@@ -1,0 +1,6 @@
+// Barrel export for easy imports
+export * from './user.types';
+export * from './product.types';
+export * from './customer.types';
+export * from './order.types';
+export * from './invoice.types';
