@@ -1,71 +1,40 @@
+import uuid
+
+from django.conf import settings
 from django.db import models
-from django.core.validators import MinValueValidator
+
 
 class Product(models.Model):
-    """
-    Comprehensive Product model with detailed tracking and validation
-    """
-    name = models.CharField(
-        max_length=255, 
-        help_text="Name of the product"
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="products",
+        blank=True,
+        null=True,
     )
-    description = models.TextField(
-        blank=True, 
-        null=True, 
-        help_text="Optional product description"
-    )
-    unit = models.CharField(
-        max_length=50, 
-        help_text="Unit of measurement (e.g., 'szt', 'kg', 'l')"
-    )
-    price = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        validators=[MinValueValidator(0)],
-        help_text="Product price"
-    )
-    stock_quantity = models.IntegerField(
-        default=0, 
-        validators=[MinValueValidator(0)],
-        help_text="Current stock quantity"
-    )
-    category = models.CharField(
-        max_length=100, 
-        blank=True, 
-        null=True, 
-        help_text="Optional product category"
-    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    unit = models.CharField(max_length=20, default="")
+    price_net = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    price_gross = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=23.00)
+    sku = models.CharField(max_length=50, blank=True, null=True)
+    barcode = models.CharField(max_length=50, blank=True, null=True)
+    track_batches = models.BooleanField(default=True)
+    min_stock_alert = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    shelf_life_days = models.IntegerField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return f"{self.name} ({self.unit})"
-
-    def update_stock(self, quantity_change):
-        """
-        Update stock quantity with validation
-        
-        :param quantity_change: Positive or negative quantity change
-        :return: New stock quantity
-        """
-        new_quantity = self.stock_quantity + quantity_change
-        if new_quantity < 0:
-            raise ValueError("Stock cannot be negative")
-        
-        self.stock_quantity = new_quantity
-        self.save()
-        return self.stock_quantity
-
-    def is_in_stock(self):
-        """
-        Check if product is currently in stock
-        
-        :return: Boolean indicating stock availability
-        """
-        return self.stock_quantity > 0
-
     class Meta:
-        ordering = ['-created_at']
-        verbose_name = 'Product'
-        verbose_name_plural = 'Products'
-        unique_together = ['name', 'unit']  # Prevent duplicate products
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user"], name="idx_products_user"),
+            models.Index(fields=["sku"], name="idx_products_sku"),
+            models.Index(fields=["is_active"], name="idx_products_active"),
+        ]
+
+    def __str__(self):
+        return self.name
