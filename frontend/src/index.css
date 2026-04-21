@@ -1,7 +1,9 @@
-/* @tailwindcss/vite v4 - ignore unknown at-rules */
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
+/* Custom CSS Variables */
+:root {
   /* Primary color - Purple/Violet (main actions) */
   --color-primary-50: #eef2ff;
   --color-primary-100: #e0e7ff;
