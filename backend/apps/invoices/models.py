@@ -1,6 +1,6 @@
 from django.db import models
-from users.models import User
-from orders.models import Order
+from apps.users.models import User
+from apps.orders.models import Order
 
 class Invoice(models.Model):
     STATUS_CHOICES = [
@@ -20,3 +20,6 @@ class Invoice(models.Model):
 
     def __str__(self):
         return f"Invoice {self.invoice_number}"
+
+    class Meta:
+        ordering = ['-created_at']

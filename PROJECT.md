@@ -1419,10 +1419,10 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - [ ] Protected routes (frontend)
 
 ### Faza 3: Product & Customer Management (Tydzień 3-4)
-- [ ] CRUD produktów
-- [ ] CRUD klientów
+- [x] CRUD produktów
+- [x] CRUD klientów
 - [ ] Zarządzanie stanami magazynowymi
-- [ ] Lista produktów z wyszukiwaniem
+- [x] Lista produktów z wyszukiwaniem
 
 ### Faza 4: Order Management (Tydzień 4-5)
 - [ ] Tworzenie zamówienia (wybór daty, klienta)

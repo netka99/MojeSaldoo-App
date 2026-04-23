@@ -1,5 +1,12 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import ProductViewSet, WarehouseViewSet
+
+router = DefaultRouter()
+router.register("products", ProductViewSet, basename="product")
+router.register("warehouses", WarehouseViewSet, basename="warehouse")
 
 urlpatterns = [
-    # Admin URLs will be automatically included
+    path("", include(router.urls)),
 ]

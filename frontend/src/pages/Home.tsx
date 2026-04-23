@@ -1,7 +1,13 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { cn } from '@/lib/utils';
+
+const outlineLinkClass = cn(
+  'inline-flex h-10 items-center justify-center whitespace-nowrap rounded-md border border-input bg-background px-4 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+);
 
 export const Home: React.FC = () => {
   return (
@@ -46,11 +52,18 @@ export const Home: React.FC = () => {
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                 <Button variant="outline">Create Order</Button>
                 <Button variant="outline">View Orders</Button>
-                <Button variant="outline">Manage Products</Button>
-                <Button variant="outline">Generate Reports</Button>
+                <Link to="/products" className={outlineLinkClass}>
+                  Manage Products
+                </Link>
+                <Link to="/customers" className={outlineLinkClass}>
+                  Customers
+                </Link>
+                <Link to="/warehouses" className={outlineLinkClass}>
+                  Warehouses
+                </Link>
               </div>
             </CardContent>
           </Card>

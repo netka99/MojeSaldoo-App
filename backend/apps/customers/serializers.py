@@ -1,52 +1,67 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
 from .models import Customer
 
+
 class CustomerSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Customer model with comprehensive validation
-    """
+    """Full Customer API shape; monetary amounts use DecimalField (no floats)."""
+
+    credit_limit = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+
     class Meta:
         model = Customer
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = [
+            "id",
+            "user",
+            "name",
+            "company_name",
+            "nip",
+            "email",
+            "phone",
+            "street",
+            "city",
+            "postal_code",
+            "country",
+            "distance_km",
+            "delivery_days",
+            "payment_terms",
+            "credit_limit",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "user", "created_at", "updated_at"]
 
     def validate_nip(self, value):
-        """
-        Validate NIP (Polish tax identification number)
-        """
         if value and not self.validate_nip_format(value):
             raise serializers.ValidationError("Invalid NIP format")
         return value
 
     def validate_phone(self, value):
-        """
-        Basic phone number validation
-        """
         if value and not self.validate_phone_format(value):
             raise serializers.ValidationError("Invalid phone number format")
         return value
 
-    def validate_distance(self, value):
-        """
-        Ensure distance is non-negative
-        """
-        if value < 0:
+    def validate_distance_km(self, value):
+        if value is not None and value < 0:
             raise serializers.ValidationError("Distance cannot be negative")
+        return value
+
+    def validate_credit_limit(self, value: Decimal) -> Decimal:
+        if value < 0:
+            raise serializers.ValidationError("Credit limit cannot be negative.")
         return value
 
     @staticmethod
     def validate_nip_format(nip):
-        """
-        Validate Polish NIP number format
-        """
         if not nip or len(nip) != 10:
             return False
-        
-        # Basic NIP validation weights
+
         weights = [6, 5, 7, 2, 3, 4, 5, 6, 7]
-        
+
         try:
-            # Calculate checksum
             checksum = sum(int(nip[i]) * weights[i] for i in range(9)) % 11
             return int(nip[9]) == checksum
         except (ValueError, IndexError):
@@ -54,11 +69,5 @@ class CustomerSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def validate_phone_format(phone):
-        """
-        Basic phone number validation
-        """
-        # Remove spaces and dashes
-        phone = ''.join(filter(str.isdigit, phone))
-        
-        # Check for valid phone number length
-        return 9 <= len(phone) <= 15
+        digits = "".join(filter(str.isdigit, phone))
+        return 9 <= len(digits) <= 15

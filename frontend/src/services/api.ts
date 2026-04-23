@@ -7,11 +7,61 @@
  * The 'token' stored here is a JWT for user authentication, NOT a KSeF token.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+import axios, { type AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
+
+/**
+ * Backend API root (must include `/api` if your Django routes are mounted there).
+ * Set `VITE_API_BASE_URL` in `.env` to override (e.g. full URL in production).
+ *
+ * In the browser during `npm run dev`, default is `/api` so requests use the Vite
+ * dev proxy (`vite.config.ts` → `localhost:8000`) and avoid cross-origin "Network Error".
+ */
+function resolveApiBaseUrl(): string {
+  const fromEnv = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '');
+  if (fromEnv) return fromEnv;
+  if (import.meta.env.DEV && typeof window !== 'undefined') return '/api';
+  return 'http://localhost:8000/api';
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
+
+/** Dispatched when tokens are cleared after refresh failure so AuthContext can reset user state. */
+export const AUTH_SESSION_EXPIRED_EVENT = 'mojesaldoo:auth-session-expired';
+
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
+/** Prefix for `Authorization` — swap scheme if the API expects something other than RFC 6750 Bearer JWT. */
+const JWT_AUTH_SCHEME = 'Bearer';
+
+/**
+ * Attach JWT (access token) to outgoing requests.
+ * Placeholder / extension point: add `X-Request-ID`, tenant headers, alternate `Authorization` schemes, etc.
+ */
+function applyJwtAuthHeaders(config: InternalAxiosRequestConfig): void {
+  const token = authStorage.getAccessToken();
+  if (!token) {
+    return;
+  }
+  // Example placeholder for additional auth context:
+  // config.headers['X-Your-Tenant-Id'] = resolveTenantId();
+  config.headers.Authorization = `${JWT_AUTH_SCHEME} ${token}`;
+}
+
 type ApiErrorResponse = { detail?: string; message?: string };
+
+function drfFieldMessages(body: Record<string, unknown>): string | null {
+  const messages: string[] = [];
+  for (const [key, val] of Object.entries(body)) {
+    if (key === 'detail' || key === 'message' || val == null) continue;
+    if (typeof val === 'string') messages.push(`${key}: ${val}`);
+    else if (Array.isArray(val)) {
+      const strs = val.filter((v): v is string => typeof v === 'string');
+      if (strs.length) messages.push(`${key}: ${strs.join(', ')}`);
+    }
+  }
+  return messages.length ? messages.join(' · ') : null;
+}
 
 export interface AuthUser {
   id: number;
@@ -38,10 +88,9 @@ export interface RegisterPayload {
   password2: string;
 }
 
-const getAccessToken = (): string | null => localStorage.getItem(ACCESS_TOKEN_KEY);
-const getRefreshToken = (): string | null => localStorage.getItem(REFRESH_TOKEN_KEY);
-
 export const authStorage = {
+  getAccessToken: (): string | null => localStorage.getItem(ACCESS_TOKEN_KEY),
+  getRefreshToken: (): string | null => localStorage.getItem(REFRESH_TOKEN_KEY),
   setTokens: (access: string, refresh: string) => {
     localStorage.setItem(ACCESS_TOKEN_KEY, access);
     localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
@@ -55,94 +104,117 @@ export const authStorage = {
 let refreshPromise: Promise<string> | null = null;
 
 async function refreshAccessToken(): Promise<string> {
-  const refresh = getRefreshToken();
+  const refresh = authStorage.getRefreshToken();
   if (!refresh) {
     throw new Error('Missing refresh token');
   }
 
-  const response = await fetch(`${API_BASE_URL}/auth/refresh/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ refresh }),
-  });
+  const { data } = await axios.post<{ access: string; refresh?: string }>(
+    `${API_BASE_URL}/auth/refresh/`,
+    { refresh },
+    { headers: { 'Content-Type': 'application/json' } },
+  );
 
-  if (!response.ok) {
-    authStorage.clear();
-    throw new Error('Session expired');
-  }
-
-  const data = (await response.json()) as { access: string; refresh?: string };
   authStorage.setTokens(data.access, data.refresh ?? refresh);
   return data.access;
 }
 
-// Base fetch wrapper
-async function fetchApi<T>(
-  endpoint: string,
-  options: RequestInit = {},
-  retried = false
-): Promise<T> {
-  const token = getAccessToken();
+function toAppError(error: unknown): Error {
+  if (axios.isAxiosError(error)) {
+    const ax = error as AxiosError<ApiErrorResponse & Record<string, unknown>>;
+    const body = ax.response?.data;
+    const detail = body?.detail;
+    const detailStr =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail) && detail.every((d): d is string => typeof d === 'string')
+          ? detail.join(' · ')
+          : null;
+    const fieldStr =
+      body && typeof body === 'object' && !Array.isArray(body) ? drfFieldMessages(body as Record<string, unknown>) : null;
+    const msg =
+      detailStr ||
+      (typeof body?.message === 'string' ? body.message : null) ||
+      fieldStr ||
+      ax.message ||
+      'Request failed';
+    return new Error(typeof msg === 'string' ? msg : 'Request failed');
+  }
+  return error instanceof Error ? error : new Error('Request failed');
+}
 
-  const config: RequestInit = {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options?.headers,
-    },
-  };
+export const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  },
+  // timeout: 30_000,
+});
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+apiClient.interceptors.request.use((config) => {
+  applyJwtAuthHeaders(config);
+  return config;
+});
 
-  if (response.status === 401 && token && !retried) {
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
+    const status = error.response?.status;
+
+    if (!originalRequest || status !== 401 || originalRequest._retry) {
+      return Promise.reject(toAppError(error));
+    }
+
+    const path = `${originalRequest.baseURL ?? ''}${originalRequest.url ?? ''}`;
+    if (path.includes('/auth/login/') || path.includes('/auth/register/') || path.includes('/auth/refresh/')) {
+      return Promise.reject(toAppError(error));
+    }
+
+    if (!authStorage.getAccessToken()) {
+      return Promise.reject(toAppError(error));
+    }
+
+    originalRequest._retry = true;
     refreshPromise = refreshPromise ?? refreshAccessToken();
     try {
-      await refreshPromise;
-      return fetchApi<T>(endpoint, options, true);
+      const access = await refreshPromise;
+      originalRequest.headers.Authorization = `${JWT_AUTH_SCHEME} ${access}`;
+      return apiClient(originalRequest);
+    } catch {
+      authStorage.clear();
+      globalThis.dispatchEvent?.(new Event(AUTH_SESSION_EXPIRED_EVENT));
+      return Promise.reject(toAppError(error));
     } finally {
       refreshPromise = null;
     }
-  }
+  },
+);
 
-  // Handle errors
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ message: 'Unknown error' }))) as ApiErrorResponse;
-    throw new Error(error.detail || error.message || 'Request failed');
+async function unwrap<T>(p: Promise<{ data: T }>): Promise<T> {
+  try {
+    const { data } = await p;
+    return data;
+  } catch (e) {
+    throw toAppError(e);
   }
-
-  if (response.status === 204) {
-    return {} as T;
-  }
-
-  return response.json() as Promise<T>;
 }
 
-// Export API methods
+/** Typed helpers returning response bodies (DRF JSON / empty object for 204). */
 export const api = {
-  get: <T>(url: string) => fetchApi<T>(url, { method: 'GET' }),
-  
-  post: <T>(url: string, data?: unknown) =>
-    fetchApi<T>(url, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  put: <T>(url: string, data?: unknown) =>
-    fetchApi<T>(url, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  
-  patch: <T>(url: string, data?: unknown) =>
-    fetchApi<T>(url, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-  
-  delete: <T>(url: string) => fetchApi<T>(url, { method: 'DELETE' }),
+  get: <T>(url: string, config?: AxiosRequestConfig) => unwrap<T>(apiClient.get<T>(url, config)),
+
+  post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    unwrap<T>(apiClient.post<T>(url, data, config)),
+
+  put: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    unwrap<T>(apiClient.put<T>(url, data, config)),
+
+  patch: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    unwrap<T>(apiClient.patch<T>(url, data, config)),
+
+  delete: <T>(url: string, config?: AxiosRequestConfig) => unwrap<T>(apiClient.delete<T>(url, config)),
 };
 
 export const authApi = {

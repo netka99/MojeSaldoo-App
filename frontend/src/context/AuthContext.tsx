@@ -1,18 +1,22 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-
-interface User {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  companyName: string;
-  ksefCertificateUploaded: boolean;
-}
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  authApi,
+  authStorage,
+  AUTH_SESSION_EXPIRED_EVENT,
+  type AuthUser,
+} from '@/services/api';
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -24,54 +28,51 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('authToken');
-    if (token) {
-      // TODO: Validate token with backend
-      // For now, just check if it exists
-      const userData = localStorage.getItem('userData');
-      if (userData) {
-        setUser(JSON.parse(userData));
-      }
-    }
-    setIsLoading(false);
+    const onSessionExpired = () => setUser(null);
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, onSessionExpired);
+    return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, onSessionExpired);
   }, []);
 
-  const login = async (email: string, password: string): Promise<void> => {
-    setIsLoading(true);
-    try {
-      // TODO: Replace with actual API call
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+  useEffect(() => {
+    let cancelled = false;
 
-      if (!response.ok) {
-        throw new Error('Login failed');
+    async function bootstrap() {
+      if (!authStorage.getAccessToken()) {
+        if (!cancelled) setIsLoading(false);
+        return;
       }
-
-      const data = await response.json();
-      localStorage.setItem('authToken', data.token);
-      localStorage.setItem('userData', JSON.stringify(data.user));
-      setUser(data.user);
-    } catch (error) {
-      throw error;
-    } finally {
-      setIsLoading(false);
+      try {
+        const { user: me } = await authApi.me();
+        if (!cancelled) setUser(me);
+      } catch {
+        authStorage.clear();
+        if (!cancelled) setUser(null);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
     }
-  };
 
-  const logout = (): void => {
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('userData');
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const login = useCallback(async (username: string, password: string): Promise<void> => {
+    const data = await authApi.login(username, password);
+    setUser(data.user);
+  }, []);
+
+  const logout = useCallback((): void => {
+    authApi.logout();
     setUser(null);
-  };
+  }, []);
 
-  const isAuthenticated = !!user;
+  const isAuthenticated = Boolean(user);
 
   return (
     <AuthContext.Provider value={{ user, isLoading, login, logout, isAuthenticated }}>
