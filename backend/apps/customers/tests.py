@@ -9,6 +9,13 @@ from rest_framework.test import APIClient
 
 from apps.customers.models import Customer
 from apps.customers.serializers import CustomerSerializer
+from apps.users.models import Company, CompanyMembership
+
+
+def _company_with_user(user, name_suffix="org"):
+    co = Company.objects.create(name=f"{user.username} {name_suffix}")
+    CompanyMembership.objects.create(user=user, company=co, role="admin", is_active=True)
+    return co
 
 
 class CustomerModelTests(TestCase):
@@ -18,10 +25,12 @@ class CustomerModelTests(TestCase):
             email="customer@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
 
     def test_customer_creation_with_requested_fields(self):
         customer = Customer.objects.create(
             user=self.user,
+            company=self.company,
             name="Sklep ABC",
             company_name="ABC Sp. z o.o.",
             nip="1234567890",
@@ -46,7 +55,8 @@ class CustomerModelTests(TestCase):
         self.assertIsNotNone(customer.updated_at)
 
     def test_customer_defaults(self):
-        customer = Customer.objects.create(name="Default Customer")
+        co = Company.objects.create(name="Default Co")
+        customer = Customer.objects.create(name="Default Customer", company=co)
 
         self.assertEqual(customer.country, "PL")
         self.assertEqual(customer.payment_terms, 14)
@@ -63,7 +73,8 @@ class CustomerSerializerTests(TestCase):
             }
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        customer = serializer.save()
+        co = Company.objects.create(name="Serializer Co")
+        customer = serializer.save(company=co)
 
         self.assertEqual(customer.credit_limit, Decimal("9999.99"))
 
@@ -102,8 +113,14 @@ class CustomerViewSetAPITests(TestCase):
             email="api-ct@test.com",
             password="test12345",
         )
-        Customer.objects.create(user=self.user, name="My client")
-        Customer.objects.create(user=self.other, name="Their client")
+        self.co_user = _company_with_user(self.user)
+        self.co_other = _company_with_user(self.other)
+        Customer.objects.create(user=self.user, company=self.co_user, name="My client")
+        Customer.objects.create(user=self.other, company=self.co_other, name="Their client")
+        self.user.current_company = self.co_user
+        self.user.save(update_fields=["current_company"])
+        self.other.current_company = self.co_other
+        self.other.save(update_fields=["current_company"])
 
     def test_list_scoped_to_owner(self):
         self.client.force_authenticate(user=self.user)

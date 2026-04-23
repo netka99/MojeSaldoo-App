@@ -6,18 +6,11 @@ from rest_framework.permissions import IsAuthenticated
 from .filters import CustomerFilter
 from .models import Customer
 from .serializers import CustomerSerializer
-
-
-def _scoped_for_user(qs: QuerySet, user) -> QuerySet:
-    if not user.is_authenticated:
-        return qs.none()
-    if user.is_staff:
-        return qs
-    return qs.filter(user=user)
+from apps.users.tenant import filter_queryset_for_current_company
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
-    """Full CRUD for customers owned by the current user (staff see all)."""
+    """Full CRUD for customers in the user's active company."""
 
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
@@ -43,10 +36,16 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         qs = Customer.objects.all().order_by("-created_at")
-        return _scoped_for_user(qs, self.request.user)
+        return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )
 
     def perform_update(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )

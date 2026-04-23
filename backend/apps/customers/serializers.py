@@ -15,6 +15,7 @@ class CustomerSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "user",
+            "company",
             "name",
             "company_name",
             "nip",
@@ -32,7 +33,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "company", "created_at", "updated_at"]
 
     def validate_nip(self, value):
         if value and not self.validate_nip_format(value):

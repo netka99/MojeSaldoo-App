@@ -18,14 +18,7 @@ from .serializers import (
     StockUpdateSerializer,
     WarehouseSerializer,
 )
-
-
-def _scoped_for_user(qs: QuerySet, user) -> QuerySet:
-    if not user.is_authenticated:
-        return qs.none()
-    if user.is_staff:
-        return qs
-    return qs.filter(user=user)
+from apps.users.tenant import filter_queryset_for_current_company
 
 
 def _stock_owner_user(product, request_user):
@@ -33,7 +26,7 @@ def _stock_owner_user(product, request_user):
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    """Full CRUD for products owned by the current user (staff see all)."""
+    """Full CRUD for products in the user's active company."""
 
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
@@ -59,13 +52,19 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         qs = Product.objects.all().order_by("-created_at")
-        return _scoped_for_user(qs, self.request.user)
+        return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )
 
     def perform_update(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )
 
     @action(detail=True, methods=["post"], url_path="update-stock")
     def update_stock(self, request, pk=None):
@@ -78,13 +77,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         data = input_serializer.validated_data
         existing = getattr(input_serializer, "_existing_movement", None)
 
-        warehouse = get_object_or_404(Warehouse, pk=data["warehouse_id"])
-        owner = _stock_owner_user(product, request.user)
-        if warehouse.user_id != owner.id:
-            return Response(
-                {"detail": "Warehouse does not belong to this product's owner."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        warehouse = get_object_or_404(
+            Warehouse.objects.filter(company_id=product.company_id),
+            pk=data["warehouse_id"],
+        )
         qty_change: Decimal = data["quantity_change"]
         movement_type = data.get("movement_type", StockMovement.MovementType.ADJUSTMENT)
         ref_type = (data.get("reference_type") or "").strip() or None
@@ -127,6 +123,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
             if stock is None:
                 stock = ProductStock(
+                    company=product.company,
                     product=product,
                     warehouse=warehouse,
                     quantity_available=new_available,
@@ -164,6 +161,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 http_status = status.HTTP_200_OK
             else:
                 movement = StockMovement.objects.create(
+                    company=product.company,
                     product=product,
                     warehouse=warehouse,
                     user=movement_user,
@@ -185,7 +183,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 
 class WarehouseViewSet(viewsets.ModelViewSet):
-    """Full CRUD for warehouses owned by the current user (staff see all)."""
+    """Full CRUD for warehouses in the user's active company."""
 
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
@@ -215,10 +213,16 @@ class WarehouseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         qs = Warehouse.objects.all().order_by("code")
-        return _scoped_for_user(qs, self.request.user)
+        return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )
 
     def perform_update(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )

@@ -13,6 +13,7 @@ class Customer(models.Model):
         blank=True,
         null=True,
     )
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     company_name = models.CharField(max_length=255, blank=True, null=True)
     nip = models.CharField(max_length=10, blank=True, null=True)
@@ -34,6 +35,7 @@ class Customer(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user"], name="idx_customers_user"),
+            models.Index(fields=["company"], name="idx_customers_company"),
             models.Index(fields=["nip"], name="idx_customers_nip"),
             models.Index(fields=["is_active"], name="idx_customers_active"),
         ]

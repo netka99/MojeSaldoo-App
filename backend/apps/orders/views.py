@@ -1,16 +1,23 @@
-from rest_framework import viewsets, filters, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
+from django.db.models import QuerySet
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.users.tenant import filter_queryset_for_current_company
+
 from .models import Order
 from .serializers import OrderSerializer
+
 
 class OrderViewSet(viewsets.ModelViewSet):
     """
     Comprehensive ViewSet for Order model with advanced filtering and custom actions
     """
-    queryset = Order.objects.all()
+
     serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
     
     # Advanced filtering and search capabilities
     filter_backends = [
@@ -41,11 +48,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         'created_at'
     ]
 
-    def get_queryset(self):
-        """
-        Customize queryset based on request parameters
-        """
-        return Order.objects.all().order_by('-created_at')
+    def get_queryset(self) -> QuerySet:
+        qs = Order.objects.all().order_by("-created_at")
+        return filter_queryset_for_current_company(qs, self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.current_company)
 
     @action(detail=True, methods=['POST'], url_path='confirm')
     def confirm_order(self, request, pk=None):

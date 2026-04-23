@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from apps.customers.models import Customer
 from apps.orders.models import Order
+from apps.users.models import Company, CompanyMembership
 
 
 class OrderApiTests(TestCase):
@@ -20,9 +21,19 @@ class OrderApiTests(TestCase):
             email="order-api@test.com",
             password="test12345",
         )
-        self.customer = Customer.objects.create(name="Buyer Co")
+        self.co = Company.objects.create(name="Buyer tenant")
+        CompanyMembership.objects.create(
+            user=self.user,
+            company=self.co,
+            role="admin",
+            is_active=True,
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.customer = Customer.objects.create(name="Buyer Co", company=self.co)
         Order.objects.create(
             customer=self.customer,
+            company=self.co,
             order_date=date(2026, 4, 1),
             delivery_date=date(2026, 4, 10),
             status="draft",

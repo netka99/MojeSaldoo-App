@@ -49,7 +49,7 @@ class OrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'total', 'status']
+        read_only_fields = ['id', 'created_at', 'total', 'status', 'company']
 
     def validate(self, data):
         """
@@ -63,6 +63,9 @@ class OrderSerializer(serializers.ModelSerializer):
         Custom create method to handle nested order items
         """
         items_data = self.context.get('request').data.get('items', [])
+        validated_data.pop('items', None)
+        customer = validated_data['customer']
+        validated_data.setdefault('company', customer.company)
         order = Order.objects.create(**validated_data)
 
         # Create order items
@@ -81,8 +84,13 @@ class OrderSerializer(serializers.ModelSerializer):
         """
         Custom update method to handle nested order items
         """
-        # Update order fields
-        instance.customer = validated_data.get('customer', instance.customer)
+        validated_data.pop('items', None)
+        customer = validated_data.get('customer', instance.customer)
+        instance.customer = customer
+        if 'company' in validated_data:
+            instance.company = validated_data['company']
+        else:
+            instance.company = customer.company
         instance.delivery_date = validated_data.get('delivery_date', instance.delivery_date)
         instance.save()
 

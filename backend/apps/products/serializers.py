@@ -18,6 +18,7 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "user",
+            "company",
             "name",
             "description",
             "unit",
@@ -33,7 +34,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "company", "created_at", "updated_at"]
 
     def validate_price_net(self, value: Decimal) -> Decimal:
         if value < 0:
@@ -59,6 +60,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "user",
+            "company",
             "code",
             "name",
             "warehouse_type",
@@ -69,7 +71,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "company", "created_at", "updated_at"]
 
 
 class StockMovementSerializer(serializers.ModelSerializer):
@@ -84,6 +86,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
         model = StockMovement
         fields = [
             "id",
+            "company",
             "product",
             "warehouse",
             "warehouse_code",
@@ -100,6 +103,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "company",
             "product",
             "warehouse",
             "warehouse_code",

@@ -21,6 +21,7 @@ class Order(models.Model):
         on_delete=models.PROTECT,
         help_text="Customer who placed the order"
     )
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     order_date = models.DateField(
         help_text="Date when the order was placed"
     )

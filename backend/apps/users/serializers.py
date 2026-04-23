@@ -1,13 +1,50 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import User
+
+from .models import Company, CompanyMembership, CompanyModule, User
+
 
 class UserSerializer(serializers.ModelSerializer):
+    current_company = serializers.UUIDField(source="current_company_id", allow_null=True, read_only=True)
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'phone_number', 'is_active']
-        extra_kwargs = {'password': {'write_only': True}}
+        fields = [
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "phone_number",
+            "is_active",
+            "current_company",
+        ]
+        extra_kwargs = {"password": {"write_only": True}}
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Company
+        fields = ["id", "name", "nip", "address", "email", "phone"]
+        read_only_fields = ["id"]
+
+
+class CompanyMembershipSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    company = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = CompanyMembership
+        fields = ["id", "user", "company", "role", "is_active", "joined_at"]
+        read_only_fields = ["id", "user", "company", "role", "is_active", "joined_at"]
+
+
+class CompanyModuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyModule
+        fields = ["id", "company", "module", "is_enabled", "enabled_at"]
+        read_only_fields = ["id", "company", "module", "enabled_at"]
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
@@ -48,3 +85,7 @@ class UserTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         data["user"] = UserSerializer(self.user).data
         return data
+
+
+class SwitchCompanySerializer(serializers.Serializer):
+    company = serializers.UUIDField()

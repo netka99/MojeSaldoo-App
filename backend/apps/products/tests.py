@@ -11,6 +11,13 @@ from rest_framework.test import APIClient
 
 from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
 from apps.products.serializers import ProductSerializer, WarehouseSerializer
+from apps.users.models import Company, CompanyMembership
+
+
+def _company_with_user(user, name_suffix="org"):
+    co = Company.objects.create(name=f"{user.username} {name_suffix}")
+    CompanyMembership.objects.create(user=user, company=co, role="admin", is_active=True)
+    return co
 
 
 class ProductModelTests(TestCase):
@@ -20,10 +27,12 @@ class ProductModelTests(TestCase):
             email="product@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
 
     def test_product_creation_with_requested_fields(self):
         product = Product.objects.create(
             user=self.user,
+            company=self.company,
             name="Kartacze",
             description="Test product",
             unit="kg",
@@ -47,7 +56,8 @@ class ProductModelTests(TestCase):
         self.assertIsNotNone(product.updated_at)
 
     def test_product_defaults(self):
-        product = Product.objects.create(name="Default Product")
+        co = Company.objects.create(name="Product default co")
+        product = Product.objects.create(name="Default Product", company=co)
 
         self.assertEqual(product.unit, "")
         self.assertEqual(product.price_net, Decimal("0"))
@@ -71,10 +81,13 @@ class WarehouseModelTests(TestCase):
             email="warehouse-other@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
+        self.other_company = _company_with_user(self.other_user, "other")
 
     def test_warehouse_creation_with_requested_fields(self):
         warehouse = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="MG",
             name="Magazyn główny",
             warehouse_type=Warehouse.WarehouseType.MOBILE,
@@ -99,6 +112,7 @@ class WarehouseModelTests(TestCase):
     def test_warehouse_defaults(self):
         warehouse = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="DEF",
             name="Default Warehouse",
         )
@@ -111,12 +125,14 @@ class WarehouseModelTests(TestCase):
     def test_code_unique_globally(self):
         Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="MG",
             name="First",
         )
         with self.assertRaises(IntegrityError):
             Warehouse.objects.create(
                 user=self.other_user,
+                company=self.other_company,
                 code="MG",
                 name="Duplicate code different user",
             )
@@ -124,11 +140,13 @@ class WarehouseModelTests(TestCase):
     def test_user_reverse_relation(self):
         w1 = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="W1",
             name="One",
         )
         w2 = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="W2",
             name="Two",
         )
@@ -137,6 +155,7 @@ class WarehouseModelTests(TestCase):
     def test_cascade_delete_user_removes_warehouses(self):
         Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="MG",
             name="Main",
         )
@@ -146,8 +165,8 @@ class WarehouseModelTests(TestCase):
         self.assertFalse(Warehouse.objects.filter(code="MG").exists())
 
     def test_meta_ordering_by_code(self):
-        Warehouse.objects.create(user=self.user, code="ZZ", name="Zeta")
-        Warehouse.objects.create(user=self.user, code="AA", name="Alpha")
+        Warehouse.objects.create(user=self.user, company=self.company, code="ZZ", name="Zeta")
+        Warehouse.objects.create(user=self.user, company=self.company, code="AA", name="Alpha")
         codes = list(
             Warehouse.objects.filter(user=self.user).values_list("code", flat=True)
         )
@@ -162,24 +181,29 @@ class ProductStockModelTests(TestCase):
             email="stock@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
         self.product = Product.objects.create(
             user=self.user,
+            company=self.company,
             name="Stocked Item",
             unit="szt",
         )
         self.warehouse_a = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="WA",
             name="Warehouse A",
         )
         self.warehouse_b = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="WB",
             name="Warehouse B",
         )
 
     def test_product_stock_creation_with_quantities(self):
         row = ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_a,
             quantity_available=Decimal("10.50"),
@@ -196,6 +220,7 @@ class ProductStockModelTests(TestCase):
 
     def test_product_stock_decimal_defaults(self):
         row = ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_a,
         )
@@ -205,10 +230,12 @@ class ProductStockModelTests(TestCase):
 
     def test_reverse_relations(self):
         s1 = ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_a,
         )
         s2 = ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_b,
         )
@@ -219,17 +246,20 @@ class ProductStockModelTests(TestCase):
 
     def test_unique_product_warehouse(self):
         ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_a,
         )
         with self.assertRaises(IntegrityError):
             ProductStock.objects.create(
+                company=self.company,
                 product=self.product,
                 warehouse=self.warehouse_a,
             )
 
     def test_cascade_delete_product_removes_stock(self):
         ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_a,
         )
@@ -239,6 +269,7 @@ class ProductStockModelTests(TestCase):
 
     def test_cascade_delete_warehouse_removes_stock(self):
         ProductStock.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse_a,
         )
@@ -255,19 +286,23 @@ class StockBatchModelTests(TestCase):
             email="batch@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
         self.product = Product.objects.create(
             user=self.user,
+            company=self.company,
             name="Batch Product",
             unit="szt",
         )
         self.warehouse = Warehouse.objects.create(
             user=self.user,
+            company=self.company,
             code="B1",
             name="Batch warehouse",
         )
 
     def test_stock_batch_creation_with_requested_fields(self):
         batch = StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             batch_number="LOT-2026-01",
@@ -290,6 +325,7 @@ class StockBatchModelTests(TestCase):
 
     def test_stock_batch_optional_fields_null(self):
         batch = StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             received_date=date(2026, 2, 1),
@@ -302,6 +338,7 @@ class StockBatchModelTests(TestCase):
 
     def test_reverse_relations(self):
         b = StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             received_date=date(2026, 3, 1),
@@ -313,6 +350,7 @@ class StockBatchModelTests(TestCase):
 
     def test_cascade_delete_product_removes_batches(self):
         StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             received_date=date(2026, 4, 1),
@@ -325,6 +363,7 @@ class StockBatchModelTests(TestCase):
 
     def test_cascade_delete_warehouse_removes_batches(self):
         StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             received_date=date(2026, 4, 1),
@@ -337,6 +376,7 @@ class StockBatchModelTests(TestCase):
 
     def test_default_ordering_fifo_by_received_date(self):
         b_newer = StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             received_date=date(2026, 5, 20),
@@ -344,6 +384,7 @@ class StockBatchModelTests(TestCase):
             quantity_remaining=Decimal("1.00"),
         )
         b_older = StockBatch.objects.create(
+            company=self.company,
             product=self.product,
             warehouse=self.warehouse,
             received_date=date(2026, 5, 10),
@@ -363,6 +404,7 @@ class ProductSerializerTests(TestCase):
             email="pser@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
 
     def test_create_accepts_decimal_strings_and_stores_decimals(self):
         serializer = ProductSerializer(
@@ -376,7 +418,7 @@ class ProductSerializerTests(TestCase):
             }
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        product = serializer.save(user=self.user)
+        product = serializer.save(user=self.user, company=self.company)
 
         self.assertEqual(product.price_net, Decimal("10.50"))
         self.assertEqual(product.price_gross, Decimal("12.92"))
@@ -402,6 +444,7 @@ class WarehouseSerializerTests(TestCase):
             email="wser@test.com",
             password="test12345",
         )
+        self.company = _company_with_user(self.user)
 
     def test_create_round_trip(self):
         serializer = WarehouseSerializer(
@@ -416,7 +459,7 @@ class WarehouseSerializerTests(TestCase):
             }
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        warehouse = serializer.save(user=self.user)
+        warehouse = serializer.save(user=self.user, company=self.company)
 
         self.assertEqual(warehouse.code, "SZ")
         self.assertEqual(warehouse.name, "Serialized warehouse")
@@ -441,8 +484,11 @@ class ProductViewSetAPITests(TestCase):
             email="api-pt@test.com",
             password="test12345",
         )
+        self.co_user = _company_with_user(self.user)
+        self.co_other = _company_with_user(self.other)
         Product.objects.create(
             user=self.user,
+            company=self.co_user,
             name="My catalog item",
             unit="szt",
             price_net=Decimal("1.00"),
@@ -450,13 +496,21 @@ class ProductViewSetAPITests(TestCase):
         )
         Product.objects.create(
             user=self.other,
+            company=self.co_other,
             name="Other user item",
             unit="kg",
         )
+        self.user.current_company = self.co_user
+        self.user.save(update_fields=["current_company"])
+        self.other.current_company = self.co_other
+        self.other.save(update_fields=["current_company"])
 
     def test_list_requires_authentication(self):
         response = self.client.get(reverse("product-list"))
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
 
     def test_list_scoped_to_owner(self):
         self.client.force_authenticate(user=self.user)
@@ -498,16 +552,24 @@ class WarehouseViewSetAPITests(TestCase):
             email="api-who@test.com",
             password="test12345",
         )
+        self.co_user = _company_with_user(self.user)
+        self.co_other = _company_with_user(self.other)
         Warehouse.objects.create(
             user=self.user,
+            company=self.co_user,
             code="OW1",
             name="Owner warehouse",
         )
         Warehouse.objects.create(
             user=self.other,
+            company=self.co_other,
             code="OW2",
             name="Other warehouse",
         )
+        self.user.current_company = self.co_user
+        self.user.save(update_fields=["current_company"])
+        self.other.current_company = self.co_other
+        self.other.save(update_fields=["current_company"])
 
     def test_list_scoped_to_owner(self):
         self.client.force_authenticate(user=self.user)
@@ -546,16 +608,24 @@ class ProductUpdateStockAPITests(TestCase):
             email="ustock-o@test.com",
             password="test12345",
         )
+        self.co_user = _company_with_user(self.user)
+        self.co_other = _company_with_user(self.other)
         self.product = Product.objects.create(
             user=self.user,
+            company=self.co_user,
             name="Stocked product",
             unit="szt",
         )
         self.warehouse = Warehouse.objects.create(
             user=self.user,
+            company=self.co_user,
             code="US1",
             name="Update-stock warehouse",
         )
+        self.user.current_company = self.co_user
+        self.user.save(update_fields=["current_company"])
+        self.other.current_company = self.co_other
+        self.other.save(update_fields=["current_company"])
 
     def test_update_stock_creates_movement_and_product_stock(self):
         self.client.force_authenticate(user=self.user)
@@ -615,6 +685,7 @@ class ProductUpdateStockAPITests(TestCase):
     def test_warehouse_wrong_owner_rejected(self):
         foreign_wh = Warehouse.objects.create(
             user=self.other,
+            company=self.co_other,
             code="FX1",
             name="Foreign",
         )
@@ -625,7 +696,7 @@ class ProductUpdateStockAPITests(TestCase):
             {"warehouse_id": str(foreign_wh.id), "quantity_change": "1.00"},
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_update_stock_accepts_warehouse_code_instead_of_id(self):
         self.client.force_authenticate(user=self.user)

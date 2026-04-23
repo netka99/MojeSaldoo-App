@@ -13,6 +13,7 @@ class Product(models.Model):
         blank=True,
         null=True,
     )
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     unit = models.CharField(max_length=20, default="")
@@ -32,6 +33,7 @@ class Product(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user"], name="idx_products_user"),
+            models.Index(fields=["company"], name="idx_products_company"),
             models.Index(fields=["sku"], name="idx_products_sku"),
             models.Index(fields=["is_active"], name="idx_products_active"),
         ]
@@ -55,6 +57,7 @@ class Warehouse(models.Model):
         on_delete=models.CASCADE,
         related_name="warehouses",
     )
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     code = models.CharField(
         max_length=10,
         unique=True,
@@ -77,6 +80,7 @@ class Warehouse(models.Model):
         ordering = ["code"]
         indexes = [
             models.Index(fields=["user"], name="idx_warehouses_user"),
+            models.Index(fields=["company"], name="idx_warehouses_company"),
             models.Index(fields=["code"], name="idx_warehouses_code"),
             models.Index(fields=["warehouse_type"], name="idx_warehouses_type"),
         ]
@@ -89,6 +93,7 @@ class ProductStock(models.Model):
     """Per-warehouse inventory quantities for a product."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -123,6 +128,7 @@ class ProductStock(models.Model):
             ),
         ]
         indexes = [
+            models.Index(fields=["company"], name="idx_product_stock_company"),
             models.Index(fields=["product"], name="idx_product_stock_product"),
             models.Index(fields=["warehouse"], name="idx_product_stock_warehouse"),
         ]
@@ -135,6 +141,7 @@ class StockBatch(models.Model):
     """FIFO lot / batch line for a product in a warehouse."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -160,6 +167,7 @@ class StockBatch(models.Model):
     class Meta:
         ordering = ["received_date", "id"]
         indexes = [
+            models.Index(fields=["company"], name="idx_stock_batches_company"),
             models.Index(fields=["product"], name="idx_stock_batches_product"),
             models.Index(fields=["warehouse"], name="idx_stock_batches_warehouse"),
             models.Index(fields=["received_date"], name="idx_stock_batches_received"),
@@ -182,6 +190,7 @@ class StockMovement(models.Model):
         DAMAGE = "damage", "Damage"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -224,6 +233,7 @@ class StockMovement(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
+            models.Index(fields=["company"], name="idx_stock_movements_company"),
             models.Index(fields=["product"], name="idx_stock_movements_product"),
             models.Index(fields=["warehouse"], name="idx_stock_movements_warehouse"),
             models.Index(fields=["movement_type"], name="idx_stock_movements_type"),

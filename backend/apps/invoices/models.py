@@ -1,6 +1,7 @@
 from django.db import models
-from apps.users.models import User
+
 from apps.orders.models import Order
+
 
 class Invoice(models.Model):
     STATUS_CHOICES = [
@@ -11,6 +12,7 @@ class Invoice(models.Model):
     ]
 
     order = models.OneToOneField(Order, on_delete=models.CASCADE)
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     invoice_number = models.CharField(max_length=50, unique=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
