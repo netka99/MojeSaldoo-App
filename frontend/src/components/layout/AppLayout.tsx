@@ -32,6 +32,7 @@ export function AppLayout() {
             <NavLink to="/customers">Customers</NavLink>
             <NavLink to="/products">Products</NavLink>
             <NavLink to="/warehouses">Warehouses</NavLink>
+            <NavLink to="/settings/company">Firma</NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {isAuthenticated ? (

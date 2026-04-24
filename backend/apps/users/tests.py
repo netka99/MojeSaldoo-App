@@ -29,6 +29,8 @@ class CompanyCreateAPITests(TestCase):
                 "name": "NewCo",
                 "nip": "0987654321",
                 "address": "ul. Test 1",
+                "city": "Warszawa",
+                "postal_code": "00-001",
                 "email": "new@co.test",
                 "phone": "+48111222333",
             },
@@ -38,6 +40,9 @@ class CompanyCreateAPITests(TestCase):
         cid = response.data["id"]
         co = Company.objects.get(pk=cid)
         self.assertEqual(co.name, "NewCo")
+        self.assertEqual(co.city, "Warszawa")
+        self.assertEqual(co.postal_code, "00-001")
+        self.assertIn("created_at", response.data)
         m = CompanyMembership.objects.get(user=self.user, company=co)
         self.assertEqual(m.role, "admin")
 
@@ -323,6 +328,16 @@ class CurrentUserIncludesCurrentCompanyTests(TestCase):
         response = self.client.get(reverse("current_user"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["user"]["current_company"], str(self.co.pk))
+        self.assertEqual(response.data["user"]["current_company_role"], "admin")
+
+    def test_me_returns_null_current_company_role_without_current_company(self):
+        self.user.current_company = None
+        self.user.save(update_fields=["current_company"])
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(reverse("current_user"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data["user"]["current_company"])
+        self.assertIsNone(response.data["user"]["current_company_role"])
 
 
 class CompanyPermissionTests(TestCase):

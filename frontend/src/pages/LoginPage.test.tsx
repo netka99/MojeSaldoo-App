@@ -7,7 +7,15 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { LoginPage } from './LoginPage';
 import { AuthProvider } from '@/context/AuthContext';
+import { companyService } from '@/services/company.service';
 import { authApi, authStorage, type AuthUser } from '@/services/api';
+import { TestQueryProvider } from '@/test/TestQueryProvider';
+
+vi.mock('@/services/company.service', () => ({
+  companyService: {
+    getMyCompanies: vi.fn(),
+  },
+}));
 
 const sampleUser: AuthUser = {
   id: 3,
@@ -22,6 +30,8 @@ describe('LoginPage', () => {
   beforeEach(() => {
     vi.spyOn(authApi, 'me').mockReset();
     vi.spyOn(authApi, 'login').mockReset();
+    vi.mocked(companyService.getMyCompanies).mockReset();
+    vi.mocked(companyService.getMyCompanies).mockResolvedValue([{ id: 'c-1', name: 'ACME' } as never]);
   });
 
   afterEach(() => {
@@ -31,13 +41,16 @@ describe('LoginPage', () => {
   function renderLogin(initialPath = '/login') {
     return render(
       <MemoryRouter initialEntries={[initialPath]}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<div data-testid="dashboard">Dashboard</div>} />
-            <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
-          </Routes>
-        </AuthProvider>
+        <TestQueryProvider>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={<div data-testid="dashboard">Dashboard</div>} />
+              <Route path="/onboarding" element={<div data-testid="onboarding">Onboarding</div>} />
+              <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
+            </Routes>
+          </AuthProvider>
+        </TestQueryProvider>
       </MemoryRouter>,
     );
   }
@@ -70,12 +83,14 @@ describe('LoginPage', () => {
 
     render(
       <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/customers' } }]}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
-          </Routes>
-        </AuthProvider>
+        <TestQueryProvider>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
+            </Routes>
+          </AuthProvider>
+        </TestQueryProvider>
       </MemoryRouter>,
     );
 
@@ -86,6 +101,25 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => expect(screen.getByTestId('customers')).toBeInTheDocument());
+  });
+
+  it('redirects to /onboarding after login when user has no companies', async () => {
+    vi.mocked(companyService.getMyCompanies).mockResolvedValue([]);
+    vi.spyOn(authApi, 'login').mockResolvedValue({
+      access: 'new-a',
+      refresh: 'new-r',
+      user: sampleUser,
+    });
+
+    renderLogin();
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText(/username/i), 'carol');
+    await userEvent.type(screen.getByLabelText(/^password$/i), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Log in' }));
+
+    await waitFor(() => expect(companyService.getMyCompanies).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('onboarding')).toBeInTheDocument());
   });
 
   it('skips login form when already authenticated', async () => {

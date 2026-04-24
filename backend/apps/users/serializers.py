@@ -7,6 +7,7 @@ from .models import Company, CompanyMembership, CompanyModule, User
 
 class UserSerializer(serializers.ModelSerializer):
     current_company = serializers.UUIDField(source="current_company_id", allow_null=True, read_only=True)
+    current_company_role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -19,15 +20,39 @@ class UserSerializer(serializers.ModelSerializer):
             "phone_number",
             "is_active",
             "current_company",
+            "current_company_role",
         ]
         extra_kwargs = {"password": {"write_only": True}}
 
+    def get_current_company_role(self, obj):
+        cid = obj.current_company_id
+        if not cid:
+            return None
+        m = CompanyMembership.objects.filter(
+            user=obj, company_id=cid, is_active=True
+        ).first()
+        return m.role if m else None
+
 
 class CompanySerializer(serializers.ModelSerializer):
+    """Aligns with onboarding `CompanyWrite` (snake_case) and the `Company` model."""
+
     class Meta:
         model = Company
-        fields = ["id", "name", "nip", "address", "email", "phone"]
-        read_only_fields = ["id"]
+        fields = [
+            "id",
+            "name",
+            "nip",
+            "address",
+            "city",
+            "postal_code",
+            "email",
+            "phone",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "is_active", "created_at", "updated_at"]
 
 
 class CompanyMembershipSerializer(serializers.ModelSerializer):

@@ -2,11 +2,43 @@ import { type FormEvent, useState } from 'react';
 import { isAxiosError } from 'axios';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useMyCompaniesQuery } from '@/query/use-companies';
 import { API_BASE_URL } from '@/services/api';
+import { companyService } from '@/services/company.service';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils';
+
+function resolvePostLoginTarget(from: string, hasCompanies: boolean): string {
+  if (!hasCompanies) return '/onboarding';
+  if (!from.startsWith('/')) return '/';
+  if (from === '/login' || from === '/onboarding') return '/';
+  return from;
+}
+
+/**
+ * When session exists but the user opened `/login`, send them to onboarding or the app based on company membership.
+ */
+function PostAuthLoginRedirect({ from }: { from: string }) {
+  const { data, isPending, isSuccess, isError } = useMyCompaniesQuery();
+
+  if (isPending) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 text-sm text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  if (isError) {
+    const to = from.startsWith('/') && from !== '/login' ? from : '/';
+    return <Navigate to={to} replace />;
+  }
+
+  const hasCompanies = isSuccess && data.length > 0;
+  return <Navigate to={resolvePostLoginTarget(from, hasCompanies)} replace />;
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -28,7 +60,7 @@ export function LoginPage() {
   }
 
   if (isAuthenticated) {
-    return <Navigate to={from.startsWith('/') ? from : '/'} replace />;
+    return <PostAuthLoginRedirect from={from.startsWith('/') ? from : '/'} />;
   }
 
   const onSubmit = async (e: FormEvent) => {
@@ -37,7 +69,9 @@ export function LoginPage() {
     setLoading(true);
     try {
       await login(username.trim(), password);
-      navigate(from.startsWith('/') ? from : '/', { replace: true });
+      const companies = await companyService.getMyCompanies();
+      const target = resolvePostLoginTarget(from, companies.length > 0);
+      navigate(target, { replace: true });
     } catch (err) {
       if (isAxiosError(err) && err.message === 'Network Error') {
         setError(

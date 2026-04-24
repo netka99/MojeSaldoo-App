@@ -18,6 +18,8 @@ interface AuthContextType {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  /** Reload user from `GET /auth/me/` (e.g. after company switch or onboarding). */
+  refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -72,10 +74,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUser(null);
   }, []);
 
+  const refreshUser = useCallback(async (): Promise<void> => {
+    if (!authStorage.getAccessToken()) {
+      setUser(null);
+      return;
+    }
+    try {
+      const { user: me } = await authApi.me();
+      setUser(me);
+    } catch {
+      authStorage.clear();
+      setUser(null);
+    }
+  }, []);
+
   const isAuthenticated = Boolean(user);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, isAuthenticated }}>
+    <AuthContext.Provider
+      value={{ user, isLoading, login, logout, refreshUser, isAuthenticated }}
+    >
       {children}
     </AuthContext.Provider>
   );

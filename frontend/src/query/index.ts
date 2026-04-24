@@ -1,5 +1,5 @@
 export { createAppQueryClient, createTestQueryClient } from './query-client';
-export { customerKeys, productKeys, warehouseKeys } from './keys';
+export { companyKeys, customerKeys, productKeys, warehouseKeys } from './keys';
 export {
   useCustomerListQuery,
   useCustomerQuery,
@@ -23,3 +23,10 @@ export {
   useUpdateWarehouseMutation,
   useDeleteWarehouseMutation,
 } from './use-warehouses';
+export {
+  useMyCompaniesQuery,
+  useCompanyModulesQuery,
+  useCreateCompanyMutation,
+  useSwitchCompanyMutation,
+  useToggleModuleMutation,
+} from './use-companies';

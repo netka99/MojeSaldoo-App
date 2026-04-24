@@ -9,6 +9,8 @@
 
 import axios, { type AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
 
+import type { CompanyRole } from '@/types';
+
 /**
  * Backend API root (must include `/api` if your Django routes are mounted there).
  * Set `VITE_API_BASE_URL` in `.env` to override (e.g. full URL in production).
@@ -71,6 +73,10 @@ export interface AuthUser {
   last_name: string;
   phone_number?: string | null;
   is_active: boolean;
+  /** Active tenant from `POST /api/companies/switch/`; drives module guards. */
+  current_company?: string | null;
+  /** Role in `current_company`; from `GET /auth/me/`. */
+  current_company_role?: CompanyRole | null;
 }
 
 export interface AuthResponse {
