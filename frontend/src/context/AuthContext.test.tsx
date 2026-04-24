@@ -1,9 +1,11 @@
 /**
  * @vitest-environment jsdom
  */
+import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { AuthProvider, useAuth } from './AuthContext';
 import { authApi, authStorage, AUTH_SESSION_EXPIRED_EVENT, type AuthUser } from '@/services/api';
 
@@ -44,11 +46,17 @@ describe('AuthContext', () => {
     vi.restoreAllMocks();
   });
 
+  function withProviders(node: ReactNode) {
+    return (
+      <TestQueryProvider>
+        <AuthProvider>{node}</AuthProvider>
+      </TestQueryProvider>
+    );
+  }
+
   it('finishes bootstrap with no token as unauthenticated', async () => {
     render(
-      <AuthProvider>
-        <TestConsumer />
-      </AuthProvider>,
+      withProviders(<TestConsumer />),
     );
 
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('ready'));
@@ -61,11 +69,7 @@ describe('AuthContext', () => {
     authStorage.setTokens('access-jwt', 'refresh-jwt');
     vi.spyOn(authApi, 'me').mockResolvedValue({ user: sampleUser });
 
-    render(
-      <AuthProvider>
-        <TestConsumer />
-      </AuthProvider>,
-    );
+    render(withProviders(<TestConsumer />));
 
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('ready'));
     expect(authApi.me).toHaveBeenCalledTimes(1);
@@ -77,11 +81,7 @@ describe('AuthContext', () => {
     authStorage.setTokens('bad-access', 'refresh-jwt');
     vi.spyOn(authApi, 'me').mockRejectedValue(new Error('unauthorized'));
 
-    render(
-      <AuthProvider>
-        <TestConsumer />
-      </AuthProvider>,
-    );
+    render(withProviders(<TestConsumer />));
 
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('ready'));
     expect(localStorage.getItem('access_token')).toBeNull();
@@ -96,11 +96,7 @@ describe('AuthContext', () => {
       user: sampleUser,
     });
 
-    render(
-      <AuthProvider>
-        <TestConsumer />
-      </AuthProvider>,
-    );
+    render(withProviders(<TestConsumer />));
 
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('ready'));
     await userEvent.click(screen.getByRole('button', { name: 'login' }));
@@ -117,11 +113,7 @@ describe('AuthContext', () => {
       user: sampleUser,
     });
 
-    render(
-      <AuthProvider>
-        <TestConsumer />
-      </AuthProvider>,
-    );
+    render(withProviders(<TestConsumer />));
 
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('ready'));
     await userEvent.click(screen.getByRole('button', { name: 'login' }));
@@ -138,11 +130,7 @@ describe('AuthContext', () => {
     authStorage.setTokens('access-jwt', 'refresh-jwt');
     vi.spyOn(authApi, 'me').mockResolvedValue({ user: sampleUser });
 
-    render(
-      <AuthProvider>
-        <TestConsumer />
-      </AuthProvider>,
-    );
+    render(withProviders(<TestConsumer />));
 
     await waitFor(() => expect(screen.getByTestId('username')).toHaveTextContent('alice'));
 

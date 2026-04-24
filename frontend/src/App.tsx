@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { RequireCompanyForApp } from '@/components/auth/RequireCompanyForApp';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { EnsureCurrentCompany } from '@/components/auth/EnsureCurrentCompany';
 import { AuthProvider } from '@/context/AuthContext';
 import { Home } from './pages/Home';
 import { LoginPage } from './pages/LoginPage';
@@ -14,11 +15,13 @@ import { WarehousesPage } from './pages/WarehousesPage';
 import { WarehouseCreatePage } from './pages/WarehouseCreatePage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { CompanySettingsPage } from './pages/CompanySettingsPage';
+import { CompanyDataPage } from './pages/CompanyDataPage';
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <EnsureCurrentCompany />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<RequireAuth />}>
@@ -34,6 +37,7 @@ function App() {
                 <Route path="/warehouses" element={<WarehousesPage />} />
                 <Route path="/warehouses/new" element={<WarehouseCreatePage />} />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
+                <Route path="/settings/company-data" element={<CompanyDataPage />} />
               </Route>
             </Route>
           </Route>

@@ -4,7 +4,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { CompanySettingsPage } from './CompanySettingsPage';
+
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <CompanySettingsPage />
+    </MemoryRouter>,
+  );
+}
 
 const refreshUser = vi.fn();
 const toggleMutateAsync = vi.fn().mockResolvedValue({});
@@ -17,6 +26,33 @@ const authState = vi.hoisted(() => ({
   },
 }));
 
+const myCompaniesListState = vi.hoisted(() => ({
+  data: [
+    {
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      name: 'ACME Sp. z o.o.',
+      nip: '5260250274',
+      address: 'ul. Przykładowa 1',
+      city: 'Kraków',
+      postal_code: '30-001',
+      email: 'biuro@acme.test',
+      phone: '+48111222333',
+    },
+  ] as
+    | {
+        id: string;
+        name: string;
+        nip: string;
+        address: string;
+        city: string;
+        postal_code: string;
+        email: string;
+        phone: string;
+      }[]
+    | undefined,
+  isPending: false,
+}));
+
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
     user: authState.user,
@@ -26,19 +62,12 @@ vi.mock('@/context/AuthContext', () => ({
 
 vi.mock('@/query/use-companies', () => ({
   useMyCompaniesQuery: () => ({
-    data: [
-      {
-        id: '550e8400-e29b-41d4-a716-446655440000',
-        name: 'ACME Sp. z o.o.',
-        nip: '5260250274',
-        address: 'ul. Przykładowa 1',
-        city: 'Kraków',
-        postal_code: '30-001',
-        email: 'biuro@acme.test',
-        phone: '+48111222333',
-      },
-    ],
-    isPending: false,
+    get data() {
+      return myCompaniesListState.data;
+    },
+    get isPending() {
+      return myCompaniesListState.isPending;
+    },
   }),
   useCompanyModulesQuery: () => ({
     data: [
@@ -62,10 +91,23 @@ describe('CompanySettingsPage', () => {
       current_company: '550e8400-e29b-41d4-a716-446655440000',
       current_company_role: 'admin',
     };
+    myCompaniesListState.data = [
+      {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        name: 'ACME Sp. z o.o.',
+        nip: '5260250274',
+        address: 'ul. Przykładowa 1',
+        city: 'Kraków',
+        postal_code: '30-001',
+        email: 'biuro@acme.test',
+        phone: '+48111222333',
+      },
+    ];
+    myCompaniesListState.isPending = false;
   });
 
   it('shows company data and module cards', async () => {
-    render(<CompanySettingsPage />);
+    renderPage();
 
     expect(await screen.findByRole('heading', { name: 'Ustawienia firmy' })).toBeInTheDocument();
     expect(screen.getByText('ACME Sp. z o.o.')).toBeInTheDocument();
@@ -79,7 +121,7 @@ describe('CompanySettingsPage', () => {
 
   it('toggles a module for admin and refreshes the user', async () => {
     const user = userEvent.setup();
-    render(<CompanySettingsPage />);
+    renderPage();
 
     const warehousesCard = screen.getByText('Magazyny').closest('li');
     expect(warehousesCard).toBeTruthy();
@@ -94,7 +136,7 @@ describe('CompanySettingsPage', () => {
 
   it('disables module switches for non-admin roles', () => {
     authState.user.current_company_role = 'viewer';
-    render(<CompanySettingsPage />);
+    renderPage();
 
     const switches = screen.getAllByRole('switch');
     for (const sw of switches) {
@@ -107,10 +149,11 @@ describe('CompanySettingsPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('asks to refresh when no current company is set', () => {
+  it('asks to refresh when the user has no company memberships', () => {
     authState.user.current_company = null;
-    render(<CompanySettingsPage />);
+    myCompaniesListState.data = [];
+    renderPage();
 
-    expect(screen.getByText(/Nie wybrano aktywnej firmy/)).toBeInTheDocument();
+    expect(screen.getByText(/Nie należysz do żadnej firmy/)).toBeInTheDocument();
   });
 });

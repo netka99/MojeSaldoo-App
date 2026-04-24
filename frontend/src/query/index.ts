@@ -29,4 +29,5 @@ export {
   useCreateCompanyMutation,
   useSwitchCompanyMutation,
   useToggleModuleMutation,
+  useUpdateCompanyMutation,
 } from './use-companies';

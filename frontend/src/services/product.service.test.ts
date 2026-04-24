@@ -18,6 +18,7 @@ vi.mock('./api', () => ({
   },
 }));
 
+import type { ProductWrite } from '../types';
 import { productService } from './product.service';
 
 describe('productService', () => {
@@ -44,23 +45,27 @@ describe('productService', () => {
   });
 
   it('createItem posts body to /products/', async () => {
-    const body = {
+    const body: ProductWrite = {
       name: 'X',
+      description: null,
       unit: 'szt',
       price_net: '1',
       price_gross: '1.23',
       vat_rate: '23',
+      sku: null,
+      barcode: null,
       track_batches: false,
       min_stock_alert: '0',
+      shelf_life_days: null,
       is_active: true,
-    } as never;
+    };
     mocks.post.mockResolvedValue({ id: 'new', ...body });
     await productService.createItem(body);
     expect(mocks.post).toHaveBeenCalledWith('/products/', body);
   });
 
   it('updateItem puts body to /products/:id/', async () => {
-    const body = { name: 'Y' } as never;
+    const body = { name: 'Y' } as ProductWrite;
     mocks.put.mockResolvedValue({ id: 'p1' });
     await productService.updateItem('p1', body);
     expect(mocks.put).toHaveBeenCalledWith('/products/p1/', body);

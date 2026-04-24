@@ -50,6 +50,26 @@ def _ensure_company_modules(company: Company) -> None:
         )
 
 
+class CompanyDetailView(generics.RetrieveUpdateAPIView):
+    """
+    GET/PATCH /api/companies/<uuid>/
+    Only companies where the user has an active membership; any member can read/update profile fields.
+    """
+
+    serializer_class = CompanySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_field = "pk"
+
+    def get_queryset(self):
+        return (
+            Company.objects.filter(
+                memberships__user=self.request.user,
+                memberships__is_active=True,
+            )
+            .distinct()
+        )
+
+
 class CompanyCreateView(mixins.CreateModelMixin, generics.GenericAPIView):
     """POST /api/companies/ — create org; creator becomes admin member."""
 

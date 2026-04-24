@@ -23,7 +23,9 @@ function mapCompanyModule(row: CompanyModuleApi): CompanyModule {
  */
 function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
   const body: Record<string, unknown> = { name: data.name };
-  if (data.nip !== undefined) body.nip = data.nip;
+  if (data.nip !== undefined) {
+    body.nip = data.nip === '' || data.nip == null ? null : data.nip;
+  }
   if (data.address !== undefined) body.address = data.address;
   if (data.city !== undefined) body.city = data.city;
   if (data.postalCode !== undefined) body.postal_code = data.postalCode;
@@ -32,11 +34,19 @@ function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
   return body;
 }
 
+function toPatchCompanyBody(data: CompanyWrite): Record<string, unknown> {
+  return toCreateCompanyBody(data);
+}
+
 export const companyService = {
   getMyCompanies: () => api.get<Company[]>('/companies/me/'),
 
   createCompany: (data: CompanyWrite) =>
     api.post<Company>('/companies/', toCreateCompanyBody(data)),
+
+  /** PUT/PATCH body uses same snake_case mapping as create. */
+  updateCompany: (companyId: string, data: CompanyWrite) =>
+    api.patch<Company>(`/companies/${companyId}/`, toPatchCompanyBody(data)),
 
   switchCompany: (companyId: string) =>
     api.post<{ user: AuthUser }>('/companies/switch/', { company: companyId }),

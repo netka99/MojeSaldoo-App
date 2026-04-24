@@ -3,7 +3,7 @@ import { useMyCompaniesQuery } from '@/query/use-companies';
 
 /**
  * Allows the main app shell only when the user belongs to at least one company.
- * Users with no memberships are sent to `/onboarding` (except when that query fails — then we fail open to the layout).
+ * Users with no memberships (or when the companies list cannot be loaded) are sent to `/onboarding`.
  */
 export function RequireCompanyForApp() {
   const location = useLocation();
@@ -18,7 +18,8 @@ export function RequireCompanyForApp() {
   }
 
   if (isError) {
-    return <Outlet />;
+    // Do not render the main app without knowing company membership (previously "fail open" hid onboarding for no-company users).
+    return <Navigate to="/onboarding" replace state={{ from: location.pathname }} />;
   }
 
   if (isSuccess && data.length === 0) {

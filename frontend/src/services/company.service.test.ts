@@ -59,6 +59,22 @@ describe('companyService', () => {
     expect(mocks.post).toHaveBeenCalledWith('/companies/', { name: 'Only' });
   });
 
+  it('updateCompany PATCHes /companies/:id/ with snake_case body', async () => {
+    mocks.patch.mockResolvedValue({ id: 'c1' });
+    await companyService.updateCompany('c1', {
+      name: 'X',
+      nip: '5260250274',
+      postalCode: '00-001',
+      city: 'Warszawa',
+    });
+    expect(mocks.patch).toHaveBeenCalledWith('/companies/c1/', {
+      name: 'X',
+      nip: '5260250274',
+      postal_code: '00-001',
+      city: 'Warszawa',
+    });
+  });
+
   it('switchCompany posts { company } to /companies/switch/', async () => {
     const user = { id: 1, username: 'u', email: '', first_name: '', last_name: '', is_active: true };
     mocks.post.mockResolvedValue({ user });

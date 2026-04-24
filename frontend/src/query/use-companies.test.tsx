@@ -12,12 +12,14 @@ import {
   useMyCompaniesQuery,
   useSwitchCompanyMutation,
   useToggleModuleMutation,
+  useUpdateCompanyMutation,
 } from './use-companies';
 
 const companyServiceMock = vi.hoisted(() => ({
   getMyCompanies: vi.fn(),
   getModules: vi.fn(),
   createCompany: vi.fn(),
+  updateCompany: vi.fn(),
   switchCompany: vi.fn(),
   toggleModule: vi.fn(),
 }));
@@ -118,5 +120,23 @@ describe('use-companies hooks', () => {
 
     expect(companyServiceMock.toggleModule).toHaveBeenCalledWith(companyId, 'ksef', true);
     expect(spy).toHaveBeenCalledWith({ queryKey: companyKeys.modules(companyId) });
+  });
+
+  it('useUpdateCompanyMutation calls service and invalidates company tree', async () => {
+    const queryClient = createTestQueryClient();
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    companyServiceMock.updateCompany.mockResolvedValue({ id: 'c1', name: 'X' });
+
+    const { result } = renderHook(() => useUpdateCompanyMutation(), {
+      wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
+    });
+
+    await result.current.mutateAsync({
+      companyId: 'c1',
+      data: { name: 'X', city: 'W' },
+    });
+
+    expect(companyServiceMock.updateCompany).toHaveBeenCalledWith('c1', { name: 'X', city: 'W' });
+    expect(spy).toHaveBeenCalledWith({ queryKey: companyKeys.all });
   });
 });

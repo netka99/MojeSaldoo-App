@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { RequireAuth } from './RequireAuth';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { authApi, authStorage, type AuthUser } from '@/services/api';
@@ -33,14 +34,16 @@ describe('RequireAuth', () => {
   function renderHarness(initialPath: string) {
     return render(
       <MemoryRouter initialEntries={[initialPath]}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<div data-testid="login-page">Login page</div>} />
-            <Route element={<RequireAuth />}>
-              <Route path="/secret" element={<SecretPage />} />
-            </Route>
-          </Routes>
-        </AuthProvider>
+        <TestQueryProvider>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<div data-testid="login-page">Login page</div>} />
+              <Route element={<RequireAuth />}>
+                <Route path="/secret" element={<SecretPage />} />
+              </Route>
+            </Routes>
+          </AuthProvider>
+        </TestQueryProvider>
       </MemoryRouter>,
     );
   }
@@ -100,22 +103,24 @@ describe('RequireAuth integration with useAuth', () => {
 
     render(
       <MemoryRouter initialEntries={['/secret']}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<div data-testid="login-page">Login page</div>} />
-            <Route element={<RequireAuth />}>
-              <Route
-                path="/secret"
-                element={
-                  <div>
-                    <SecretPage />
-                    <ToggleAuth />
-                  </div>
-                }
-              />
-            </Route>
-          </Routes>
-        </AuthProvider>
+        <TestQueryProvider>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<div data-testid="login-page">Login page</div>} />
+              <Route element={<RequireAuth />}>
+                <Route
+                  path="/secret"
+                  element={
+                    <div>
+                      <SecretPage />
+                      <ToggleAuth />
+                    </div>
+                  }
+                />
+              </Route>
+            </Routes>
+          </AuthProvider>
+        </TestQueryProvider>
       </MemoryRouter>,
     );
 

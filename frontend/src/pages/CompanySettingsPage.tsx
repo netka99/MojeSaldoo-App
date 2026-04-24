@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { useCompanyModulesQuery, useMyCompaniesQuery, useToggleModuleMutation } from '@/query/use-companies';
+import { useResolvedCompanyId, type CompanyListRow } from '@/hooks/useResolvedCompanyId';
+import { useCompanyModulesQuery, useToggleModuleMutation } from '@/query/use-companies';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { MODULE_CARD_COPY, MODULE_DISPLAY_ORDER } from '@/constants/companyModuleLabels';
@@ -13,7 +15,7 @@ type CompanyRow = Company & {
   is_active?: boolean;
 };
 
-function pickCompanyField(c: CompanyRow | undefined, camel: string, snake: string): string {
+function pickCompanyField(c: (CompanyRow | CompanyListRow) | undefined, camel: string, snake: string): string {
   if (!c) return '—';
   const o = c as unknown as Record<string, unknown>;
   const v = o[camel] ?? o[snake];
@@ -41,16 +43,22 @@ function ModuleSwitch({
       disabled={disabled}
       onClick={onToggle}
       className={cn(
-        'relative inline-flex h-8 w-14 shrink-0 items-center rounded-full border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-        enabled ? 'bg-primary' : 'bg-muted',
+        'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border-2 transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
+        // Off: solid gray so the track is never “invisible”
+        !enabled && 'border-slate-300 bg-slate-200 shadow-[inset_0_1px_2px_rgba(0,0,0,0.06)] dark:border-slate-500 dark:bg-slate-600',
+        // On: clear blue (not theme primary) so “active” is obvious
+        enabled &&
+          'border-blue-600 bg-blue-600 shadow-sm dark:border-sky-500 dark:bg-sky-600',
         !disabled && 'cursor-pointer',
-        disabled && 'cursor-not-allowed opacity-60',
+        disabled && 'cursor-not-allowed opacity-55',
       )}
     >
       <span
         className={cn(
-          'inline-block h-7 w-7 transform rounded-full bg-background shadow transition',
-          enabled ? 'translate-x-7' : 'translate-x-0.5',
+          'inline-block h-5 w-5 translate-x-0.5 transform rounded-full border-2 border-slate-300/90 bg-white shadow transition duration-200 ease-out',
+          'dark:border-slate-400 dark:bg-slate-50',
+          enabled && 'translate-x-6 border-white/90 shadow-md',
         )}
         aria-hidden
       />
@@ -178,28 +186,11 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
 
 export function CompanySettingsPage() {
   const { user, refreshUser } = useAuth();
-  const companyId = user?.current_company ?? undefined;
+  const resolved = useResolvedCompanyId();
+
   const canChangeModules = user?.current_company_role === 'admin';
 
-  const { data: myCompanies, isPending: listPending } = useMyCompaniesQuery();
-
-  const currentCompany = useMemo(
-    () => (myCompanies as CompanyRow[] | undefined)?.find((c) => c.id === companyId),
-    [myCompanies, companyId],
-  );
-
-  if (!companyId) {
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <p className="text-sm text-muted-foreground">Nie wybrano aktywnej firmy. Ustaw bieżącą firmę lub zaloguj się ponownie.</p>
-        <Button type="button" className="mt-4" variant="outline" onClick={() => void refreshUser()}>
-          Odśwież dane użytkownika
-        </Button>
-      </div>
-    );
-  }
-
-  if (listPending) {
+  if (resolved.state === 'loading') {
     return (
       <div className="mx-auto max-w-5xl p-6">
         <p className="text-sm text-muted-foreground">Ładowanie…</p>
@@ -207,11 +198,41 @@ export function CompanySettingsPage() {
     );
   }
 
+  if (resolved.state === 'no_companies') {
+    return (
+      <div className="mx-auto max-w-3xl p-6">
+        <p className="text-sm text-muted-foreground">
+          Nie należysz do żadnej firmy lub profil /me jeszcze się nie zaktualizował. Odśwież dane użytkownika.
+        </p>
+        <Button type="button" className="mt-4" variant="outline" onClick={() => void refreshUser()}>
+          Odśwież dane użytkownika
+        </Button>
+      </div>
+    );
+  }
+
+  if (resolved.state !== 'ready') {
+    return null;
+  }
+
+  const { companyId, company: currentCompany, isUnsynced } = resolved;
+
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Ustawienia firmy</h1>
-        <p className="text-sm text-muted-foreground">Dane organizacji i moduły bieżącej firmy.</p>
+        <p className="text-sm text-muted-foreground">
+          Dane organizacji i moduły bieżącej firmy.{' '}
+          <Link to="/settings/company-data" className="font-medium text-primary underline-offset-4 hover:underline">
+            Edytuj dane rejestrowe
+          </Link>
+        </p>
+        {isUnsynced && (
+          <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm" role="status">
+            Profil użytkownika nie ma jeszcze ustawionej bieżącej firmy (current_company) — poniżej: pierwsza z listy. Po
+            połączeniu zostanie zsynchronizowane.
+          </p>
+        )}
       </div>
 
       <Card>

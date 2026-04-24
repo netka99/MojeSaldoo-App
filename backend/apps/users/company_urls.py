@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     CompanyCreateView,
+    CompanyDetailView,
     CompanyMeListView,
     CompanyModuleEnableView,
     CompanyModulesListView,
@@ -22,4 +23,5 @@ urlpatterns = [
         CompanyModulesListView.as_view(),
         name="company-modules-list",
     ),
+    path("<uuid:pk>/", CompanyDetailView.as_view(), name="company-detail"),
 ]

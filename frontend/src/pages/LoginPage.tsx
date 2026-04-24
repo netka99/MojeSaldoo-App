@@ -1,7 +1,9 @@
 import { type FormEvent, useState } from 'react';
 import { isAxiosError } from 'axios';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { companyKeys } from '@/query/keys';
 import { useMyCompaniesQuery } from '@/query/use-companies';
 import { API_BASE_URL } from '@/services/api';
 import { companyService } from '@/services/company.service';
@@ -32,8 +34,8 @@ function PostAuthLoginRedirect({ from }: { from: string }) {
   }
 
   if (isError) {
-    const to = from.startsWith('/') && from !== '/login' ? from : '/';
-    return <Navigate to={to} replace />;
+    // Could not load companies (network/401/5xx). Prefer onboarding so new users are not dropped on `/` with a broken shell.
+    return <Navigate to="/onboarding" replace />;
   }
 
   const hasCompanies = isSuccess && data.length > 0;
@@ -41,6 +43,7 @@ function PostAuthLoginRedirect({ from }: { from: string }) {
 }
 
 export function LoginPage() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
   const { login, isAuthenticated, isLoading } = useAuth();
@@ -69,7 +72,10 @@ export function LoginPage() {
     setLoading(true);
     try {
       await login(username.trim(), password);
-      const companies = await companyService.getMyCompanies();
+      const companies = await queryClient.fetchQuery({
+        queryKey: companyKeys.me(),
+        queryFn: () => companyService.getMyCompanies(),
+      });
       const target = resolvePostLoginTarget(from, companies.length > 0);
       navigate(target, { replace: true });
     } catch (err) {

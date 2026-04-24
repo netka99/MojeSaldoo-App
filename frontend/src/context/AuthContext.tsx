@@ -6,6 +6,8 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { companyKeys } from '@/query/keys';
 import {
   authApi,
   authStorage,
@@ -30,14 +32,18 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const onSessionExpired = () => setUser(null);
+    const onSessionExpired = () => {
+      void queryClient.removeQueries({ queryKey: companyKeys.all });
+      setUser(null);
+    };
     window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, onSessionExpired);
     return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, onSessionExpired);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,14 +71,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = useCallback(async (username: string, password: string): Promise<void> => {
+    void queryClient.removeQueries({ queryKey: companyKeys.all });
     const data = await authApi.login(username, password);
     setUser(data.user);
-  }, []);
+  }, [queryClient]);
 
   const logout = useCallback((): void => {
+    void queryClient.removeQueries({ queryKey: companyKeys.all });
     authApi.logout();
     setUser(null);
-  }, []);
+  }, [queryClient]);
 
   const refreshUser = useCallback(async (): Promise<void> => {
     if (!authStorage.getAccessToken()) {

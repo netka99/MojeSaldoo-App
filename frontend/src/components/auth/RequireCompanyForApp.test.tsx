@@ -6,8 +6,15 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { RequireCompanyForApp } from './RequireCompanyForApp';
 
+type MyCompaniesState = {
+  isPending: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  data: { id: string; name: string }[] | undefined;
+};
+
 const useMyCompaniesQueryMock = vi.hoisted(() =>
-  vi.fn(() => ({
+  vi.fn((): MyCompaniesState => ({
     isPending: true,
     isSuccess: false,
     isError: false,
@@ -67,14 +74,14 @@ describe('RequireCompanyForApp', () => {
       isPending: false,
       isSuccess: true,
       isError: false,
-      data: [{ id: 'c1', name: 'A' } as never],
+      data: [{ id: 'c1', name: 'A' }],
     });
 
     renderHarness();
     await waitFor(() => expect(screen.getByTestId('app-shell')).toBeInTheDocument());
   });
 
-  it('renders child routes on query error (fail open)', async () => {
+  it('redirects to /onboarding when the companies query fails', async () => {
     useMyCompaniesQueryMock.mockReturnValue({
       isPending: false,
       isSuccess: false,
@@ -83,6 +90,6 @@ describe('RequireCompanyForApp', () => {
     });
 
     renderHarness();
-    await waitFor(() => expect(screen.getByTestId('app-shell')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('onboarding')).toBeInTheDocument());
   });
 });

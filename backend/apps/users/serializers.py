@@ -54,6 +54,11 @@ class CompanySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "is_active", "created_at", "updated_at"]
 
+    def validate_nip(self, value):
+        if value in (None, ""):
+            return None
+        return str(value).strip()
+
 
 class CompanyMembershipSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)

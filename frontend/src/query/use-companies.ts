@@ -50,3 +50,14 @@ export function useToggleModuleMutation(companyId: string) {
     },
   });
 }
+
+export function useUpdateCompanyMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ companyId, data }: { companyId: string; data: CompanyWrite }) =>
+      companyService.updateCompany(companyId, data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}

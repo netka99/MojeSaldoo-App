@@ -1,7 +1,8 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, vi, beforeEach, type ReactNode } from 'vitest';
+import { type ReactNode } from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { createTestQueryClient } from '@/query/query-client';
 import { TestQueryProvider } from '@/test/TestQueryProvider';

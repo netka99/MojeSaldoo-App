@@ -50,7 +50,7 @@ function applyJwtAuthHeaders(config: InternalAxiosRequestConfig): void {
   config.headers.Authorization = `${JWT_AUTH_SCHEME} ${token}`;
 }
 
-type ApiErrorResponse = { detail?: string; message?: string };
+type ApiErrorResponse = { detail?: string | string[]; message?: string };
 
 function drfFieldMessages(body: Record<string, unknown>): string | null {
   const messages: string[] = [];

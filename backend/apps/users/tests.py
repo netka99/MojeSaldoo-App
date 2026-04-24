@@ -99,6 +99,75 @@ class CompanyMeListAPITests(TestCase):
         self.assertNotIn("Secret", names)
 
 
+class CompanyDetailAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="detail-user",
+            email="detail@test.com",
+            password="test12345",
+        )
+        self.other = User.objects.create_user(
+            username="detail-other",
+            email="detail-o@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(
+            name="StartName",
+            nip="",
+            address="A 1",
+            city="Gdańsk",
+            postal_code="80-000",
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="viewer", is_active=True
+        )
+
+    def _url(self, pk=None):
+        return reverse("company-detail", kwargs={"pk": pk or self.company.pk})
+
+    def test_get_member_200(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["name"], "StartName")
+        self.assertEqual(r.data["city"], "Gdańsk")
+
+    def test_get_non_member_404(self):
+        self.client.force_authenticate(user=self.other)
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_get_anonymous_401(self):
+        r = self.client.get(self._url())
+        self.assertIn(
+            r.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        )
+
+    def test_patch_member_updates(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.patch(
+            self._url(),
+            {"name": "NewName", "city": "Sopot", "postal_code": "81-001"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["name"], "NewName")
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.name, "NewName")
+        self.assertEqual(self.company.city, "Sopot")
+
+    def test_patch_non_member_404(self):
+        self.client.force_authenticate(user=self.other)
+        r = self.client.patch(
+            self._url(),
+            {"name": "Hacked"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
 class CompanyModulesAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()

@@ -7,9 +7,11 @@ import { cn } from '@/lib/utils';
 const linkClass = 'text-sm font-medium text-muted-foreground hover:text-foreground';
 const activeClass = 'text-sm font-medium text-foreground';
 
-function NavLink({ to, children }: { to: string; children: ReactNode }) {
+function NavLink({ to, children, end }: { to: string; children: ReactNode; end?: boolean }) {
   const { pathname } = useLocation();
-  const active = pathname === to || (to !== '/' && pathname.startsWith(to));
+  const active = end
+    ? pathname === to
+    : pathname === to || (to !== '/' && pathname.startsWith(to));
   return (
     <Link to={to} className={active ? activeClass : linkClass}>
       {children}
@@ -32,7 +34,12 @@ export function AppLayout() {
             <NavLink to="/customers">Customers</NavLink>
             <NavLink to="/products">Products</NavLink>
             <NavLink to="/warehouses">Warehouses</NavLink>
-            <NavLink to="/settings/company">Firma</NavLink>
+            <NavLink to="/settings/company" end>
+              Firma
+            </NavLink>
+            <NavLink to="/settings/company-data" end>
+              Dane firmy
+            </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {isAuthenticated ? (
