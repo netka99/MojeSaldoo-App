@@ -25,17 +25,25 @@ function validatePhoneDigits(phone: string): boolean {
   return digits.length >= 9 && digits.length <= 15;
 }
 
+/** Number inputs can send "", "0.", ".5" — normalize before a strict 2-dp check (blocks submit and POST if invalid). */
+function normalizeCreditLimitInput(s: string): string {
+  let t = s.trim();
+  if (t === '' || t === '.') return '0';
+  if (t.startsWith('.')) t = `0${t}`;
+  if (/\d+\.$/.test(t)) t = t.slice(0, -1);
+  return t;
+}
+
 const creditLimitStr = z
   .string()
-  .regex(/^\d*(\.\d{0,2})?$/, 'Invalid number')
-  .transform((s) => (s.trim() === '' ? '0' : s))
-  .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), 'Use up to 2 decimal places');
+  .transform(normalizeCreditLimitInput)
+  .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), { message: 'Use up to 2 decimal places' });
 
 export const customerFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255),
   company_name: z.string().max(255),
   nip: z.string().refine((s) => !s.trim() || validateNipChecksum(s), {
-    message: 'Invalid NIP (10 digits, valid checksum)',
+    message: 'Invalid NIP: 10 digits and the last digit must match the Polish check digit (or leave empty)',
   }),
   email: z.string().refine((s) => !s.trim() || z.string().email().safeParse(s.trim()).success, {
     message: 'Invalid email',
@@ -53,14 +61,21 @@ export const customerFormSchema = z.object({
       message: 'Whole kilometers only, or leave empty',
     }),
   delivery_days: z.string().max(50),
-  payment_terms: z
-    .string()
-    .min(1, 'Required')
-    .regex(/^\d+$/, 'Whole days')
-    .refine((s) => {
-      const n = Number.parseInt(s, 10);
-      return n >= 0 && n <= 36500;
-    }, 'Must be between 0 and 36500'),
+  payment_terms: z.preprocess(
+    (val) => {
+      if (val === '' || val == null) return '14';
+      if (typeof val === 'number' && !Number.isNaN(val)) return String(val);
+      return val;
+    },
+    z
+      .string()
+      .min(1, 'Required')
+      .regex(/^\d+$/, 'Whole days')
+      .refine((s) => {
+        const n = Number.parseInt(s, 10);
+        return n >= 0 && n <= 36500;
+      }, 'Must be between 0 and 36500'),
+  ),
   credit_limit: creditLimitStr,
   is_active: z.boolean(),
 });
@@ -149,8 +164,10 @@ export function CustomerForm({
     handleSubmit,
     control,
     reset,
-    formState: { errors },
+    formState: { errors, isSubmitted },
   } = form;
+
+  const hasSubmitErrors = isSubmitted && Object.keys(errors).length > 0;
 
   useEffect(() => {
     reset(customer ? customerToFormDefaults(customer) : EMPTY_CUSTOMER_DEFAULTS);
@@ -167,13 +184,27 @@ export function CustomerForm({
       </CardHeader>
       <CardContent>
         <form noValidate onSubmit={submit} className="space-y-4">
+          {hasSubmitErrors && (
+            <p
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
+              Some fields are invalid. Please fix the highlighted values and try again.
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
             <Input label="Display name" {...register('name')} error={errors.name?.message} required />
             <Input label="Company name" {...register('company_name')} error={errors.company_name?.message} />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="NIP" {...register('nip')} error={errors.nip?.message} maxLength={10} />
+            <Input
+              label="NIP"
+              {...register('nip')}
+              error={errors.nip?.message}
+              maxLength={10}
+              helperText="Polish NIP: 10 digits, last is a check digit. Leave empty if not used."
+            />
             <Input label="Email" type="email" {...register('email')} error={errors.email?.message} />
           </div>
 

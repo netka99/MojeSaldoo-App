@@ -19,6 +19,14 @@ vi.mock('@/services/customer.service', () => ({
   },
 }));
 
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { current_company: '550e8400-e29b-41d4-a716-446655440000' as string | null },
+    isLoading: false,
+    isAuthenticated: true,
+  }),
+}));
+
 function customer(over: Partial<Customer> = {}): Customer {
   return {
     id: '660e8400-e29b-41d4-a716-446655440001',

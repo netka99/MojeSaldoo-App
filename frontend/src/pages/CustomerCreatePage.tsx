@@ -1,14 +1,17 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { CustomerForm } from '@/components/features/CustomerForm';
 import { Button } from '@/components/ui/Button';
 import { useCreateCustomerMutation } from '@/query/use-customers';
+import { customerKeys } from '@/query/keys';
 import { authStorage } from '@/services/api';
 import type { CustomerWrite } from '@/types';
 
 export function CustomerCreatePage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const create = useCreateCustomerMutation();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -33,6 +36,7 @@ export function CustomerCreatePage() {
           setSubmitError(null);
           try {
             await create.mutateAsync(data);
+            await queryClient.invalidateQueries({ queryKey: customerKeys.all });
             navigate('/customers');
           } catch (e) {
             setSubmitError(e instanceof Error ? e.message : 'Could not create customer');

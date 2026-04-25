@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { validateNipChecksum } from '@/components/features/CustomerForm';
+import { companyCreateFormSchema, type CompanyCreateFormValues } from '@/lib/companyCreateFormSchema';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -18,45 +17,7 @@ import { authStorage } from '@/services/api';
 import type { CompanyWrite, ModuleName } from '@/types';
 import { cn } from '@/lib/utils';
 
-const step1Schema = z.object({
-  name: z
-    .string()
-    .refine((s) => s.trim().length > 0, { message: 'Nazwa firmy jest wymagana' })
-    .transform((s) => s.trim()),
-  nip: z
-    .string()
-    .refine((s) => s.trim().length > 0, { message: 'NIP jest wymagany' })
-    .transform((s) => s.trim())
-    .refine(validateNipChecksum, { message: 'Nieprawidłowy numer NIP' }),
-  city: z
-    .string()
-    .refine((s) => s.trim().length > 0, { message: 'Miasto jest wymagane' })
-    .transform((s) => s.trim()),
-  address: z
-    .string()
-    .transform((s) => s.trim() || undefined)
-    .optional(),
-  phone: z
-    .string()
-    .transform((s) => s.trim() || undefined)
-    .refine(
-      (s) => {
-        if (s === undefined) return true;
-        const d = s.replace(/\D/g, '');
-        return d.length >= 9 && d.length <= 15;
-      },
-      { message: 'Podaj 9–15 cyfr lub zostaw puste' },
-    ),
-  email: z
-    .string()
-    .transform((s) => s.trim() || undefined)
-    .refine(
-      (s) => s === undefined || z.string().email().safeParse(s).success,
-      { message: 'Nieprawidłowy adres e-mail' },
-    ),
-});
-
-type Step1FormValues = z.infer<typeof step1Schema>;
+type Step1FormValues = CompanyCreateFormValues;
 
 const OPTIONAL_MODULE_ROWS: {
   key: 'orders' | 'delivery' | 'invoicing' | 'ksef' | 'reporting';
@@ -311,7 +272,7 @@ export function OnboardingPage() {
     handleSubmit,
     formState: { errors },
   } = useForm<Step1FormValues>({
-    resolver: zodResolver(step1Schema),
+    resolver: zodResolver(companyCreateFormSchema),
     defaultValues: {
       name: '',
       nip: '',

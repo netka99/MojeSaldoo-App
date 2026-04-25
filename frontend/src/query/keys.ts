@@ -1,7 +1,8 @@
 export const customerKeys = {
   all: ['customers'] as const,
   lists: () => [...customerKeys.all, 'list'] as const,
-  list: (params: { page: number; search: string }) => [...customerKeys.lists(), params] as const,
+  /** `companyId` isolates cache per active company (after switch / new org). */
+  list: (params: { page: number; search: string; companyId: string }) => [...customerKeys.lists(), params] as const,
   details: () => [...customerKeys.all, 'detail'] as const,
   detail: (id: string) => [...customerKeys.details(), id] as const,
 };

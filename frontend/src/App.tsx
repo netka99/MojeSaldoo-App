@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { RequireCompanyForApp } from '@/components/auth/RequireCompanyForApp';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { ModuleRouteGate } from '@/components/layout/ModuleRoute';
 import { EnsureCurrentCompany } from '@/components/auth/EnsureCurrentCompany';
 import { AuthProvider } from '@/context/AuthContext';
 import { Home } from './pages/Home';
@@ -17,6 +18,15 @@ import { OnboardingPage } from './pages/OnboardingPage';
 import { CompanySettingsPage } from './pages/CompanySettingsPage';
 import { CompanyDataPage } from './pages/CompanyDataPage';
 
+function AppPlaceholderPage({ title }: { title: string }) {
+  return (
+    <div className="max-w-2xl p-6">
+      <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">This section is not implemented yet.</p>
+    </div>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -29,13 +39,118 @@ function App() {
             <Route element={<RequireCompanyForApp />}>
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Home />} />
-                <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/customers/new" element={<CustomerCreatePage />} />
-                <Route path="/products" element={<ProductsPage />} />
-                <Route path="/products/new" element={<ProductCreatePage />} />
-                <Route path="/products/:id/adjust-stock" element={<ProductAdjustStockPage />} />
-                <Route path="/warehouses" element={<WarehousesPage />} />
-                <Route path="/warehouses/new" element={<WarehouseCreatePage />} />
+                <Route
+                  path="/customers"
+                  element={
+                    <ModuleRouteGate module="customers">
+                      <CustomersPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/customers/new"
+                  element={
+                    <ModuleRouteGate module="customers">
+                      <CustomerCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/products"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <ProductsPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/products/new"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <ProductCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/products/:id/adjust-stock"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <ProductAdjustStockPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/warehouses"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <WarehousesPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/warehouses/new"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <WarehouseCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/orders"
+                  element={
+                    <ModuleRouteGate module="orders">
+                      <AppPlaceholderPage title="Orders" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/orders/new"
+                  element={
+                    <ModuleRouteGate module="orders">
+                      <AppPlaceholderPage title="New order" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/orders/:id"
+                  element={
+                    <ModuleRouteGate module="orders">
+                      <AppPlaceholderPage title="Order" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/delivery"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <AppPlaceholderPage title="Delivery" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <AppPlaceholderPage title="Invoices" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <AppPlaceholderPage title="Reports" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/ksef"
+                  element={
+                    <ModuleRouteGate module="ksef">
+                      <AppPlaceholderPage title="KSeF" />
+                    </ModuleRouteGate>
+                  }
+                />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />
               </Route>

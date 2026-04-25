@@ -5,6 +5,7 @@ import { useResolvedCompanyId, type CompanyListRow } from '@/hooks/useResolvedCo
 import { useCompanyModulesQuery, useToggleModuleMutation } from '@/query/use-companies';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { CreateCompanyDialog } from '@/components/features/company/CreateCompanyDialog';
 import { MODULE_CARD_COPY, MODULE_DISPLAY_ORDER } from '@/constants/companyModuleLabels';
 import { cn } from '@/lib/utils';
 import type { Company, ModuleName } from '@/types';
@@ -234,6 +235,22 @@ export function CompanySettingsPage() {
           </p>
         )}
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Dodaj firmę</CardTitle>
+          <CardDescription>
+            Utwórz kolejną organizację w koncie. Zostaniesz do niej od razu przełączony (nowe moduły skonfigurujesz
+            poniżej).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CreateCompanyDialog
+            triggerVariant="outline"
+            triggerLabel="Dodaj kolejną firmę"
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

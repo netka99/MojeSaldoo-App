@@ -5,13 +5,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { CompanySettingsPage } from './CompanySettingsPage';
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <CompanySettingsPage />
-    </MemoryRouter>,
+    <TestQueryProvider>
+      <MemoryRouter>
+        <CompanySettingsPage />
+      </MemoryRouter>
+    </TestQueryProvider>,
   );
 }
 
@@ -79,6 +82,15 @@ vi.mock('@/query/use-companies', () => ({
   }),
   useToggleModuleMutation: () => ({
     mutateAsync: toggleMutateAsync,
+    isPending: false,
+  }),
+  useCreateCompanyMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+  }),
+  useSwitchCompanyMutation: () => ({
+    mutateAsync: vi.fn(),
     isPending: false,
   }),
 }));

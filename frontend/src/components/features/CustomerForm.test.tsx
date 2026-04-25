@@ -87,6 +87,46 @@ describe('customerFormSchema', () => {
       }),
     ).toThrow(/Invalid NIP/);
   });
+
+  it('treats empty payment_terms as default 14 (cleared number input)', () => {
+    const parsed = customerFormSchema.parse({
+      name: 'Client',
+      company_name: '',
+      nip: '',
+      email: '',
+      phone: '',
+      street: '',
+      city: '',
+      postal_code: '',
+      country: 'PL',
+      distance_km: '',
+      delivery_days: '',
+      payment_terms: '',
+      credit_limit: '0',
+      is_active: true,
+    });
+    expect(parsed.payment_terms).toBe('14');
+  });
+
+  it('normalizes credit limit after partial decimal entry', () => {
+    const parsed = customerFormSchema.parse({
+      name: 'Client',
+      company_name: '',
+      nip: '',
+      email: '',
+      phone: '',
+      street: '',
+      city: '',
+      postal_code: '',
+      country: 'PL',
+      distance_km: '',
+      delivery_days: '',
+      payment_terms: '14',
+      credit_limit: '0.',
+      is_active: true,
+    });
+    expect(parsed.credit_limit).toBe('0');
+  });
 });
 
 describe('CustomerForm', () => {

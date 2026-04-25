@@ -1,11 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/context/AuthContext';
 import { customerService } from '@/services/customer.service';
 import type { CustomerWrite } from '@/types';
 import { customerKeys } from './keys';
 
 export function useCustomerListQuery(page: number, search: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
   return useQuery({
-    queryKey: customerKeys.list({ page, search }),
+    queryKey: customerKeys.list({ page, search, companyId }),
     queryFn: () =>
       customerService.fetchList({
         page,
