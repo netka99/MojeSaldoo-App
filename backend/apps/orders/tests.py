@@ -1,14 +1,17 @@
-from datetime import date
+from datetime import date, datetime, timezone as dt_timezone
 from decimal import Decimal
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.customers.models import Customer
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderItem
+from apps.products.models import Product
 from apps.users.models import Company, CompanyMembership
 
 
@@ -31,13 +34,21 @@ class OrderApiTests(TestCase):
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
         self.customer = Customer.objects.create(name="Buyer Co", company=self.co)
+        self.product = Product.objects.create(
+            name="API Product",
+            company=self.co,
+            unit="szt",
+            price_net=Decimal("10.00"),
+            price_gross=Decimal("12.30"),
+            vat_rate=Decimal("23.00"),
+        )
         Order.objects.create(
+            user=self.user,
             customer=self.customer,
             company=self.co,
             order_date=date(2026, 4, 1),
             delivery_date=date(2026, 4, 10),
             status="draft",
-            total=Decimal("100.00"),
         )
 
     def test_order_list_url_resolves(self):
@@ -53,3 +64,543 @@ class OrderApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("results", response.data)
         self.assertGreaterEqual(response.data["count"], 1)
+
+    def test_create_order_accepts_customer_id_and_items(self):
+        self.client.force_authenticate(user=self.user)
+        body = {
+            "customer_id": str(self.customer.id),
+            "delivery_date": "2026-04-20",
+            "items": [
+                {
+                    "product_id": str(self.product.id),
+                    "quantity": "2.00",
+                    "unit_price_net": "5.00",
+                    "unit_price_gross": "6.00",
+                    "vat_rate": "23.00",
+                    "discount_percent": "0.00",
+                }
+            ],
+        }
+        r = self.client.post(
+            reverse("order-list"), data=body, format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertIn("id", r.data)
+        self.assertIn("order_number", r.data)
+        it = r.data["items"]
+        self.assertEqual(len(it), 1)
+        self.assertEqual(it[0]["product_name"], "API Product")
+        self.assertEqual(it[0]["product_unit"], "szt")
+        self.assertEqual(it[0]["line_total_net"], "10.00")
+        self.assertEqual(it[0]["line_total_gross"], "12.00")
+        self.assertEqual(r.data["subtotal_net"], "10.00")
+        self.assertEqual(r.data["subtotal_gross"], "12.00")
+
+    def _auth(self):
+        self.client.force_authenticate(user=self.user)
+
+    def _url_items(self, order_id):
+        return reverse("order-items", kwargs={"pk": str(order_id)})
+
+    def _url_confirm(self, order_id):
+        return reverse("order-confirm", kwargs={"pk": str(order_id)})
+
+    def _url_cancel(self, order_id):
+        return reverse("order-cancel", kwargs={"pk": str(order_id)})
+
+    def test_list_forbidden_without_current_company(self):
+        User = get_user_model()
+        u = User.objects.create_user(
+            username="no-cc",
+            email="no-cc@test.com",
+            password="x",
+        )
+        CompanyMembership.objects.create(
+            user=u, company=self.co, role="viewer", is_active=True
+        )
+        self.client.force_authenticate(u)
+        r = self.client.get(reverse("order-list"))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list_forbidden_wrong_current_company(self):
+        other = Company.objects.create(name="Not member here")
+        self.user.current_company = other
+        self.user.save(update_fields=["current_company"])
+        self._auth()
+        r = self.client.get(reverse("order-list"))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+    def test_get_items_returns_list_of_line_items(self):
+        self._auth()
+        o = Order.objects.get(company=self.co)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.get(self._url_items(o.id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(r.data, list)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]["product_name"], "API Product")
+
+    def test_post_confirm_draft_to_confirmed(self):
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["status"], Order.STATUS_CONFIRMED)
+        o.refresh_from_db()
+        self.assertIsNotNone(o.confirmed_at)
+
+    def test_post_confirm_non_draft_returns_400(self):
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        o.status = Order.STATUS_CONFIRMED
+        o.save(update_fields=["status"])
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", r.data)
+
+    def test_post_cancel_draft_succeeds(self):
+        self._auth()
+        o = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 3, 1),
+            delivery_date=date(2026, 3, 20),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.post(self._url_cancel(o.id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], Order.STATUS_CANCELLED)
+
+    def test_post_cancel_confirmed_succeeds(self):
+        self._auth()
+        o = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 3, 1),
+            delivery_date=date(2026, 3, 20),
+            status=Order.STATUS_CONFIRMED,
+        )
+        r = self.client.post(self._url_cancel(o.id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], Order.STATUS_CANCELLED)
+
+    def test_post_cancel_in_preparation_returns_400(self):
+        self._auth()
+        o = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 3, 1),
+            delivery_date=date(2026, 3, 20),
+            status=Order.STATUS_IN_PREPARATION,
+        )
+        r = self.client.post(self._url_cancel(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", r.data)
+
+    def test_filter_delivery_date_range(self):
+        self._auth()
+        o_early = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 4, 5),
+            status=Order.STATUS_DRAFT,
+        )
+        o_mid = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 4, 15),
+            status=Order.STATUS_DRAFT,
+        )
+        o_late = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 4, 25),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.get(
+            reverse("order-list"),
+            {
+                "delivery_date_after": "2026-04-10",
+                "delivery_date_before": "2026-04-20",
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        ids = {row["id"] for row in r.data["results"]}
+        self.assertIn(str(o_mid.id), ids)
+        self.assertNotIn(str(o_early.id), ids)
+        self.assertNotIn(str(o_late.id), ids)
+
+    def test_filter_by_status(self):
+        self._auth()
+        o_draft = Order.objects.filter(company=self.co, status=Order.STATUS_DRAFT).first()
+        o_conf = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 5, 1),
+            status=Order.STATUS_CONFIRMED,
+        )
+        r = self.client.get(reverse("order-list"), {"status": Order.STATUS_CONFIRMED})
+        ids = {row["id"] for row in r.data["results"]}
+        self.assertIn(str(o_conf.id), ids)
+        if o_draft and o_draft.status != Order.STATUS_CONFIRMED:
+            self.assertNotIn(str(o_draft.id), ids)
+
+    def test_filter_by_customer(self):
+        self._auth()
+        c2 = Customer.objects.create(name="Other", company=self.co)
+        o1 = Order.objects.get(company=self.co, customer=self.customer, delivery_date=date(2026, 4, 10))
+        o2 = Order.objects.create(
+            user=self.user,
+            customer=c2,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 6, 1),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.get(reverse("order-list"), {"customer": str(c2.id)})
+        ids = {row["id"] for row in r.data["results"]}
+        self.assertIn(str(o2.id), ids)
+        self.assertNotIn(str(o1.id), ids)
+
+    def test_ordering_by_total_gross(self):
+        self._auth()
+        o_low = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 7, 1),
+            status=Order.STATUS_DRAFT,
+            subtotal_gross=Decimal("10.00"),
+            subtotal_net=Decimal("8.00"),
+            total_gross=Decimal("10.00"),
+            total_net=Decimal("8.00"),
+        )
+        o_high = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 7, 2),
+            status=Order.STATUS_DRAFT,
+            subtotal_gross=Decimal("100.00"),
+            subtotal_net=Decimal("80.00"),
+            total_gross=Decimal("100.00"),
+            total_net=Decimal("80.00"),
+        )
+        r = self.client.get(reverse("order-list"), {"ordering": "total_gross"})
+        ids = [row["id"] for row in r.data["results"]]
+        pos_low = ids.index(str(o_low.id)) if str(o_low.id) in ids else -1
+        pos_high = ids.index(str(o_high.id)) if str(o_high.id) in ids else -1
+        self.assertNotEqual(pos_low, -1)
+        self.assertNotEqual(pos_high, -1)
+        self.assertLess(pos_low, pos_high)
+
+    def test_retrieve_order_from_other_company_returns_404(self):
+        self._auth()
+        other_co = Company.objects.create(name="OtherCo")
+        foreign_c = Customer.objects.create(name="Ext", company=other_co)
+        foreign_o = Order.objects.create(
+            user=self.user,
+            customer=foreign_c,
+            company=other_co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 8, 1),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.get(
+            reverse("order-detail", kwargs={"pk": str(foreign_o.id)})
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_ordering_created_at(self):
+        self._auth()
+        o_a = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 9, 1),
+            status=Order.STATUS_DRAFT,
+        )
+        o_b = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 9, 2),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.get(reverse("order-list"), {"ordering": "created_at"})
+        ids = [row["id"] for row in r.data["results"]]
+        pos_a = ids.index(str(o_a.id))
+        pos_b = ids.index(str(o_b.id))
+        self.assertLess(pos_a, pos_b)
+
+    def test_items_action_404_for_other_company_order(self):
+        self._auth()
+        other_co = Company.objects.create(name="Co2")
+        foreign_c = Customer.objects.create(name="F", company=other_co)
+        foreign_o = Order.objects.create(
+            user=self.user,
+            customer=foreign_c,
+            company=other_co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 8, 1),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.get(self._url_items(foreign_o.id))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class OrderModelTests(TestCase):
+    """Cover order_number sequencing, pricing, and status side effects."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="order-model-user",
+            email="order-model@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(name="Comp A")
+        self.company_b = Company.objects.create(name="Comp B")
+        CompanyMembership.objects.create(
+            user=self.user,
+            company=self.company,
+            role="admin",
+            is_active=True,
+        )
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        self.customer = Customer.objects.create(name="Cust A", company=self.company)
+        self.customer_b = Customer.objects.create(name="Cust B", company=self.company_b)
+        self.product = Product.objects.create(
+            name="P1", company=self.company, price_net=60, price_gross=73.8
+        )
+
+    def _make_order(self, company=None, customer=None, user=None, **kwargs):
+        return Order.objects.create(
+            user=user or self.user,
+            company=company or self.company,
+            customer=customer or self.customer,
+            order_date=kwargs.pop("order_date", date(2026, 4, 1)),
+            delivery_date=kwargs.pop("delivery_date", date(2026, 4, 10)),
+            status=kwargs.pop("status", Order.STATUS_DRAFT),
+            **kwargs,
+        )
+
+    def test_new_order_receives_sequential_number_per_company(self):
+        o1 = self._make_order()
+        o2 = self._make_order()
+        self.assertEqual(o1.order_number, "ZAM/2026/0001")
+        self.assertEqual(o2.order_number, "ZAM/2026/0002")
+
+    def test_different_companies_may_reuse_number_pattern(self):
+        a = self._make_order(self.company, self.customer)
+        b = self._make_order(self.company_b, self.customer_b)
+        self.assertEqual(a.order_number, "ZAM/2026/0001")
+        self.assertEqual(b.order_number, "ZAM/2026/0001")
+
+    def test_year_is_taken_from_order_date(self):
+        o = self._make_order(order_date=date(2025, 6, 15))
+        self.assertEqual(o.order_number, "ZAM/2025/0001")
+
+    def test_explicit_order_number_is_not_replaced(self):
+        o = self._make_order(order_number="MANUAL-1")
+        self.assertEqual(o.order_number, "MANUAL-1")
+
+    @mock.patch("apps.orders.models.timezone")
+    def test_update_status_sets_confirmed_at_once(self, m_tz):
+        m_tz.localdate = mock.Mock(return_value=date(2026, 4, 1))
+        t = datetime(2026, 4, 1, 9, 0, 0, tzinfo=dt_timezone.utc)
+        m_tz.now = mock.Mock(return_value=t)
+        o = self._make_order()
+        o.update_status(Order.STATUS_CONFIRMED)
+        o.refresh_from_db()
+        self.assertEqual(o.confirmed_at, t)
+        m_tz.now.return_value = datetime(2026, 4, 2, 9, 0, 0, tzinfo=dt_timezone.utc)
+        o.update_status(Order.STATUS_IN_PREPARATION)
+        o.update_status(Order.STATUS_CONFIRMED)
+        self.assertEqual(o.confirmed_at, t)
+
+    @mock.patch("apps.orders.models.timezone")
+    def test_update_status_sets_delivered_at(self, m_tz):
+        t = datetime(2026, 4, 5, 12, 0, 0, tzinfo=dt_timezone.utc)
+        m_tz.localdate = mock.Mock(return_value=date(2026, 4, 1))
+        m_tz.now = mock.Mock(return_value=t)
+        o = self._make_order()
+        o.update_status(Order.STATUS_DELIVERED)
+        o.refresh_from_db()
+        self.assertEqual(o.delivered_at, t)
+
+    def test_update_status_rejects_invalid(self):
+        o = self._make_order()
+        with self.assertRaises(ValueError):
+            o.update_status("not_a_status")
+
+    def _line(
+        self,
+        order,
+        unit_net: Decimal = Decimal("10.00"),
+        unit_gross: Decimal = Decimal("10.00"),
+        qty: Decimal = Decimal("2"),
+    ):
+        return OrderItem.objects.create(
+            order=order,
+            product=self.product,
+            quantity=qty,
+            unit_price_net=unit_net,
+            unit_price_gross=unit_gross,
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+
+    def test_calculate_total_sums_line_items(self):
+        o = self._make_order()
+        self._line(o)
+        o.refresh_from_db()
+        self.assertEqual(o.subtotal_net, Decimal("20.00"))
+        self.assertEqual(o.subtotal_gross, Decimal("20.00"))
+        self.assertEqual(o.total_gross, Decimal("20.00"))
+
+    def test_calculate_total_applies_discount_percent(self):
+        o = self._make_order(discount_percent=Decimal("10.00"))
+        self._line(
+            o,
+            unit_net=Decimal("100.00"),
+            unit_gross=Decimal("100.00"),
+            qty=Decimal("1"),
+        )
+        o.refresh_from_db()
+        self.assertEqual(o.discount_amount, Decimal("10.00"))
+        self.assertEqual(o.total_gross, Decimal("90.00"))
+        self.assertEqual(o.total_net, Decimal("90.00"))
+
+    def test_calculate_total_uses_amount_when_no_percent(self):
+        o = self._make_order(
+            discount_percent=Decimal("0"), discount_amount=Decimal("15.00")
+        )
+        self._line(
+            o,
+            unit_net=Decimal("100.00"),
+            unit_gross=Decimal("100.00"),
+            qty=Decimal("1"),
+        )
+        o.refresh_from_db()
+        self.assertEqual(o.total_gross, Decimal("85.00"))
+        self.assertEqual(o.total_net, Decimal("85.00"))
+
+    def test_duplicate_order_number_per_company_fails(self):
+        self._make_order()
+        with self.assertRaises(IntegrityError):
+            self._make_order(
+                order_number="ZAM/2026/0001",
+            )
+
+    def test_id_is_uuid(self):
+        o = self._make_order()
+        self.assertEqual(len(str(o.id)), 36)
+
+    def test_can_be_modified_draft_and_confirmed_only(self):
+        o = self._make_order()
+        self.assertTrue(o.can_be_modified())
+        o.status = Order.STATUS_CONFIRMED
+        self.assertTrue(o.can_be_modified())
+        o.status = Order.STATUS_IN_PREPARATION
+        self.assertFalse(o.can_be_modified())
+
+    def test_str_uses_order_number(self):
+        o = self._make_order()
+        self.assertIn("ZAM/2026/0001", str(o))
+
+    def test_order_item_id_is_uuid(self):
+        o = self._make_order()
+        line = self._line(o)
+        self.assertEqual(len(str(line.id)), 36)
+
+    def test_order_item_snapshots_product_name_and_unit(self):
+        self.product.name = "Renamed product"
+        self.product.unit = "szt"
+        self.product.save(update_fields=["name", "unit"])
+        o = self._make_order()
+        line = self._line(o)
+        self.assertEqual(line.product_name, "Renamed product")
+        self.assertEqual(line.product_unit, "szt")
+
+    def test_line_recomputes_totals_from_line_discount(self):
+        o = self._make_order()
+        line = OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("100.00"),
+            unit_price_gross=Decimal("123.00"),
+            vat_rate=Decimal("23.00"),
+            discount_percent=Decimal("10.00"),
+        )
+        # (1 - 0.1) * 100 = 90, (1 - 0.1) * 123 = 110.7
+        self.assertEqual(line.line_total_net, Decimal("90.00"))
+        self.assertEqual(line.line_total_gross, Decimal("110.70"))
+
+    def test_same_product_appears_twice_on_one_order(self):
+        o = self._make_order()
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        o.refresh_from_db()
+        self.assertEqual(o.subtotal_gross, Decimal("2.00"))
+        self.assertEqual(o.items.filter(product=self.product).count(), 2)
+
+    def test_quantity_delivered_and_returned_persist(self):
+        o = self._make_order()
+        line = OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("5"),
+            quantity_delivered=Decimal("2"),
+            quantity_returned=Decimal("0.5"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        line.refresh_from_db()
+        self.assertEqual(line.quantity_delivered, Decimal("2.00"))
+        self.assertEqual(line.quantity_returned, Decimal("0.50"))

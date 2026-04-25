@@ -5,109 +5,89 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from django.utils import timezone
+
+from apps.users.permissions import IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
+from .filters import OrderFilter
 from .models import Order
-from .serializers import OrderSerializer
+from .serializers import OrderItemSerializer, OrderSerializer
 
 
 class OrderViewSet(viewsets.ModelViewSet):
     """
-    Comprehensive ViewSet for Order model with advanced filtering and custom actions
+    CRUD for orders, scoped to ``request.user.current_company``.
     """
 
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated]
-    
-    # Advanced filtering and search capabilities
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+    filterset_class = OrderFilter
     filter_backends = [
-        DjangoFilterBackend, 
-        filters.SearchFilter, 
-        filters.OrderingFilter
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
     ]
-    
-    # Fields that can be used for filtering
-    filterset_fields = [
-        'customer', 
-        'status', 
-        'order_date', 
-        'delivery_date'
-    ]
-    
-    # Fields that can be searched
     search_fields = [
-        'id', 
-        'customer__name'
+        "id",
+        "order_number",
+        "customer__name",
     ]
-    
-    # Fields that can be used for ordering
-    ordering_fields = [
-        'order_date', 
-        'delivery_date', 
-        'total', 
-        'created_at'
-    ]
+    ordering_fields = ("delivery_date", "created_at", "total_gross")
+    ordering = ["-created_at"]
 
     def get_queryset(self) -> QuerySet:
-        qs = Order.objects.all().order_by("-created_at")
+        qs = (
+            Order.objects.all()
+            .select_related("customer", "company", "user")
+            .prefetch_related("items", "items__product")
+        )
         return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(company=self.request.user.current_company)
+        serializer.save(
+            company=self.request.user.current_company,
+            user=self.request.user,
+        )
 
-    @action(detail=True, methods=['POST'], url_path='confirm')
-    def confirm_order(self, request, pk=None):
-        """
-        Custom action to confirm an order
-        """
+    @action(detail=True, methods=["get"], url_path="items")
+    def items(self, request, pk=None):
+        """GET /{id}/items/ — list line items for this order."""
         order = self.get_object()
-        
-        try:
-            # Validate and update order status
-            if order.status != 'draft':
-                return Response({
-                    'error': 'Only draft orders can be confirmed'
-                }, status=status.HTTP_400_BAD_REQUEST)
+        data = OrderItemSerializer(
+            order.items.all(),
+            many=True,
+            context=self.get_serializer_context(),
+        ).data
+        return Response(data)
 
-            # Update order status
-            order.status = 'confirmed'
-            order.save()
-
-            # Optional: Additional logic like stock reduction
-            for item in order.items.all():
-                product = item.product
-                product.update_stock(-item.quantity)
-
-            serializer = self.get_serializer(order)
-            return Response(serializer.data)
-
-        except Exception as e:
-            return Response({
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['POST'], url_path='cancel')
-    def cancel_order(self, request, pk=None):
-        """
-        Custom action to cancel an order
-        """
+    @action(detail=True, methods=["post"], url_path="confirm")
+    def confirm(self, request, pk=None):
+        """POST /{id}/confirm/ — draft → confirmed."""
         order = self.get_object()
-        
-        try:
-            # Validate and update order status
-            if order.status in ['completed', 'cancelled']:
-                return Response({
-                    'error': f'Cannot cancel order with status {order.status}'
-                }, status=status.HTTP_400_BAD_REQUEST)
+        if order.status != Order.STATUS_DRAFT:
+            return Response(
+                {"error": "Only draft orders can be confirmed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.status = Order.STATUS_CONFIRMED
+        if not order.confirmed_at:
+            order.confirmed_at = timezone.now()
+        order.save()
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
-            # Update order status
-            order.status = 'cancelled'
-            order.save()
-
-            serializer = self.get_serializer(order)
-            return Response(serializer.data)
-
-        except Exception as e:
-            return Response({
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        """POST /{id}/cancel/ — cancel (only when draft or confirmed)."""
+        order = self.get_object()
+        if order.status not in (Order.STATUS_DRAFT, Order.STATUS_CONFIRMED):
+            return Response(
+                {
+                    "error": f"Order cannot be cancelled in status {order.status!r} "
+                    f"(only draft or confirmed)."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.status = Order.STATUS_CANCELLED
+        order.save()
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)

@@ -1,3 +1,5 @@
+import type { OrderListParams } from '@/services/order.service';
+
 export const customerKeys = {
   all: ['customers'] as const,
   lists: () => [...customerKeys.all, 'list'] as const,
@@ -29,4 +31,15 @@ export const companyKeys = {
   modules: (companyId: string) => [...companyKeys.all, 'modules', companyId] as const,
   ksefCertificateStatus: (companyId: string) =>
     [...companyKeys.all, 'ksef-certificate', 'status', companyId] as const,
+};
+
+/** List cache key: page + active company + filter fields (after `page` is stripped from `OrderListParams`). */
+export type OrderListKeyParams = Omit<OrderListParams, 'page'> & { page: number; companyId: string };
+
+export const orderKeys = {
+  all: ['orders'] as const,
+  lists: () => [...orderKeys.all, 'list'] as const,
+  list: (params: OrderListKeyParams) => [...orderKeys.lists(), params] as const,
+  details: () => [...orderKeys.all, 'detail'] as const,
+  detail: (id: string) => [...orderKeys.details(), id] as const,
 };

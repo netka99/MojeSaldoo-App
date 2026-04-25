@@ -18,6 +18,9 @@ import { OnboardingPage } from './pages/OnboardingPage';
 import { CompanySettingsPage } from './pages/CompanySettingsPage';
 import { CompanyDataPage } from './pages/CompanyDataPage';
 import { CertificateUploadPage } from './pages/CertificateUploadPage';
+import { OrdersPage } from './pages/OrdersPage';
+import { OrderCreatePage } from './pages/OrderCreatePage';
+import { OrderDetailPage } from './pages/OrderDetailPage';
 
 function AppPlaceholderPage({ title }: { title: string }) {
   return (
@@ -100,7 +103,7 @@ function App() {
                   path="/orders"
                   element={
                     <ModuleRouteGate module="orders">
-                      <AppPlaceholderPage title="Orders" />
+                      <OrdersPage />
                     </ModuleRouteGate>
                   }
                 />
@@ -108,7 +111,7 @@ function App() {
                   path="/orders/new"
                   element={
                     <ModuleRouteGate module="orders">
-                      <AppPlaceholderPage title="New order" />
+                      <OrderCreatePage />
                     </ModuleRouteGate>
                   }
                 />
@@ -116,7 +119,7 @@ function App() {
                   path="/orders/:id"
                   element={
                     <ModuleRouteGate module="orders">
-                      <AppPlaceholderPage title="Order" />
+                      <OrderDetailPage />
                     </ModuleRouteGate>
                   }
                 />

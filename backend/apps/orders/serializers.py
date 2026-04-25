@@ -1,113 +1,194 @@
+from decimal import Decimal
+
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
-from .models import Order, OrderItem
+
+from apps.customers.models import Customer
 from apps.products.models import Product
+
+from .models import Order, OrderItem
+
 
 class OrderItemSerializer(serializers.ModelSerializer):
     """
-    Serializer for OrderItem with product validation
+    Writable nested line: POST uses product_id, quantity, unit prices, vat, discount.
+    line_total_* and product name/unit are set by the model on save.
     """
-    product_name = serializers.CharField(source='product.name', read_only=True)
+
+    product_id = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(),
+        source="product",
+    )
 
     class Meta:
         model = OrderItem
-        fields = '__all__'
-        read_only_fields = ['id', 'total']
+        fields = [
+            "id",
+            "product_id",
+            "product_name",
+            "product_unit",
+            "quantity",
+            "quantity_delivered",
+            "quantity_returned",
+            "unit_price_net",
+            "unit_price_gross",
+            "vat_rate",
+            "discount_percent",
+            "line_total_net",
+            "line_total_gross",
+        ]
+        read_only_fields = [
+            "id",
+            "product_name",
+            "product_unit",
+            "line_total_net",
+            "line_total_gross",
+        ]
 
     def validate_quantity(self, value):
-        """Ensure quantity is positive"""
         if value <= 0:
             raise serializers.ValidationError("Quantity must be greater than zero")
         return value
 
-    def validate(self, data):
-        """
-        Validate order item data
-        - Check product availability
-        - Calculate total
-        """
-        product = data.get('product')
-        quantity = data.get('quantity')
-        unit_price = data.get('unit_price')
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if (
+            request
+            and request.user.is_authenticated
+            and getattr(request.user, "current_company_id", None)
+        ):
+            self.fields["product_id"].queryset = Product.objects.filter(
+                company_id=request.user.current_company_id
+            )
 
-        if product and quantity:
-            # Check product availability
-            if quantity > product.stock_quantity:
-                raise serializers.ValidationError(f"Not enough stock for {product.name}")
-
-            # Calculate total
-            data['total'] = quantity * unit_price
-
-        return data
 
 class OrderSerializer(serializers.ModelSerializer):
     """
-    Comprehensive Order serializer with nested items
+    POST /api/orders/ with customer_id, delivery_date, items: [
+      { product_id, quantity, unit_price_net, unit_price_gross, vat_rate, discount_percent }
+    ]
     """
-    items = OrderItemSerializer(many=True, required=False)
-    customer_name = serializers.CharField(source='customer.name', read_only=True)
+
+    customer_id = serializers.PrimaryKeyRelatedField(
+        queryset=Customer.objects.all(),
+        source="customer",
+    )
+    order_date = serializers.DateField(required=False, allow_null=True)
+    items = OrderItemSerializer(many=True, required=False, allow_empty=True)
+    customer_name = serializers.CharField(source="customer.name", read_only=True)
 
     class Meta:
         model = Order
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'total', 'status', 'company']
+        fields = [
+            "id",
+            "customer_id",
+            "customer_name",
+            "company",
+            "user",
+            "order_number",
+            "order_date",
+            "delivery_date",
+            "status",
+            "subtotal_net",
+            "subtotal_gross",
+            "discount_percent",
+            "discount_amount",
+            "total_net",
+            "total_gross",
+            "customer_notes",
+            "internal_notes",
+            "created_at",
+            "updated_at",
+            "confirmed_at",
+            "delivered_at",
+            "items",
+        ]
+        read_only_fields = [
+            "id",
+            "order_number",
+            "created_at",
+            "updated_at",
+            "subtotal_net",
+            "subtotal_gross",
+            "total_net",
+            "total_gross",
+            "status",
+            "company",
+            "user",
+        ]
 
-    def validate(self, data):
-        """
-        Additional order-level validation
-        """
-        # You can add more complex validation here
-        return data
-
-    def create(self, validated_data):
-        """
-        Custom create method to handle nested order items
-        """
-        items_data = self.context.get('request').data.get('items', [])
-        validated_data.pop('items', None)
-        customer = validated_data['customer']
-        validated_data.setdefault('company', customer.company)
-        order = Order.objects.create(**validated_data)
-
-        # Create order items
-        for item_data in items_data:
-            product = Product.objects.get(id=item_data['product'])
-            OrderItem.objects.create(
-                order=order, 
-                product=product, 
-                quantity=item_data['quantity'],
-                unit_price=item_data['unit_price']
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if (
+            request
+            and request.user.is_authenticated
+            and getattr(request.user, "current_company_id", None)
+        ):
+            self.fields["customer_id"].queryset = Customer.objects.filter(
+                company_id=request.user.current_company_id
             )
 
+    @staticmethod
+    def _item_dec(row, key, default: Decimal) -> Decimal:
+        v = row.get(key, default)
+        if v is None:
+            return default
+        return Decimal(str(v))
+
+    def _build_line_kwargs(self, row) -> dict:
+        """row is nested validated data: uses `product` key from product_id field."""
+        product: Product = row["product"]
+        return {
+            "product": product,
+            "quantity": self._item_dec(row, "quantity", Decimal("1")),
+            "quantity_delivered": self._item_dec(
+                row, "quantity_delivered", Decimal("0.00")
+            ),
+            "quantity_returned": self._item_dec(
+                row, "quantity_returned", Decimal("0.00")
+            ),
+            "unit_price_net": self._item_dec(row, "unit_price_net", product.price_net),
+            "unit_price_gross": self._item_dec(
+                row, "unit_price_gross", product.price_gross
+            ),
+            "vat_rate": self._item_dec(row, "vat_rate", product.vat_rate),
+            "discount_percent": self._item_dec(
+                row, "discount_percent", Decimal("0.00")
+            ),
+        }
+
+    @transaction.atomic
+    def create(self, validated_data):
+        items_data = validated_data.pop("items", [])
+        if validated_data.get("order_date") is None:
+            validated_data["order_date"] = timezone.localdate()
+        order = Order.objects.create(**validated_data)
+        for row in items_data:
+            OrderItem.objects.create(order=order, **self._build_line_kwargs(row))
+        order.refresh_from_db()
+        order.calculate_total()
         return order
 
+    @transaction.atomic
     def update(self, instance, validated_data):
-        """
-        Custom update method to handle nested order items
-        """
-        validated_data.pop('items', None)
-        customer = validated_data.get('customer', instance.customer)
-        instance.customer = customer
-        if 'company' in validated_data:
-            instance.company = validated_data['company']
-        else:
-            instance.company = customer.company
-        instance.delivery_date = validated_data.get('delivery_date', instance.delivery_date)
+        items_data = validated_data.pop("items", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if "customer" in validated_data:
+            instance.company = instance.customer.company
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            instance.user = request.user
         instance.save()
-
-        # Update or create order items
-        items_data = self.context.get('request').data.get('items', [])
-        
-        # Remove existing items
-        instance.items.all().delete()
-
-        # Create new items
-        for item_data in items_data:
-            product = Product.objects.get(id=item_data['product'])
-            OrderItem.objects.create(
-                order=instance, 
-                product=product, 
-                quantity=item_data['quantity'],
-                unit_price=item_data['unit_price']
-            )
-
+        if items_data is not None:
+            instance.items.all().delete()
+            for row in items_data:
+                OrderItem.objects.create(
+                    order=instance, **self._build_line_kwargs(row)
+                )
+        instance.refresh_from_db()
+        instance.calculate_total()
         return instance

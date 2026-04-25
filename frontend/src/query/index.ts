@@ -1,5 +1,6 @@
 export { createAppQueryClient, createTestQueryClient } from './query-client';
-export { companyKeys, customerKeys, productKeys, warehouseKeys } from './keys';
+export { companyKeys, customerKeys, orderKeys, productKeys, warehouseKeys } from './keys';
+export type { OrderListKeyParams } from './keys';
 export {
   useCustomerListQuery,
   useCustomerQuery,
@@ -31,3 +32,12 @@ export {
   useToggleModuleMutation,
   useUpdateCompanyMutation,
 } from './use-companies';
+export {
+  useOrderListQuery,
+  useOrderQuery,
+  useCreateOrderMutation,
+  useConfirmOrderMutation,
+  useCancelOrderMutation,
+  useDeleteOrderMutation,
+  type OrderListFilters,
+} from './use-orders';
