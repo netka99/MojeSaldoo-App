@@ -207,12 +207,30 @@ async function unwrap<T>(p: Promise<{ data: T }>): Promise<T> {
   }
 }
 
+/** Multipart upload: FormData must not use `application/json` (browser sets boundary). */
+function postFormData<T>(url: string, data: FormData) {
+  return unwrap<T>(
+    apiClient.post<T>(url, data, {
+      transformRequest: [
+        (body, headers) => {
+          if (headers && typeof headers === 'object' && 'Content-Type' in headers) {
+            delete (headers as Record<string, string | undefined>)['Content-Type'];
+          }
+          return body;
+        },
+      ],
+    }),
+  );
+}
+
 /** Typed helpers returning response bodies (DRF JSON / empty object for 204). */
 export const api = {
   get: <T>(url: string, config?: AxiosRequestConfig) => unwrap<T>(apiClient.get<T>(url, config)),
 
   post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
     unwrap<T>(apiClient.post<T>(url, data, config)),
+
+  postForm: <T>(url: string, data: FormData) => postFormData<T>(url, data),
 
   put: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
     unwrap<T>(apiClient.put<T>(url, data, config)),

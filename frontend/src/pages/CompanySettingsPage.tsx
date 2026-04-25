@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useResolvedCompanyId, type CompanyListRow } from '@/hooks/useResolvedCompanyId';
 import { useCompanyModulesQuery, useToggleModuleMutation } from '@/query/use-companies';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -188,6 +189,7 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
 export function CompanySettingsPage() {
   const { user, refreshUser } = useAuth();
   const resolved = useResolvedCompanyId();
+  const ksefEnabled = useModuleGuard('ksef');
 
   const canChangeModules = user?.current_company_role === 'admin';
 
@@ -227,6 +229,17 @@ export function CompanySettingsPage() {
           <Link to="/settings/company-data" className="font-medium text-primary underline-offset-4 hover:underline">
             Edytuj dane rejestrowe
           </Link>
+          {ksefEnabled && (
+            <>
+              {' · '}
+              <Link
+                to="/settings/certificate"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Certyfikat KSeF
+              </Link>
+            </>
+          )}
         </p>
         {isUnsynced && (
           <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm" role="status">

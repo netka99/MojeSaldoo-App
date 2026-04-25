@@ -124,6 +124,9 @@ export function Sidebar() {
         <AppNavItemLink to="/settings/company" end>
           Ustawienia
         </AppNavItemLink>
+        <ModuleNavItem module="ksef" to="/settings/certificate" end>
+          Certyfikat KSeF
+        </ModuleNavItem>
         {isAuthenticated ? (
           <Button
             type="button"

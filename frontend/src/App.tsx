@@ -17,6 +17,7 @@ import { WarehouseCreatePage } from './pages/WarehouseCreatePage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { CompanySettingsPage } from './pages/CompanySettingsPage';
 import { CompanyDataPage } from './pages/CompanyDataPage';
+import { CertificateUploadPage } from './pages/CertificateUploadPage';
 
 function AppPlaceholderPage({ title }: { title: string }) {
   return (
@@ -153,6 +154,14 @@ function App() {
                 />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />
+                <Route
+                  path="/settings/certificate"
+                  element={
+                    <ModuleRouteGate module="ksef">
+                      <CertificateUploadPage />
+                    </ModuleRouteGate>
+                  }
+                />
               </Route>
             </Route>
           </Route>

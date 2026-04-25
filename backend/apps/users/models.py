@@ -72,3 +72,22 @@ class CompanyModule(models.Model):
 
     class Meta:
         unique_together = ("company", "module")
+
+
+class KSeFCertificate(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.OneToOneField(
+        Company,
+        on_delete=models.CASCADE,
+        related_name="ksef_certificate",
+    )
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    # Public certificate (.pem) — not encrypted
+    certificate_pem = models.TextField()
+    # Private key encrypted with server-derived key (see ksef_crypto)
+    encrypted_key = models.TextField()
+    subject_name = models.CharField(max_length=255, blank=True)
+    valid_from = models.DateField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
