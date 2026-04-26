@@ -88,6 +88,7 @@ export function WarehouseForm({
 
   useEffect(() => {
     reset(warehouse ? warehouseToForm(warehouse) : EMPTY_DEFAULTS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warehouse?.id, warehouse?.updated_at, reset]);
 
   const submit = handleSubmit(async (values) => {

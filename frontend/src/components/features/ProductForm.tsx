@@ -128,6 +128,7 @@ export function ProductForm({
 
   useEffect(() => {
     reset(product ? productToFormDefaults(product) : EMPTY_PRODUCT_DEFAULTS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.id, product?.updated_at, reset]);
 
   const submit = handleSubmit(async (values) => {

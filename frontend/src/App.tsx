@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { RequireCompanyForApp } from '@/components/auth/RequireCompanyForApp';
@@ -5,22 +6,61 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { ModuleRouteGate } from '@/components/layout/ModuleRoute';
 import { EnsureCurrentCompany } from '@/components/auth/EnsureCurrentCompany';
 import { AuthProvider } from '@/context/AuthContext';
-import { Home } from './pages/Home';
-import { LoginPage } from './pages/LoginPage';
-import { CustomersPage } from './pages/CustomersPage';
-import { CustomerCreatePage } from './pages/CustomerCreatePage';
-import { ProductsPage } from './pages/ProductsPage';
-import { ProductCreatePage } from './pages/ProductCreatePage';
-import { ProductAdjustStockPage } from './pages/ProductAdjustStockPage';
-import { WarehousesPage } from './pages/WarehousesPage';
-import { WarehouseCreatePage } from './pages/WarehouseCreatePage';
-import { OnboardingPage } from './pages/OnboardingPage';
-import { CompanySettingsPage } from './pages/CompanySettingsPage';
-import { CompanyDataPage } from './pages/CompanyDataPage';
-import { CertificateUploadPage } from './pages/CertificateUploadPage';
-import { OrdersPage } from './pages/OrdersPage';
-import { OrderCreatePage } from './pages/OrderCreatePage';
-import { OrderDetailPage } from './pages/OrderDetailPage';
+
+const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })));
+const LoginPage = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })));
+const CustomersPage = lazy(() =>
+  import('./pages/CustomersPage').then((m) => ({ default: m.CustomersPage })),
+);
+const CustomerCreatePage = lazy(() =>
+  import('./pages/CustomerCreatePage').then((m) => ({ default: m.CustomerCreatePage })),
+);
+const ProductsPage = lazy(() => import('./pages/ProductsPage').then((m) => ({ default: m.ProductsPage })));
+const ProductCreatePage = lazy(() =>
+  import('./pages/ProductCreatePage').then((m) => ({ default: m.ProductCreatePage })),
+);
+const ProductAdjustStockPage = lazy(() =>
+  import('./pages/ProductAdjustStockPage').then((m) => ({ default: m.ProductAdjustStockPage })),
+);
+const WarehousesPage = lazy(() =>
+  import('./pages/WarehousesPage').then((m) => ({ default: m.WarehousesPage })),
+);
+const WarehouseCreatePage = lazy(() =>
+  import('./pages/WarehouseCreatePage').then((m) => ({ default: m.WarehouseCreatePage })),
+);
+const OnboardingPage = lazy(() =>
+  import('./pages/OnboardingPage').then((m) => ({ default: m.OnboardingPage })),
+);
+const CompanySettingsPage = lazy(() =>
+  import('./pages/CompanySettingsPage').then((m) => ({ default: m.CompanySettingsPage })),
+);
+const CompanyDataPage = lazy(() =>
+  import('./pages/CompanyDataPage').then((m) => ({ default: m.CompanyDataPage })),
+);
+const CertificateUploadPage = lazy(() =>
+  import('./pages/CertificateUploadPage').then((m) => ({ default: m.CertificateUploadPage })),
+);
+const OrdersPage = lazy(() => import('./pages/OrdersPage').then((m) => ({ default: m.OrdersPage })));
+const OrderCreatePage = lazy(() =>
+  import('./pages/OrderCreatePage').then((m) => ({ default: m.OrderCreatePage })),
+);
+const OrderDetailPage = lazy(() =>
+  import('./pages/OrderDetailPage').then((m) => ({ default: m.OrderDetailPage })),
+);
+const DeliveryDocumentsPage = lazy(() =>
+  import('./pages/DeliveryDocumentsPage').then((m) => ({ default: m.DeliveryDocumentsPage })),
+);
+const DeliveryDocumentDetailPage = lazy(() =>
+  import('./pages/DeliveryDocumentDetailPage').then((m) => ({ default: m.DeliveryDocumentDetailPage })),
+);
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center text-sm text-muted-foreground">
+      Ładowanie…
+    </div>
+  );
+}
 
 function AppPlaceholderPage({ title }: { title: string }) {
   return (
@@ -36,6 +76,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <EnsureCurrentCompany />
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<RequireAuth />}>
@@ -127,7 +168,15 @@ function App() {
                   path="/delivery"
                   element={
                     <ModuleRouteGate module="delivery">
-                      <AppPlaceholderPage title="Delivery" />
+                      <DeliveryDocumentsPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/delivery/:id"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <DeliveryDocumentDetailPage />
                     </ModuleRouteGate>
                   }
                 />
@@ -169,6 +218,7 @@ function App() {
             </Route>
           </Route>
         </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

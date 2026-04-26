@@ -3,8 +3,17 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 
+export interface OnboardingFormValues {
+  firstName: string;
+  lastName: string;
+  email: string;
+  companyName: string;
+  password: string;
+  confirmPassword: string;
+}
+
 interface OnboardingFormProps {
-  onSubmit: (data: any) => void;
+  onSubmit: (data: OnboardingFormValues) => void;
   isLoading?: boolean;
 }
 

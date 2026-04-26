@@ -171,6 +171,8 @@ export function CustomerForm({
 
   useEffect(() => {
     reset(customer ? customerToFormDefaults(customer) : EMPTY_CUSTOMER_DEFAULTS);
+    // Reset when the loaded entity identity changes (id/updated_at), not on every parent re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer?.id, customer?.updated_at, reset]);
 
   const submit = handleSubmit(async (values) => {

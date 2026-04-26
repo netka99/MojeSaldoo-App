@@ -1,0 +1,189 @@
+from decimal import Decimal
+
+from rest_framework import serializers
+
+from apps.customers.models import Customer
+from apps.orders.models import Order
+from apps.products.models import Warehouse
+
+from .models import DeliveryDocument, DeliveryItem
+
+
+class DeliveryItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryItem
+        fields = [
+            "id",
+            "order_item_id",
+            "product_id",
+            "quantity_planned",
+            "quantity_actual",
+            "quantity_returned",
+            "return_reason",
+            "is_damaged",
+            "notes",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class DeliveryItemCompleteRowSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    quantity_actual = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    quantity_returned = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        default=Decimal("0"),
+    )
+    return_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+    )
+    is_damaged = serializers.BooleanField(required=False, default=False)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class DeliveryCompleteSerializer(serializers.Serializer):
+    items = DeliveryItemCompleteRowSerializer(
+        many=True,
+        required=False,
+        allow_empty=True,
+    )
+    receiver_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+    )
+    has_returns = serializers.BooleanField(required=False)
+    returns_notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class DeliveryDocumentSerializer(serializers.ModelSerializer):
+    order_id = serializers.PrimaryKeyRelatedField(
+        queryset=Order.objects.all(),
+        source="order",
+    )
+    from_warehouse_id = serializers.PrimaryKeyRelatedField(
+        queryset=Warehouse.objects.all(),
+        source="from_warehouse",
+        required=False,
+        allow_null=True,
+    )
+    to_warehouse_id = serializers.PrimaryKeyRelatedField(
+        queryset=Warehouse.objects.all(),
+        source="to_warehouse",
+        required=False,
+        allow_null=True,
+    )
+    to_customer_id = serializers.PrimaryKeyRelatedField(
+        queryset=Customer.objects.all(),
+        source="to_customer",
+        required=False,
+        allow_null=True,
+    )
+    items = DeliveryItemSerializer(many=True, read_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    customer_name = serializers.CharField(source="order.customer.name", read_only=True)
+
+    class Meta:
+        model = DeliveryDocument
+        fields = [
+            "id",
+            "company",
+            "order_id",
+            "order_number",
+            "customer_name",
+            "user",
+            "document_type",
+            "document_number",
+            "issue_date",
+            "from_warehouse_id",
+            "to_warehouse_id",
+            "to_customer_id",
+            "status",
+            "has_returns",
+            "returns_notes",
+            "driver_name",
+            "receiver_name",
+            "delivered_at",
+            "notes",
+            "created_at",
+            "updated_at",
+            "items",
+        ]
+        read_only_fields = [
+            "id",
+            "document_number",
+            "company",
+            "user",
+            "status",
+            "created_at",
+            "updated_at",
+            "items",
+            "order_number",
+            "customer_name",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        cc_id = (
+            getattr(request.user, "current_company_id", None)
+            if request and request.user.is_authenticated
+            else None
+        )
+        if cc_id:
+            self.fields["order_id"].queryset = Order.objects.filter(company_id=cc_id)
+            self.fields["from_warehouse_id"].queryset = Warehouse.objects.filter(
+                company_id=cc_id
+            )
+            self.fields["to_warehouse_id"].queryset = Warehouse.objects.filter(
+                company_id=cc_id
+            )
+            self.fields["to_customer_id"].queryset = Customer.objects.filter(
+                company_id=cc_id
+            )
+
+    def validate_order(self, order: Order):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return order
+        cc_id = getattr(request.user, "current_company_id", None)
+        if cc_id and order.company_id != cc_id:
+            raise serializers.ValidationError("Order does not belong to your company.")
+        return order
+
+    def _ensure_fk_company(self, value, label: str):
+        if value is None:
+            return value
+        request = self.context.get("request")
+        cc_id = (
+            getattr(request.user, "current_company_id", None)
+            if request and request.user.is_authenticated
+            else None
+        )
+        if cc_id and value.company_id != cc_id:
+            raise serializers.ValidationError(f"{label} does not belong to your company.")
+        return value
+
+    def validate_from_warehouse(self, wh):
+        return self._ensure_fk_company(wh, "From warehouse")
+
+    def validate_to_warehouse(self, wh):
+        return self._ensure_fk_company(wh, "To warehouse")
+
+    def validate_to_customer(self, customer):
+        return self._ensure_fk_company(customer, "Customer")
+
+    def update(self, instance, validated_data):
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            instance.user = request.user
+        return super().update(instance, validated_data)

@@ -5,4 +5,5 @@ export * from './product.types';
 export * from './customer.types';
 export * from './warehouse.types';
 export * from './order.types';
+export * from './delivery.types';
 export * from './invoice.types';

@@ -1,0 +1,237 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { TestQueryProvider } from '@/test/TestQueryProvider';
+import { DeliveryDocumentDetailPage, productLabelForDeliveryLine } from './DeliveryDocumentDetailPage';
+import { authStorage } from '@/services/api';
+import type { DeliveryDocument } from '@/types';
+import type { Order } from '@/types';
+
+describe('productLabelForDeliveryLine', () => {
+  it('uses order line product_name when found', () => {
+    const order = {
+      items: [{ id: 'oi-1', product_name: 'Mleko 1L' }],
+    } as Order;
+    expect(productLabelForDeliveryLine(order, 'oi-1')).toBe('Mleko 1L');
+  });
+
+  it('falls back to short id when order or line missing', () => {
+    expect(productLabelForDeliveryLine(undefined, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toBe('aaaaaaaa');
+  });
+});
+
+const useDeliveryQueryMock = vi.hoisted(() => vi.fn());
+const useOrderQueryMock = vi.hoisted(() => vi.fn());
+const saveMutateAsync = vi.hoisted(() => vi.fn());
+const startMutateAsync = vi.hoisted(() => vi.fn());
+const completeMutateAsync = vi.hoisted(() => vi.fn());
+
+vi.mock('@/query/use-delivery', () => ({
+  useDeliveryQuery: (id: string | undefined, enabled?: boolean) => useDeliveryQueryMock(id, enabled),
+  useSaveDeliveryMutation: () => ({ mutateAsync: saveMutateAsync, isPending: false }),
+  useStartDeliveryMutation: () => ({ mutateAsync: startMutateAsync, isPending: false }),
+  useCompleteDeliveryMutation: () => ({ mutateAsync: completeMutateAsync, isPending: false }),
+}));
+
+vi.mock('@/query/use-orders', () => ({
+  useOrderQuery: (id: string | undefined, enabled?: boolean) => useOrderQueryMock(id, enabled),
+}));
+
+function makeDoc(over: Partial<DeliveryDocument> = {}): DeliveryDocument {
+  return {
+    id: 'doc-1',
+    company: 'c',
+    order_id: 'ord-1',
+    order_number: 'ZAM/1',
+    customer_name: 'Klient',
+    user: null,
+    document_type: 'WZ',
+    document_number: 'WZ/2026/0001',
+    issue_date: '2026-06-01',
+    from_warehouse_id: null,
+    to_warehouse_id: null,
+    to_customer_id: null,
+    status: 'draft',
+    has_returns: false,
+    returns_notes: '',
+    driver_name: '',
+    receiver_name: '',
+    delivered_at: null,
+    notes: '',
+    created_at: '',
+    updated_at: '',
+    items: [
+      {
+        id: 'li-1',
+        order_item_id: 'oi-1',
+        product_id: 'p-1',
+        quantity_planned: '2',
+        quantity_actual: null,
+        quantity_returned: '0',
+        return_reason: '',
+        is_damaged: false,
+        notes: '',
+        created_at: '',
+      },
+    ],
+    ...over,
+  };
+}
+
+function renderDetail(id = 'doc-1') {
+  return render(
+    <TestQueryProvider>
+      <MemoryRouter initialEntries={[`/delivery/${id}`]}>
+        <Routes>
+          <Route path="/delivery/:id" element={<DeliveryDocumentDetailPage />} />
+          <Route path="/login" element={<div>Logowanie</div>} />
+          <Route path="/delivery" element={<div>Lista</div>} />
+        </Routes>
+      </MemoryRouter>
+    </TestQueryProvider>,
+  );
+}
+
+describe('DeliveryDocumentDetailPage', () => {
+  const getToken = vi.spyOn(authStorage, 'getAccessToken');
+
+  beforeEach(() => {
+    getToken.mockReturnValue('token');
+    useOrderQueryMock.mockReturnValue({
+      data: { items: [{ id: 'oi-1', product_name: 'Woda' }] } as Order,
+    });
+    saveMutateAsync.mockReset();
+    startMutateAsync.mockReset();
+    completeMutateAsync.mockReset();
+  });
+
+  afterEach(() => {
+    getToken.mockReset();
+  });
+
+  it('redirects to login without token', () => {
+    getToken.mockReturnValue(null);
+    useDeliveryQueryMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.getByText('Logowanie')).toBeInTheDocument();
+  });
+
+  it('shows Zapisz WZ for draft and calls save', async () => {
+    const user = userEvent.setup();
+    const doc = makeDoc({ status: 'draft' });
+    useDeliveryQueryMock.mockReturnValue({
+      data: doc,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.getByRole('heading', { name: /WZ WZ\/2026\/0001/ })).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: 'Zapisz WZ' });
+    await user.click(btn);
+    expect(saveMutateAsync).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('shows Rozpocznij dostawę when saved', () => {
+    useDeliveryQueryMock.mockReturnValue({
+      data: makeDoc({ status: 'saved' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.getByRole('button', { name: 'Rozpocznij dostawę' })).toBeInTheDocument();
+  });
+
+  it('calls start delivery when Rozpocznij dostawę is clicked', async () => {
+    const user = userEvent.setup();
+    useDeliveryQueryMock.mockReturnValue({
+      data: makeDoc({ status: 'saved' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    await user.click(screen.getByRole('button', { name: 'Rozpocznij dostawę' }));
+    expect(startMutateAsync).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('submits complete payload with line quantities', async () => {
+    const user = userEvent.setup();
+    completeMutateAsync.mockResolvedValue(undefined as never);
+    useDeliveryQueryMock.mockReturnValue({
+      data: makeDoc({ status: 'in_transit' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    await user.click(screen.getByRole('button', { name: 'Zakończ dostawę' }));
+    await user.type(screen.getByLabelText('Odbiorca (podpis / osoba)'), 'Jan Nowak');
+    await user.click(screen.getByRole('button', { name: 'Potwierdź zakończenie dostawy' }));
+    expect(completeMutateAsync).toHaveBeenCalledTimes(1);
+    const arg = completeMutateAsync.mock.calls[0][0] as {
+      id: string;
+      data: { items: { id: string; quantity_actual?: string; receiver_name?: string }[]; receiver_name?: string };
+    };
+    expect(arg.id).toBe('doc-1');
+    expect(arg.data.receiver_name).toBe('Jan Nowak');
+    expect(arg.data.items).toEqual([
+      expect.objectContaining({
+        id: 'li-1',
+        quantity_actual: '2',
+        quantity_returned: '0',
+      }),
+    ]);
+  });
+
+  it('does not show workflow buttons when delivered', () => {
+    useDeliveryQueryMock.mockReturnValue({
+      data: makeDoc({ status: 'delivered' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.queryByRole('button', { name: 'Zapisz WZ' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rozpocznij dostawę' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Zakończ dostawę' })).not.toBeInTheDocument();
+  });
+
+  it('shows complete form toggle when in transit', async () => {
+    const user = userEvent.setup();
+    useDeliveryQueryMock.mockReturnValue({
+      data: makeDoc({ status: 'in_transit' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    await user.click(screen.getByRole('button', { name: 'Zakończ dostawę' }));
+    expect(screen.getByRole('table', { name: /Linie WZ/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Potwierdź zakończenie dostawy' })).toBeInTheDocument();
+  });
+});

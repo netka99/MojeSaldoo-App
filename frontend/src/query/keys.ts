@@ -1,3 +1,4 @@
+import type { DeliveryListParams } from '@/services/delivery.service';
 import type { OrderListParams } from '@/services/order.service';
 
 export const customerKeys = {
@@ -42,4 +43,15 @@ export const orderKeys = {
   list: (params: OrderListKeyParams) => [...orderKeys.lists(), params] as const,
   details: () => [...orderKeys.all, 'detail'] as const,
   detail: (id: string) => [...orderKeys.details(), id] as const,
+};
+
+/** List cache key: page + active company + filter fields (after `page` is stripped from `DeliveryListParams`). */
+export type DeliveryListKeyParams = Omit<DeliveryListParams, 'page'> & { page: number; companyId: string };
+
+export const deliveryKeys = {
+  all: ['delivery-documents'] as const,
+  lists: () => [...deliveryKeys.all, 'list'] as const,
+  list: (params: DeliveryListKeyParams) => [...deliveryKeys.lists(), params] as const,
+  details: () => [...deliveryKeys.all, 'detail'] as const,
+  detail: (id: string) => [...deliveryKeys.details(), id] as const,
 };

@@ -30,12 +30,12 @@ export function formatDateShort(date: string | Date): string {
   });
 }
 
-export function debounce<T extends (...args: any[]) => any>(
-  func: T,
+export function debounce<TArgs extends unknown[], TResult>(
+  func: (...args: TArgs) => TResult,
   wait: number
-): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout;
-  return (...args: Parameters<T>) => {
+): (...args: TArgs) => void {
+  let timeout: ReturnType<typeof setTimeout>;
+  return (...args: TArgs) => {
     clearTimeout(timeout);
     timeout = setTimeout(() => {
       void func(...args);

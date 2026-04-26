@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -56,7 +56,7 @@ export function CertificateUploadPage() {
     companyId &&
     user?.current_company === companyId;
 
-  const onSubmit = async (e: React.FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFeedback(null);
     if (!companyId) return;
