@@ -6,6 +6,8 @@ import type {
   DeliveryDocumentPatch,
   PaginatedDeliveryDocuments,
   VanLoadingPayload,
+  VanReconciliationPayload,
+  VanReconciliationResult,
 } from '../types';
 
 /**
@@ -52,4 +54,7 @@ export const deliveryService = {
 
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),
+
+  vanReconciliation: (warehouseId: string, data: VanReconciliationPayload) =>
+    api.post<VanReconciliationResult>(`/delivery/van-reconciliation/${warehouseId}/`, data),
 };

@@ -24,3 +24,19 @@ export interface Product {
 /** Fields clients may send on create/update (read-only server fields omitted). */
 export type ProductWrite = Omit<Product, 'id' | 'created_at' | 'updated_at' | 'user'> &
   Partial<Pick<Product, 'id'>>;
+
+// Stock snapshot for a single warehouse (used by van reconciliation)
+
+export interface StockSnapshotItem {
+  product_id: string;
+  product_name: string;
+  sku: string | null;
+  unit: string;
+  quantity_available: string; // decimal string
+}
+
+export interface StockSnapshot {
+  warehouse_id: string;
+  warehouse_name: string;
+  items: StockSnapshotItem[];
+}

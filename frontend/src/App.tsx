@@ -53,6 +53,9 @@ const DeliveryDocumentsPage = lazy(() =>
 const VanLoadingPage = lazy(() =>
   import('./pages/VanLoadingPage').then((m) => ({ default: m.VanLoadingPage })),
 );
+const VanReconciliationPage = lazy(() =>
+  import('./pages/VanReconciliationPage').then((m) => ({ default: m.VanReconciliationPage })),
+);
 const DeliveryDocumentDetailPage = lazy(() =>
   import('./pages/DeliveryDocumentDetailPage').then((m) => ({ default: m.DeliveryDocumentDetailPage })),
 );
@@ -190,6 +193,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="delivery">
                       <VanLoadingPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/delivery/van-reconciliation"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <VanReconciliationPage />
                     </ModuleRouteGate>
                   }
                 />

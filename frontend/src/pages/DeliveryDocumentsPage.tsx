@@ -186,6 +186,9 @@ function DeliveryDocumentsPageContent() {
                 <Button variant="secondary" onClick={() => navigate('/delivery/van-loading')}>
                   Załaduj Van
                 </Button>
+                <Button variant="outline" onClick={() => navigate('/delivery/van-reconciliation')}>
+                  Rozlicz Van
+                </Button>
               </div>
             </div>
             {generateError && (

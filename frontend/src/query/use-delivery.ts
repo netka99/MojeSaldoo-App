@@ -7,6 +7,7 @@ import type {
   DeliveryDocumentCreate,
   DeliveryDocumentPatch,
   VanLoadingPayload,
+  VanReconciliationPayload,
 } from '@/types';
 import { deliveryKeys, orderKeys } from './keys';
 
@@ -123,6 +124,19 @@ export function useVanLoadingMutation() {
     mutationFn: (body: VanLoadingPayload) => deliveryService.vanLoading(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+    },
+  });
+}
+
+export function useVanReconciliationMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ warehouseId, data }: { warehouseId: string; data: VanReconciliationPayload }) =>
+      deliveryService.vanReconciliation(warehouseId, data),
+    onSuccess: () => {
+      // Invalidate delivery docs and product stock data after reconciliation
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
     },
   });
 }

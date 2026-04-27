@@ -110,3 +110,8 @@ export const reportKeys = {
     [...reportKeys.all, 'invoices', p] as const,
   inventory: (companyId: string) => [...reportKeys.all, 'inventory', companyId] as const,
 };
+
+export const stockSnapshotKeys = {
+  all: ['stock-snapshot'] as const,
+  byWarehouse: (warehouseId: string) => [...stockSnapshotKeys.all, warehouseId] as const,
+};

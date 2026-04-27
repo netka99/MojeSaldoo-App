@@ -114,3 +114,35 @@ export interface VanLoadingPayload {
   notes?: string;
   items: VanLoadingItemPayload[];
 }
+
+// Van reconciliation types
+
+export interface VanReconciliationItemPayload {
+  product_id: string;
+  quantity_actual: string; // decimal string, e.g. "5.000"
+}
+
+export interface VanReconciliationPayload {
+  reconciliation_date: string; // "YYYY-MM-DD"
+  notes?: string;
+  items: VanReconciliationItemPayload[];
+}
+
+export interface VanReconciliationResultItem {
+  product_id: string;
+  product_name: string;
+  unit: string;
+  quantity_expected: string;
+  quantity_actual: string;
+  discrepancy: string; // negative = shortage, positive = surplus
+  movement_type: 'damage' | 'adjustment';
+}
+
+export interface VanReconciliationResult {
+  warehouse_id: string;
+  warehouse_name: string;
+  reconciliation_date: string;
+  items: VanReconciliationResultItem[];
+  total_discrepancies: number;
+  has_discrepancies: boolean;
+}

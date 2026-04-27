@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Product, ProductWrite } from '../types';
+import type { Product, ProductWrite, StockSnapshot } from '../types';
 
 interface PaginatedResponse<T> {
   count: number;
@@ -78,4 +78,7 @@ export const productService = {
 
   updateStock: (id: string, body: StockUpdatePayload) =>
     api.post<StockMovement>(`/products/${id}/update-stock/`, body),
+
+  fetchStockSnapshot: (warehouseId: string) =>
+    api.get<StockSnapshot>('/products/stock-snapshot/', { params: { warehouse_id: warehouseId } }),
 };
