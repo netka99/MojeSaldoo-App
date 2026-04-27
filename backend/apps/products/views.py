@@ -128,13 +128,11 @@ class ProductViewSet(viewsets.ModelViewSet):
                     warehouse=warehouse,
                     quantity_available=new_available,
                     quantity_reserved=Decimal("0"),
-                    quantity_total=new_available,
                 )
                 stock.save()
             else:
                 stock.quantity_available = new_available
-                stock.quantity_total = new_available + stock.quantity_reserved
-                stock.save()
+                stock.save(update_fields=["quantity_available"])
 
             movement_user = product.user or request.user
 

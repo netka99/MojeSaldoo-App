@@ -1,7 +1,7 @@
 import uuid
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 
 
 class Product(models.Model):
@@ -133,6 +133,30 @@ class ProductStock(models.Model):
             models.Index(fields=["warehouse"], name="idx_product_stock_warehouse"),
         ]
 
+    @classmethod
+    def get_or_create_for(cls, product, warehouse):
+        stock, _ = cls.objects.get_or_create(
+            product=product,
+            warehouse=warehouse,
+            defaults={
+                "company_id": product.company_id,
+                "quantity_available": 0,
+                "quantity_reserved": 0,
+                "quantity_total": 0,
+            },
+        )
+        return stock
+
+    def save(self, *args, **kwargs):
+        self.quantity_total = self.quantity_available + self.quantity_reserved
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            u = set(update_fields)
+            u.add("quantity_total")
+            kwargs["update_fields"] = list(u)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.product_id} @ {self.warehouse_id}"
 
@@ -189,6 +213,7 @@ class StockMovement(models.Model):
         TRANSFER = "transfer", "Transfer"
         DAMAGE = "damage", "Damage"
         RESERVATION = "reservation", "Reservation"
+        UNRESERVATION = "unreservation", "Unreservation"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)

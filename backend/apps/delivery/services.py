@@ -4,8 +4,22 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.orders.models import Order
+from apps.products.models import Warehouse
 
 from .models import DeliveryDocument, DeliveryItem
+
+
+def active_main_warehouse_for_company(company_id):
+    """First active main warehouse for the company (by code), or ``None``."""
+    return (
+        Warehouse.objects.filter(
+            company_id=company_id,
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+            is_active=True,
+        )
+        .order_by("code")
+        .first()
+    )
 
 
 def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
@@ -28,6 +42,7 @@ def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
             document_type=DeliveryDocument.DOC_TYPE_WZ,
             issue_date=timezone.localdate(),
             to_customer=order.customer,
+            from_warehouse=active_main_warehouse_for_company(order.company_id),
             status=DeliveryDocument.STATUS_DRAFT,
         )
         for oi in order.items.select_related("product"):

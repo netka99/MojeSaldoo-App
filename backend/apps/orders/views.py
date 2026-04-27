@@ -19,6 +19,19 @@ from .filters import OrderFilter
 from .models import Order
 from .serializers import OrderItemSerializer, OrderSerializer
 
+# Order was never reserved in draft; all later workflow statuses may still hold
+# line reservations from confirm() until released (e.g. on cancel).
+_ORDER_STATUSES_WITH_LINE_RESERVATION = frozenset(
+    {
+        Order.STATUS_CONFIRMED,
+        Order.STATUS_IN_PREPARATION,
+        Order.STATUS_LOADED,
+        Order.STATUS_IN_DELIVERY,
+        Order.STATUS_DELIVERED,
+        Order.STATUS_INVOICED,
+    }
+)
+
 
 class OrderViewSet(viewsets.ModelViewSet):
     """
@@ -157,12 +170,10 @@ class OrderViewSet(viewsets.ModelViewSet):
                 qty_before_avail = stock.quantity_available
                 stock.quantity_available -= qty
                 stock.quantity_reserved += qty
-                stock.quantity_total = stock.quantity_available + stock.quantity_reserved
                 stock.save(
                     update_fields=[
                         "quantity_available",
                         "quantity_reserved",
-                        "quantity_total",
                     ]
                 )
                 StockMovement.objects.create(
@@ -198,6 +209,126 @@ class OrderViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        order.status = Order.STATUS_CANCELLED
-        order.save()
+
+        with transaction.atomic():
+            order = (
+                Order.objects.select_for_update()
+                .select_related("company")
+                .prefetch_related("items", "items__product")
+                .get(pk=order.pk)
+            )
+            if order.status not in (Order.STATUS_DRAFT, Order.STATUS_CONFIRMED):
+                return Response(
+                    {
+                        "error": f"Order cannot be cancelled in status {order.status!r} "
+                        f"(only draft or confirmed)."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            release_stock = order.status in _ORDER_STATUSES_WITH_LINE_RESERVATION
+            items = list(order.items.all())
+            main_wh = None
+
+            if release_stock and items:
+                main_wh = (
+                    Warehouse.objects.select_for_update()
+                    .filter(
+                        company_id=order.company_id,
+                        warehouse_type=Warehouse.WarehouseType.MAIN,
+                        is_active=True,
+                    )
+                    .order_by("code")
+                    .first()
+                )
+                if main_wh is None:
+                    raise ValidationError(
+                        {
+                            "warehouse": (
+                                "No active main warehouse found for this company; "
+                                "cannot release reserved stock."
+                            )
+                        }
+                    )
+
+                product_ids = sorted({item.product_id for item in items})
+                stocks_by_product = {}
+                for pid in product_ids:
+                    try:
+                        stock = ProductStock.objects.select_for_update().get(
+                            company_id=order.company_id,
+                            product_id=pid,
+                            warehouse=main_wh,
+                        )
+                    except ProductStock.DoesNotExist:
+                        line = next(i for i in items if i.product_id == pid)
+                        raise ValidationError(
+                            {
+                                "stock": [
+                                    {
+                                        "product_id": str(pid),
+                                        "product_name": line.product.name,
+                                        "detail": (
+                                            "No ProductStock row for this product at the "
+                                            "main warehouse; cannot unreserve."
+                                        ),
+                                    }
+                                ]
+                            }
+                        )
+                    stocks_by_product[pid] = stock
+
+                needed_reserved = defaultdict(Decimal)
+                for item in items:
+                    needed_reserved[item.product_id] += item.quantity
+
+                shortfalls = []
+                for pid, need_qty in sorted(
+                    needed_reserved.items(), key=lambda x: str(x[0])
+                ):
+                    stock = stocks_by_product[pid]
+                    if stock.quantity_reserved < need_qty:
+                        line = next(i for i in items if i.product_id == pid)
+                        shortfalls.append(
+                            {
+                                "product_id": str(pid),
+                                "product_name": line.product.name,
+                                "quantity_reserved": str(stock.quantity_reserved),
+                                "quantity_to_release": str(need_qty),
+                                "short_by": str(need_qty - stock.quantity_reserved),
+                            }
+                        )
+                if shortfalls:
+                    raise ValidationError({"stock": shortfalls})
+
+                movement_user = order.user or request.user
+                for item in items:
+                    stock = stocks_by_product[item.product_id]
+                    qty = item.quantity
+                    qty_before_avail = stock.quantity_available
+                    stock.quantity_reserved -= qty
+                    stock.quantity_available += qty
+                    stock.save(
+                        update_fields=[
+                            "quantity_available",
+                            "quantity_reserved",
+                        ]
+                    )
+                    StockMovement.objects.create(
+                        company_id=order.company_id,
+                        product_id=item.product_id,
+                        warehouse=main_wh,
+                        user=movement_user,
+                        movement_type=StockMovement.MovementType.UNRESERVATION,
+                        quantity=qty,
+                        quantity_before=qty_before_avail,
+                        quantity_after=stock.quantity_available,
+                        reference_type="order",
+                        reference_id=order.id,
+                        created_by=request.user,
+                    )
+
+            order.status = Order.STATUS_CANCELLED
+            order.save()
+
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)

@@ -228,6 +228,66 @@ class ProductStockModelTests(TestCase):
         self.assertEqual(row.quantity_reserved, Decimal("0"))
         self.assertEqual(row.quantity_total, Decimal("0"))
 
+    def test_get_or_create_for_creates_with_company_and_zero_quantities(self):
+        self.assertEqual(ProductStock.objects.count(), 0)
+        row = ProductStock.get_or_create_for(self.product, self.warehouse_a)
+        self.assertEqual(ProductStock.objects.count(), 1)
+        self.assertEqual(row.company_id, self.company.id)
+        self.assertEqual(row.product, self.product)
+        self.assertEqual(row.warehouse, self.warehouse_a)
+        self.assertEqual(row.quantity_available, Decimal("0"))
+        self.assertEqual(row.quantity_reserved, Decimal("0"))
+        self.assertEqual(row.quantity_total, Decimal("0"))
+
+    def test_get_or_create_for_returns_existing_row(self):
+        existing = ProductStock.objects.create(
+            company=self.company,
+            product=self.product,
+            warehouse=self.warehouse_a,
+            quantity_available=Decimal("5"),
+            quantity_reserved=Decimal("1"),
+            quantity_total=Decimal("6"),
+        )
+        row = ProductStock.get_or_create_for(self.product, self.warehouse_a)
+        self.assertEqual(row.pk, existing.pk)
+        self.assertEqual(ProductStock.objects.count(), 1)
+        self.assertEqual(row.quantity_available, Decimal("5"))
+
+    def test_get_or_create_for_same_product_different_warehouse_two_rows(self):
+        a = ProductStock.get_or_create_for(self.product, self.warehouse_a)
+        b = ProductStock.get_or_create_for(self.product, self.warehouse_b)
+        self.assertEqual(ProductStock.objects.count(), 2)
+        self.assertNotEqual(a.pk, b.pk)
+        self.assertEqual(a.warehouse, self.warehouse_a)
+        self.assertEqual(b.warehouse, self.warehouse_b)
+        self.assertEqual(a.company_id, b.company_id)
+
+    def test_save_sets_quantity_total_to_available_plus_reserved(self):
+        row = ProductStock(
+            company=self.company,
+            product=self.product,
+            warehouse=self.warehouse_a,
+            quantity_available=Decimal("10"),
+            quantity_reserved=Decimal("4"),
+            quantity_total=Decimal("999"),
+        )
+        row.save()
+        row.refresh_from_db()
+        self.assertEqual(row.quantity_total, Decimal("14"))
+
+    def test_save_with_update_fields_recalculates_quantity_total(self):
+        row = ProductStock.objects.create(
+            company=self.company,
+            product=self.product,
+            warehouse=self.warehouse_a,
+            quantity_available=Decimal("5"),
+            quantity_reserved=Decimal("3"),
+        )
+        row.quantity_available = Decimal("20")
+        row.save(update_fields=["quantity_available"])
+        row.refresh_from_db()
+        self.assertEqual(row.quantity_total, Decimal("23"))
+
     def test_reverse_relations(self):
         s1 = ProductStock.objects.create(
             company=self.company,

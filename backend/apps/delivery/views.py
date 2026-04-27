@@ -1,3 +1,4 @@
+from collections import defaultdict
 from decimal import Decimal
 
 from django.db import transaction
@@ -7,16 +8,19 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.orders.models import Order
+from apps.products.models import ProductStock, StockMovement
 from apps.users.permissions import IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .filters import DeliveryDocumentFilter
 from .models import DeliveryDocument, DeliveryItem
 from .serializers import DeliveryCompleteSerializer, DeliveryDocumentSerializer
+from .services import active_main_warehouse_for_company
 
 
 class DeliveryDocumentViewSet(viewsets.ModelViewSet):
@@ -98,8 +102,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         rows = data.get("items") or []
         payload_by_id = {str(row["id"]): row for row in rows}
 
-        doc_items = list(doc.items.select_related("order_item"))
-        valid_ids = {str(i.id) for i in doc_items}
+        doc_items_preview = list(
+            doc.items.select_related("order_item")
+        )
+        valid_ids = {str(i.id) for i in doc_items_preview}
         extra = set(payload_by_id) - valid_ids
         if extra:
             return Response(
@@ -108,7 +114,22 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
 
         with transaction.atomic():
+            doc = (
+                DeliveryDocument.objects.select_for_update()
+                .select_related("from_warehouse", "company", "order", "user")
+                .prefetch_related("items__product", "items__order_item")
+                .get(pk=doc.pk)
+            )
+            if doc.status != DeliveryDocument.STATUS_IN_TRANSIT:
+                return Response(
+                    {"error": "Only documents in transit can be completed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            doc_items = list(doc.items.select_related("order_item"))
+            line_ops = []
             any_return = False
+
             for item in doc_items:
                 row = payload_by_id.get(str(item.id))
                 if row:
@@ -179,6 +200,117 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
                 if ret > 0:
                     any_return = True
+
+                line_ops.append((item, actual, ret))
+
+            if any(a > 0 or r > 0 for _, a, r in line_ops):
+                if doc.from_warehouse_id is None:
+                    raise ValidationError(
+                        {
+                            "from_warehouse": (
+                                "Delivery document has no source warehouse; "
+                                "set from_warehouse before completing."
+                            )
+                        }
+                    )
+
+                sale_by_product = defaultdict(Decimal)
+                return_by_product = defaultdict(Decimal)
+                for item, actual, ret in line_ops:
+                    if actual > 0:
+                        sale_by_product[item.product_id] += actual
+                    if ret > 0:
+                        return_by_product[item.product_id] += ret
+
+                all_product_ids = sorted(
+                    set(sale_by_product) | set(return_by_product),
+                    key=str,
+                )
+                stocks = {}
+                for pid in all_product_ids:
+                    try:
+                        st = ProductStock.objects.select_for_update().get(
+                            company_id=doc.company_id,
+                            product_id=pid,
+                            warehouse_id=doc.from_warehouse_id,
+                        )
+                    except ProductStock.DoesNotExist:
+                        line = next(i for i, _, _ in line_ops if i.product_id == pid)
+                        raise ValidationError(
+                            {
+                                "stock": [
+                                    {
+                                        "product_id": str(pid),
+                                        "product_name": line.product.name,
+                                        "detail": (
+                                            "No ProductStock for this product at "
+                                            "from_warehouse."
+                                        ),
+                                    }
+                                ]
+                            }
+                        )
+                    stocks[pid] = st
+
+                shortfalls = []
+                for pid, need in sorted(sale_by_product.items(), key=lambda x: str(x[0])):
+                    if stocks[pid].quantity_reserved < need:
+                        line = next(i for i, _, _ in line_ops if i.product_id == pid)
+                        shortfalls.append(
+                            {
+                                "product_id": str(pid),
+                                "product_name": line.product.name,
+                                "quantity_reserved": str(stocks[pid].quantity_reserved),
+                                "quantity_to_consume": str(need),
+                                "short_by": str(need - stocks[pid].quantity_reserved),
+                            }
+                        )
+                if shortfalls:
+                    raise ValidationError({"stock": shortfalls})
+
+                movement_user = doc.user or request.user
+
+                for item, actual, ret in line_ops:
+                    if actual <= 0:
+                        continue
+                    stock = stocks[item.product_id]
+                    qty_before_avail = stock.quantity_available
+                    stock.quantity_reserved -= actual
+                    stock.save(update_fields=["quantity_reserved"])
+                    StockMovement.objects.create(
+                        company_id=doc.company_id,
+                        product_id=item.product_id,
+                        warehouse_id=doc.from_warehouse_id,
+                        user=movement_user,
+                        movement_type=StockMovement.MovementType.SALE,
+                        quantity=-actual,
+                        quantity_before=qty_before_avail,
+                        quantity_after=stock.quantity_available,
+                        reference_type="delivery",
+                        reference_id=doc.id,
+                        created_by=request.user,
+                    )
+
+                for item, actual, ret in line_ops:
+                    if ret <= 0:
+                        continue
+                    stock = stocks[item.product_id]
+                    qty_before_avail = stock.quantity_available
+                    stock.quantity_available += ret
+                    stock.save(update_fields=["quantity_available"])
+                    StockMovement.objects.create(
+                        company_id=doc.company_id,
+                        product_id=item.product_id,
+                        warehouse_id=doc.from_warehouse_id,
+                        user=movement_user,
+                        movement_type=StockMovement.MovementType.RETURN,
+                        quantity=ret,
+                        quantity_before=qty_before_avail,
+                        quantity_after=stock.quantity_available,
+                        reference_type="delivery",
+                        reference_id=doc.id,
+                        created_by=request.user,
+                    )
 
             doc.status = DeliveryDocument.STATUS_DELIVERED
             doc.delivered_at = timezone.now()
@@ -256,6 +388,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 document_type=DeliveryDocument.DOC_TYPE_WZ,
                 issue_date=timezone.localdate(),
                 to_customer=order.customer,
+                from_warehouse=active_main_warehouse_for_company(company_id),
                 status=DeliveryDocument.STATUS_DRAFT,
             )
             for oi, qty in lines:

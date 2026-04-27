@@ -15,7 +15,7 @@ from apps.delivery.models import DeliveryDocument, DeliveryItem
 from apps.delivery.serializers import DeliveryDocumentSerializer
 from apps.delivery.services import generate_delivery_from_order
 from apps.orders.models import Order, OrderItem
-from apps.products.models import Product, Warehouse
+from apps.products.models import Product, ProductStock, StockMovement, Warehouse
 from apps.users.models import Company, CompanyMembership
 
 
@@ -304,12 +304,19 @@ class DeliveryDocumentAPITests(TestCase):
             company=self.co,
             code="MG",
             name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
         )
         self.product = Product.objects.create(
             name="Line product",
             company=self.co,
             price_net=Decimal("10.00"),
             price_gross=Decimal("12.30"),
+        )
+        self.product_b = Product.objects.create(
+            name="Other line product",
+            company=self.co,
+            price_net=Decimal("5.00"),
+            price_gross=Decimal("6.00"),
         )
 
     def test_delivery_document_list_url_resolves(self):
@@ -501,6 +508,24 @@ class DeliveryDocumentAPITests(TestCase):
             kwargs={"order_id": str(order_id)},
         )
 
+    def _reserve_stock_for_order(self, order: Order, warehouse: Warehouse) -> None:
+        """Mirror post-confirm stock: one ProductStock row per product with reservation."""
+        pool = Decimal("100.00")
+        by_product = {}
+        for line in order.items.all():
+            by_product[line.product_id] = by_product.get(line.product_id, Decimal("0")) + line.quantity
+        for pid, reserved in by_product.items():
+            ProductStock.objects.update_or_create(
+                company_id=order.company_id,
+                product_id=pid,
+                warehouse=warehouse,
+                defaults={
+                    "quantity_available": pool - reserved,
+                    "quantity_reserved": reserved,
+                    "quantity_total": pool,
+                },
+            )
+
     def _confirmed_order_with_line(self, qty_delivered=Decimal("0.00")):
         o = Order.objects.create(
             user=self.user,
@@ -520,6 +545,59 @@ class DeliveryDocumentAPITests(TestCase):
             vat_rate=Decimal("23.00"),
             discount_percent=Decimal("0.00"),
         )
+        self._reserve_stock_for_order(o, self.wh)
+        return o
+
+    def _confirmed_order_two_lines_same_product(self):
+        o = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 5, 1),
+            delivery_date=date(2026, 5, 15),
+            status=Order.STATUS_CONFIRMED,
+        )
+        for qty in (Decimal("2.00"), Decimal("3.00")):
+            OrderItem.objects.create(
+                order=o,
+                product=self.product,
+                quantity=qty,
+                unit_price_net=Decimal("10.00"),
+                unit_price_gross=Decimal("12.30"),
+                vat_rate=Decimal("23.00"),
+                discount_percent=Decimal("0.00"),
+            )
+        self._reserve_stock_for_order(o, self.wh)
+        return o
+
+    def _confirmed_order_two_products(self, qty_a=Decimal("2.00"), qty_b=Decimal("3.00")):
+        o = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 5, 1),
+            delivery_date=date(2026, 5, 15),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=qty_a,
+            unit_price_net=Decimal("10.00"),
+            unit_price_gross=Decimal("12.30"),
+            vat_rate=Decimal("23.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        OrderItem.objects.create(
+            order=o,
+            product=self.product_b,
+            quantity=qty_b,
+            unit_price_net=Decimal("5.00"),
+            unit_price_gross=Decimal("6.00"),
+            vat_rate=Decimal("23.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        self._reserve_stock_for_order(o, self.wh)
         return o
 
     def test_filter_by_order_status_issue_date_and_type(self):
@@ -591,6 +669,7 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["document_type"], DeliveryDocument.DOC_TYPE_WZ)
         self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DRAFT)
+        self.assertEqual(str(r.data["from_warehouse_id"]), str(self.wh.id))
         self.assertEqual(len(r.data["items"]), 1)
         self.assertEqual(r.data["items"][0]["quantity_planned"], "4.00")
         doc = DeliveryDocument.objects.get(id=r.data["id"])
@@ -659,6 +738,20 @@ class DeliveryDocumentAPITests(TestCase):
             Order.STATUS_CONFIRMED,
             "Partial delivery must not mark the order as delivered.",
         )
+        stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.quantity_reserved, Decimal("1.00"))
+        self.assertEqual(stock.quantity_available, Decimal("97.00"))
+        self.assertEqual(stock.quantity_total, Decimal("98.00"))
+        movements = StockMovement.objects.filter(reference_id=r.data["id"]).order_by(
+            "movement_type"
+        )
+        self.assertEqual(movements.count(), 2)
+        sale = movements.filter(movement_type=StockMovement.MovementType.SALE).get()
+        self.assertEqual(sale.quantity, Decimal("-3"))
+        self.assertEqual(sale.reference_type, "delivery")
+        ret_m = movements.filter(movement_type=StockMovement.MovementType.RETURN).get()
+        self.assertEqual(ret_m.quantity, Decimal("1"))
+        self.assertEqual(ret_m.reference_type, "delivery")
 
     def test_post_complete_marks_order_delivered_when_fully_delivered(self):
         self.client.force_authenticate(user=self.user)
@@ -778,6 +871,329 @@ class DeliveryDocumentAPITests(TestCase):
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_post_complete_insufficient_reserved_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        ProductStock.objects.filter(
+            product=self.product, warehouse=self.wh
+        ).update(quantity_reserved=Decimal("1.00"), quantity_available=Decimal("99.00"))
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        line_id = gen.data["items"][0]["id"]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_id,
+                        "quantity_actual": "4.00",
+                        "quantity_returned": "0",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        doc = DeliveryDocument.objects.get(pk=doc_id)
+        self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
+
+    def test_post_complete_sale_only_one_sale_movement_and_stock(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        line_id = gen.data["items"][0]["id"]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_id,
+                        "quantity_actual": "4.00",
+                        "quantity_returned": "0",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.quantity_reserved, Decimal("0"))
+        self.assertEqual(stock.quantity_available, Decimal("96.00"))
+        self.assertEqual(stock.quantity_total, Decimal("96.00"))
+        mov = StockMovement.objects.filter(reference_id=r.data["id"])
+        self.assertEqual(mov.count(), 1)
+        m = mov.get()
+        self.assertEqual(m.movement_type, StockMovement.MovementType.SALE)
+        self.assertEqual(m.quantity, Decimal("-4"))
+        self.assertEqual(m.quantity_before, Decimal("96"))
+        self.assertEqual(m.quantity_after, Decimal("96"))
+
+    def test_post_complete_missing_productstock_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        line_id = gen.data["items"][0]["id"]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        ProductStock.objects.filter(
+            product=self.product, warehouse=self.wh
+        ).delete()
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_id,
+                        "quantity_actual": "2.00",
+                        "quantity_returned": "0",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        doc = DeliveryDocument.objects.get(pk=doc_id)
+        self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
+
+    def test_post_complete_without_from_warehouse_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        line_id = gen.data["items"][0]["id"]
+        DeliveryDocument.objects.filter(pk=doc_id).update(from_warehouse=None)
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_id,
+                        "quantity_actual": "1.00",
+                        "quantity_returned": "0",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("from_warehouse", r.data)
+        doc = DeliveryDocument.objects.get(pk=doc_id)
+        self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
+
+    def test_post_complete_two_lines_same_product_two_sale_movements(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_two_lines_same_product()
+        gen = self.client.get(self._url_generate(o.id))
+        self.assertEqual(gen.status_code, status.HTTP_201_CREATED, gen.data)
+        self.assertEqual(len(gen.data["items"]), 2)
+        doc_id = gen.data["id"]
+        ids = [row["id"] for row in gen.data["items"]]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {"id": ids[0], "quantity_actual": "2.00", "quantity_returned": "0"},
+                    {"id": ids[1], "quantity_actual": "3.00", "quantity_returned": "0"},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.quantity_reserved, Decimal("0"))
+        self.assertEqual(stock.quantity_total, Decimal("95.00"))
+        sales = StockMovement.objects.filter(
+            reference_id=r.data["id"],
+            movement_type=StockMovement.MovementType.SALE,
+        )
+        self.assertEqual(sales.count(), 2)
+        self.assertEqual(
+            {m.quantity for m in sales},
+            {Decimal("-2"), Decimal("-3")},
+        )
+
+    def test_post_complete_two_distinct_products_updates_both_stocks(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_two_products()
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        line_by_product = {
+            str(row["product_id"]): row["id"] for row in gen.data["items"]
+        }
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_by_product[str(self.product.id)],
+                        "quantity_actual": "2.00",
+                        "quantity_returned": "0",
+                    },
+                    {
+                        "id": line_by_product[str(self.product_b.id)],
+                        "quantity_actual": "3.00",
+                        "quantity_returned": "0",
+                    },
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        sa = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        sb = ProductStock.objects.get(product=self.product_b, warehouse=self.wh)
+        self.assertEqual(sa.quantity_reserved, Decimal("0"))
+        self.assertEqual(sa.quantity_total, Decimal("98.00"))
+        self.assertEqual(sb.quantity_reserved, Decimal("0"))
+        self.assertEqual(sb.quantity_total, Decimal("97.00"))
+        self.assertEqual(
+            StockMovement.objects.filter(
+                reference_id=r.data["id"],
+                movement_type=StockMovement.MovementType.SALE,
+            ).count(),
+            2,
+        )
+
+    def test_post_complete_two_products_one_short_rolls_back_all(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_two_products(Decimal("2.00"), Decimal("3.00"))
+        ProductStock.objects.filter(product=self.product_b, warehouse=self.wh).update(
+            quantity_reserved=Decimal("1.00"),
+            quantity_available=Decimal("99.00"),
+        )
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        line_by_product = {
+            str(row["product_id"]): row["id"] for row in gen.data["items"]
+        }
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_by_product[str(self.product.id)],
+                        "quantity_actual": "2.00",
+                        "quantity_returned": "0",
+                    },
+                    {
+                        "id": line_by_product[str(self.product_b.id)],
+                        "quantity_actual": "3.00",
+                        "quantity_returned": "0",
+                    },
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        doc = DeliveryDocument.objects.get(pk=doc_id)
+        self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
+        sa = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        sb = ProductStock.objects.get(product=self.product_b, warehouse=self.wh)
+        self.assertEqual(sa.quantity_reserved, Decimal("2.00"))
+        self.assertEqual(sb.quantity_reserved, Decimal("1.00"))
+        self.assertFalse(
+            StockMovement.objects.filter(reference_id=doc_id).exists()
+        )
+
+    def test_post_complete_second_wz_consumes_remaining_reserved(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        gen1 = self.client.get(self._url_generate(o.id))
+        d1 = gen1.data["id"]
+        l1 = gen1.data["items"][0]["id"]
+        self.client.post(self._url_save(d1))
+        self.client.post(self._url_start_delivery(d1))
+        r1 = self.client.post(
+            self._url_complete(d1),
+            data={"items": [{"id": l1, "quantity_actual": "2.00", "quantity_returned": "0"}]},
+            format="json",
+        )
+        self.assertEqual(r1.status_code, status.HTTP_200_OK, r1.data)
+        stock_mid = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock_mid.quantity_reserved, Decimal("2.00"))
+        gen2 = self.client.get(self._url_generate(o.id))
+        self.assertEqual(gen2.status_code, status.HTTP_201_CREATED, gen2.data)
+        d2 = gen2.data["id"]
+        l2 = gen2.data["items"][0]["id"]
+        self.client.post(self._url_save(d2))
+        self.client.post(self._url_start_delivery(d2))
+        r2 = self.client.post(
+            self._url_complete(d2),
+            data={"items": [{"id": l2, "quantity_actual": "2.00", "quantity_returned": "0"}]},
+            format="json",
+        )
+        self.assertEqual(r2.status_code, status.HTTP_200_OK, r2.data)
+        stock_final = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock_final.quantity_reserved, Decimal("0"))
+        self.assertEqual(stock_final.quantity_total, Decimal("96.00"))
+
+    def test_post_complete_two_lines_same_product_insufficient_reserved_aggregate(
+        self,
+    ):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_two_lines_same_product()
+        ProductStock.objects.filter(product=self.product, warehouse=self.wh).update(
+            quantity_reserved=Decimal("2.00"),
+            quantity_available=Decimal("98.00"),
+        )
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        ids = [row["id"] for row in gen.data["items"]]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {"id": ids[0], "quantity_actual": "2.00", "quantity_returned": "0"},
+                    {"id": ids[1], "quantity_actual": "3.00", "quantity_returned": "0"},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        self.assertEqual(
+            DeliveryDocument.objects.get(pk=doc_id).status,
+            DeliveryDocument.STATUS_IN_TRANSIT,
+        )
+
+    def test_post_complete_empty_items_uses_planned_quantities_for_stock(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        gen = self.client.get(self._url_generate(o.id))
+        doc_id = gen.data["id"]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(self._url_complete(doc_id), data={}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.quantity_reserved, Decimal("0"))
+        self.assertEqual(stock.quantity_total, Decimal("96.00"))
+        self.assertEqual(
+            StockMovement.objects.filter(
+                reference_id=r.data["id"],
+                movement_type=StockMovement.MovementType.SALE,
+            ).count(),
+            1,
+        )
 
     def test_generate_no_remaining_quantity_returns_400(self):
         self.client.force_authenticate(user=self.user)
@@ -957,6 +1373,55 @@ class GenerateDeliveryFromOrderTests(TestCase):
         )
         with self.assertRaises(ValueError):
             generate_delivery_from_order(order)
+
+    def test_sets_from_warehouse_when_main_warehouse_exists(self):
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.company,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 7, 1),
+            delivery_date=date(2026, 7, 10),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.p1,
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        doc = generate_delivery_from_order(order)
+        self.assertEqual(doc.from_warehouse_id, wh.id)
+
+    def test_from_warehouse_none_when_no_main_warehouse(self):
+        order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 7, 1),
+            delivery_date=date(2026, 7, 10),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.p1,
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        doc = generate_delivery_from_order(order)
+        self.assertIsNone(doc.from_warehouse_id)
 
     def test_empty_order_creates_document_without_items(self):
         order = Order.objects.create(
