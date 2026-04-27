@@ -137,9 +137,7 @@ Create Account → Ask for Certificates →
 - Konfiguracja podstawowych ustawień
 
 #### Ekrany Figma:
-- Lista zamówień (Zamówienie Sklep ABC)
-- Wybór produktów: Kartacze, Babka ziemniaczana, Kiszka, Naleśniki
-- Kalkulator cen i rabatów
+- a
 
 ---
 

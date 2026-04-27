@@ -11,7 +11,10 @@ from .models import DeliveryDocument, DeliveryItem
 
 class VanLoadingItemSerializer(serializers.Serializer):
     product_id = serializers.UUIDField()
-    quantity = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"))
+    # Match frontend (toFixed(3)) and WZ line precision; service layer uses Decimals
+    quantity = serializers.DecimalField(
+        max_digits=10, decimal_places=3, min_value=Decimal("0.01")
+    )
 
 
 class VanLoadingSerializer(serializers.Serializer):
@@ -44,12 +47,15 @@ class VanReconciliationSerializer(serializers.Serializer):
 
 
 class DeliveryItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+
     class Meta:
         model = DeliveryItem
         fields = [
             "id",
             "order_item_id",
             "product_id",
+            "product_name",
             "quantity_planned",
             "quantity_actual",
             "quantity_returned",

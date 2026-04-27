@@ -294,12 +294,16 @@ function DeliveryDocumentsPageContent() {
                   <p className="text-xs text-muted-foreground">
                     Data: {formatIssueDate(row.issue_date)} · Kierowca: {row.driver_name?.trim() ? row.driver_name : '—'}
                   </p>
-                  <Link
-                    to={`/orders/${row.order_id}`}
-                    className="text-xs font-medium text-primary hover:underline"
-                  >
-                    Zamówienie
-                  </Link>
+                  {row.order_id ? (
+                    <Link
+                      to={`/orders/${row.order_id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Zamówienie
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
                 </div>
               </li>
             ))}
@@ -357,9 +361,13 @@ function DeliveryDocumentsPageContent() {
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      <Link to={`/orders/${row.order_id}`} className="text-primary hover:underline">
-                        {row.order_number ?? row.order_id.slice(0, 8)}
-                      </Link>
+                      {row.order_id ? (
+                        <Link to={`/orders/${row.order_id}`} className="text-primary hover:underline">
+                          {row.order_number ?? row.order_id.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}

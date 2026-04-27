@@ -69,6 +69,26 @@ describe('api (axios client)', () => {
     await expect(api.post('/warehouses/', {})).rejects.toThrow(/code:/i);
   });
 
+  it('maps DRF 400 van-loading insufficient stock (stock array of objects)', async () => {
+    authStorage.setTokens('t', 'r');
+    nock(HOST)
+      .post('/api/delivery/van-loading/', (body) => Boolean(body))
+      .reply(400, {
+        stock: [
+          {
+            product_id: 'p-1',
+            product_name: 'Chleb',
+            quantity_available: '0.00',
+            quantity_requested: '5.000',
+          },
+        ],
+      });
+
+    await expect(
+      api.post('/delivery/van-loading/', { from_warehouse_id: 'w1', to_warehouse_id: 'w2', items: [] }),
+    ).rejects.toThrow(/Niewystarczający stan/);
+  });
+
   it('on 401 refreshes session and retries the request', async () => {
     authStorage.setTokens('old-access', 'refresh-token');
 

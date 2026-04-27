@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +9,7 @@ import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
 import { warehouseService } from '@/services/warehouse.service';
 import { useVanLoadingMutation } from '@/query/use-delivery';
+import { useStockSnapshotQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
 import type { Product } from '@/types';
 import type { Warehouse } from '@/types';
@@ -58,9 +59,6 @@ export function VanLoadingPage() {
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [productSearch, setProductSearch] = useState<string>('');
 
-  // Success state (after submit)
-  const [createdDocument, setCreatedDocument] = useState<{ id: string; document_number: string | null } | null>(null);
-
   // Fetch main warehouses (from_warehouse selector)
   const { data: mainWarehousesData, isLoading: mainWarehousesLoading } = useQuery({
     queryKey: ['warehouses', 'main', companyId],
@@ -83,6 +81,22 @@ export function VanLoadingPage() {
     queryFn: () => productService.fetchList({ page: 1, is_active: true, ordering: 'name', page_size: 200 }),
     enabled: Boolean(companyId),
   });
+
+  // Stock in the selected source (main) warehouse — only needed on step 2
+  const {
+    data: stockSnapshot,
+    isLoading: stockSnapshotLoading,
+    isError: stockSnapshotError,
+  } = useStockSnapshotQuery(step === 2 && fromWarehouseId ? fromWarehouseId : undefined);
+
+  const stockInSourceByProductId = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!stockSnapshot?.items?.length) return m;
+    for (const row of stockSnapshot.items) {
+      m.set(row.product_id, row.quantity_available);
+    }
+    return m;
+  }, [stockSnapshot]);
 
   // TanStack Query v5: useQuery has no onSuccess — sync rows when catalog loads (preserve quantities on refetch)
   useEffect(() => {
@@ -190,7 +204,8 @@ export function VanLoadingPage() {
 
     try {
       const doc = await vanLoading.mutateAsync(payload);
-      setCreatedDocument({ id: doc.id, document_number: doc.document_number });
+      // Navigate immediately so success is not lost when React Strict Mode remounts (dev) and resets local state.
+      navigate(`/delivery/${doc.id}`, { replace: true, state: { fromVanLoading: true } });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się załadować vana');
     }
@@ -202,31 +217,6 @@ export function VanLoadingPage() {
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  }
-
-  if (createdDocument) {
-    return (
-      <div className="mx-auto max-w-2xl space-y-6 p-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Van załadowany</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">Dokument MM został wygenerowany pomyślnie.</p>
-            <div className="rounded-md bg-muted/40 px-4 py-3 text-sm">
-              <span className="text-muted-foreground">Nr dokumentu: </span>
-              <span className="font-semibold">{createdDocument.document_number ?? '—'}</span>
-            </div>
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button variant="outline" onClick={() => navigate(`/delivery/${createdDocument.id}`)}>
-                Zobacz dokument MM
-              </Button>
-              <Button onClick={() => navigate('/delivery')}>Wróć do listy dokumentów</Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
   }
 
   return (
@@ -386,8 +376,22 @@ export function VanLoadingPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Wpisz ilość każdego produktu, który chcesz załadować. Produkty z ilością 0 zostaną pominięte.
+              Magazyn źródłowy:{' '}
+              <span className="font-medium text-foreground">
+                {warehouseName(fromWarehouseId, mainWarehouses)}
+              </span>
+              . Kolumna <strong>Stan w MG</strong> pokazuje aktualną ilość dostępną w tym magazynie. Wpisz ilość
+              załadunku — produkty z ilością 0 zostaną pominięte.
             </p>
+            {stockSnapshotError && (
+              <p
+                className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                role="alert"
+              >
+                Nie udało się odczytać stanu magazynu źródłowego. Użyj własnej wiedzy o stanie; możesz też
+                wrócić krok wstecz i ponownie wejść do tego ekranu.
+              </p>
+            )}
 
             {/* SEARCH FILTER */}
             <input
@@ -404,19 +408,22 @@ export function VanLoadingPage() {
               <p className="text-sm text-muted-foreground">Ładowanie produktów…</p>
             ) : (
               <div className="overflow-x-auto rounded-md border border-border">
-                <table className="w-full min-w-[400px] text-left text-sm">
+                <table className="w-full min-w-[520px] text-left text-sm">
                   <thead className="bg-muted/50">
                     <tr>
                       <th className="px-3 py-2 font-medium">Produkt</th>
                       <th className="px-3 py-2 font-medium">SKU</th>
                       <th className="px-3 py-2 font-medium">J.m.</th>
+                      <th className="px-3 py-2 text-right font-medium" title="Stan w magazynie głównym (źródłowym)">
+                        Stan w MG
+                      </th>
                       <th className="w-32 px-3 py-2 font-medium">Ilość do załadunku</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredRows.length === 0 && (
                       <tr>
-                        <td colSpan={4} className="px-3 py-4 text-center text-muted-foreground">
+                        <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
                           Brak produktów
                         </td>
                       </tr>
@@ -424,6 +431,13 @@ export function VanLoadingPage() {
                     {filteredRows.map((r) => {
                       const qty = parseQty(r.quantity);
                       const isLoaded = qty > 0;
+                      const inMg = stockInSourceByProductId.get(r.product.id);
+                      const showStock = () => {
+                        if (stockSnapshotLoading) return '…';
+                        if (stockSnapshotError) return '—';
+                        if (inMg !== undefined) return inMg;
+                        return '0';
+                      };
                       return (
                         <tr
                           key={r.product.id}
@@ -440,6 +454,9 @@ export function VanLoadingPage() {
                           </td>
                           <td className="px-3 py-2 text-muted-foreground">
                             {r.product.unit || '—'}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-sm text-muted-foreground tabular-nums">
+                            {showStock()}
                           </td>
                           <td className="px-3 py-2">
                             <input

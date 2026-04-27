@@ -1501,12 +1501,17 @@ class VanLoadingAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["document_type"], DeliveryDocument.DOC_TYPE_MM)
         self.assertEqual(r.data["status"], DeliveryDocument.STATUS_SAVED)
+        self.assertTrue(
+            r.data.get("document_number"),
+            msg="Van-loading response must include assigned MM document_number for the client success screen.",
+        )
         self.assertIsNone(r.data["order_id"])
         doc = DeliveryDocument.objects.get(id=r.data["id"])
         self.assertEqual(doc.items.count(), 1)
         line = doc.items.first()
         self.assertIsNone(line.order_item_id)
         self.assertEqual(line.quantity_planned, Decimal("4.50"))
+        self.assertEqual(r.data["items"][0]["product_name"], self.product.name)
 
         main = ProductStock.objects.get(
             product=self.product, warehouse=self.wh_main

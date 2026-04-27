@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.db.models import Sum
 from rest_framework import serializers
 
 from .models import Product, StockMovement, Warehouse
@@ -12,6 +13,7 @@ class ProductSerializer(serializers.ModelSerializer):
     price_gross = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
     vat_rate = serializers.DecimalField(max_digits=5, decimal_places=2, required=False)
     min_stock_alert = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    stock_total = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -31,10 +33,19 @@ class ProductSerializer(serializers.ModelSerializer):
             "min_stock_alert",
             "shelf_life_days",
             "is_active",
+            "stock_total",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "company", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "company", "stock_total", "created_at", "updated_at"]
+
+    def get_stock_total(self, obj: Product) -> Decimal:
+        """Sum of ``quantity_available`` across all company warehouses; list views annotate ``_stock_total``."""
+        annotated = getattr(obj, "_stock_total", None)
+        if annotated is not None:
+            return annotated
+        t = obj.stocks.aggregate(total=Sum("quantity_available"))["total"]
+        return t if t is not None else Decimal("0")
 
     def validate_price_net(self, value: Decimal) -> Decimal:
         if value < 0:

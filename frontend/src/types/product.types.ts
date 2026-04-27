@@ -17,6 +17,8 @@ export interface Product {
   min_stock_alert: string | number;
   shelf_life_days: number | null;
   is_active: boolean;
+  /** Sum of `quantity_available` across all company warehouses; from list/detail API. */
+  stock_total?: string | number;
   created_at: string;
   updated_at: string;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -30,17 +30,28 @@ function errMsg(e: unknown): string {
   return 'Wystąpił błąd';
 }
 
-/** Resolve product display from linked order line (delivery API does not embed product name). */
-export function productLabelForDeliveryLine(order: Order | undefined, orderItemId: string): string {
-  const line = order?.items.find((i) => i.id === orderItemId);
-  if (line?.product_name) return line.product_name;
-  return orderItemId.slice(0, 8);
+type LineLabelInput = Pick<DeliveryItem, 'order_item_id' | 'product_id'> & {
+  product_name?: string | null;
+};
+
+/** Resolve product label: API product_name, then order line, then short id (MM lines have null order_item_id). */
+export function productLabelForDeliveryLine(order: Order | undefined, line: LineLabelInput): string {
+  if (line.product_name?.trim()) return line.product_name.trim();
+  if (line.order_item_id) {
+    const oi = order?.items.find((i) => i.id === line.order_item_id);
+    if (oi?.product_name) return oi.product_name;
+    return line.order_item_id.slice(0, 8);
+  }
+  if (line.product_id) return `Produkt ${line.product_id.slice(0, 8)}…`;
+  return '—';
 }
 
 function qtyStr(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return '';
   return String(v);
 }
+
+type DeliveryLocationState = { fromVanLoading?: boolean };
 
 type LineEditState = {
   quantity_actual: string;
@@ -69,7 +80,19 @@ export function DeliveryDocumentDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { data: doc, isLoading, isError, error, refetch, isFetching } = useDeliveryQuery(id, Boolean(id));
-  const { data: order } = useOrderQuery(doc?.order_id, Boolean(doc?.order_id));
+  const { data: order } = useOrderQuery(
+    doc?.order_id ?? undefined,
+    Boolean(doc?.order_id),
+  );
+
+  const [showVanLoadedBanner, setShowVanLoadedBanner] = useState(
+    () => Boolean((location.state as DeliveryLocationState | null)?.fromVanLoading),
+  );
+
+  useEffect(() => {
+    if (!showVanLoadedBanner) return;
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [showVanLoadedBanner, location.pathname, navigate]);
 
   const saveM = useSaveDeliveryMutation();
   const startM = useStartDeliveryMutation();
@@ -176,10 +199,34 @@ export function DeliveryDocumentDetailPage() {
 
       {doc && !isError && (
         <>
+          {showVanLoadedBanner && doc.document_type === 'MM' && (
+            <div
+              role="status"
+              className="flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <p className="text-sm text-foreground">
+                Van został załadowany.{' '}
+                <span className="text-muted-foreground">Numer dokumentu MM:</span>{' '}
+                <span className="font-semibold tabular-nums">
+                  {doc.document_number?.trim() ? doc.document_number : '—'}
+                </span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => window.print()}>
+                  Drukuj
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowVanLoadedBanner(false)}>
+                  Zamknij
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-foreground">
-                {doc.document_type} {doc.document_number ?? doc.id.slice(0, 8)}
+                {doc.document_type}{' '}
+                {doc.document_number?.trim() ? doc.document_number : doc.id.slice(0, 8)}
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 {doc.customer_name || '—'} · data wystawienia: {formatIssueDate(doc.issue_date)}
@@ -199,12 +246,16 @@ export function DeliveryDocumentDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-            <span>
-              Zamówienie:{' '}
-              <Link to={`/orders/${doc.order_id}`} className="font-medium text-primary hover:underline">
-                {doc.order_number ?? doc.order_id.slice(0, 8)}
-              </Link>
-            </span>
+            {doc.order_id ? (
+              <span>
+                Zamówienie:{' '}
+                <Link to={`/orders/${doc.order_id}`} className="font-medium text-primary hover:underline">
+                  {doc.order_number ?? doc.order_id.slice(0, 8)}
+                </Link>
+              </span>
+            ) : (
+              <span>Bez powiązania ze zamówieniem (MM / wewnętrzny)</span>
+            )}
             {doc.driver_name?.trim() ? (
               <span className="text-foreground">· Kierowca: {doc.driver_name}</span>
             ) : null}
@@ -291,7 +342,7 @@ export function DeliveryDocumentDetailPage() {
                         return (
                           <tr key={it.id}>
                             <td className="max-w-[180px] px-3 py-2 text-foreground">
-                              {productLabelForDeliveryLine(order, it.order_item_id)}
+                              {productLabelForDeliveryLine(order, it)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2 text-right text-muted-foreground">
                               {qtyStr(it.quantity_planned)}
@@ -405,7 +456,7 @@ export function DeliveryDocumentDetailPage() {
                     {doc.items.map((it: DeliveryItem) => (
                       <li key={it.id} className="py-3 text-sm">
                         <p className="font-medium text-foreground">
-                          {productLabelForDeliveryLine(order, it.order_item_id)}
+                          {productLabelForDeliveryLine(order, it)}
                         </p>
                         <p className="text-muted-foreground">
                           Zaplanowano: {qtyStr(it.quantity_planned)}
@@ -431,7 +482,7 @@ export function DeliveryDocumentDetailPage() {
                         {doc.items.map((it: DeliveryItem) => (
                           <tr key={it.id}>
                             <td className="px-4 py-3 text-foreground">
-                              {productLabelForDeliveryLine(order, it.order_item_id)}
+                              {productLabelForDeliveryLine(order, it)}
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-muted-foreground">
                               {qtyStr(it.quantity_planned)}

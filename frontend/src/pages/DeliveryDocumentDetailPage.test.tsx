@@ -16,11 +16,35 @@ describe('productLabelForDeliveryLine', () => {
     const order = {
       items: [{ id: 'oi-1', product_name: 'Mleko 1L' }],
     } as Order;
-    expect(productLabelForDeliveryLine(order, 'oi-1')).toBe('Mleko 1L');
+    expect(productLabelForDeliveryLine(order, { order_item_id: 'oi-1', product_id: 'p-1' })).toBe('Mleko 1L');
   });
 
-  it('falls back to short id when order or line missing', () => {
-    expect(productLabelForDeliveryLine(undefined, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toBe('aaaaaaaa');
+  it('prefers API product_name when order_item_id is null (MM lines)', () => {
+    expect(
+      productLabelForDeliveryLine(undefined, {
+        order_item_id: null,
+        product_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        product_name: 'Woda 0.5L',
+      }),
+    ).toBe('Woda 0.5L');
+  });
+
+  it('falls back to short product_id when order line missing', () => {
+    expect(
+      productLabelForDeliveryLine(undefined, {
+        order_item_id: null,
+        product_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      }),
+    ).toBe('Produkt aaaaaaaa…');
+  });
+
+  it('falls back to short order_item_id when no product_id', () => {
+    expect(
+      productLabelForDeliveryLine(undefined, {
+        order_item_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        product_id: 'p-1',
+      }),
+    ).toBe('aaaaaaaa');
   });
 });
 

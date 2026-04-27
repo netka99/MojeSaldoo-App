@@ -597,6 +597,42 @@ class ProductViewSetAPITests(TestCase):
         created = Product.objects.get(id=response.data["id"])
         self.assertEqual(created.user, self.user)
 
+    def test_list_includes_stock_total(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(reverse("product-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = response.data["results"][0]
+        self.assertIn("stock_total", row)
+        self.assertEqual(row["stock_total"], Decimal("0"))
+
+    def test_stock_snapshot_endpoint(self):
+        self.client.force_authenticate(user=self.user)
+        p = Product.objects.get(name="My catalog item")
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co_user,
+            code="MGX",
+            name="Main snap",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        ProductStock.objects.create(
+            company=self.co_user,
+            product=p,
+            warehouse=wh,
+            quantity_available=Decimal("5.25"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("5.25"),
+        )
+        response = self.client.get(
+            reverse("product-stock-snapshot"), {"warehouse_id": str(wh.id)}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["warehouse_id"], str(wh.id))
+        self.assertEqual(response.data["warehouse_name"], "Main snap")
+        self.assertEqual(len(response.data["items"]), 1)
+        self.assertEqual(response.data["items"][0]["product_id"], str(p.id))
+        self.assertEqual(response.data["items"][0]["quantity_available"], "5.250")
+
 
 class WarehouseViewSetAPITests(TestCase):
     def setUp(self):

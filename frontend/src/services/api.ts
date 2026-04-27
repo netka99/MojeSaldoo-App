@@ -57,7 +57,16 @@ function drfFieldMessages(body: Record<string, unknown>): string | null {
   for (const [key, val] of Object.entries(body)) {
     if (key === 'detail' || key === 'message' || val == null) continue;
     if (typeof val === 'string') messages.push(`${key}: ${val}`);
-    else if (Array.isArray(val)) {
+    else if (key === 'stock' && Array.isArray(val) && val.length > 0) {
+      const rows = val.filter((v): v is Record<string, unknown> => v != null && typeof v === 'object');
+      if (rows.length) {
+        const parts = rows.map((row) => {
+          const name = row.product_name ?? row.product_id;
+          return `${name}: dostępne ${row.quantity_available}, wymagane ${row.quantity_requested}`;
+        });
+        messages.push(`Niewystarczający stan: ${parts.join('; ')}`);
+      }
+    } else if (Array.isArray(val)) {
       const strs = val.filter((v): v is string => typeof v === 'string');
       if (strs.length) messages.push(`${key}: ${strs.join(', ')}`);
     }

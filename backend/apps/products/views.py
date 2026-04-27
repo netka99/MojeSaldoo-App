@@ -1,7 +1,8 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import DecimalField, QuerySet, Sum, Value
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
@@ -52,7 +53,14 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         qs = Product.objects.all().order_by("-created_at")
-        return filter_queryset_for_current_company(qs, self.request.user)
+        qs = filter_queryset_for_current_company(qs, self.request.user)
+        return qs.annotate(
+            _stock_total=Coalesce(
+                Sum("stocks__quantity_available"),
+                Value(Decimal("0")),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+        )
 
     def perform_create(self, serializer):
         serializer.save(
@@ -177,6 +185,45 @@ class ProductViewSet(viewsets.ModelViewSet):
         return Response(
             StockMovementSerializer(movement).data,
             status=http_status,
+        )
+
+    @action(detail=False, methods=["get"], url_path="stock-snapshot")
+    def stock_snapshot(self, request):
+        """Current stock in one warehouse (only lines with ``quantity_available`` > 0)."""
+        warehouse_id = request.query_params.get("warehouse_id")
+        if not warehouse_id:
+            raise ValidationError({"warehouse_id": "This field is required."})
+        wh_qs = filter_queryset_for_current_company(
+            Warehouse.objects.filter(pk=warehouse_id),
+            request.user,
+        )
+        warehouse = get_object_or_404(wh_qs)
+        items = []
+        for ps in (
+            ProductStock.objects.filter(
+                warehouse=warehouse, company_id=warehouse.company_id
+            )
+            .select_related("product")
+            .order_by("product__name")
+        ):
+            if ps.quantity_available <= 0:
+                continue
+            p = ps.product
+            items.append(
+                {
+                    "product_id": str(p.id),
+                    "product_name": p.name,
+                    "sku": p.sku,
+                    "unit": p.unit,
+                    "quantity_available": f"{ps.quantity_available:.3f}",
+                }
+            )
+        return Response(
+            {
+                "warehouse_id": str(warehouse.id),
+                "warehouse_name": warehouse.name,
+                "items": items,
+            }
         )
 
 

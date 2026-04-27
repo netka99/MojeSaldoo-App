@@ -18,6 +18,13 @@ function formatMoney(value: string | number): string {
   return pln.format(n);
 }
 
+function formatTotalStock(value: string | number | undefined): string {
+  if (value === undefined || value === null) return '—';
+  const n = typeof value === 'string' ? Number.parseFloat(value) : value;
+  if (Number.isNaN(n)) return '—';
+  return n.toLocaleString('pl-PL', { maximumFractionDigits: 3 });
+}
+
 export interface ProductListProps {
   onEdit?: (product: Product) => void;
   onDelete?: (product: Product) => void;
@@ -112,6 +119,10 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                 <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <span>Unit: {p.unit || '—'}</span>
                   <span className="text-right font-medium text-foreground">{formatMoney(p.price_gross)}</span>
+                  <span className="col-span-2">
+                    Stock (all warehouses):{' '}
+                    <span className="font-medium text-foreground tabular-nums">{formatTotalStock(p.stock_total)}</span>
+                  </span>
                   <span className="col-span-2 truncate">SKU: {p.sku ?? '—'}</span>
                 </div>
                 <div className="pt-1" onClick={(e) => e.stopPropagation()}>
@@ -185,7 +196,10 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                   Status
                 </th>
                 <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                  Stock
+                  Stock (Σ)
+                </th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
+                  Adjust
                 </th>
                 {(onEdit || onDelete) && (
                   <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
@@ -218,6 +232,9 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                     >
                       {p.is_active ? 'Active' : 'Inactive'}
                     </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-foreground">
+                    {formatTotalStock(p.stock_total)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div onClick={(e) => e.stopPropagation()}>

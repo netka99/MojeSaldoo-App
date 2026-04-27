@@ -16,8 +16,10 @@ export type DeliveryDocumentStatus =
 /** One line on a delivery document (read shape from API). */
 export interface DeliveryItem {
   id: string;
-  order_item_id: string;
+  order_item_id: string | null;
   product_id: string;
+  /** From linked product (API); present for MM/PZ lines without order_item. */
+  product_name?: string | null;
   quantity_planned: string | number;
   quantity_actual: string | number | null;
   quantity_returned: string | number;
@@ -31,7 +33,7 @@ export interface DeliveryItem {
 export interface DeliveryDocument {
   id: string;
   company: string;
-  order_id: string;
+  order_id: string | null;
   /** From linked order (read-only API). */
   order_number: string | null;
   /** From linked order's customer (read-only API). */
