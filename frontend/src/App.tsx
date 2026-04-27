@@ -53,6 +53,13 @@ const DeliveryDocumentsPage = lazy(() =>
 const DeliveryDocumentDetailPage = lazy(() =>
   import('./pages/DeliveryDocumentDetailPage').then((m) => ({ default: m.DeliveryDocumentDetailPage })),
 );
+const InvoicesPage = lazy(() => import('./pages/InvoicesPage').then((m) => ({ default: m.InvoicesPage })));
+const InvoiceCreatePage = lazy(() =>
+  import('./pages/InvoiceCreatePage').then((m) => ({ default: m.InvoiceCreatePage })),
+);
+const InvoiceDetailPage = lazy(() =>
+  import('./pages/InvoiceDetailPage').then((m) => ({ default: m.InvoiceDetailPage })),
+);
 
 function RouteFallback() {
   return (
@@ -184,7 +191,23 @@ function App() {
                   path="/invoices"
                   element={
                     <ModuleRouteGate module="invoicing">
-                      <AppPlaceholderPage title="Invoices" />
+                      <InvoicesPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/new"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <InvoiceCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/:id"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <InvoiceDetailPage />
                     </ModuleRouteGate>
                   }
                 />

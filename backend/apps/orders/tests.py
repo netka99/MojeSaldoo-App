@@ -65,6 +65,50 @@ class OrderApiTests(TestCase):
         self.assertIn("results", response.data)
         self.assertGreaterEqual(response.data["count"], 1)
 
+    def test_order_list_without_invoice_returns_confirmed_or_delivered_uninvoiced(self):
+        from apps.invoices.models import Invoice
+
+        self.client.force_authenticate(user=self.user)
+        o_delivered = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 5, 1),
+            delivery_date=date(2026, 5, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        o_confirmed = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 5, 3),
+            delivery_date=date(2026, 5, 14),
+            status=Order.STATUS_CONFIRMED,
+        )
+        o_invoiced = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 5, 2),
+            delivery_date=date(2026, 5, 12),
+            status=Order.STATUS_DELIVERED,
+        )
+        Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=o_invoiced,
+            customer=self.customer,
+            issue_date=date(2026, 5, 13),
+            sale_date=date(2026, 5, 13),
+            due_date=date(2026, 5, 27),
+        )
+        r = self.client.get(reverse("order-list"), {"without_invoice": "true"})
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        ids = {row["id"] for row in r.data["results"]}
+        self.assertIn(str(o_delivered.id), ids)
+        self.assertIn(str(o_confirmed.id), ids)
+        self.assertNotIn(str(o_invoiced.id), ids)
+
     def test_create_order_accepts_customer_id_and_items(self):
         self.client.force_authenticate(user=self.user)
         body = {

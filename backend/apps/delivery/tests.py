@@ -653,6 +653,38 @@ class DeliveryDocumentAPITests(TestCase):
         oi = OrderItem.objects.get(order=o)
         self.assertEqual(oi.quantity_delivered, Decimal("2.00"))
         self.assertEqual(oi.quantity_returned, Decimal("1.00"))
+        o.refresh_from_db()
+        self.assertEqual(
+            o.status,
+            Order.STATUS_CONFIRMED,
+            "Partial delivery must not mark the order as delivered.",
+        )
+
+    def test_post_complete_marks_order_delivered_when_fully_delivered(self):
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        gen = self.client.get(self._url_generate(o.id))
+        self.assertEqual(gen.status_code, status.HTTP_201_CREATED, gen.data)
+        doc_id = gen.data["id"]
+        line_id = gen.data["items"][0]["id"]
+        self.client.post(self._url_save(doc_id))
+        self.client.post(self._url_start_delivery(doc_id))
+        r = self.client.post(
+            self._url_complete(doc_id),
+            data={
+                "items": [
+                    {
+                        "id": line_id,
+                        "quantity_actual": "4.00",
+                        "quantity_returned": "0",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        o.refresh_from_db()
+        self.assertEqual(o.status, Order.STATUS_DELIVERED)
 
     def test_post_start_delivery_wrong_status_returns_400(self):
         self.client.force_authenticate(user=self.user)

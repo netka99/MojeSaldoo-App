@@ -49,6 +49,19 @@ describe('orderService', () => {
     });
   });
 
+  it('fetchList passes without_invoice when set', async () => {
+    const page = { count: 0, next: null, previous: null, results: [] };
+    mocks.get.mockResolvedValue(page);
+    await orderService.fetchList({ page: 1, without_invoice: true, ordering: '-delivery_date' });
+    expect(mocks.get).toHaveBeenCalledWith('/orders/', {
+      params: {
+        page: 1,
+        without_invoice: true,
+        ordering: '-delivery_date',
+      },
+    });
+  });
+
   it('fetchList calls GET /orders/ without config when no params', async () => {
     const page = { count: 0, next: null, previous: null, results: [] };
     mocks.get.mockResolvedValue(page);

@@ -203,6 +203,18 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 ]
             )
 
+            order = Order.objects.select_for_update().get(pk=doc.order_id)
+            lines = list(order.items.all())
+            if lines and all(
+                (oi.quantity_delivered or Decimal("0")) >= oi.quantity for oi in lines
+            ):
+                if order.status not in (
+                    Order.STATUS_DELIVERED,
+                    Order.STATUS_INVOICED,
+                    Order.STATUS_CANCELLED,
+                ):
+                    order.update_status(Order.STATUS_DELIVERED)
+
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
 

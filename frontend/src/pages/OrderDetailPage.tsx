@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { buildOrderStatusHistory, isOrderCancellableStatus } from '@/lib/order-status-history';
 import { orderStatusBadgeClassName } from '@/pages/OrdersPage';
+import { useGenerateDeliveryForOrderMutation } from '@/query/use-delivery';
 import {
   useCancelOrderMutation,
   useConfirmOrderMutation,
@@ -48,6 +49,7 @@ export function OrderDetailPage() {
   const { data: order, isLoading, isError, error, refetch, isFetching } = useOrderQuery(id, Boolean(id));
   const confirmM = useConfirmOrderMutation();
   const cancelM = useCancelOrderMutation();
+  const generateWzM = useGenerateDeliveryForOrderMutation();
   const [actionError, setActionError] = useState<string | null>(null);
 
   if (!authStorage.getAccessToken()) {
@@ -77,6 +79,17 @@ export function OrderDetailPage() {
     setActionError(null);
     try {
       await cancelM.mutateAsync(id);
+    } catch (e) {
+      setActionError(errMsg(e));
+    }
+  };
+
+  const onCreateWz = async () => {
+    if (!id || order?.status !== 'confirmed') return;
+    setActionError(null);
+    try {
+      const doc = await generateWzM.mutateAsync(id);
+      navigate(`/delivery/${doc.id}`);
     } catch (e) {
       setActionError(errMsg(e));
     }
@@ -152,10 +165,39 @@ export function OrderDetailPage() {
                 {cancelM.isPending ? 'Anulowanie…' : 'Anuluj'}
               </Button>
             )}
-            <Button type="button" variant="secondary" size="default" disabled title="Funkcja w przygotowaniu">
-              Utwórz WZ
-            </Button>
-            <p className="w-full text-xs text-muted-foreground sm:w-auto sm:self-center">WZ — wkrótce (powiązanie z magazynem)</p>
+            {order.status === 'confirmed' ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="default"
+                onClick={() => void onCreateWz()}
+                disabled={generateWzM.isPending}
+                aria-busy={generateWzM.isPending}
+              >
+                {generateWzM.isPending ? 'Tworzenie WZ…' : 'Utwórz WZ'}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                size="default"
+                disabled
+                title={
+                  order.status === 'draft'
+                    ? 'Najpierw potwierdź zamówienie'
+                    : 'WZ można utworzyć tylko dla zamówienia potwierdzonego'
+                }
+              >
+                Utwórz WZ
+              </Button>
+            )}
+            <p className="w-full text-xs text-muted-foreground sm:w-auto sm:self-center">
+              {order.status === 'confirmed'
+                ? 'Fakturę możesz wystawić od razu (Faktury → nowa z zamówienia). WZ jest opcjonalne — jeśli z niego korzystasz: zapisz, rozpocznij i zakończ dostawę.'
+                : order.status === 'draft'
+                  ? 'Po potwierdzeniu zamówienia możesz wystawić fakturę lub utworzyć WZ.'
+                  : 'Fakturę wystawisz przy zamówieniu potwierdzonym lub dostarczonym, bez wcześniejszej faktury.'}
+            </p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">

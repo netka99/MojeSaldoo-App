@@ -13,6 +13,15 @@ import type { Order } from '@/types';
 const useOrderQueryMock = vi.hoisted(() => vi.fn());
 const confirmAsync = vi.hoisted(() => vi.fn().mockResolvedValue({} as Order));
 const cancelAsync = vi.hoisted(() => vi.fn().mockResolvedValue({} as Order));
+const generateWzAsync = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'doc-wz-1' }));
+
+vi.mock('@/query/use-delivery', () => ({
+  useGenerateDeliveryForOrderMutation: () => ({
+    mutateAsync: generateWzAsync,
+    isPending: false,
+    isError: false,
+  }),
+}));
 
 vi.mock('@/query/use-orders', () => ({
   useOrderQuery: (id: string | undefined, en?: boolean) => useOrderQueryMock(id, en),
@@ -80,6 +89,7 @@ function renderWithRoute(order: Order) {
       <MemoryRouter initialEntries={['/orders/ord-x']}>
         <Routes>
           <Route path="/orders/:id" element={<OrderDetailPage />} />
+          <Route path="/delivery/:id" element={<div data-testid="delivery-detail">WZ</div>} />
         </Routes>
       </MemoryRouter>
     </TestQueryProvider>,
@@ -130,10 +140,22 @@ describe('OrderDetailPage', () => {
     expect(screen.getByRole('button', { name: 'Anuluj' })).toBeInTheDocument();
   });
 
-  it('WZ button is disabled (future feature)', () => {
+  it('WZ button is disabled for draft (confirm order first)', () => {
     renderWithRoute(makeOrder());
     const wz = screen.getByRole('button', { name: 'Utwórz WZ' });
     expect(wz).toBeDisabled();
+  });
+
+  it('Utwórz WZ generates document and opens delivery detail when confirmed', async () => {
+    const user = userEvent.setup();
+    renderWithRoute(makeOrder({ status: 'confirmed', confirmed_at: '2026-02-01T10:00:00.000Z' }));
+    const wz = screen.getByRole('button', { name: 'Utwórz WZ' });
+    expect(wz).not.toBeDisabled();
+    await user.click(wz);
+    await waitFor(() => {
+      expect(generateWzAsync).toHaveBeenCalledWith('ord-x');
+    });
+    expect(await screen.findByTestId('delivery-detail')).toBeInTheDocument();
   });
 
   it('does not show Potwierdź when status is confirmed', () => {

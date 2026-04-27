@@ -14,6 +14,8 @@ export type OrderListParams = {
   delivery_date?: string;
   delivery_date_after?: string;
   delivery_date_before?: string;
+  /** Delivered orders that have no invoice yet (django-filter). */
+  without_invoice?: boolean;
 };
 
 export const orderService = {

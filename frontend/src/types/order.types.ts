@@ -42,6 +42,8 @@ export interface Order {
   id: string;
   customer_id: string;
   customer_name: string;
+  /** Days until due from issue date when generating invoice; from `customer.payment_terms`. */
+  customer_payment_terms?: number | null;
   company: string;
   user: number | null;
   order_number: string | null;

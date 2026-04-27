@@ -78,6 +78,10 @@ class OrderSerializer(serializers.ModelSerializer):
     order_date = serializers.DateField(required=False, allow_null=True)
     items = OrderItemSerializer(many=True, required=False, allow_empty=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
+    customer_payment_terms = serializers.IntegerField(
+        source="customer.payment_terms",
+        read_only=True,
+    )
 
     class Meta:
         model = Order
@@ -85,6 +89,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "id",
             "customer_id",
             "customer_name",
+            "customer_payment_terms",
             "company",
             "user",
             "order_number",

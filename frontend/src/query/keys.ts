@@ -1,4 +1,5 @@
 import type { DeliveryListParams } from '@/services/delivery.service';
+import type { InvoiceListParams } from '@/services/invoice.service';
 import type { OrderListParams } from '@/services/order.service';
 
 export const customerKeys = {
@@ -54,4 +55,20 @@ export const deliveryKeys = {
   list: (params: DeliveryListKeyParams) => [...deliveryKeys.lists(), params] as const,
   details: () => [...deliveryKeys.all, 'detail'] as const,
   detail: (id: string) => [...deliveryKeys.details(), id] as const,
+};
+
+/** List cache key: page + active company (and future filters from `InvoiceListParams`). */
+export type InvoiceListKeyParams = Omit<InvoiceListParams, 'page'> & {
+  page: number;
+  companyId: string;
+};
+
+export const invoiceKeys = {
+  all: ['invoices'] as const,
+  lists: () => [...invoiceKeys.all, 'list'] as const,
+  list: (params: InvoiceListKeyParams) => [...invoiceKeys.lists(), params] as const,
+  details: () => [...invoiceKeys.all, 'detail'] as const,
+  detail: (id: string) => [...invoiceKeys.details(), id] as const,
+  previews: () => [...invoiceKeys.all, 'preview'] as const,
+  preview: (id: string) => [...invoiceKeys.previews(), id] as const,
 };
