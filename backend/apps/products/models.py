@@ -188,6 +188,7 @@ class StockMovement(models.Model):
         ADJUSTMENT = "adjustment", "Adjustment"
         TRANSFER = "transfer", "Transfer"
         DAMAGE = "damage", "Damage"
+        RESERVATION = "reservation", "Reservation"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)

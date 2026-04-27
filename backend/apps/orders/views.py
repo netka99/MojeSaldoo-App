@@ -1,12 +1,17 @@
+from collections import defaultdict
+from decimal import Decimal
+
+from django.db import transaction
 from django.db.models import QuerySet
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from django.utils import timezone
-
+from apps.products.models import ProductStock, StockMovement, Warehouse
 from apps.users.permissions import IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
@@ -70,10 +75,115 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"error": "Only draft orders can be confirmed"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        order.status = Order.STATUS_CONFIRMED
-        if not order.confirmed_at:
-            order.confirmed_at = timezone.now()
-        order.save()
+
+        with transaction.atomic():
+            order = (
+                Order.objects.select_for_update()
+                .select_related("company")
+                .prefetch_related("items", "items__product")
+                .get(pk=order.pk)
+            )
+            if order.status != Order.STATUS_DRAFT:
+                return Response(
+                    {"error": "Only draft orders can be confirmed"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            items = list(order.items.all())
+            main_wh = None
+            if items:
+                main_wh = (
+                    Warehouse.objects.select_for_update()
+                    .filter(
+                        company_id=order.company_id,
+                        warehouse_type=Warehouse.WarehouseType.MAIN,
+                        is_active=True,
+                    )
+                    .order_by("code")
+                    .first()
+                )
+                if main_wh is None:
+                    raise ValidationError(
+                        {
+                            "warehouse": (
+                                "No active main warehouse found for this company. "
+                                "Configure a warehouse with type 'main' before confirming orders."
+                            )
+                        }
+                    )
+
+            stocks_by_product = {}
+            if items:
+                product_ids = sorted({item.product_id for item in items})
+                for pid in product_ids:
+                    stock, _created = ProductStock.objects.get_or_create(
+                        company_id=order.company_id,
+                        product_id=pid,
+                        warehouse=main_wh,
+                        defaults={
+                            "quantity_available": Decimal("0"),
+                            "quantity_reserved": Decimal("0"),
+                            "quantity_total": Decimal("0"),
+                        },
+                    )
+                    stock = ProductStock.objects.select_for_update().get(pk=stock.pk)
+                    stocks_by_product[pid] = stock
+
+                needed = defaultdict(Decimal)
+                for item in items:
+                    needed[item.product_id] += item.quantity
+
+                shortfalls = []
+                for pid, need_qty in sorted(needed.items(), key=lambda x: str(x[0])):
+                    stock = stocks_by_product[pid]
+                    if stock.quantity_available < need_qty:
+                        line = next(i for i in items if i.product_id == pid)
+                        shortfalls.append(
+                            {
+                                "product_id": str(pid),
+                                "product_name": line.product.name,
+                                "quantity_available": str(stock.quantity_available),
+                                "quantity_requested": str(need_qty),
+                                "short_by": str(need_qty - stock.quantity_available),
+                            }
+                        )
+                if shortfalls:
+                    raise ValidationError({"stock": shortfalls})
+
+            movement_user = order.user or request.user
+            for item in items:
+                stock = stocks_by_product[item.product_id]
+                qty = item.quantity
+                qty_before_avail = stock.quantity_available
+                stock.quantity_available -= qty
+                stock.quantity_reserved += qty
+                stock.quantity_total = stock.quantity_available + stock.quantity_reserved
+                stock.save(
+                    update_fields=[
+                        "quantity_available",
+                        "quantity_reserved",
+                        "quantity_total",
+                    ]
+                )
+                StockMovement.objects.create(
+                    company_id=order.company_id,
+                    product_id=item.product_id,
+                    warehouse=main_wh,
+                    user=movement_user,
+                    movement_type=StockMovement.MovementType.RESERVATION,
+                    quantity=-qty,
+                    quantity_before=qty_before_avail,
+                    quantity_after=stock.quantity_available,
+                    reference_type="order",
+                    reference_id=order.id,
+                    created_by=request.user,
+                )
+
+            order.status = Order.STATUS_CONFIRMED
+            if not order.confirmed_at:
+                order.confirmed_at = timezone.now()
+            order.save()
+
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="cancel")

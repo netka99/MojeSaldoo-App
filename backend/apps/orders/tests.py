@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 
 from apps.customers.models import Customer
 from apps.orders.models import Order, OrderItem
-from apps.products.models import Product
+from apps.products.models import Product, ProductStock, StockMovement, Warehouse
 from apps.users.models import Company, CompanyMembership
 
 
@@ -211,6 +211,259 @@ class OrderApiTests(TestCase):
         r = self.client.post(self._url_confirm(o.id))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", r.data)
+
+    def test_post_confirm_with_items_requires_main_warehouse(self):
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("warehouse", r.data)
+
+    def test_post_confirm_insufficient_stock_returns_400_and_no_partial_reserve(self):
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=wh,
+            quantity_available=Decimal("2"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("2"),
+        )
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("5"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        o.refresh_from_db()
+        self.assertEqual(o.status, Order.STATUS_DRAFT)
+        stock = ProductStock.objects.get(product=self.product, warehouse=wh)
+        self.assertEqual(stock.quantity_available, Decimal("2"))
+        self.assertEqual(stock.quantity_reserved, Decimal("0"))
+        self.assertEqual(StockMovement.objects.filter(reference_id=o.id).count(), 0)
+
+    def test_post_confirm_reserves_stock_and_writes_movements(self):
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=wh,
+            quantity_available=Decimal("10"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("10"),
+        )
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("3"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["status"], Order.STATUS_CONFIRMED)
+        stock = ProductStock.objects.get(product=self.product, warehouse=wh)
+        self.assertEqual(stock.quantity_available, Decimal("7"))
+        self.assertEqual(stock.quantity_reserved, Decimal("3"))
+        self.assertEqual(stock.quantity_total, Decimal("10"))
+        mov = StockMovement.objects.get(reference_id=o.id)
+        self.assertEqual(mov.movement_type, StockMovement.MovementType.RESERVATION)
+        self.assertEqual(mov.quantity, Decimal("-3"))
+        self.assertEqual(mov.reference_type, "order")
+        self.assertEqual(mov.quantity_before, Decimal("10"))
+        self.assertEqual(mov.quantity_after, Decimal("7"))
+
+    def test_post_confirm_two_lines_same_product_reserves_cumulative_and_two_movements(
+        self,
+    ):
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=wh,
+            quantity_available=Decimal("10"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("10"),
+        )
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        for qty in (Decimal("2"), Decimal("3")):
+            OrderItem.objects.create(
+                order=o,
+                product=self.product,
+                quantity=qty,
+                unit_price_net=Decimal("1.00"),
+                unit_price_gross=Decimal("1.00"),
+                vat_rate=Decimal("0.00"),
+                discount_percent=Decimal("0.00"),
+            )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        stock = ProductStock.objects.get(product=self.product, warehouse=wh)
+        self.assertEqual(stock.quantity_available, Decimal("5"))
+        self.assertEqual(stock.quantity_reserved, Decimal("5"))
+        movements = StockMovement.objects.filter(reference_id=o.id).order_by(
+            "quantity_after"
+        )
+        self.assertEqual(movements.count(), 2)
+        self.assertEqual(
+            {m.quantity for m in movements},
+            {Decimal("-2"), Decimal("-3")},
+        )
+
+    def test_post_confirm_two_products_short_on_one_rolls_back_all(self):
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        p2 = Product.objects.create(
+            name="Second",
+            company=self.co,
+            unit="szt",
+            price_net=Decimal("1.00"),
+            price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=wh,
+            quantity_available=Decimal("100"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("100"),
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=p2,
+            warehouse=wh,
+            quantity_available=Decimal("1"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("1"),
+        )
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("5"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        OrderItem.objects.create(
+            order=o,
+            product=p2,
+            quantity=Decimal("3"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        o.refresh_from_db()
+        self.assertEqual(o.status, Order.STATUS_DRAFT)
+        s1 = ProductStock.objects.get(product=self.product, warehouse=wh)
+        s2 = ProductStock.objects.get(product=p2, warehouse=wh)
+        self.assertEqual(s1.quantity_available, Decimal("100"))
+        self.assertEqual(s2.quantity_available, Decimal("1"))
+        self.assertEqual(StockMovement.objects.filter(reference_id=o.id).count(), 0)
+
+    def test_post_confirm_without_productstock_row_shortfall_uses_zero_available(self):
+        wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("stock", r.data)
+        self.assertFalse(
+            ProductStock.objects.filter(
+                product=self.product, warehouse=wh
+            ).exists()
+        )
+
+    def test_post_confirm_inactive_main_warehouse_rejected(self):
+        Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+            is_active=False,
+        )
+        self._auth()
+        o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
+        OrderItem.objects.create(
+            order=o,
+            product=self.product,
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(self._url_confirm(o.id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("warehouse", r.data)
 
     def test_post_cancel_draft_succeeds(self):
         self._auth()

@@ -60,6 +60,9 @@ const InvoiceCreatePage = lazy(() =>
 const InvoiceDetailPage = lazy(() =>
   import('./pages/InvoiceDetailPage').then((m) => ({ default: m.InvoiceDetailPage })),
 );
+const ReportsPage = lazy(() =>
+  import('./pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
+);
 
 function RouteFallback() {
   return (
@@ -215,7 +218,7 @@ function App() {
                   path="/reports"
                   element={
                     <ModuleRouteGate module="reporting">
-                      <AppPlaceholderPage title="Reports" />
+                      <ReportsPage />
                     </ModuleRouteGate>
                   }
                 />

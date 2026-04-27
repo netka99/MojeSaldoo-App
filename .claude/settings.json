@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -1d \"d:\\\\Work\\\\MojeSaldoo App/backend/apps\"/*/)"
+    ]
+  }
+}

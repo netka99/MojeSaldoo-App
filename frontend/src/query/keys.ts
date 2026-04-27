@@ -72,3 +72,31 @@ export const invoiceKeys = {
   previews: () => [...invoiceKeys.all, 'preview'] as const,
   preview: (id: string) => [...invoiceKeys.previews(), id] as const,
 };
+
+export type ReportRangeKeyParams = {
+  companyId: string;
+  dateFrom: string;
+  dateTo: string;
+};
+
+/** Cache key for `GET /reports/invoices/` — empty strings mean “no filter” for stable keys. */
+export type ReportingInvoicesListKeyParams = {
+  companyId: string;
+  page: number;
+  dateFrom: string;
+  dateTo: string;
+  status: string;
+};
+
+export const reportKeys = {
+  all: ['reports'] as const,
+  salesSummary: (p: ReportRangeKeyParams) => [...reportKeys.all, 'sales-summary', p] as const,
+  topProducts: (p: ReportRangeKeyParams & { limit: number }) =>
+    [...reportKeys.all, 'top-products', p] as const,
+  topCustomers: (p: ReportRangeKeyParams & { limit: number }) =>
+    [...reportKeys.all, 'top-customers', p] as const,
+  ksefStatus: (companyId: string) => [...reportKeys.all, 'ksef-status', companyId] as const,
+  reportingInvoices: (p: ReportingInvoicesListKeyParams) =>
+    [...reportKeys.all, 'invoices', p] as const,
+  inventory: (companyId: string) => [...reportKeys.all, 'inventory', companyId] as const,
+};
