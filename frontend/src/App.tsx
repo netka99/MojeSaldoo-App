@@ -50,6 +50,9 @@ const OrderDetailPage = lazy(() =>
 const DeliveryDocumentsPage = lazy(() =>
   import('./pages/DeliveryDocumentsPage').then((m) => ({ default: m.DeliveryDocumentsPage })),
 );
+const VanLoadingPage = lazy(() =>
+  import('./pages/VanLoadingPage').then((m) => ({ default: m.VanLoadingPage })),
+);
 const DeliveryDocumentDetailPage = lazy(() =>
   import('./pages/DeliveryDocumentDetailPage').then((m) => ({ default: m.DeliveryDocumentDetailPage })),
 );
@@ -179,6 +182,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="delivery">
                       <DeliveryDocumentsPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/delivery/van-loading"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <VanLoadingPage />
                     </ModuleRouteGate>
                   }
                 />

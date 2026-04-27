@@ -9,6 +9,40 @@ from apps.products.models import Warehouse
 from .models import DeliveryDocument, DeliveryItem
 
 
+class VanLoadingItemSerializer(serializers.Serializer):
+    product_id = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"))
+
+
+class VanLoadingSerializer(serializers.Serializer):
+    from_warehouse_id = serializers.UUIDField()
+    to_warehouse_id = serializers.UUIDField()
+    issue_date = serializers.DateField(required=False)
+    driver_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    notes = serializers.CharField(required=False, allow_blank=True)
+    items = VanLoadingItemSerializer(many=True)
+
+    def validate(self, data):
+        if not data.get("items"):
+            raise serializers.ValidationError(
+                {"items": "At least one line is required."}
+            )
+        return data
+
+
+class VanReconciliationItemSerializer(serializers.Serializer):
+    product_id = serializers.UUIDField()
+    quantity_actual_remaining = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal("0"),
+    )
+
+
+class VanReconciliationSerializer(serializers.Serializer):
+    items = VanReconciliationItemSerializer(many=True, allow_empty=True)
+
+
 class DeliveryItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeliveryItem
@@ -69,6 +103,8 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     order_id = serializers.PrimaryKeyRelatedField(
         queryset=Order.objects.all(),
         source="order",
+        required=False,
+        allow_null=True,
     )
     from_warehouse_id = serializers.PrimaryKeyRelatedField(
         queryset=Warehouse.objects.all(),
@@ -89,8 +125,8 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     items = DeliveryItemSerializer(many=True, read_only=True)
-    order_number = serializers.CharField(source="order.order_number", read_only=True)
-    customer_name = serializers.CharField(source="order.customer.name", read_only=True)
+    order_number = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -150,6 +186,25 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             self.fields["to_customer_id"].queryset = Customer.objects.filter(
                 company_id=cc_id
             )
+
+    def get_order_number(self, obj):
+        if obj.order_id:
+            return obj.order.order_number
+        return None
+
+    def get_customer_name(self, obj):
+        if obj.order_id and obj.order.customer_id:
+            return obj.order.customer.name
+        return None
+
+    def validate(self, data):
+        doc_type = data.get("document_type")
+        order = data.get("order")
+        if not self.instance and doc_type != DeliveryDocument.DOC_TYPE_MM and not order:
+            raise serializers.ValidationError(
+                {"order_id": "This field is required for this document type."}
+            )
+        return data
 
     def validate_order(self, order: Order):
         request = self.context.get("request")

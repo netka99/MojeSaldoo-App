@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -76,6 +76,7 @@ export function DeliveryDocumentsPage() {
 }
 
 function DeliveryDocumentsPageContent() {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<'' | DeliveryDocumentStatus>('');
   const [dateFrom, setDateFrom] = useState('');
@@ -126,7 +127,9 @@ function DeliveryDocumentsPageContent() {
   return (
     <div className="space-y-4 p-6">
       <div className="mx-auto flex max-w-6xl flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-foreground">Dokumenty WZ</h1>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-semibold text-foreground">Dokumenty WZ</h1>
+        </div>
 
         <Card className="w-full shadow-sm">
           <CardHeader className="border-b border-border pb-4">
@@ -170,15 +173,20 @@ function DeliveryDocumentsPageContent() {
                   ))}
                 </select>
               </div>
-              <Button
-                type="button"
-                className="sm:shrink-0"
-                disabled={!selectedOrderId || generateMutation.isPending}
-                onClick={handleGenerateWz}
-                id="delivery-generate-wz"
-              >
-                {generateMutation.isPending ? 'Generowanie…' : 'Generuj WZ'}
-              </Button>
+              <div className="flex flex-wrap items-end gap-2 sm:shrink-0">
+                <Button
+                  type="button"
+                  className="sm:shrink-0"
+                  disabled={!selectedOrderId || generateMutation.isPending}
+                  onClick={handleGenerateWz}
+                  id="delivery-generate-wz"
+                >
+                  {generateMutation.isPending ? 'Generowanie…' : 'Generuj WZ'}
+                </Button>
+                <Button variant="secondary" onClick={() => navigate('/delivery/van-loading')}>
+                  Załaduj Van
+                </Button>
+              </div>
             </div>
             {generateError && (
               <p className="mt-3 text-sm text-destructive" role="alert">

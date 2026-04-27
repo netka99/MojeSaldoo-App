@@ -11,6 +11,7 @@ interface PaginatedResponse<T> {
 /** Query params aligned with `ProductViewSet` filters, search, ordering, and `page`. */
 export type ProductListParams = {
   page?: number;
+  page_size?: number;
   search?: string;
   ordering?: string;
   name?: string;

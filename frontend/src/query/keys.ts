@@ -19,10 +19,20 @@ export const productKeys = {
   detail: (id: string) => [...productKeys.details(), id] as const,
 };
 
+/** List cache key — include filter fields so main/mobile (and `companyId`) do not clash. */
+export type WarehouseListKeyParams = {
+  page: number;
+  companyId?: string;
+  page_size?: number;
+  warehouse_type?: string;
+  is_active?: boolean;
+  ordering?: string;
+};
+
 export const warehouseKeys = {
   all: ['warehouses'] as const,
   lists: () => [...warehouseKeys.all, 'list'] as const,
-  list: (params: { page: number }) => [...warehouseKeys.lists(), params] as const,
+  list: (params: WarehouseListKeyParams) => [...warehouseKeys.lists(), params] as const,
   details: () => [...warehouseKeys.all, 'detail'] as const,
   detail: (id: string) => [...warehouseKeys.details(), id] as const,
 };

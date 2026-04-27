@@ -100,3 +100,17 @@ export interface PaginatedDeliveryDocuments {
   previous: string | null;
   results: DeliveryDocument[];
 }
+
+export interface VanLoadingItemPayload {
+  product_id: string;
+  quantity: string; // decimal string, e.g. "10.000"
+}
+
+export interface VanLoadingPayload {
+  from_warehouse_id: string;
+  to_warehouse_id: string;
+  issue_date: string; // "YYYY-MM-DD"
+  driver_name?: string;
+  notes?: string;
+  items: VanLoadingItemPayload[];
+}

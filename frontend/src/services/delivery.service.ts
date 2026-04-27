@@ -5,6 +5,7 @@ import type {
   DeliveryDocumentCreate,
   DeliveryDocumentPatch,
   PaginatedDeliveryDocuments,
+  VanLoadingPayload,
 } from '../types';
 
 /**
@@ -48,4 +49,7 @@ export const deliveryService = {
   /** `GET` — creates draft WZ from confirmed order (remaining quantities per line on the server). */
   generateForOrder: (orderId: string) =>
     api.get<DeliveryDocument>(`${basePath}generate-for-order/${orderId}/`),
+
+  vanLoading: (data: VanLoadingPayload) =>
+    api.post<DeliveryDocument>('/delivery/van-loading/', data),
 };

@@ -13,14 +13,23 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.orders.models import Order
-from apps.products.models import ProductStock, StockMovement
+from apps.products.models import ProductStock, StockMovement, Warehouse
 from apps.users.permissions import IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .filters import DeliveryDocumentFilter
 from .models import DeliveryDocument, DeliveryItem
-from .serializers import DeliveryCompleteSerializer, DeliveryDocumentSerializer
-from .services import active_main_warehouse_for_company
+from .serializers import (
+    DeliveryCompleteSerializer,
+    DeliveryDocumentSerializer,
+    VanLoadingSerializer,
+    VanReconciliationSerializer,
+)
+from .services import (
+    active_main_warehouse_for_company,
+    apply_van_reconciliation,
+    create_van_loading_mm,
+)
 
 
 class DeliveryDocumentViewSet(viewsets.ModelViewSet):
@@ -335,20 +344,83 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 ]
             )
 
-            order = Order.objects.select_for_update().get(pk=doc.order_id)
-            lines = list(order.items.all())
-            if lines and all(
-                (oi.quantity_delivered or Decimal("0")) >= oi.quantity for oi in lines
-            ):
-                if order.status not in (
-                    Order.STATUS_DELIVERED,
-                    Order.STATUS_INVOICED,
-                    Order.STATUS_CANCELLED,
+            if doc.order_id:
+                order = Order.objects.select_for_update().get(pk=doc.order_id)
+                lines = list(order.items.all())
+                if lines and all(
+                    (oi.quantity_delivered or Decimal("0")) >= oi.quantity for oi in lines
                 ):
-                    order.update_status(Order.STATUS_DELIVERED)
+                    if order.status not in (
+                        Order.STATUS_DELIVERED,
+                        Order.STATUS_INVOICED,
+                        Order.STATUS_CANCELLED,
+                    ):
+                        order.update_status(Order.STATUS_DELIVERED)
 
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
+
+    @action(detail=False, methods=["post"], url_path="van-loading")
+    def van_loading(self, request):
+        """Create MM (main → mobile), move ``quantity_available``, return the document."""
+        ser = VanLoadingSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        company_id = request.user.current_company_id
+        data = ser.validated_data
+        from_wh = get_object_or_404(
+            Warehouse.objects.filter(company_id=company_id),
+            pk=data["from_warehouse_id"],
+        )
+        to_wh = get_object_or_404(
+            Warehouse.objects.filter(company_id=company_id),
+            pk=data["to_warehouse_id"],
+        )
+        items = [
+            {"product_id": row["product_id"], "quantity": row["quantity"]}
+            for row in data["items"]
+        ]
+        doc = create_van_loading_mm(
+            company_id=company_id,
+            user=request.user,
+            from_warehouse=from_wh,
+            to_warehouse=to_wh,
+            items=items,
+            issue_date=data.get("issue_date"),
+            driver_name=(data.get("driver_name") or "").strip(),
+            notes=(data.get("notes") or "").strip(),
+        )
+        out = DeliveryDocumentSerializer(doc, context={"request": request})
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path=r"van-reconciliation/(?P<van_warehouse_id>[^/.]+)",
+    )
+    def van_reconciliation(self, request, van_warehouse_id=None):
+        """End-of-day van count: compare physical stock to MV book and write movements."""
+        ser = VanReconciliationSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        company_id = request.user.current_company_id
+        van_wh = get_object_or_404(
+            Warehouse.objects.filter(company_id=company_id),
+            pk=van_warehouse_id,
+        )
+        rows = ser.validated_data.get("items") or []
+        items = [
+            {
+                "product_id": row["product_id"],
+                "quantity_actual_remaining": row["quantity_actual_remaining"],
+            }
+            for row in rows
+        ]
+        summary = apply_van_reconciliation(
+            company_id=company_id,
+            user=request.user,
+            van_warehouse=van_wh,
+            items=items,
+        )
+        return Response(summary, status=status.HTTP_200_OK)
 
     @action(
         detail=False,

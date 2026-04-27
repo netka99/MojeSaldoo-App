@@ -10,9 +10,11 @@ interface PaginatedResponse<T> {
 
 export type WarehouseListParams = {
   page?: number;
+  page_size?: number;
   ordering?: string;
   code?: string;
   is_active?: boolean;
+  warehouse_type?: 'main' | 'mobile' | 'customer' | 'external';
 };
 
 export const warehouseService = {

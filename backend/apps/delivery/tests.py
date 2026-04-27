@@ -1434,3 +1434,680 @@ class GenerateDeliveryFromOrderTests(TestCase):
         )
         doc = generate_delivery_from_order(order)
         self.assertEqual(doc.items.count(), 0)
+
+
+class VanLoadingAPITests(TestCase):
+    """POST /api/delivery/van-loading/ — MM main→mobile and stock transfer."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="van-load-user",
+            email="van-load@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="Van Co")
+        CompanyMembership.objects.create(
+            user=self.user,
+            company=self.co,
+            role="admin",
+            is_active=True,
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.wh_main = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.wh_van = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MV1",
+            name="Van 1",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        self.product = Product.objects.create(
+            name="Stocked item",
+            company=self.co,
+            price_net=Decimal("10.00"),
+            price_gross=Decimal("12.30"),
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh_main,
+            quantity_available=Decimal("100.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+
+    def test_van_loading_creates_mm_and_moves_stock(self):
+        self.client.force_authenticate(user=self.user)
+        url = reverse("delivery-document-van-loading")
+        r = self.client.post(
+            url,
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [
+                    {"product_id": str(self.product.id), "quantity": "4.50"},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(r.data["document_type"], DeliveryDocument.DOC_TYPE_MM)
+        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_SAVED)
+        self.assertIsNone(r.data["order_id"])
+        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        self.assertEqual(doc.items.count(), 1)
+        line = doc.items.first()
+        self.assertIsNone(line.order_item_id)
+        self.assertEqual(line.quantity_planned, Decimal("4.50"))
+
+        main = ProductStock.objects.get(
+            product=self.product, warehouse=self.wh_main
+        )
+        van = ProductStock.objects.get(
+            product=self.product, warehouse=self.wh_van
+        )
+        self.assertEqual(main.quantity_available, Decimal("95.50"))
+        self.assertEqual(van.quantity_available, Decimal("4.50"))
+
+        moves = StockMovement.objects.filter(reference_id=doc.id).order_by("created_at")
+        self.assertEqual(moves.count(), 2)
+        self.assertEqual(moves[0].movement_type, StockMovement.MovementType.TRANSFER)
+        self.assertEqual(moves[0].quantity, Decimal("-4.50"))
+        self.assertEqual(moves[1].quantity, Decimal("4.50"))
+
+    def test_van_loading_rejects_non_main_source(self):
+        wh_other = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="XX",
+            name="Other",
+            warehouse_type=Warehouse.WarehouseType.EXTERNAL,
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(wh_other.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("from_warehouse_id", r.data)
+
+    def test_van_loading_requires_authentication(self):
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_van_loading_forbidden_without_current_company(self):
+        u = get_user_model().objects.create_user(
+            username="van-no-cc",
+            email="van-no-cc@test.com",
+            password="x",
+        )
+        CompanyMembership.objects.create(
+            user=u, company=self.co, role="viewer", is_active=True
+        )
+        self.client.force_authenticate(user=u)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_van_loading_rejects_non_mobile_destination(self):
+        wh_main2 = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG2",
+            name="Main 2",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(wh_main2.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("to_warehouse_id", r.data)
+
+    def test_van_loading_rejects_same_from_and_to(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_main.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_van_loading_insufficient_stock_returns_400(self):
+        ps = ProductStock.objects.get(
+            product=self.product, warehouse=self.wh_main
+        )
+        ps.quantity_available = Decimal("2.00")
+        ps.save(update_fields=["quantity_available"])
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "5"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("stock", r.data)
+        self.assertFalse(
+            DeliveryDocument.objects.filter(document_type=DeliveryDocument.DOC_TYPE_MM).exists()
+        )
+
+    def test_van_loading_duplicate_product_in_items_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [
+                    {"product_id": str(self.product.id), "quantity": "1"},
+                    {"product_id": str(self.product.id), "quantity": "2"},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("items", r.data)
+
+    def test_van_loading_unknown_product_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [{"product_id": str(uuid.uuid4()), "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("items", r.data)
+
+    def test_van_loading_empty_items_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("items", r.data)
+
+    def test_van_loading_foreign_warehouse_returns_404(self):
+        other = Company.objects.create(name="Foreign van co")
+        foreign_wh = Warehouse.objects.create(
+            user=self.user,
+            company=other,
+            code="FX",
+            name="Foreign",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(foreign_wh.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class VanReconciliationAPITests(TestCase):
+    """POST /api/delivery/van-reconciliation/{van_warehouse_id}/"""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="van-rec-user",
+            email="van-rec@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="Rec Co")
+        CompanyMembership.objects.create(
+            user=self.user,
+            company=self.co,
+            role="admin",
+            is_active=True,
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.wh_van = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MV1",
+            name="Van",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        self.p1 = Product.objects.create(
+            name="P1",
+            company=self.co,
+            price_net=Decimal("1.00"),
+            price_gross=Decimal("1.00"),
+        )
+        self.p2 = Product.objects.create(
+            name="P2",
+            company=self.co,
+            price_net=Decimal("2.00"),
+            price_gross=Decimal("2.00"),
+        )
+
+    def _url(self):
+        return reverse(
+            "delivery-document-van-reconciliation",
+            kwargs={"van_warehouse_id": str(self.wh_van.id)},
+        )
+
+    def test_reconciliation_shrinkage_records_damage(self):
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p1,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("10.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "8.00",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["items_processed"], 1)
+        self.assertEqual(len(r.data["discrepancies"]), 1)
+        d0 = r.data["discrepancies"][0]
+        self.assertEqual(d0["discrepancy_type"], "damage")
+        self.assertEqual(d0["quantity_expected"], "10.00")
+        self.assertEqual(d0["quantity_actual"], "8.00")
+        self.assertEqual(d0["quantity_delta"], "-2.00")
+
+        st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
+        self.assertEqual(st.quantity_available, Decimal("8.00"))
+
+        mv = StockMovement.objects.get(product=self.p1, warehouse=self.wh_van)
+        self.assertEqual(mv.movement_type, StockMovement.MovementType.DAMAGE)
+        self.assertEqual(mv.quantity, Decimal("-2.00"))
+        self.assertEqual(mv.quantity_before, Decimal("10.00"))
+        self.assertEqual(mv.quantity_after, Decimal("8.00"))
+
+    def test_reconciliation_overage_records_adjustment(self):
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p1,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("5.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "7.50",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["discrepancies"][0]["discrepancy_type"], "adjustment")
+        self.assertEqual(r.data["discrepancies"][0]["quantity_delta"], "2.50")
+
+        st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
+        self.assertEqual(st.quantity_available, Decimal("7.50"))
+        mv = StockMovement.objects.get(product=self.p1, warehouse=self.wh_van)
+        self.assertEqual(mv.movement_type, StockMovement.MovementType.ADJUSTMENT)
+        self.assertEqual(mv.quantity, Decimal("2.50"))
+
+    def test_reconciliation_no_discrepancy_no_movement(self):
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p1,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("4.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "4.00",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["discrepancies"], [])
+        self.assertEqual(StockMovement.objects.filter(product=self.p1).count(), 0)
+
+    def test_reconciliation_rejects_non_mobile_warehouse(self):
+        wh_main = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.client.force_authenticate(user=self.user)
+        url = reverse(
+            "delivery-document-van-reconciliation",
+            kwargs={"van_warehouse_id": str(wh_main.id)},
+        )
+        r = self.client.post(
+            url,
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "1",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("van_warehouse_id", r.data)
+
+    def test_reconciliation_empty_items(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={"items": []},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["items_processed"], 0)
+        self.assertEqual(r.data["discrepancies"], [])
+        self.assertIsNone(r.data["reconciliation_id"])
+
+    def test_reconciliation_requires_auth(self):
+        r = self.client.post(self._url(), data={"items": []}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_reconciliation_duplicate_product_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "1",
+                    },
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "2",
+                    },
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("items", r.data)
+
+    def test_reconciliation_unknown_product_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(uuid.uuid4()),
+                        "quantity_actual_remaining": "1",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("items", r.data)
+
+    def test_reconciliation_foreign_warehouse_returns_404(self):
+        other = Company.objects.create(name="Other rec")
+        foreign_van = Warehouse.objects.create(
+            user=self.user,
+            company=other,
+            code="FV",
+            name="Foreign van",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        self.client.force_authenticate(user=self.user)
+        url = reverse(
+            "delivery-document-van-reconciliation",
+            kwargs={"van_warehouse_id": str(foreign_van.id)},
+        )
+        r = self.client.post(
+            url,
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "1",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_reconciliation_forbidden_without_current_company(self):
+        u = get_user_model().objects.create_user(
+            username="rec-no-cc",
+            email="rec-no-cc@test.com",
+            password="x",
+        )
+        CompanyMembership.objects.create(
+            user=u, company=self.co, role="viewer", is_active=True
+        )
+        self.client.force_authenticate(user=u)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "0",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_reconciliation_multiple_products_mixed(self):
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p1,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("10.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p2,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("3.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "8.00",
+                    },
+                    {
+                        "product_id": str(self.p2.id),
+                        "quantity_actual_remaining": "3.00",
+                    },
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["items_processed"], 2)
+        self.assertEqual(len(r.data["discrepancies"]), 1)
+        self.assertEqual(r.data["discrepancies"][0]["product_id"], str(self.p1.id))
+        self.assertEqual(r.data["discrepancies"][0]["discrepancy_type"], "damage")
+
+        rid = r.data["reconciliation_id"]
+        ref = uuid.UUID(rid)
+        ids = set(
+            StockMovement.objects.filter(reference_id=ref).values_list(
+                "product_id", flat=True
+            )
+        )
+        self.assertEqual(ids, {self.p1.id})
+
+    def test_reconciliation_no_prior_stock_row_adjustment(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "5.25",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            Decimal(r.data["discrepancies"][0]["quantity_expected"]),
+            Decimal("0"),
+        )
+        self.assertEqual(r.data["discrepancies"][0]["discrepancy_type"], "adjustment")
+        st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
+        self.assertEqual(st.quantity_available, Decimal("5.25"))
+        self.assertEqual(st.quantity_total, Decimal("5.25"))
+
+    def test_reconciliation_expected_includes_reserved_shrinkage(self):
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p1,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("4.00"),
+            quantity_reserved=Decimal("6.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "8.00",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["discrepancies"][0]["quantity_expected"], "10.00")
+        self.assertEqual(r.data["discrepancies"][0]["quantity_delta"], "-2.00")
+        st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
+        self.assertEqual(st.quantity_reserved, Decimal("6.00"))
+        self.assertEqual(st.quantity_available, Decimal("2.00"))
+        self.assertEqual(st.quantity_total, Decimal("8.00"))
+
+    def test_reconciliation_batch_same_reference_id_all_movements(self):
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p1,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("10.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.p2,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("5.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url(),
+            data={
+                "items": [
+                    {
+                        "product_id": str(self.p1.id),
+                        "quantity_actual_remaining": "9.00",
+                    },
+                    {
+                        "product_id": str(self.p2.id),
+                        "quantity_actual_remaining": "3.00",
+                    },
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data["discrepancies"]), 2)
+        ref = uuid.UUID(r.data["reconciliation_id"])
+        counts = StockMovement.objects.filter(
+            reference_type="van_reconciliation",
+            reference_id=ref,
+        ).count()
+        self.assertEqual(counts, 2)

@@ -110,4 +110,16 @@ describe('deliveryService', () => {
     await deliveryService.generateForOrder('o-99');
     expect(mocks.get).toHaveBeenCalledWith('/delivery/generate-for-order/o-99/');
   });
+
+  it('vanLoading posts to /delivery/van-loading/', async () => {
+    const body = {
+      from_warehouse_id: 'w1',
+      to_warehouse_id: 'w2',
+      issue_date: '2026-04-27',
+      items: [{ product_id: 'p1', quantity: '2.00' }],
+    };
+    mocks.post.mockResolvedValue({ id: 'mm1' });
+    await deliveryService.vanLoading(body);
+    expect(mocks.post).toHaveBeenCalledWith('/delivery/van-loading/', body);
+  });
 });

@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { deliveryService, type DeliveryListParams } from '@/services/delivery.service';
-import type { DeliveryCompletePayload, DeliveryDocument, DeliveryDocumentCreate, DeliveryDocumentPatch } from '@/types';
+import type {
+  DeliveryCompletePayload,
+  DeliveryDocument,
+  DeliveryDocumentCreate,
+  DeliveryDocumentPatch,
+  VanLoadingPayload,
+} from '@/types';
 import { deliveryKeys, orderKeys } from './keys';
 
 /** Filters for `useDeliveryListQuery` (excludes `page` — pass page as the first argument). */
@@ -107,6 +113,16 @@ export function useGenerateDeliveryForOrderMutation() {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+export function useVanLoadingMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: VanLoadingPayload) => deliveryService.vanLoading(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
     },
   });
 }

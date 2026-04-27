@@ -14,7 +14,8 @@ from apps.products.models import Product, Warehouse
 
 class DeliveryDocument(models.Model):
     """
-    Outbound / transfer document (WZ, MM, PZ) linked to an order.
+    Outbound / transfer document (WZ, MM, PZ). WZ is typically linked to an order; MM
+    (inter-warehouse) may exist without a sales order (e.g. van loading).
     Document numbers are auto-assigned per company: ``{TYPE}/{year}/{seq:04d}``.
     """
 
@@ -52,6 +53,8 @@ class DeliveryDocument(models.Model):
         Order,
         on_delete=models.CASCADE,
         related_name="delivery_documents",
+        null=True,
+        blank=True,
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -174,6 +177,8 @@ class DeliveryItem(models.Model):
         OrderItem,
         on_delete=models.PROTECT,
         related_name="delivery_items",
+        null=True,
+        blank=True,
     )
     product = models.ForeignKey(
         Product,
