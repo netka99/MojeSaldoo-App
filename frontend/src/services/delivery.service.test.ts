@@ -122,4 +122,17 @@ describe('deliveryService', () => {
     await deliveryService.vanLoading(body);
     expect(mocks.post).toHaveBeenCalledWith('/delivery/van-loading/', body);
   });
+
+  it('vanReconciliation posts to /delivery/van-reconciliation/:warehouseId/', async () => {
+    const data = {
+      reconciliation_date: '2026-04-27',
+      notes: 'end of route',
+      items: [{ product_id: 'p1', quantity_actual: '5.000' }],
+    };
+    const res = { warehouse_id: 'w1', has_discrepancies: false, items: [] } as never;
+    mocks.post.mockResolvedValue(res);
+    const out = await deliveryService.vanReconciliation('w-van-1', data);
+    expect(out).toBe(res);
+    expect(mocks.post).toHaveBeenCalledWith('/delivery/van-reconciliation/w-van-1/', data);
+  });
 });

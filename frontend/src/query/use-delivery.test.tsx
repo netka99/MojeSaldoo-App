@@ -16,6 +16,7 @@ import {
   usePatchDeliveryMutation,
   useSaveDeliveryMutation,
   useStartDeliveryMutation,
+  useVanReconciliationMutation,
 } from './use-delivery';
 
 const deliveryServiceMock = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const deliveryServiceMock = vi.hoisted(() => ({
   startDelivery: vi.fn(),
   completeDelivery: vi.fn(),
   generateForOrder: vi.fn(),
+  vanReconciliation: vi.fn(),
 }));
 
 vi.mock('@/services/delivery.service', () => ({
@@ -210,5 +212,32 @@ describe('use-delivery', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-new') });
     expect(spy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+  });
+
+  it('useVanReconciliationMutation calls service and invalidates delivery + products', async () => {
+    const queryClient = createTestQueryClient();
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    const apiResult = {
+      warehouse_id: 'w1',
+      warehouse_name: 'Van',
+      reconciliation_date: '2026-04-27',
+      items: [],
+      total_discrepancies: 0,
+      has_discrepancies: false,
+    } as never;
+    deliveryServiceMock.vanReconciliation.mockResolvedValue(apiResult);
+
+    const { result } = renderHook(() => useVanReconciliationMutation(), {
+      wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
+    });
+
+    const payload = {
+      reconciliation_date: '2026-04-27',
+      items: [{ product_id: 'p1', quantity_actual: '1.000' }],
+    };
+    await result.current.mutateAsync({ warehouseId: 'w-van', data: payload });
+    expect(deliveryServiceMock.vanReconciliation).toHaveBeenCalledWith('w-van', payload);
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['products'] });
   });
 });

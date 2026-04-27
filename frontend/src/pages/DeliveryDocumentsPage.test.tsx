@@ -134,6 +134,7 @@ function renderDeliveryRoute() {
       <MemoryRouter initialEntries={['/delivery']}>
         <Routes>
           <Route path="/delivery" element={<DeliveryDocumentsPage />} />
+          <Route path="/delivery/van-reconciliation" element={<div>Van reconciliation</div>} />
           <Route path="/login" element={<div>Logowanie</div>} />
           <Route path="/orders/:id" element={<div>Order</div>} />
         </Routes>
@@ -203,6 +204,13 @@ describe('DeliveryDocumentsPage', () => {
     expect(within(table).getByRole('columnheader', { name: 'Kierowca' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Generuj WZ' })).toBeInTheDocument();
+  });
+
+  it('navigates to /delivery/van-reconciliation when Rozlicz Van is clicked', async () => {
+    const user = userEvent.setup();
+    renderDeliveryRoute();
+    await user.click(screen.getByRole('button', { name: 'Rozlicz Van' }));
+    expect(screen.getByText('Van reconciliation')).toBeInTheDocument();
   });
 
   it('shows a row with document number, client, driver, and status label', () => {

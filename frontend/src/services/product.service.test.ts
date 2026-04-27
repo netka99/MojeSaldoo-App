@@ -89,4 +89,18 @@ describe('productService', () => {
     await productService.updateStock('p1', payload);
     expect(mocks.post).toHaveBeenCalledWith('/products/p1/update-stock/', payload);
   });
+
+  it('fetchStockSnapshot calls GET /products/stock-snapshot/ with warehouse_id param', async () => {
+    const snap = {
+      warehouse_id: 'w-1',
+      warehouse_name: 'Van',
+      items: [
+        { product_id: 'p1', product_name: 'A', sku: null, unit: 'szt', quantity_available: '3.000' },
+      ],
+    };
+    mocks.get.mockResolvedValue(snap);
+    const result = await productService.fetchStockSnapshot('w-1');
+    expect(result).toBe(snap);
+    expect(mocks.get).toHaveBeenCalledWith('/products/stock-snapshot/', { params: { warehouse_id: 'w-1' } });
+  });
 });
