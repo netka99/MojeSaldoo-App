@@ -66,6 +66,7 @@ export {
   useStartDeliveryMutation,
   useCompleteDeliveryMutation,
   useGenerateDeliveryForOrderMutation,
+  useDeliveryPreviewQuery,
   type DeliveryListFilters,
 } from './use-delivery';
 export {

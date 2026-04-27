@@ -35,6 +35,14 @@ export function useDeliveryQuery(id: string | undefined, enabled = true) {
   });
 }
 
+export function useDeliveryPreviewQuery(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: id ? deliveryKeys.preview(id) : [...deliveryKeys.previews(), 'pending'],
+    queryFn: () => deliveryService.fetchPreview(id!),
+    enabled: Boolean(id) && enabled,
+  });
+}
+
 export function useCreateDeliveryMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -53,6 +61,7 @@ export function usePatchDeliveryMutation() {
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
     },
   });
 }
@@ -63,6 +72,7 @@ export function useDeleteDeliveryMutation() {
     mutationFn: (id: string) => deliveryService.deleteDocument(id),
     onSuccess: (_void, id) => {
       void queryClient.removeQueries({ queryKey: deliveryKeys.detail(id) });
+      void queryClient.removeQueries({ queryKey: deliveryKeys.preview(id) });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
     },
   });
@@ -75,6 +85,7 @@ export function useSaveDeliveryMutation() {
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
     },
   });
 }
@@ -86,6 +97,7 @@ export function useStartDeliveryMutation() {
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
     },
   });
 }
@@ -98,6 +110,7 @@ export function useCompleteDeliveryMutation() {
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     },
   });
@@ -113,6 +126,7 @@ export function useGenerateDeliveryForOrderMutation() {
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     },
   });

@@ -139,6 +139,46 @@ export interface InvoicePreviewLine {
   line_gross: string;
 }
 
+/** Structured seller block (print); falls back to `seller` if omitted. */
+export interface InvoicePreviewCompanyBlock {
+  name: string;
+  nip: string;
+  address: string;
+  city?: string;
+  postal_code?: string;
+  phone?: string;
+  email?: string;
+}
+
+/** Structured buyer block (print); falls back to `buyer` if omitted. */
+export interface InvoicePreviewCustomerBlock {
+  name: string;
+  nip: string;
+  address: string;
+  city?: string;
+  postal_code?: string;
+}
+
+/** Line row aligned with API `items` array on preview. */
+export interface InvoicePreviewItemRow {
+  product_name: string;
+  pkwiu: string;
+  quantity: string;
+  unit: string;
+  unit_price_net: string;
+  vat_rate: string;
+  line_net: string;
+  line_vat: string;
+  line_gross: string;
+}
+
+export interface InvoicePreviewVatRateTotal {
+  vat_rate: string;
+  net: string;
+  vat: string;
+  gross: string;
+}
+
 export interface InvoicePreviewPayload {
   meta: {
     title: string;
@@ -155,6 +195,9 @@ export interface InvoicePreviewPayload {
     nip: string;
     address_lines: string[];
   };
+  company?: InvoicePreviewCompanyBlock;
+  customer?: InvoicePreviewCustomerBlock;
+  items?: InvoicePreviewItemRow[];
   invoice: {
     id: string;
     invoice_number: string;
@@ -173,6 +216,7 @@ export interface InvoicePreviewPayload {
     vat_amount: string;
     subtotal_gross: string;
     total_gross: string;
+    byVatRate?: InvoicePreviewVatRateTotal[];
   };
   lines: InvoicePreviewLine[];
 }

@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -15,7 +16,11 @@ from rest_framework.test import APIClient
 from apps.customers.models import Customer
 from apps.delivery.models import DeliveryDocument
 from apps.invoices.models import Invoice, InvoiceItem
-from apps.invoices.services import generate_invoice_from_order
+from apps.invoices.services import (
+    build_invoice_preview_data,
+    generate_invoice_from_order,
+    recalculate_invoice_totals,
+)
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product
 from apps.users.models import Company, CompanyMembership
@@ -183,6 +188,12 @@ class InvoiceApiTests(TestCase):
         response = self.client.get(reverse("invoice-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("results", response.data)
+
+    def test_invoice_preview_requires_authentication(self):
+        r = self.client.get(
+            reverse("invoice-preview", kwargs={"pk": str(uuid.uuid4())}),
+        )
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
 class InvoiceViewSetAPITests(TestCase):
@@ -540,6 +551,42 @@ class InvoiceActionsAPITests(TestCase):
         self.assertIn("lines", r2.data)
         self.assertEqual(len(r2.data["lines"]), 1)
         self.assertEqual(r2.data["totals"]["total_gross"], "246.00")
+        # Print/PDF-oriented blocks
+        self.assertIn("company", r2.data)
+        self.assertIn("customer", r2.data)
+        self.assertIn("items", r2.data)
+        self.assertEqual(len(r2.data["items"]), 1)
+        self.assertIn("byVatRate", r2.data["totals"])
+        self.assertEqual(len(r2.data["totals"]["byVatRate"]), 1)
+        inv_block = r2.data["invoice"]
+        self.assertIn("ksef_status", inv_block)
+        self.assertIn("subtotal_net", inv_block)
+        self.assertEqual(r2.data["items"][0]["unit"], r2.data["lines"][0]["product_unit"])
+
+    def test_preview_returns_404_for_invoice_other_company(self):
+        other_co = Company.objects.create(name="Other Preview Co")
+        oc = Customer.objects.create(name="OC", company=other_co)
+        other_order = Order.objects.create(
+            user=self.user,
+            customer=oc,
+            company=other_co,
+            order_date=date(2026, 4, 1),
+            delivery_date=date(2026, 4, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        foreign_inv = Invoice.objects.create(
+            company=other_co,
+            user=self.user,
+            order=other_order,
+            customer=oc,
+            issue_date=date(2026, 4, 10),
+            sale_date=date(2026, 4, 10),
+            due_date=date(2026, 4, 24),
+        )
+        r = self.client.get(
+            reverse("invoice-preview", kwargs={"pk": str(foreign_inv.id)}),
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_patch_issued_invoice_rejected(self):
         r = self.client.post(self._gen_url(), data={}, format="json")
@@ -621,6 +668,319 @@ class InvoiceActionsAPITests(TestCase):
         r4 = self.client.get(reverse("invoice-list"), {"ksef_status": "pending"})
         ids4 = {row["id"] for row in r4.data["results"]}
         self.assertIn(str(inv_issued.id), ids4)
+
+
+class BuildInvoicePreviewDataTests(TestCase):
+    """Unit tests for `build_invoice_preview_data` (print/PDF payload)."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="preview-build-user",
+            email="preview-build@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(
+            name="Seller Sp. z o.o.",
+            nip="1234567890",
+            address="ul. Przykładowa 1",
+            city="Warszawa",
+            postal_code="00-001",
+            phone="+48 123 456 789",
+            email="biuro@seller.test",
+        )
+        self.customer = Customer.objects.create(
+            name="Jan Kowalski",
+            company_name="Buyer Firma SA",
+            nip="0987654321",
+            street="ul. Klienta 2",
+            city="Kraków",
+            postal_code="30-001",
+            company=self.co,
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 4, 1),
+            delivery_date=date(2026, 4, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.invoice = Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 4, 18),
+            sale_date=date(2026, 4, 17),
+            due_date=date(2026, 5, 2),
+            payment_method="transfer",
+            subtotal_net=Decimal("150.00"),
+            subtotal_gross=Decimal("169.50"),
+            vat_amount=Decimal("19.50"),
+            total_gross=Decimal("169.50"),
+            notes="Test note",
+            ksef_status="pending",
+        )
+
+    def test_company_block_matches_company_model(self):
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="Line",
+            product_unit="szt.",
+            pkwiu="12.34.56",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("150.00"),
+            vat_rate=Decimal("13.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        co = data["company"]
+        self.assertEqual(co["name"], "Seller Sp. z o.o.")
+        self.assertEqual(co["nip"], "1234567890")
+        self.assertEqual(co["address"], "ul. Przykładowa 1")
+        self.assertEqual(co["city"], "Warszawa")
+        self.assertEqual(co["postal_code"], "00-001")
+        self.assertEqual(co["phone"], "+48 123 456 789")
+        self.assertEqual(co["email"], "biuro@seller.test")
+
+    def test_customer_block_uses_company_name_and_street_as_address(self):
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="X",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("10.00"),
+            vat_rate=Decimal("23.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        cu = data["customer"]
+        self.assertEqual(cu["name"], "Buyer Firma SA")
+        self.assertEqual(cu["nip"], "0987654321")
+        self.assertEqual(cu["address"], "ul. Klienta 2")
+        self.assertEqual(cu["city"], "Kraków")
+        self.assertEqual(cu["postal_code"], "30-001")
+
+    def test_invoice_block_contains_all_model_fields_and_derived_keys(self):
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="X",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("10.00"),
+            vat_rate=Decimal("23.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        inv = data["invoice"]
+        expected_model_keys = {
+            "id",
+            "company",
+            "user",
+            "order",
+            "customer",
+            "delivery_document",
+            "invoice_number",
+            "issue_date",
+            "sale_date",
+            "due_date",
+            "payment_method",
+            "subtotal_net",
+            "subtotal_gross",
+            "vat_amount",
+            "total_gross",
+            "ksef_reference_number",
+            "ksef_number",
+            "ksef_status",
+            "ksef_sent_at",
+            "ksef_error_message",
+            "invoice_hash",
+            "upo_received",
+            "status",
+            "paid_at",
+            "notes",
+            "created_at",
+            "updated_at",
+        }
+        self.assertTrue(expected_model_keys.issubset(inv.keys()))
+        self.assertIn("order_number", inv)
+        self.assertIn("payment_method_label", inv)
+        self.assertIn("delivery_document_number", inv)
+        self.assertEqual(inv["company"], str(self.co.id))
+        self.assertEqual(inv["order"], str(self.order.id))
+        self.assertEqual(inv["customer"], str(self.customer.id))
+        self.assertIsNone(inv["delivery_document"])
+        self.assertEqual(inv["payment_method_label"], "Przelew")
+        self.assertEqual(inv["ksef_status"], "pending")
+        self.assertIsNone(inv["ksef_sent_at"])
+        self.assertIsNone(inv["paid_at"])
+        self.assertEqual(inv["notes"], "Test note")
+
+    def test_items_align_with_lines_and_include_unit_and_pkwiu(self):
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="Towar A",
+            product_unit="kg",
+            pkwiu="10.20.30",
+            quantity=Decimal("2.50"),
+            unit_price_net=Decimal("40.00"),
+            vat_rate=Decimal("23.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        self.assertEqual(len(data["items"]), 1)
+        self.assertEqual(len(data["lines"]), 1)
+        item = data["items"][0]
+        line = data["lines"][0]
+        self.assertEqual(item["product_name"], "Towar A")
+        self.assertEqual(item["pkwiu"], "10.20.30")
+        self.assertEqual(item["quantity"], "2.50")
+        self.assertEqual(item["unit"], "kg")
+        self.assertEqual(item["unit"], line["product_unit"])
+        self.assertEqual(item["line_net"], line["line_net"])
+        self.assertEqual(item["line_vat"], line["line_vat"])
+        self.assertEqual(item["line_gross"], line["line_gross"])
+
+    def test_totals_by_vat_rate_multiple_rates_sorted_ascending(self):
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="A",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("100.00"),
+            vat_rate=Decimal("23.00"),
+        )
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="B",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("50.00"),
+            vat_rate=Decimal("8.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        self.assertEqual(data["totals"]["subtotal_net"], "150.00")
+        self.assertEqual(data["totals"]["vat_amount"], "27.00")
+        self.assertEqual(data["totals"]["total_gross"], "177.00")
+        bvr = data["totals"]["byVatRate"]
+        self.assertEqual(len(bvr), 2)
+        self.assertEqual(bvr[0]["vat_rate"], "8.00")
+        self.assertEqual(bvr[0]["net"], "50.00")
+        self.assertEqual(bvr[0]["vat"], "4.00")
+        self.assertEqual(bvr[0]["gross"], "54.00")
+        self.assertEqual(bvr[1]["vat_rate"], "23.00")
+        self.assertEqual(bvr[1]["net"], "100.00")
+        self.assertEqual(bvr[1]["vat"], "23.00")
+        self.assertEqual(bvr[1]["gross"], "123.00")
+
+    def test_totals_by_vat_rate_empty_when_no_lines(self):
+        data = build_invoice_preview_data(self.invoice)
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["lines"], [])
+        self.assertEqual(data["totals"]["byVatRate"], [])
+
+    def test_delivery_document_number_on_invoice_block_when_linked(self):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 12),
+            document_number="WZ/2026/0007",
+        )
+        self.invoice.delivery_document = doc
+        self.invoice.save(update_fields=["delivery_document", "updated_at"])
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="X",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("10.00"),
+            vat_rate=Decimal("23.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        self.assertEqual(data["invoice"]["delivery_document"], str(doc.id))
+        self.assertEqual(data["invoice"]["delivery_document_number"], "WZ/2026/0007")
+
+    def test_seller_buyer_meta_present_for_legacy_layout(self):
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            product_name="X",
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("10.00"),
+            vat_rate=Decimal("23.00"),
+        )
+        recalculate_invoice_totals(self.invoice)
+        self.invoice.save(
+            update_fields=[
+                "subtotal_net",
+                "subtotal_gross",
+                "vat_amount",
+                "total_gross",
+                "updated_at",
+            ]
+        )
+        data = build_invoice_preview_data(self.invoice)
+        self.assertIn("meta", data)
+        self.assertEqual(data["meta"]["currency"], "PLN")
+        self.assertIn("seller", data)
+        self.assertIn("buyer", data)
+        self.assertEqual(data["seller"]["name"], self.co.name)
+        self.assertEqual(data["buyer"]["name"], "Buyer Firma SA")
+        self.assertIsInstance(data["seller"]["address_lines"], list)
+        self.assertIsInstance(data["buyer"]["address_lines"], list)
 
 
 class InvoiceGenerateFromOrderServiceTests(TestCase):

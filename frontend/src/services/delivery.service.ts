@@ -4,6 +4,7 @@ import type {
   DeliveryDocument,
   DeliveryDocumentCreate,
   DeliveryDocumentPatch,
+  DeliveryDocumentPreviewPayload,
   PaginatedDeliveryDocuments,
   VanLoadingPayload,
   VanReconciliationPayload,
@@ -31,6 +32,9 @@ export const deliveryService = {
     api.get<PaginatedDeliveryDocuments>(basePath, { params }),
 
   fetchById: (id: string) => api.get<DeliveryDocument>(`${basePath}${id}/`),
+
+  fetchPreview: (id: string) =>
+    api.get<DeliveryDocumentPreviewPayload>(`${basePath}${id}/preview/`),
 
   createDocument: (data: DeliveryDocumentCreate) =>
     api.post<DeliveryDocument>(basePath, data),

@@ -13,7 +13,10 @@ from rest_framework.test import APIClient, APIRequestFactory
 from apps.customers.models import Customer
 from apps.delivery.models import DeliveryDocument, DeliveryItem
 from apps.delivery.serializers import DeliveryDocumentSerializer
-from apps.delivery.services import generate_delivery_from_order
+from apps.delivery.services import (
+    build_delivery_document_preview_data,
+    generate_delivery_from_order,
+)
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product, ProductStock, StockMovement, Warehouse
 from apps.users.models import Company, CompanyMembership
@@ -326,6 +329,15 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.get(reverse("delivery-document-list"))
         self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_preview_requires_authentication(self):
+        r = self.client.get(
+            reverse(
+                "delivery-document-preview",
+                kwargs={"pk": str(uuid.uuid4())},
+            )
+        )
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_list_authenticated_returns_results(self):
         DeliveryDocument.objects.create(
             company=self.co,
@@ -421,6 +433,33 @@ class DeliveryDocumentAPITests(TestCase):
         )
         r = self.client.get(
             reverse("delivery-document-detail", kwargs={"pk": str(foreign_doc.id)})
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_preview_returns_404_for_document_other_company(self):
+        self.client.force_authenticate(user=self.user)
+        other_co = Company.objects.create(name="OtherCo")
+        foreign_c = Customer.objects.create(name="Ext", company=other_co)
+        foreign_o = Order.objects.create(
+            user=self.user,
+            customer=foreign_c,
+            company=other_co,
+            order_date=date(2026, 1, 1),
+            delivery_date=date(2026, 8, 1),
+            status=Order.STATUS_DRAFT,
+        )
+        foreign_doc = DeliveryDocument.objects.create(
+            company=other_co,
+            order=foreign_o,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 5, 1),
+        )
+        r = self.client.get(
+            reverse(
+                "delivery-document-preview",
+                kwargs={"pk": str(foreign_doc.id)},
+            )
         )
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -1256,6 +1295,218 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(DeliveryItem.objects.filter(pk=line_id).exists())
+
+    def test_preview_returns_print_payload(self):
+        self.client.force_authenticate(user=self.user)
+        self.co.address = "ul. Firmowa 1"
+        self.co.nip = "1234567890"
+        self.co.save(update_fields=["address", "nip"])
+        self.customer.company_name = "Klient SA"
+        self.customer.nip = "0987654321"
+        self.customer.street = "ul. Klienta 9"
+        self.customer.save(update_fields=["company_name", "nip", "street"])
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 18),
+            from_warehouse=self.wh,
+            to_customer=self.customer,
+            notes="Bring ID",
+        )
+        self.product.unit = "op."
+        self.product.save(update_fields=["unit"])
+        DeliveryItem.objects.create(
+            delivery_document=doc,
+            product=self.product,
+            quantity_planned=Decimal("4.00"),
+            quantity_actual=None,
+            quantity_returned=Decimal("0"),
+        )
+        r = self.client.get(
+            reverse("delivery-document-preview", kwargs={"pk": str(doc.id)})
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertIn("document", r.data)
+        self.assertEqual(r.data["company"]["name"], self.co.name)
+        self.assertEqual(r.data["company"]["nip"], "1234567890")
+        self.assertEqual(r.data["company"]["address"], "ul. Firmowa 1")
+        self.assertEqual(r.data["customer"]["name"], "Klient SA")
+        self.assertEqual(r.data["customer"]["nip"], "0987654321")
+        self.assertEqual(r.data["customer"]["address"], "ul. Klienta 9")
+        self.assertEqual(r.data["from_warehouse"]["name"], "Main")
+        self.assertEqual(r.data["from_warehouse"]["code"], "MG")
+        self.assertEqual(len(r.data["items"]), 1)
+        row = r.data["items"][0]
+        self.assertEqual(row["product_name"], "Line product")
+        self.assertEqual(row["quantity_planned"], "4.00")
+        self.assertIsNone(row["quantity_actual"])
+        self.assertEqual(row["quantity_returned"], "0.00")
+        self.assertEqual(row["unit"], "op.")
+        d = r.data["document"]
+        self.assertEqual(d["id"], str(doc.id))
+        self.assertEqual(d["document_type"], "WZ")
+        self.assertEqual(d["notes"], "Bring ID")
+        self.assertEqual(d["from_warehouse"], str(self.wh.id))
+
+
+class BuildDeliveryDocumentPreviewDataTests(TestCase):
+    """Unit tests for `build_delivery_document_preview_data`."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="del-preview-build",
+            email="del-preview-build@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(
+            name="Co Preview",
+            nip="1111111111",
+            address="Addr 1",
+        )
+        CompanyMembership.objects.create(
+            user=self.user,
+            company=self.co,
+            role="admin",
+            is_active=True,
+        )
+        self.customer = Customer.objects.create(
+            name="Osoba",
+            company_name="Firma ABC",
+            nip="2222222222",
+            street="ul. Test 3",
+            company=self.co,
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 4, 1),
+            delivery_date=date(2026, 4, 10),
+            status=Order.STATUS_DRAFT,
+        )
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="WH1",
+            name="Warehouse One",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="SKU-X",
+            company=self.co,
+            unit="kg",
+            price_net=Decimal("1.00"),
+            price_gross=Decimal("1.00"),
+        )
+
+    def test_document_block_contains_all_delivery_fields(self):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 12),
+            from_warehouse=self.wh,
+            to_customer=self.customer,
+            status=DeliveryDocument.STATUS_SAVED,
+            driver_name="Kierowca",
+        )
+        expected_keys = {
+            "id",
+            "company",
+            "order",
+            "user",
+            "document_type",
+            "document_number",
+            "issue_date",
+            "from_warehouse",
+            "to_warehouse",
+            "to_customer",
+            "status",
+            "has_returns",
+            "returns_notes",
+            "driver_name",
+            "receiver_name",
+            "delivered_at",
+            "notes",
+            "created_at",
+            "updated_at",
+        }
+        data = build_delivery_document_preview_data(doc)
+        self.assertTrue(expected_keys.issubset(data["document"].keys()))
+        self.assertEqual(data["document"]["company"], str(self.co.id))
+        self.assertEqual(data["document"]["order"], str(self.order.id))
+        self.assertEqual(data["document"]["from_warehouse"], str(self.wh.id))
+        self.assertEqual(data["document"]["driver_name"], "Kierowca")
+        self.assertIsNone(data["document"]["to_warehouse"])
+        self.assertIsNone(data["document"]["delivered_at"])
+
+    def test_customer_from_order_when_to_customer_not_set(self):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 1),
+            to_customer=None,
+        )
+        data = build_delivery_document_preview_data(doc)
+        self.assertEqual(data["customer"]["name"], "Firma ABC")
+        self.assertEqual(data["customer"]["nip"], "2222222222")
+        self.assertEqual(data["customer"]["address"], "ul. Test 3")
+
+    def test_mm_without_order_or_customer_has_empty_customer_party(self):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=None,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_MM,
+            issue_date=date(2026, 4, 1),
+            to_customer=None,
+        )
+        data = build_delivery_document_preview_data(doc)
+        self.assertEqual(data["customer"]["name"], "")
+        self.assertEqual(data["document"]["order"], None)
+
+    def test_from_warehouse_null_in_payload_when_unset(self):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 1),
+            from_warehouse=None,
+        )
+        data = build_delivery_document_preview_data(doc)
+        self.assertIsNone(data["from_warehouse"])
+        self.assertIsNone(data["document"]["from_warehouse"])
+
+    def test_items_include_quantities_and_unit(self):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 1),
+        )
+        DeliveryItem.objects.create(
+            delivery_document=doc,
+            product=self.product,
+            quantity_planned=Decimal("2.50"),
+            quantity_actual=Decimal("2.00"),
+            quantity_returned=Decimal("0.25"),
+        )
+        data = build_delivery_document_preview_data(doc)
+        self.assertEqual(len(data["items"]), 1)
+        row = data["items"][0]
+        self.assertEqual(row["product_name"], "SKU-X")
+        self.assertEqual(row["quantity_planned"], "2.50")
+        self.assertEqual(row["quantity_actual"], "2.00")
+        self.assertEqual(row["quantity_returned"], "0.25")
+        self.assertEqual(row["unit"], "kg")
 
 
 class GenerateDeliveryFromOrderTests(TestCase):

@@ -148,3 +148,59 @@ export interface VanReconciliationResult {
   total_discrepancies: number;
   has_discrepancies: boolean;
 }
+
+/** `GET /api/delivery/:id/preview/` — print-oriented payload. */
+export interface DeliveryDocumentPreviewDocument {
+  id: string;
+  company: string;
+  order: string | null;
+  user: string | null;
+  document_type: DeliveryDocumentType;
+  document_number: string;
+  issue_date: string;
+  from_warehouse: string | null;
+  to_warehouse: string | null;
+  to_customer: string | null;
+  status: DeliveryDocumentStatus;
+  has_returns: boolean;
+  returns_notes: string;
+  driver_name: string;
+  receiver_name: string;
+  delivered_at: string | null;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliveryDocumentPreviewCompany {
+  name: string;
+  nip: string;
+  address: string;
+}
+
+export interface DeliveryDocumentPreviewCustomer {
+  name: string;
+  nip: string;
+  address: string;
+}
+
+export interface DeliveryDocumentPreviewWarehouse {
+  name: string;
+  code: string;
+}
+
+export interface DeliveryDocumentPreviewItem {
+  product_name: string;
+  quantity_planned: string;
+  quantity_actual: string | null;
+  quantity_returned: string;
+  unit: string;
+}
+
+export interface DeliveryDocumentPreviewPayload {
+  document: DeliveryDocumentPreviewDocument;
+  company: DeliveryDocumentPreviewCompany;
+  customer: DeliveryDocumentPreviewCustomer;
+  from_warehouse: DeliveryDocumentPreviewWarehouse | null;
+  items: DeliveryDocumentPreviewItem[];
+}

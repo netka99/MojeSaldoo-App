@@ -8,12 +8,14 @@ import { deliveryStatusBadgeClassName } from '@/pages/DeliveryDocumentsPage';
 import {
   useCompleteDeliveryMutation,
   useDeliveryQuery,
+  useDeliveryPreviewQuery,
   useSaveDeliveryMutation,
   useStartDeliveryMutation,
 } from '@/query/use-delivery';
 import { useOrderQuery } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { openWZPrintWindow } from '@/lib/openWZPrintWindow';
 import type { DeliveryCompleteItemRow, DeliveryItem } from '@/types';
 import type { Order } from '@/types';
 
@@ -80,6 +82,7 @@ export function DeliveryDocumentDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { data: doc, isLoading, isError, error, refetch, isFetching } = useDeliveryQuery(id, Boolean(id));
+  const { data: deliveryPreview, isLoading: prevLoading } = useDeliveryPreviewQuery(id, Boolean(id));
   const { data: order } = useOrderQuery(
     doc?.order_id ?? undefined,
     Boolean(doc?.order_id),
@@ -99,6 +102,7 @@ export function DeliveryDocumentDetailPage() {
   const completeM = useCompleteDeliveryMutation();
 
   const [actionError, setActionError] = useState<string | null>(null);
+  const [printError, setPrintError] = useState<string | null>(null);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [lineEdits, setLineEdits] = useState<Record<string, LineEditState>>({});
   const [receiverName, setReceiverName] = useState('');
@@ -176,6 +180,17 @@ export function DeliveryDocumentDetailPage() {
 
   const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending;
 
+  const onPrintWz = () => {
+    if (!deliveryPreview) return;
+    setPrintError(null);
+    const opened = openWZPrintWindow(deliveryPreview);
+    if (!opened) {
+      setPrintError(
+        'Nie udało się otworzyć widoku drukowania. Odśwież stronę i spróbuj ponownie.',
+      );
+    }
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -234,6 +249,15 @@ export function DeliveryDocumentDetailPage() {
               {isFetching && <p className="text-xs text-muted-foreground">Aktualizowanie…</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onPrintWz}
+                disabled={!doc || !deliveryPreview || isLoading || prevLoading}
+                id="delivery-action-print"
+              >
+                Drukuj WZ
+              </Button>
               <span
                 className={cn(
                   'inline-block rounded-full px-3 py-1 text-sm font-medium',
@@ -267,6 +291,12 @@ export function DeliveryDocumentDetailPage() {
           {actionError && (
             <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {actionError}
+            </p>
+          )}
+
+          {printError && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+              {printError}
             </p>
           )}
 

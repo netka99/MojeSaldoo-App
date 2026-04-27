@@ -1,5 +1,6 @@
 """Invoice generation, totals, and preview payload for HTML rendering."""
 
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -181,6 +182,45 @@ def _fmt_money(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):.2f}"
 
 
+def _fk_uuid(value) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _serialize_invoice_full(invoice: Invoice) -> dict:
+    """All `Invoice` DB fields as JSON-friendly scalars (amounts as formatted strings)."""
+    return {
+        "id": str(invoice.id),
+        "company": str(invoice.company_id),
+        "user": _fk_uuid(invoice.user_id),
+        "order": str(invoice.order_id),
+        "customer": str(invoice.customer_id),
+        "delivery_document": _fk_uuid(invoice.delivery_document_id),
+        "invoice_number": invoice.invoice_number or "",
+        "issue_date": invoice.issue_date.isoformat(),
+        "sale_date": invoice.sale_date.isoformat(),
+        "due_date": invoice.due_date.isoformat(),
+        "payment_method": invoice.payment_method,
+        "subtotal_net": _fmt_money(invoice.subtotal_net),
+        "subtotal_gross": _fmt_money(invoice.subtotal_gross),
+        "vat_amount": _fmt_money(invoice.vat_amount),
+        "total_gross": _fmt_money(invoice.total_gross),
+        "ksef_reference_number": invoice.ksef_reference_number or "",
+        "ksef_number": invoice.ksef_number or "",
+        "ksef_status": invoice.ksef_status,
+        "ksef_sent_at": (
+            invoice.ksef_sent_at.isoformat() if invoice.ksef_sent_at else None
+        ),
+        "ksef_error_message": invoice.ksef_error_message or "",
+        "invoice_hash": invoice.invoice_hash or "",
+        "upo_received": invoice.upo_received,
+        "status": invoice.status,
+        "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
+        "notes": invoice.notes or "",
+        "created_at": invoice.created_at.isoformat(),
+        "updated_at": invoice.updated_at.isoformat(),
+    }
+
+
 def build_invoice_preview_data(invoice: Invoice) -> dict:
     """Structured payload for an HTML invoice preview (A4-style layout)."""
     company = invoice.company
@@ -237,6 +277,58 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
             }
         )
 
+    by_rate: dict[Decimal, dict[str, Decimal]] = defaultdict(
+        lambda: {
+            "net": Decimal("0.00"),
+            "vat": Decimal("0.00"),
+            "gross": Decimal("0.00"),
+        }
+    )
+    for it in items:
+        rate = it.vat_rate.quantize(Decimal("0.01"))
+        by_rate[rate]["net"] += it.line_net
+        by_rate[rate]["vat"] += it.line_vat
+        by_rate[rate]["gross"] += it.line_gross
+    by_vat_rate = [
+        {
+            "vat_rate": _fmt_money(rate),
+            "net": _fmt_money(totals["net"]),
+            "vat": _fmt_money(totals["vat"]),
+            "gross": _fmt_money(totals["gross"]),
+        }
+        for rate, totals in sorted(by_rate.items(), key=lambda x: x[0])
+    ]
+
+    preview_items = [
+        {
+            "product_name": it.product_name,
+            "pkwiu": it.pkwiu or "",
+            "quantity": _fmt_money(it.quantity),
+            "unit": it.product_unit or "",
+            "unit_price_net": _fmt_money(it.unit_price_net),
+            "vat_rate": _fmt_money(it.vat_rate),
+            "line_net": _fmt_money(it.line_net),
+            "line_vat": _fmt_money(it.line_vat),
+            "line_gross": _fmt_money(it.line_gross),
+        }
+        for it in items
+    ]
+
+    invoice_block = {
+        **_serialize_invoice_full(invoice),
+        "order_number": invoice.order.order_number or "",
+        "payment_method_label": dict(Invoice.PAYMENT_METHOD_CHOICES).get(
+            invoice.payment_method,
+            invoice.payment_method,
+        ),
+        "delivery_document_number": (
+            invoice.delivery_document.document_number
+            if invoice.delivery_document_id
+            and invoice.delivery_document.document_number
+            else ""
+        ),
+    }
+
     return {
         "meta": {
             "title": f"Invoice {invoice.invoice_number or ''}".strip(),
@@ -253,32 +345,30 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
             "nip": customer.nip or "",
             "address_lines": customer_lines,
         },
-        "invoice": {
-            "id": str(invoice.id),
-            "invoice_number": invoice.invoice_number or "",
-            "issue_date": invoice.issue_date.isoformat(),
-            "sale_date": invoice.sale_date.isoformat(),
-            "due_date": invoice.due_date.isoformat(),
-            "payment_method": invoice.payment_method,
-            "payment_method_label": dict(Invoice.PAYMENT_METHOD_CHOICES).get(
-                invoice.payment_method,
-                invoice.payment_method,
-            ),
-            "status": invoice.status,
-            "notes": invoice.notes or "",
-            "order_number": invoice.order.order_number or "",
-            "delivery_document_number": (
-                invoice.delivery_document.document_number
-                if invoice.delivery_document_id
-                and invoice.delivery_document.document_number
-                else ""
-            ),
+        "company": {
+            "name": company.name,
+            "nip": company.nip or "",
+            "address": (company.address or "").strip(),
+            "city": company.city or "",
+            "postal_code": company.postal_code or "",
+            "phone": company.phone or "",
+            "email": company.email or "",
         },
+        "customer": {
+            "name": buyer_name,
+            "nip": customer.nip or "",
+            "address": (customer.street or "") or "",
+            "city": customer.city or "",
+            "postal_code": customer.postal_code or "",
+        },
+        "invoice": invoice_block,
         "totals": {
             "subtotal_net": _fmt_money(invoice.subtotal_net),
             "vat_amount": _fmt_money(invoice.vat_amount),
             "subtotal_gross": _fmt_money(invoice.subtotal_gross),
             "total_gross": _fmt_money(invoice.total_gross),
+            "byVatRate": by_vat_rate,
         },
+        "items": preview_items,
         "lines": line_rows,
     }

@@ -130,6 +130,7 @@ describe('use-delivery', () => {
     expect(deliveryServiceMock.patchDocument).toHaveBeenCalledWith('d1', { notes: 'x' });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d1') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d1') });
   });
 
   it('useDeleteDeliveryMutation removes detail and invalidates list', async () => {
@@ -145,6 +146,7 @@ describe('use-delivery', () => {
     await result.current.mutateAsync('d-del');
     expect(deliveryServiceMock.deleteDocument).toHaveBeenCalledWith('d-del');
     expect(remove).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-del') });
+    expect(remove).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d-del') });
     expect(inv).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
   });
 
@@ -162,6 +164,7 @@ describe('use-delivery', () => {
     expect(deliveryServiceMock.saveDocument).toHaveBeenCalledWith('d1');
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d1') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d1') });
   });
 
   it('useStartDeliveryMutation invalidates list + detail', async () => {
@@ -178,6 +181,7 @@ describe('use-delivery', () => {
     expect(deliveryServiceMock.startDelivery).toHaveBeenCalledWith('d1');
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d1') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d1') });
   });
 
   it('useCompleteDeliveryMutation invalidates delivery + orders', async () => {
@@ -194,6 +198,7 @@ describe('use-delivery', () => {
     expect(deliveryServiceMock.completeDelivery).toHaveBeenCalledWith('d1', { receiver_name: 'A' });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d1') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d1') });
     expect(spy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
   });
 
@@ -211,6 +216,7 @@ describe('use-delivery', () => {
     expect(deliveryServiceMock.generateForOrder).toHaveBeenCalledWith('o1');
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-new') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d-new') });
     expect(spy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
   });
 

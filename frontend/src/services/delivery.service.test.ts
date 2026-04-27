@@ -51,6 +51,12 @@ describe('deliveryService', () => {
     });
   });
 
+  it('fetchPreview calls GET /delivery/:id/preview/', async () => {
+    mocks.get.mockResolvedValue({ document: {}, company: {}, customer: {}, from_warehouse: null, items: [] });
+    await deliveryService.fetchPreview('d1');
+    expect(mocks.get).toHaveBeenCalledWith('/delivery/d1/preview/');
+  });
+
   it('fetchById calls GET /delivery/:id/', async () => {
     mocks.get.mockResolvedValue({ id: 'd1' });
     await deliveryService.fetchById('d1');

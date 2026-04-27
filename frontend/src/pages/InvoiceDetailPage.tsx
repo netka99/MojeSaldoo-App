@@ -12,6 +12,7 @@ import {
 } from '@/query/use-invoices';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { openInvoicePrintWindow } from '@/lib/openInvoicePrintWindow';
 import { invoiceKsefStatusBadgeClassName, invoiceStatusBadgeClassName } from './InvoicesPage';
 import type { InvoicePreviewLine } from '@/types';
 
@@ -74,6 +75,7 @@ export function InvoiceDetailPage() {
   const issueM = useIssueInvoiceMutation();
   const markPaidM = useMarkPaidInvoiceMutation();
   const [actionError, setActionError] = useState<string | null>(null);
+  const [printError, setPrintError] = useState<string | null>(null);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -111,6 +113,17 @@ export function InvoiceDetailPage() {
       refetchAll();
     } catch (e) {
       setActionError(errMsg(e));
+    }
+  };
+
+  const onPrintInvoice = () => {
+    if (!preview) return;
+    setPrintError(null);
+    const opened = openInvoicePrintWindow(preview);
+    if (!opened) {
+      setPrintError(
+        'Nie udało się otworzyć widoku drukowania. Odśwież stronę i spróbuj ponownie.',
+      );
     }
   };
 
@@ -188,6 +201,14 @@ export function InvoiceDetailPage() {
             <Button
               type="button"
               variant="outline"
+              onClick={onPrintInvoice}
+              disabled={!preview || loading}
+            >
+              Drukuj fakturę
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
               disabled
               title="Wysyłka do KSeF będzie dostępna w fazie 7."
             >
@@ -197,6 +218,11 @@ export function InvoiceDetailPage() {
           {actionError && (
             <p className="max-w-md text-right text-sm text-destructive" role="alert">
               {actionError}
+            </p>
+          )}
+          {printError && (
+            <p className="max-w-md text-right text-sm text-destructive" role="alert">
+              {printError}
             </p>
           )}
         </div>

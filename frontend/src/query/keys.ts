@@ -65,6 +65,8 @@ export const deliveryKeys = {
   list: (params: DeliveryListKeyParams) => [...deliveryKeys.lists(), params] as const,
   details: () => [...deliveryKeys.all, 'detail'] as const,
   detail: (id: string) => [...deliveryKeys.details(), id] as const,
+  previews: () => [...deliveryKeys.all, 'preview'] as const,
+  preview: (id: string) => [...deliveryKeys.previews(), id] as const,
 };
 
 /** List cache key: page + active company (and future filters from `InvoiceListParams`). */

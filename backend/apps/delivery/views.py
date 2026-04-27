@@ -28,6 +28,7 @@ from .serializers import (
 from .services import (
     active_main_warehouse_for_company,
     apply_van_reconciliation,
+    build_delivery_document_preview_data,
     create_van_loading_mm,
 )
 
@@ -66,6 +67,11 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             user=self.request.user,
         )
+
+    @action(detail=True, methods=["get"], url_path="preview")
+    def preview(self, request, pk=None):
+        doc = self.get_object()
+        return Response(build_delivery_document_preview_data(doc))
 
     @action(detail=True, methods=["post"], url_path="save")
     def save(self, request, pk=None):

@@ -1,0 +1,198 @@
+/* Print-ready WZ/MM/PZ: grayscale, no theme colors. */
+
+.wz-print-scope {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #000;
+  background: #fff;
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: 10mm 12mm;
+  box-sizing: border-box;
+}
+
+.wz-print-scope * {
+  box-sizing: border-box;
+}
+
+.wz-print-title-block {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #000;
+}
+
+.wz-print-title {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.wz-print-meta {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wz-print-meta li {
+  margin: 0 0 4px;
+}
+
+.wz-print-meta-label {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.wz-print-parties {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 520px) {
+  .wz-print-parties {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wz-print-party-box {
+  border: 1px solid #000;
+  padding: 10px 12px;
+}
+
+.wz-print-party-title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wz-print-party-body {
+  margin: 0;
+  font-size: 11px;
+}
+
+.wz-print-party-lines {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wz-print-party-lines li {
+  margin: 0 0 2px;
+}
+
+.wz-print-table-wrap {
+  margin-bottom: 16px;
+}
+
+.wz-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.wz-print-table th,
+.wz-print-table td {
+  border: 1px solid #000;
+  padding: 5px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.wz-print-table th {
+  font-weight: 700;
+  background: #f0f0f0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.wz-print-table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.wz-print-table .center {
+  text-align: center;
+}
+
+.wz-print-table .narrow {
+  width: 32px;
+}
+
+.wz-print-notes {
+  margin-bottom: 14px;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+
+.wz-print-signatures {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  justify-content: space-between;
+}
+
+.wz-print-signature {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.wz-print-sig-label {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.wz-print-sig-value {
+  min-height: 32px;
+  margin: 0;
+  padding: 4px 0;
+  border-bottom: 1px solid #000;
+  font-size: 11px;
+}
+
+.wz-print-footer {
+  margin-top: 24px;
+  padding-top: 10px;
+  border-top: 1px solid #000;
+  font-size: 9px;
+  color: #222;
+  text-align: center;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .wz-print-scope,
+  .wz-print-scope * {
+    visibility: visible;
+  }
+
+  .wz-print-scope {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 8mm 10mm;
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .wz-print-table th {
+    background: #e8e8e8 !important;
+  }
+}

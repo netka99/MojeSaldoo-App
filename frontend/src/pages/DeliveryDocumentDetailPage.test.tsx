@@ -8,7 +8,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { DeliveryDocumentDetailPage, productLabelForDeliveryLine } from './DeliveryDocumentDetailPage';
 import { authStorage } from '@/services/api';
-import type { DeliveryDocument } from '@/types';
+import type { DeliveryDocument, DeliveryDocumentPreviewPayload } from '@/types';
 import type { Order } from '@/types';
 
 describe('productLabelForDeliveryLine', () => {
@@ -49,6 +49,7 @@ describe('productLabelForDeliveryLine', () => {
 });
 
 const useDeliveryQueryMock = vi.hoisted(() => vi.fn());
+const useDeliveryPreviewQueryMock = vi.hoisted(() => vi.fn());
 const useOrderQueryMock = vi.hoisted(() => vi.fn());
 const saveMutateAsync = vi.hoisted(() => vi.fn());
 const startMutateAsync = vi.hoisted(() => vi.fn());
@@ -56,6 +57,8 @@ const completeMutateAsync = vi.hoisted(() => vi.fn());
 
 vi.mock('@/query/use-delivery', () => ({
   useDeliveryQuery: (id: string | undefined, enabled?: boolean) => useDeliveryQueryMock(id, enabled),
+  useDeliveryPreviewQuery: (id: string | undefined, enabled?: boolean) =>
+    useDeliveryPreviewQueryMock(id, enabled),
   useSaveDeliveryMutation: () => ({ mutateAsync: saveMutateAsync, isPending: false }),
   useStartDeliveryMutation: () => ({ mutateAsync: startMutateAsync, isPending: false }),
   useCompleteDeliveryMutation: () => ({ mutateAsync: completeMutateAsync, isPending: false }),
@@ -106,6 +109,39 @@ function makeDoc(over: Partial<DeliveryDocument> = {}): DeliveryDocument {
   };
 }
 
+function makePreviewPayload(
+  over: Partial<DeliveryDocumentPreviewPayload> = {},
+): DeliveryDocumentPreviewPayload {
+  return {
+    document: {
+      id: 'doc-1',
+      company: 'c',
+      order: 'ord-1',
+      user: null,
+      document_type: 'WZ',
+      document_number: 'WZ/2026/0001',
+      issue_date: '2026-06-01',
+      from_warehouse: null,
+      to_warehouse: null,
+      to_customer: null,
+      status: 'draft',
+      has_returns: false,
+      returns_notes: '',
+      driver_name: '',
+      receiver_name: '',
+      delivered_at: null,
+      notes: '',
+      created_at: '2026-06-01T00:00:00Z',
+      updated_at: '2026-06-01T00:00:00Z',
+    },
+    company: { name: 'Spółka', nip: '111', address: 'ul. 1' },
+    customer: { name: 'Klient', nip: '222', address: 'ul. 2' },
+    from_warehouse: { name: 'M', code: 'MG' },
+    items: [],
+    ...over,
+  };
+}
+
 function renderDetail(id = 'doc-1') {
   return render(
     <TestQueryProvider>
@@ -128,6 +164,10 @@ describe('DeliveryDocumentDetailPage', () => {
     useOrderQueryMock.mockReturnValue({
       data: { items: [{ id: 'oi-1', product_name: 'Woda' }] } as Order,
     });
+    useDeliveryPreviewQueryMock.mockReturnValue({
+      data: makePreviewPayload(),
+      isLoading: false,
+    });
     saveMutateAsync.mockReset();
     startMutateAsync.mockReset();
     completeMutateAsync.mockReset();
@@ -146,6 +186,10 @@ describe('DeliveryDocumentDetailPage', () => {
       error: null,
       refetch: vi.fn(),
       isFetching: false,
+    });
+    useDeliveryPreviewQueryMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
     });
     renderDetail();
     expect(screen.getByText('Logowanie')).toBeInTheDocument();

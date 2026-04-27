@@ -345,3 +345,97 @@ def apply_van_reconciliation(
         "discrepancies": discrepancies,
         "items_processed": len(items),
     }
+
+
+def _fk_uuid(value) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _fmt_decimal(value: Decimal) -> str:
+    return f"{value.quantize(Decimal('0.01')):.2f}"
+
+
+def _serialize_delivery_document_full(doc: DeliveryDocument) -> dict:
+    """All `DeliveryDocument` DB fields as JSON-friendly scalars."""
+    return {
+        "id": str(doc.id),
+        "company": str(doc.company_id),
+        "order": _fk_uuid(doc.order_id),
+        "user": _fk_uuid(doc.user_id),
+        "document_type": doc.document_type,
+        "document_number": doc.document_number or "",
+        "issue_date": doc.issue_date.isoformat(),
+        "from_warehouse": _fk_uuid(doc.from_warehouse_id),
+        "to_warehouse": _fk_uuid(doc.to_warehouse_id),
+        "to_customer": _fk_uuid(doc.to_customer_id),
+        "status": doc.status,
+        "has_returns": doc.has_returns,
+        "returns_notes": doc.returns_notes or "",
+        "driver_name": doc.driver_name or "",
+        "receiver_name": doc.receiver_name or "",
+        "delivered_at": (
+            doc.delivered_at.isoformat() if doc.delivered_at else None
+        ),
+        "notes": doc.notes or "",
+        "created_at": doc.created_at.isoformat(),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
+def _preview_customer_party(doc: DeliveryDocument) -> dict:
+    """Recipient for print: `to_customer`, else order's customer."""
+    cust = doc.to_customer
+    if cust is None and doc.order_id:
+        order = doc.order
+        if order is not None:
+            cust = order.customer
+    if cust is None:
+        return {"name": "", "nip": "", "address": ""}
+    name = (cust.company_name or cust.name or "").strip()
+    return {
+        "name": name,
+        "nip": cust.nip or "",
+        "address": (cust.street or "") or "",
+    }
+
+
+def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
+    """Structured payload for WZ / delivery document print or PDF."""
+    company = doc.company
+    document_block = _serialize_delivery_document_full(doc)
+    company_block = {
+        "name": company.name,
+        "nip": company.nip or "",
+        "address": (company.address or "").strip(),
+    }
+    customer_block = _preview_customer_party(doc)
+
+    from_wh = doc.from_warehouse
+    from_warehouse = None
+    if from_wh is not None:
+        from_warehouse = {"name": from_wh.name, "code": from_wh.code}
+
+    items_out = []
+    for it in doc.items.all().order_by("created_at"):
+        product = it.product
+        items_out.append(
+            {
+                "product_name": product.name,
+                "quantity_planned": _fmt_decimal(it.quantity_planned),
+                "quantity_actual": (
+                    None
+                    if it.quantity_actual is None
+                    else _fmt_decimal(it.quantity_actual)
+                ),
+                "quantity_returned": _fmt_decimal(it.quantity_returned),
+                "unit": product.unit or "",
+            }
+        )
+
+    return {
+        "document": document_block,
+        "company": company_block,
+        "customer": customer_block,
+        "from_warehouse": from_warehouse,
+        "items": items_out,
+    }
