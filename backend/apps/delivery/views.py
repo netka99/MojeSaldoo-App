@@ -2,7 +2,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Prefetch, QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
@@ -12,6 +12,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.invoices.models import Invoice
 from apps.orders.models import Order
 from apps.products.models import ProductStock, StockMovement, Warehouse
 from apps.users.permissions import IsCompanyMember
@@ -22,11 +23,13 @@ from .models import DeliveryDocument, DeliveryItem
 from .serializers import (
     DeliveryCompleteSerializer,
     DeliveryDocumentSerializer,
+    DeliveryUpdateLinesSerializer,
     VanLoadingSerializer,
     VanReconciliationSerializer,
 )
 from .services import (
     active_main_warehouse_for_company,
+    apply_delivery_document_line_updates,
     apply_van_reconciliation,
     build_delivery_document_preview_data,
     create_van_loading_mm,
@@ -60,6 +63,16 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
             .prefetch_related("items", "items__product", "items__order_item")
         )
+        qs = qs.prefetch_related(
+            Prefetch(
+                "invoices",
+                queryset=Invoice.objects.order_by("created_at").only(
+                    "id",
+                    "delivery_document_id",
+                    "invoice_number",
+                ),
+            ),
+        )
         return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
@@ -67,6 +80,41 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             user=self.request.user,
         )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_locked_by_invoice():
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Delivery document is linked to an invoice and cannot be deleted."
+                    )
+                },
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="update-lines")
+    def update_lines(self, request, pk=None):
+        """Bulk update line fields; reconciles order + stock after ``delivered``."""
+        doc = self.get_object()
+        if doc.is_locked_by_invoice():
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Delivery document is linked to an invoice and cannot be changed."
+                    )
+                },
+            )
+        ser = DeliveryUpdateLinesSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        rows = ser.validated_data["items"]
+        apply_delivery_document_line_updates(
+            doc=doc,
+            items_payload=list(rows),
+            user=request.user,
+        )
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, pk=None):
@@ -77,6 +125,14 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     def save(self, request, pk=None):
         """draft → saved."""
         doc = self.get_object()
+        if doc.is_locked_by_invoice():
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Delivery document is linked to an invoice and cannot be changed."
+                    )
+                },
+            )
         if doc.status != DeliveryDocument.STATUS_DRAFT:
             return Response(
                 {"error": "Only draft documents can be saved."},
@@ -91,6 +147,14 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     def start_delivery(self, request, pk=None):
         """saved → in_transit."""
         doc = self.get_object()
+        if doc.is_locked_by_invoice():
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Delivery document is linked to an invoice and cannot be changed."
+                    )
+                },
+            )
         if doc.status != DeliveryDocument.STATUS_SAVED:
             return Response(
                 {"error": "Only saved documents can start delivery."},
@@ -105,6 +169,14 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     def complete(self, request, pk=None):
         """in_transit → delivered; apply actual quantities and returns; sync order lines."""
         doc = self.get_object()
+        if doc.is_locked_by_invoice():
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Delivery document is linked to an invoice and cannot be changed."
+                    )
+                },
+            )
         if doc.status != DeliveryDocument.STATUS_IN_TRANSIT:
             return Response(
                 {"error": "Only documents in transit can be completed."},

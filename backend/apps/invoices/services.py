@@ -160,6 +160,7 @@ def generate_invoice_from_order(
             product=oi.product,
             product_name=product_name,
             product_unit=product_unit,
+            pkwiu=(oi.product.pkwiu or "").strip() if oi.product_id else "",
             quantity=qty,
             unit_price_net=oi.unit_price_net,
             vat_rate=oi.vat_rate,

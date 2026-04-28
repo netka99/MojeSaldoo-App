@@ -54,6 +54,8 @@ const useOrderQueryMock = vi.hoisted(() => vi.fn());
 const saveMutateAsync = vi.hoisted(() => vi.fn());
 const startMutateAsync = vi.hoisted(() => vi.fn());
 const completeMutateAsync = vi.hoisted(() => vi.fn());
+const patchMutateAsync = vi.hoisted(() => vi.fn());
+const updateLinesMutateAsync = vi.hoisted(() => vi.fn());
 
 vi.mock('@/query/use-delivery', () => ({
   useDeliveryQuery: (id: string | undefined, enabled?: boolean) => useDeliveryQueryMock(id, enabled),
@@ -62,6 +64,8 @@ vi.mock('@/query/use-delivery', () => ({
   useSaveDeliveryMutation: () => ({ mutateAsync: saveMutateAsync, isPending: false }),
   useStartDeliveryMutation: () => ({ mutateAsync: startMutateAsync, isPending: false }),
   useCompleteDeliveryMutation: () => ({ mutateAsync: completeMutateAsync, isPending: false }),
+  usePatchDeliveryMutation: () => ({ mutateAsync: patchMutateAsync, isPending: false }),
+  useUpdateDeliveryLinesMutation: () => ({ mutateAsync: updateLinesMutateAsync, isPending: false }),
 }));
 
 vi.mock('@/query/use-orders', () => ({
@@ -171,6 +175,8 @@ describe('DeliveryDocumentDetailPage', () => {
     saveMutateAsync.mockReset();
     startMutateAsync.mockReset();
     completeMutateAsync.mockReset();
+    patchMutateAsync.mockReset();
+    updateLinesMutateAsync.mockReset();
   });
 
   afterEach(() => {
@@ -285,6 +291,26 @@ describe('DeliveryDocumentDetailPage', () => {
     expect(screen.queryByRole('button', { name: 'Zapisz WZ' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Rozpocznij dostawę' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Zakończ dostawę' })).not.toBeInTheDocument();
+  });
+
+  it('shows invoice lock banner and disables editing when linked to invoice', () => {
+    useDeliveryQueryMock.mockReturnValue({
+      data: makeDoc({
+        status: 'draft',
+        locked_for_edit: true,
+        linked_invoices: [{ id: 'inv-1', invoice_number: 'FV/2026/0001' }],
+      }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.getByText(/Dokument powiązany z fakturą/)).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /Faktura FV\/2026\/0001/ });
+    expect(link).toHaveAttribute('href', '/invoices/inv-1');
+    expect(screen.getByRole('button', { name: 'Zapisz WZ' })).toBeDisabled();
   });
 
   it('shows complete form toggle when in transit', async () => {

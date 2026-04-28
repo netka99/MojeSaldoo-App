@@ -29,6 +29,12 @@ export interface DeliveryItem {
   created_at: string;
 }
 
+/** Linked invoice preview on delivery detail (WZ locked). */
+export interface LinkedInvoiceRef {
+  id: string;
+  invoice_number: string;
+}
+
 /** Full document as returned from GET (includes nested `items`). */
 export interface DeliveryDocument {
   id: string;
@@ -54,6 +60,9 @@ export interface DeliveryDocument {
   notes: string;
   created_at: string;
   updated_at: string;
+  /** True when an invoice references this delivery document (editing blocked server-side). */
+  locked_for_edit?: boolean;
+  linked_invoices?: LinkedInvoiceRef[];
   items: DeliveryItem[];
 }
 
@@ -94,6 +103,19 @@ export interface DeliveryCompletePayload {
   receiver_name?: string;
   has_returns?: boolean;
   returns_notes?: string;
+}
+
+/** POST `/api/delivery/:id/update-lines/` body. */
+export interface DeliveryUpdateLinesPayload {
+  items: Array<{
+    id: string;
+    quantity_planned?: string | number;
+    quantity_actual?: string | number | null;
+    quantity_returned?: string | number;
+    return_reason?: string;
+    is_damaged?: boolean;
+    notes?: string;
+  }>;
 }
 
 export interface PaginatedDeliveryDocuments {

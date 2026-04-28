@@ -18,6 +18,7 @@ const baseProduct: Product = {
   vat_rate: '23',
   sku: null,
   barcode: null,
+  pkwiu: '',
   track_batches: true,
   min_stock_alert: '0',
   shelf_life_days: 30,
@@ -37,6 +38,7 @@ describe('productFormSchema', () => {
       vat_rate: '23',
       sku: '',
       barcode: '',
+      pkwiu: '',
       track_batches: true,
       min_stock_alert: '0',
       shelf_life_days: '',
@@ -56,12 +58,41 @@ describe('productFormSchema', () => {
         vat_rate: '23',
         sku: '',
         barcode: '',
+        pkwiu: '',
         track_batches: true,
         min_stock_alert: '0',
         shelf_life_days: '',
         is_active: true,
       }),
     ).toThrow();
+  });
+
+  it('rejects pkwiu longer than 20 characters', () => {
+    const base = {
+      name: 'X',
+      description: '',
+      unit: 'szt',
+      price_net: '1',
+      price_gross: '1.23',
+      vat_rate: '23',
+      sku: '',
+      barcode: '',
+      track_batches: true,
+      min_stock_alert: '0',
+      shelf_life_days: '',
+      is_active: true,
+    };
+    expect(() =>
+      productFormSchema.parse({
+        ...base,
+        pkwiu: 'x'.repeat(21),
+      }),
+    ).toThrow();
+    const parsed = productFormSchema.parse({
+      ...base,
+      pkwiu: 'x'.repeat(20),
+    });
+    expect(parsed.pkwiu).toHaveLength(20);
   });
 });
 
@@ -76,6 +107,25 @@ describe('ProductForm', () => {
     render(<ProductForm product={baseProduct} onSubmit={vi.fn()} />);
     expect(screen.getByRole('heading', { name: /edit product/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+  });
+
+  it('renders Kod PKWiU field with placeholder and KSeF help text', () => {
+    render(<ProductForm onSubmit={vi.fn()} />);
+    expect(screen.getByRole('textbox', { name: /kod pkwiu/i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('np. 10.89.19.0')).toBeInTheDocument();
+    expect(
+      screen.getByText('Wymagane do wysyłki faktur do KSeF'),
+    ).toBeInTheDocument();
+  });
+
+  it('prefills pkwiu in edit mode', () => {
+    render(
+      <ProductForm
+        product={{ ...baseProduct, pkwiu: '62.01.11.0' }}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('textbox', { name: /kod pkwiu/i })).toHaveValue('62.01.11.0');
   });
 
   it('shows validation error when name is empty', async () => {
@@ -114,10 +164,34 @@ describe('ProductForm', () => {
         vat_rate: '23',
         sku: null,
         barcode: null,
+        pkwiu: '',
         track_batches: true,
         min_stock_alert: '0',
         shelf_life_days: null,
         is_active: true,
+      }),
+    );
+  });
+
+  it('submits create with trimmed pkwiu', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(<ProductForm onSubmit={onSubmit} />);
+
+    const nameInput = container.querySelector<HTMLInputElement>('input[name="name"]')!;
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Towar');
+
+    const pkwiuInput = screen.getByRole('textbox', { name: /kod pkwiu/i });
+    await user.type(pkwiuInput, '  10.89.19.0  ');
+
+    await user.click(screen.getByRole('button', { name: /create product/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Towar',
+        pkwiu: '10.89.19.0',
       }),
     );
   });

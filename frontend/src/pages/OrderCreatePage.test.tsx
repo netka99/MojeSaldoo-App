@@ -54,6 +54,7 @@ const productFetch = vi.hoisted(() =>
         vat_rate: '23.00',
         sku: 'SKU-1',
         barcode: null,
+        pkwiu: '',
         track_batches: false,
         min_stock_alert: '0',
         shelf_life_days: null,

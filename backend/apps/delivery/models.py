@@ -152,6 +152,10 @@ class DeliveryDocument(models.Model):
             return self.document_number
         return f"Delivery {self.id}"
 
+    def is_locked_by_invoice(self) -> bool:
+        """True if any invoice references this document (edits must be blocked)."""
+        return self.invoices.exists()
+
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "Delivery document"

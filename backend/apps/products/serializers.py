@@ -29,6 +29,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "vat_rate",
             "sku",
             "barcode",
+            "pkwiu",
             "track_batches",
             "min_stock_alert",
             "shelf_life_days",

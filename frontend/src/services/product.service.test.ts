@@ -54,6 +54,7 @@ describe('productService', () => {
       vat_rate: '23',
       sku: null,
       barcode: null,
+      pkwiu: '',
       track_batches: false,
       min_stock_alert: '0',
       shelf_life_days: null,

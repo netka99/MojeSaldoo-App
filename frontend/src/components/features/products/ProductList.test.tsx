@@ -32,6 +32,7 @@ function product(over: Partial<Product> = {}): Product {
     vat_rate: '23',
     sku: 'SKU-1',
     barcode: null,
+    pkwiu: '',
     track_batches: false,
     min_stock_alert: '0',
     shelf_life_days: null,

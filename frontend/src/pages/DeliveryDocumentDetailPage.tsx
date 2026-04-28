@@ -9,8 +9,10 @@ import {
   useCompleteDeliveryMutation,
   useDeliveryQuery,
   useDeliveryPreviewQuery,
+  usePatchDeliveryMutation,
   useSaveDeliveryMutation,
   useStartDeliveryMutation,
+  useUpdateDeliveryLinesMutation,
 } from '@/query/use-delivery';
 import { useOrderQuery } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
@@ -77,6 +79,30 @@ function buildInitialLineEdits(items: DeliveryItem[]): Record<string, LineEditSt
   return next;
 }
 
+type LinePersistState = {
+  quantity_planned: string;
+  quantity_actual: string;
+  quantity_returned: string;
+  return_reason: string;
+  is_damaged: boolean;
+  notes: string;
+};
+
+function buildLinePersist(items: DeliveryItem[]): Record<string, LinePersistState> {
+  const next: Record<string, LinePersistState> = {};
+  for (const it of items) {
+    next[it.id] = {
+      quantity_planned: qtyStr(it.quantity_planned),
+      quantity_actual: qtyStr(it.quantity_actual ?? ''),
+      quantity_returned: qtyStr(it.quantity_returned ?? '0'),
+      return_reason: it.return_reason ?? '',
+      is_damaged: Boolean(it.is_damaged),
+      notes: it.notes ?? '',
+    };
+  }
+  return next;
+}
+
 export function DeliveryDocumentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
@@ -100,6 +126,8 @@ export function DeliveryDocumentDetailPage() {
   const saveM = useSaveDeliveryMutation();
   const startM = useStartDeliveryMutation();
   const completeM = useCompleteDeliveryMutation();
+  const patchM = usePatchDeliveryMutation();
+  const updateLinesM = useUpdateDeliveryLinesMutation();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -108,8 +136,15 @@ export function DeliveryDocumentDetailPage() {
   const [receiverName, setReceiverName] = useState('');
   const [returnsNotes, setReturnsNotes] = useState('');
 
+  const [linePersist, setLinePersist] = useState<Record<string, LinePersistState>>({});
+  const [headerDraft, setHeaderDraft] = useState({
+    driver_name: '',
+    notes: '',
+    issue_date: '',
+  });
+
   const openCompleteForm = useCallback(() => {
-    if (!doc) return;
+    if (!doc || doc.locked_for_edit) return;
     setLineEdits(buildInitialLineEdits(doc.items));
     setReceiverName(doc.receiver_name?.trim() ? doc.receiver_name : '');
     setReturnsNotes(doc.returns_notes ?? '');
@@ -121,6 +156,22 @@ export function DeliveryDocumentDetailPage() {
     setCompleteOpen(false);
     setActionError(null);
   };
+
+  useEffect(() => {
+    if (!doc) return;
+    setHeaderDraft({
+      driver_name: doc.driver_name ?? '',
+      notes: doc.notes ?? '',
+      issue_date: doc.issue_date ? doc.issue_date.slice(0, 10) : '',
+    });
+    setLinePersist(buildLinePersist(doc.items));
+  }, [doc]);
+
+  useEffect(() => {
+    if (doc?.locked_for_edit) {
+      setCompleteOpen(false);
+    }
+  }, [doc?.locked_for_edit]);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -178,7 +229,65 @@ export function DeliveryDocumentDetailPage() {
     }
   };
 
-  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending;
+  const locked = Boolean(doc?.locked_for_edit);
+
+  const onHeaderSave = async () => {
+    if (!id || locked) return;
+    setActionError(null);
+    try {
+      await patchM.mutateAsync({
+        id,
+        data: {
+          driver_name: headerDraft.driver_name.trim() || undefined,
+          notes: headerDraft.notes.trim() || undefined,
+          issue_date: headerDraft.issue_date || undefined,
+        },
+      });
+    } catch (e) {
+      setActionError(errMsg(e));
+    }
+  };
+
+  const onLinesSave = async () => {
+    if (!id || !doc || locked) return;
+    setActionError(null);
+    try {
+      await updateLinesM.mutateAsync({
+        id,
+        data: {
+          items: doc.items.map((it) => {
+            const row = linePersist[it.id];
+            if (!row) {
+              return {
+                id: it.id,
+                quantity_planned: String(it.quantity_planned),
+                quantity_returned: qtyStr(it.quantity_returned),
+              };
+            }
+            const qa = row.quantity_actual.trim();
+            return {
+              id: it.id,
+              quantity_planned: row.quantity_planned.trim() || String(it.quantity_planned),
+              quantity_actual: qa === '' ? null : qa,
+              quantity_returned: row.quantity_returned.trim() || '0',
+              return_reason: row.return_reason,
+              is_damaged: row.is_damaged,
+              notes: row.notes,
+            };
+          }),
+        },
+      });
+    } catch (e) {
+      setActionError(errMsg(e));
+    }
+  };
+
+  const workflowBusy =
+    saveM.isPending ||
+    startM.isPending ||
+    completeM.isPending ||
+    patchM.isPending ||
+    updateLinesM.isPending;
 
   const onPrintWz = () => {
     if (!deliveryPreview) return;
@@ -300,9 +409,83 @@ export function DeliveryDocumentDetailPage() {
             </p>
           )}
 
+          {locked && (
+            <div
+              role="status"
+              className="rounded-md border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm text-foreground"
+            >
+              <p>Dokument powiązany z fakturą — edycja jest zablokowana.</p>
+              {(doc.linked_invoices ?? []).length > 0 ? (
+                <ul className="mt-2 list-inside list-disc space-y-1 text-foreground">
+                  {(doc.linked_invoices ?? []).map((inv) => (
+                    <li key={inv.id}>
+                      <Link
+                        to={`/invoices/${inv.id}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        Faktura {inv.invoice_number?.trim() ? inv.invoice_number : inv.id.slice(0, 8)}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          )}
+
+          {!locked && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Dane dokumentu</CardTitle>
+                <p className="text-sm text-muted-foreground">Data wystawienia, kierowca i uwagi (zapis do serwera).</p>
+              </CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-2">
+                <Input
+                  label="Data wystawienia"
+                  type="date"
+                  value={headerDraft.issue_date}
+                  onChange={(e) =>
+                    setHeaderDraft((s) => ({ ...s, issue_date: e.target.value }))
+                  }
+                  id="delivery-header-issue-date"
+                />
+                <Input
+                  label="Kierowca"
+                  value={headerDraft.driver_name}
+                  onChange={(e) =>
+                    setHeaderDraft((s) => ({ ...s, driver_name: e.target.value }))
+                  }
+                  id="delivery-header-driver"
+                />
+                <div className="sm:col-span-2">
+                  <Input
+                    label="Uwagi (dokument)"
+                    value={headerDraft.notes}
+                    onChange={(e) => setHeaderDraft((s) => ({ ...s, notes: e.target.value }))}
+                    id="delivery-header-notes"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Button
+                    type="button"
+                    onClick={() => void onHeaderSave()}
+                    disabled={workflowBusy}
+                    id="delivery-header-save"
+                  >
+                    {patchM.isPending ? 'Zapisywanie…' : 'Zapisz nagłówek'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex flex-wrap gap-2">
             {doc.status === 'draft' && (
-              <Button type="button" onClick={() => void onSave()} disabled={workflowBusy} id="delivery-action-save">
+              <Button
+                type="button"
+                onClick={() => void onSave()}
+                disabled={workflowBusy || locked}
+                id="delivery-action-save"
+              >
                 {saveM.isPending ? 'Zapisywanie…' : 'Zapisz WZ'}
               </Button>
             )}
@@ -310,7 +493,7 @@ export function DeliveryDocumentDetailPage() {
               <Button
                 type="button"
                 onClick={() => void onStart()}
-                disabled={workflowBusy}
+                disabled={workflowBusy || locked}
                 id="delivery-action-start"
               >
                 {startM.isPending ? 'Uruchamianie…' : 'Rozpocznij dostawę'}
@@ -321,7 +504,7 @@ export function DeliveryDocumentDetailPage() {
                 type="button"
                 variant={completeOpen ? 'outline' : 'default'}
                 onClick={() => (completeOpen ? closeCompleteForm() : openCompleteForm())}
-                disabled={workflowBusy && !completeOpen}
+                disabled={(workflowBusy && !completeOpen) || locked}
                 id="delivery-action-complete-toggle"
               >
                 {completeOpen ? 'Anuluj formularz' : 'Zakończ dostawę'}
@@ -329,7 +512,7 @@ export function DeliveryDocumentDetailPage() {
             )}
           </div>
 
-          {doc.status === 'in_transit' && completeOpen && (
+          {doc.status === 'in_transit' && completeOpen && !locked && (
             <Card className="border-primary/30 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-lg">Zakończenie dostawy — ilości i zwroty</CardTitle>
@@ -476,11 +659,16 @@ export function DeliveryDocumentDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Pozycje</CardTitle>
+              {!locked && doc.items.length > 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Zapisz zmiany ilości lub zwrotów — po dostawie korekty są uwzględniane w magazynie i zamówieniu.
+                </p>
+              ) : null}
             </CardHeader>
             <CardContent>
               {doc.items.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Brak pozycji na tym dokumencie.</p>
-              ) : (
+              ) : locked ? (
                 <>
                   <ul className="divide-y divide-border md:hidden">
                     {doc.items.map((it: DeliveryItem) => (
@@ -518,7 +706,9 @@ export function DeliveryDocumentDetailPage() {
                               {qtyStr(it.quantity_planned)}
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-muted-foreground">
-                              {it.quantity_actual != null && it.quantity_actual !== '' ? qtyStr(it.quantity_actual) : '—'}
+                              {it.quantity_actual != null && it.quantity_actual !== ''
+                                ? qtyStr(it.quantity_actual)
+                                : '—'}
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-muted-foreground">
                               {qtyStr(it.quantity_returned)}
@@ -529,6 +719,139 @@ export function DeliveryDocumentDetailPage() {
                     </table>
                   </div>
                 </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table
+                      className="min-w-full divide-y divide-border text-sm"
+                      aria-label="Edycja pozycji dokumentu WZ"
+                    >
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Produkt</th>
+                          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Zaplan.</th>
+                          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Faktyczna</th>
+                          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Zwrot</th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Powód zwrotu</th>
+                          <th className="px-3 py-2 text-center font-medium text-muted-foreground">Uszk.</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border bg-card">
+                        {doc.items.map((it) => {
+                          const row = linePersist[it.id] ?? buildLinePersist([it])[it.id];
+                          return (
+                            <tr key={it.id}>
+                              <td className="max-w-[160px] px-3 py-2 text-foreground">
+                                {productLabelForDeliveryLine(order, it)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <label className="sr-only" htmlFor={`qp-${it.id}`}>
+                                  Zaplanowano {it.id}
+                                </label>
+                                <input
+                                  id={`qp-${it.id}`}
+                                  type="text"
+                                  inputMode="decimal"
+                                  className={cn(
+                                    'flex h-9 w-full min-w-[4rem] rounded-md border border-input bg-background px-2 py-1 text-sm',
+                                    'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                  )}
+                                  value={row.quantity_planned}
+                                  onChange={(e) =>
+                                    setLinePersist((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...row, quantity_planned: e.target.value },
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <label className="sr-only" htmlFor={`ep-qa-${it.id}`}>
+                                  Faktyczna {it.id}
+                                </label>
+                                <input
+                                  id={`ep-qa-${it.id}`}
+                                  type="text"
+                                  inputMode="decimal"
+                                  className={cn(
+                                    'flex h-9 w-full min-w-[4rem] rounded-md border border-input bg-background px-2 py-1 text-sm',
+                                    'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                  )}
+                                  value={row.quantity_actual}
+                                  onChange={(e) =>
+                                    setLinePersist((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...row, quantity_actual: e.target.value },
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <label className="sr-only" htmlFor={`ep-qr-${it.id}`}>
+                                  Zwrot {it.id}
+                                </label>
+                                <input
+                                  id={`ep-qr-${it.id}`}
+                                  type="text"
+                                  inputMode="decimal"
+                                  className={cn(
+                                    'flex h-9 w-full min-w-[4rem] rounded-md border border-input bg-background px-2 py-1 text-sm',
+                                    'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                  )}
+                                  value={row.quantity_returned}
+                                  onChange={(e) =>
+                                    setLinePersist((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...row, quantity_returned: e.target.value },
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="text"
+                                  className={cn(
+                                    'flex h-9 w-full min-w-[7rem] rounded-md border border-input bg-background px-2 py-1 text-sm',
+                                    'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                  )}
+                                  value={row.return_reason}
+                                  onChange={(e) =>
+                                    setLinePersist((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...row, return_reason: e.target.value },
+                                    }))
+                                  }
+                                  aria-label={`Powód zwrotu ${it.id}`}
+                                />
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={row.is_damaged}
+                                  onChange={(e) =>
+                                    setLinePersist((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...row, is_damaged: e.target.checked },
+                                    }))
+                                  }
+                                  aria-label={`Uszkodzono ${it.id}`}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => void onLinesSave()}
+                    disabled={workflowBusy}
+                    id="delivery-lines-save"
+                  >
+                    {updateLinesM.isPending ? 'Zapisywanie…' : 'Zapisz pozycje'}
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>

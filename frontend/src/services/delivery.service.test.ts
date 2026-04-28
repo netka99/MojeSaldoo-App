@@ -111,6 +111,15 @@ describe('deliveryService', () => {
     expect(mocks.post).toHaveBeenCalledWith('/delivery/d1/complete/', {});
   });
 
+  it('updateLines posts to /delivery/:id/update-lines/', async () => {
+    const payload = {
+      items: [{ id: 'li-1', quantity_planned: '2', quantity_returned: '0' }],
+    };
+    mocks.post.mockResolvedValue({ id: 'd1' });
+    await deliveryService.updateLines('d1', payload);
+    expect(mocks.post).toHaveBeenCalledWith('/delivery/d1/update-lines/', payload);
+  });
+
   it('generateForOrder GETs /delivery/generate-for-order/:orderId/', async () => {
     mocks.get.mockResolvedValue({ id: 'd-new' });
     await deliveryService.generateForOrder('o-99');

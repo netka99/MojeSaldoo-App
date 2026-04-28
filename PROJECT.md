@@ -157,7 +157,7 @@ Create Account → Ask for Certificates →
 #### STAGE 3: Delivery (Moduł 5)
 - Okno planowania kierowcy
 - Wydruk WZ i produktów dla każdego sklepu
-- Dodanie zwrotów (WZ może być edytowalny)
+- Dodanie zwrotów — edycja WZ (nagłówek i pozycje do momentu powiązania z fakturą); po powiązaniu z fakturą dokument tylko do odczytu na ekranie ze wskazaniem numeru faktury
 - Zmiana statusu WZ z Draft na Saved
 
 #### STAGE 4: Invoicing WZ (Moduł 3)

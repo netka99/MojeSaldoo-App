@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderItem
 from apps.products.models import Product, ProductStock, StockMovement, Warehouse
 
 from .models import DeliveryDocument, DeliveryItem
@@ -439,3 +439,263 @@ def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
         "from_warehouse": from_warehouse,
         "items": items_out,
     }
+
+
+def _delivery_effective_actual(item: DeliveryItem) -> Decimal:
+    """Same interpretation as completion: fallback to planned when actual unset."""
+    if item.quantity_actual is not None:
+        return item.quantity_actual
+    return item.quantity_planned
+
+
+def _apply_sale_return_deltas_to_stock(
+    *,
+    company_id,
+    warehouse_id,
+    product_id,
+    product_name: str,
+    delta_sale: Decimal,
+    delta_return: Decimal,
+    movement_user,
+    created_by,
+    doc_id,
+) -> None:
+    """
+    Apply increments to reserved (sale) and available (returns) like ``complete()``,
+    and emit matching ``StockMovement`` rows. ``delta_sale`` is (new_actual - old_actual)
+    (positive = ship more from reserved); ``delta_return`` is (new_return - old_return).
+    """
+    if delta_sale == Decimal("0") and delta_return == Decimal("0"):
+        return
+
+    try:
+        st = ProductStock.objects.select_for_update().get(
+            company_id=company_id,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+        )
+    except ProductStock.DoesNotExist:
+        raise ValidationError(
+            {
+                "stock": [
+                    {
+                        "product_id": str(product_id),
+                        "product_name": product_name,
+                        "detail": (
+                            "No ProductStock for this product at from_warehouse "
+                            "(cannot reconcile)."
+                        ),
+                    }
+                ]
+            }
+        )
+
+    if delta_sale != Decimal("0"):
+        qty_before_avail = st.quantity_available
+        st.quantity_reserved -= delta_sale
+        if st.quantity_reserved < 0:
+            raise ValidationError(
+                {
+                    "stock": (
+                        "Insufficient quantity_reserved for this correction "
+                        f"(product {product_name})."
+                    ),
+                },
+            )
+        st.save(update_fields=["quantity_reserved"])
+        StockMovement.objects.create(
+            company_id=company_id,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+            user=movement_user,
+            movement_type=StockMovement.MovementType.SALE,
+            quantity=-delta_sale,
+            quantity_before=qty_before_avail,
+            quantity_after=st.quantity_available,
+            reference_type="delivery_correction",
+            reference_id=doc_id,
+            created_by=created_by,
+        )
+
+    if delta_return != Decimal("0"):
+        qty_before_avail_ret = st.quantity_available
+        st.quantity_available += delta_return
+        st.save(update_fields=["quantity_available"])
+        StockMovement.objects.create(
+            company_id=company_id,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+            user=movement_user,
+            movement_type=StockMovement.MovementType.RETURN,
+            quantity=delta_return,
+            quantity_before=qty_before_avail_ret,
+            quantity_after=st.quantity_available,
+            reference_type="delivery_correction",
+            reference_id=doc_id,
+            created_by=created_by,
+        )
+
+
+@transaction.atomic
+def apply_delivery_document_line_updates(
+    *,
+    doc: DeliveryDocument,
+    items_payload: list[dict],
+    user,
+) -> DeliveryDocument:
+    """
+    Update delivery line quantities and notes. Before delivery this only updates rows.
+    After delivery (`status == delivered`), adjusts ``OrderItem`` and stock for deltas.
+    """
+    if doc.is_locked_by_invoice():
+        raise ValidationError(
+            {"detail": "Delivery document is linked to an invoice and cannot be changed."}
+        )
+    if doc.status == DeliveryDocument.STATUS_CANCELLED:
+        raise ValidationError({"detail": "Cancelled documents cannot be changed."})
+
+    doc = (
+        DeliveryDocument.objects.select_for_update()
+        .select_related("company", "order", "from_warehouse", "user")
+        .prefetch_related("items__order_item", "items__product")
+        .get(pk=doc.pk)
+    )
+
+    if doc.is_locked_by_invoice():
+        raise ValidationError(
+            {"detail": "Delivery document is linked to an invoice and cannot be changed."}
+        )
+
+    payload_by_id = {str(row["id"]): row for row in items_payload}
+
+    movement_user = doc.user if doc.user_id else user
+
+    items_now = list(doc.items.select_related("order_item", "product"))
+
+    valid_ids = {str(i.id) for i in items_now}
+    extra = set(payload_by_id) - valid_ids
+    if extra:
+        raise ValidationError(
+            {"items": f"Unknown delivery item id(s): {', '.join(sorted(extra))}."}
+        )
+
+    for item in items_now:
+        row = payload_by_id.get(str(item.id))
+        if not row:
+            continue
+
+        old_act_eff = _delivery_effective_actual(item)
+        old_ret = item.quantity_returned or Decimal("0")
+
+        if "quantity_planned" in row and row["quantity_planned"] is not None:
+            item.quantity_planned = row["quantity_planned"]
+        if "quantity_actual" in row:
+            item.quantity_actual = row["quantity_actual"]
+        if "quantity_returned" in row:
+            rw = row["quantity_returned"]
+            item.quantity_returned = Decimal("0") if rw is None else rw
+        if "return_reason" in row:
+            item.return_reason = (row.get("return_reason") or "").strip()
+        if "is_damaged" in row:
+            item.is_damaged = bool(row["is_damaged"])
+        if "notes" in row:
+            item.notes = (row.get("notes") or "").strip()
+
+        new_act_eff = _delivery_effective_actual(item)
+        new_ret = item.quantity_returned or Decimal("0")
+
+        if new_ret < 0 or new_act_eff < 0:
+            raise ValidationError({"items": "Quantities cannot be negative."})
+        if new_ret > new_act_eff:
+            raise ValidationError(
+                {"items": f"quantity_returned cannot exceed quantity for item {item.id}."}
+            )
+
+        if doc.status != DeliveryDocument.STATUS_DELIVERED:
+            item.save()
+            continue
+
+        delta_sale = new_act_eff - old_act_eff
+        delta_return = new_ret - old_ret
+
+        if delta_sale == Decimal("0") and delta_return == Decimal("0"):
+            item.save()
+            continue
+
+        if doc.from_warehouse_id is None:
+            raise ValidationError(
+                {
+                    "from_warehouse": (
+                        "Delivery document has no source warehouse; "
+                        "cannot reconcile stock lines."
+                    )
+                },
+            )
+
+        sold_old = old_act_eff - old_ret
+        sold_new = new_act_eff - new_ret
+
+        if item.order_item_id:
+            oi = OrderItem.objects.select_for_update().get(pk=item.order_item_id)
+            tentative_delivered = (
+                (oi.quantity_delivered or Decimal("0")) - sold_old + sold_new
+            )
+            tentative_returned_line = (
+                (oi.quantity_returned or Decimal("0")) - old_ret + new_ret
+            )
+            if tentative_delivered < 0:
+                raise ValidationError(
+                    {
+                        "items": (
+                            "Order line update would drive delivered quantity negative "
+                            f"({oi.id})."
+                        ),
+                    },
+                )
+            if tentative_delivered > oi.quantity:
+                raise ValidationError(
+                    {
+                        "items": (
+                            f"Order line {oi.id} would exceed ordered quantity "
+                            f"({tentative_delivered} > {oi.quantity})."
+                        ),
+                    },
+                )
+
+            oi.quantity_delivered = tentative_delivered
+            oi.quantity_returned = tentative_returned_line
+            oi.save(update_fields=["quantity_delivered", "quantity_returned"])
+
+        _apply_sale_return_deltas_to_stock(
+            company_id=doc.company_id,
+            warehouse_id=doc.from_warehouse_id,
+            product_id=item.product_id,
+            product_name=item.product.name if item.product_id else "",
+            delta_sale=delta_sale,
+            delta_return=delta_return,
+            movement_user=movement_user,
+            created_by=user,
+            doc_id=doc.id,
+        )
+
+        item.save()
+
+    doc.user = user
+    doc.save(update_fields=["user", "updated_at"])
+    doc.refresh_from_db()
+
+    if doc.order_id and doc.status == DeliveryDocument.STATUS_DELIVERED:
+        order = Order.objects.select_for_update().get(pk=doc.order_id)
+        lines = list(order.items.all())
+        if lines and all(
+            (oi.quantity_delivered or Decimal("0")) >= oi.quantity for oi in lines
+        ):
+            if order.status not in (
+                Order.STATUS_DELIVERED,
+                Order.STATUS_INVOICED,
+                Order.STATUS_CANCELLED,
+            ):
+                order.update_status(Order.STATUS_DELIVERED)
+
+    return doc
+

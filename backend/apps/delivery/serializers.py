@@ -105,6 +105,35 @@ class DeliveryCompleteSerializer(serializers.Serializer):
     returns_notes = serializers.CharField(required=False, allow_blank=True)
 
 
+class DeliveryLineMutationSerializer(serializers.Serializer):
+    """Subset of editable fields per line for ``POST .../update-lines/``."""
+
+    id = serializers.UUIDField()
+    quantity_planned = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+    )
+    quantity_actual = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    quantity_returned = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+    )
+    return_reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    is_damaged = serializers.BooleanField(required=False)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class DeliveryUpdateLinesSerializer(serializers.Serializer):
+    items = DeliveryLineMutationSerializer(many=True, allow_empty=False)
+
+
 class DeliveryDocumentSerializer(serializers.ModelSerializer):
     order_id = serializers.PrimaryKeyRelatedField(
         queryset=Order.objects.all(),
@@ -133,6 +162,8 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     items = DeliveryItemSerializer(many=True, read_only=True)
     order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
+    locked_for_edit = serializers.SerializerMethodField()
+    linked_invoices = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -158,6 +189,8 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "notes",
             "created_at",
             "updated_at",
+            "locked_for_edit",
+            "linked_invoices",
             "items",
         ]
         read_only_fields = [
@@ -171,6 +204,8 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "items",
             "order_number",
             "customer_name",
+            "locked_for_edit",
+            "linked_invoices",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -202,6 +237,15 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         if obj.order_id and obj.order.customer_id:
             return obj.order.customer.name
         return None
+
+    def get_locked_for_edit(self, obj):
+        return obj.is_locked_by_invoice()
+
+    def get_linked_invoices(self, obj):
+        return [
+            {"id": str(inv.id), "invoice_number": inv.invoice_number or ""}
+            for inv in obj.invoices.all().order_by("created_at")
+        ]
 
     def validate(self, data):
         doc_type = data.get("document_type")
@@ -244,6 +288,14 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         return self._ensure_fk_company(customer, "Customer")
 
     def update(self, instance, validated_data):
+        if instance.is_locked_by_invoice():
+            raise serializers.ValidationError(
+                {
+                    "detail": (
+                        "Delivery document is linked to an invoice and cannot be changed."
+                    )
+                }
+            )
         request = self.context.get("request")
         if request and request.user.is_authenticated:
             instance.user = request.user

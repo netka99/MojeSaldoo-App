@@ -22,6 +22,11 @@ class Product(models.Model):
     vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=23.00)
     sku = models.CharField(max_length=50, blank=True, null=True)
     barcode = models.CharField(max_length=50, blank=True, null=True)
+    pkwiu = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Polish product classification code",
+    )
     track_batches = models.BooleanField(default=True)
     min_stock_alert = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     shelf_life_days = models.IntegerField(blank=True, null=True)

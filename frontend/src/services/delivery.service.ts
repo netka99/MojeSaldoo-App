@@ -5,6 +5,7 @@ import type {
   DeliveryDocumentCreate,
   DeliveryDocumentPatch,
   DeliveryDocumentPreviewPayload,
+  DeliveryUpdateLinesPayload,
   PaginatedDeliveryDocuments,
   VanLoadingPayload,
   VanReconciliationPayload,
@@ -51,6 +52,9 @@ export const deliveryService = {
 
   completeDelivery: (id: string, data?: DeliveryCompletePayload) =>
     api.post<DeliveryDocument>(`${basePath}${id}/complete/`, data ?? {}),
+
+  updateLines: (id: string, data: DeliveryUpdateLinesPayload) =>
+    api.post<DeliveryDocument>(`${basePath}${id}/update-lines/`, data),
 
   /** `GET` — creates draft WZ from confirmed order (remaining quantities per line on the server). */
   generateForOrder: (orderId: string) =>

@@ -66,6 +66,17 @@ class ProductModelTests(TestCase):
         self.assertTrue(product.track_batches)
         self.assertEqual(product.min_stock_alert, Decimal("0"))
         self.assertTrue(product.is_active)
+        self.assertEqual(product.pkwiu, "")
+
+    def test_pkwiu_persists(self):
+        product = Product.objects.create(
+            user=self.user,
+            company=self.company,
+            name="Classified good",
+            pkwiu="62.01.11.0",
+        )
+        product.refresh_from_db()
+        self.assertEqual(product.pkwiu, "62.01.11.0")
 
 
 class WarehouseModelTests(TestCase):
@@ -496,6 +507,29 @@ class ProductSerializerTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("price_net", serializer.errors)
 
+    def test_create_with_pkwiu(self):
+        serializer = ProductSerializer(
+            data={
+                "name": "With PKWiU",
+                "unit": "szt",
+                "pkwiu": "01.11.12.13",
+            }
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        product = serializer.save(user=self.user, company=self.company)
+        self.assertEqual(product.pkwiu, "01.11.12.13")
+
+    def test_to_representation_includes_pkwiu(self):
+        product = Product.objects.create(
+            user=self.user,
+            company=self.company,
+            name="Listed product",
+            unit="szt",
+            pkwiu="99.88.77",
+        )
+        data = ProductSerializer(product).data
+        self.assertEqual(data["pkwiu"], "99.88.77")
+
 
 class WarehouseSerializerTests(TestCase):
     def setUp(self):
@@ -596,6 +630,47 @@ class ProductViewSetAPITests(TestCase):
         self.assertEqual(response.data["name"], "New via API")
         created = Product.objects.get(id=response.data["id"])
         self.assertEqual(created.user, self.user)
+
+    def test_create_accepts_pkwiu(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse("product-list"),
+            {
+                "name": "API PKWiU product",
+                "unit": "szt",
+                "price_net": "1.00",
+                "price_gross": "1.23",
+                "pkwiu": "62.01.11.0",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["pkwiu"], "62.01.11.0")
+        created = Product.objects.get(id=response.data["id"])
+        self.assertEqual(created.pkwiu, "62.01.11.0")
+
+    def test_list_includes_pkwiu(self):
+        self.client.force_authenticate(user=self.user)
+        p = Product.objects.get(name="My catalog item")
+        p.pkwiu = "10.20.30"
+        p.save(update_fields=["pkwiu"])
+        response = self.client.get(reverse("product-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = next(r for r in response.data["results"] if r["id"] == str(p.id))
+        self.assertEqual(row["pkwiu"], "10.20.30")
+
+    def test_patch_updates_pkwiu(self):
+        self.client.force_authenticate(user=self.user)
+        p = Product.objects.get(name="My catalog item")
+        response = self.client.patch(
+            reverse("product-detail", kwargs={"pk": p.id}),
+            {"pkwiu": "44.55.66"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["pkwiu"], "44.55.66")
+        p.refresh_from_db()
+        self.assertEqual(p.pkwiu, "44.55.66")
 
     def test_list_includes_stock_total(self):
         self.client.force_authenticate(user=self.user)

@@ -1084,6 +1084,28 @@ class InvoiceGenerateFromOrderServiceTests(TestCase):
         line = inv.items.first()
         self.assertEqual(line.product_name, "Original name")
 
+    def test_invoice_item_gets_pkwiu_from_product(self):
+        self.product.pkwiu = "62.01.11.0"
+        self.product.save(update_fields=["pkwiu"])
+        inv = generate_invoice_from_order(
+            order=self.order,
+            company=self.co,
+            user=self.user,
+        )
+        line = inv.items.first()
+        self.assertEqual(line.pkwiu, "62.01.11.0")
+
+    def test_invoice_item_pkwiu_empty_when_product_has_no_pkwiu(self):
+        self.product.pkwiu = ""
+        self.product.save(update_fields=["pkwiu"])
+        inv = generate_invoice_from_order(
+            order=self.order,
+            company=self.co,
+            user=self.user,
+        )
+        line = inv.items.first()
+        self.assertEqual(line.pkwiu, "")
+
 
 class InvoiceItemModelTests(TestCase):
     """Line snapshots, computed amounts, and invoice cascade."""

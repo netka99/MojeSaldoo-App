@@ -6,6 +6,7 @@ import type {
   DeliveryDocument,
   DeliveryDocumentCreate,
   DeliveryDocumentPatch,
+  DeliveryUpdateLinesPayload,
   VanLoadingPayload,
   VanReconciliationPayload,
 } from '@/types';
@@ -107,6 +108,20 @@ export function useCompleteDeliveryMutation() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data?: DeliveryCompletePayload }) =>
       deliveryService.completeDelivery(id, data),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+export function useUpdateDeliveryLinesMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: DeliveryUpdateLinesPayload }) =>
+      deliveryService.updateLines(id, data),
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });

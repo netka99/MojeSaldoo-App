@@ -13,6 +13,8 @@ export interface Product {
   vat_rate: string | number;
   sku: string | null;
   barcode: string | null;
+  /** Polish PKWiU classification code (KSeF invoice lines). */
+  pkwiu: string;
   track_batches: boolean;
   min_stock_alert: string | number;
   shelf_life_days: number | null;

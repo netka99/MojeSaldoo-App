@@ -28,6 +28,7 @@ export const productFormSchema = z.object({
   vat_rate: decimalStr,
   sku: z.string().max(50),
   barcode: z.string().max(50),
+  pkwiu: z.string().max(20),
   track_batches: z.boolean(),
   min_stock_alert: minStockStr,
   shelf_life_days: z
@@ -49,6 +50,7 @@ const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
   vat_rate: '23',
   sku: '',
   barcode: '',
+  pkwiu: '',
   track_batches: true,
   min_stock_alert: '0',
   shelf_life_days: '',
@@ -65,6 +67,7 @@ function productToFormDefaults(product: Product): ProductFormValues {
     vat_rate: String(product.vat_rate),
     sku: product.sku ?? '',
     barcode: product.barcode ?? '',
+    pkwiu: product.pkwiu ?? '',
     track_batches: product.track_batches,
     min_stock_alert: String(product.min_stock_alert),
     shelf_life_days: product.shelf_life_days != null ? String(product.shelf_life_days) : '',
@@ -84,6 +87,7 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
     vat_rate: values.vat_rate,
     sku: values.sku.trim() ? values.sku.trim() : null,
     barcode: values.barcode.trim() ? values.barcode.trim() : null,
+    pkwiu: values.pkwiu.trim(),
     track_batches: values.track_batches,
     min_stock_alert: values.min_stock_alert,
     shelf_life_days: shelf ? Number.parseInt(shelf, 10) : null,
@@ -167,6 +171,15 @@ export function ProductForm({
             <Input label="Price (net)" {...register('price_net')} error={errors.price_net?.message} required />
             <Input label="Price (gross)" {...register('price_gross')} error={errors.price_gross?.message} required />
           </div>
+
+          <Input
+            label="Kod PKWiU"
+            type="text"
+            placeholder="np. 10.89.19.0"
+            helperText="Wymagane do wysyłki faktur do KSeF"
+            {...register('pkwiu')}
+            error={errors.pkwiu?.message}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Input label="SKU" {...register('sku')} error={errors.sku?.message} />

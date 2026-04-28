@@ -518,6 +518,219 @@ class DeliveryDocumentAPITests(TestCase):
         d.refresh_from_db()
         self.assertEqual(d.user_id, other.id)
 
+    def test_detail_includes_locked_for_edit_and_linked_invoices(self):
+        """GET exposes ``locked_for_edit`` and ``linked_invoices``."""
+        from apps.invoices.models import Invoice
+
+        self.client.force_authenticate(user=self.user)
+        d = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 1),
+        )
+        r0 = self.client.get(
+            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+        )
+        self.assertEqual(r0.status_code, status.HTTP_200_OK)
+        self.assertFalse(r0.data["locked_for_edit"])
+        self.assertEqual(r0.data["linked_invoices"], [])
+        inv = Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            delivery_document=d,
+            issue_date=date(2026, 5, 1),
+            sale_date=date(2026, 5, 1),
+            due_date=date(2026, 5, 15),
+            status=Invoice.STATUS_DRAFT,
+        )
+        r1 = self.client.get(
+            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+        )
+        self.assertTrue(r1.data["locked_for_edit"])
+        self.assertEqual(len(r1.data["linked_invoices"]), 1)
+        self.assertEqual(r1.data["linked_invoices"][0]["id"], str(inv.id))
+        self.assertTrue(r1.data["linked_invoices"][0]["invoice_number"])
+
+    def test_mutations_reject_when_locked_by_invoice(self):
+        from apps.invoices.models import Invoice
+
+        self.order.status = Order.STATUS_CONFIRMED
+        self.order.save(update_fields=["status"])
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            from_warehouse=self.wh,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 1),
+            status=DeliveryDocument.STATUS_DRAFT,
+        )
+        oi = OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name=self.product.name,
+            quantity=Decimal("10.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.23"),
+            vat_rate=Decimal("23.00"),
+        )
+        line = DeliveryItem.objects.create(
+            delivery_document=doc,
+            order_item=oi,
+            product=self.product,
+            quantity_planned=Decimal("4.00"),
+        )
+        Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            delivery_document=doc,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 15),
+            status=Invoice.STATUS_DRAFT,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        patch_r = self.client.patch(
+            reverse("delivery-document-detail", kwargs={"pk": str(doc.id)}),
+            data={"driver_name": "X"},
+            format="json",
+        )
+        self.assertEqual(patch_r.status_code, status.HTTP_400_BAD_REQUEST)
+
+        sv = self.client.post(
+            reverse("delivery-document-save", kwargs={"pk": str(doc.id)}),
+            data={},
+            format="json",
+        )
+        self.assertEqual(sv.status_code, status.HTTP_400_BAD_REQUEST)
+
+        ul = self.client.post(
+            reverse("delivery-document-update-lines", kwargs={"pk": str(doc.id)}),
+            data={
+                "items": [
+                    {"id": str(line.id), "quantity_planned": "3.00"},
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(ul.status_code, status.HTTP_400_BAD_REQUEST)
+
+        del_r = self.client.delete(
+            reverse("delivery-document-detail", kwargs={"pk": str(doc.id)}),
+        )
+        self.assertEqual(del_r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_allowed_after_draft_invoice_deleted(self):
+        """Deleting the draft invoice removes the edit lock."""
+        from apps.invoices.models import Invoice
+
+        self.client.force_authenticate(user=self.user)
+        d = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 1),
+        )
+        inv = Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            delivery_document=d,
+            issue_date=date(2026, 5, 1),
+            sale_date=date(2026, 5, 1),
+            due_date=date(2026, 5, 15),
+            status=Invoice.STATUS_DRAFT,
+        )
+
+        blocked = self.client.patch(
+            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            data={"driver_name": "Locked"},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+
+        inv.delete()
+
+        freed = self.client.patch(
+            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            data={"driver_name": "Unlocked"},
+            format="json",
+        )
+        self.assertEqual(freed.status_code, status.HTTP_200_OK)
+        self.assertFalse(freed.data["locked_for_edit"])
+        self.assertEqual(freed.data["driver_name"], "Unlocked")
+
+    def test_start_and_complete_reject_when_locked(self):
+        from apps.invoices.models import Invoice
+
+        self.order.status = Order.STATUS_CONFIRMED
+        self.order.save(update_fields=["status"])
+        saved_doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            from_warehouse=self.wh,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 5),
+            status=DeliveryDocument.STATUS_SAVED,
+        )
+        Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            delivery_document=saved_doc,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 15),
+            status=Invoice.STATUS_DRAFT,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        rs = self.client.post(
+            reverse("delivery-document-start-delivery", kwargs={"pk": str(saved_doc.id)}),
+            data={},
+            format="json",
+        )
+        self.assertEqual(rs.status_code, status.HTTP_400_BAD_REQUEST)
+
+        transit_doc = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            from_warehouse=self.wh,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 6),
+            status=DeliveryDocument.STATUS_IN_TRANSIT,
+        )
+        Invoice.objects.create(
+            company=self.co,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            delivery_document=transit_doc,
+            issue_date=date(2026, 6, 2),
+            sale_date=date(2026, 6, 2),
+            due_date=date(2026, 6, 16),
+            status=Invoice.STATUS_DRAFT,
+        )
+
+        rc = self.client.post(
+            reverse("delivery-document-complete", kwargs={"pk": str(transit_doc.id)}),
+            data={},
+            format="json",
+        )
+        self.assertEqual(rc.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_create_uses_issue_date_year_in_document_number(self):
         self.client.force_authenticate(user=self.user)
         r = self.client.post(
