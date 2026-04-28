@@ -928,6 +928,21 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(doc.order_id, o.id)
         self.assertEqual(doc.to_customer_id, o.customer_id)
 
+    def test_get_generate_for_order_prefers_mobile_from_warehouse(self):
+        """When a MOBILE warehouse exists, WZ `from_warehouse` is the van (not MG)."""
+        wh_mobile = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MV",
+            name="Van",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        self.client.force_authenticate(user=self.user)
+        o = self._confirmed_order_with_line()
+        r = self.client.get(self._url_generate(o.id))
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(str(r.data["from_warehouse_id"]), str(wh_mobile.id))
+
     def test_generate_for_order_requires_confirmed(self):
         self.client.force_authenticate(user=self.user)
         self.order.status = Order.STATUS_DRAFT
@@ -1866,6 +1881,70 @@ class GenerateDeliveryFromOrderTests(TestCase):
         doc = generate_delivery_from_order(order)
         self.assertEqual(doc.from_warehouse_id, wh.id)
 
+    def test_prefers_mobile_warehouse_over_main(self):
+        Warehouse.objects.create(
+            user=self.user,
+            company=self.company,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        wh_mobile = Warehouse.objects.create(
+            user=self.user,
+            company=self.company,
+            code="MV",
+            name="Van",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 7, 1),
+            delivery_date=date(2026, 7, 10),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.p1,
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        doc = generate_delivery_from_order(order)
+        self.assertEqual(doc.from_warehouse_id, wh_mobile.id)
+
+    def test_sets_from_warehouse_mobile_when_mobile_exists_without_main(self):
+        """Active mobile warehouse is used even if the company has no MAIN warehouse."""
+        wh_mobile = Warehouse.objects.create(
+            user=self.user,
+            company=self.company,
+            code="MV",
+            name="Van",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 7, 1),
+            delivery_date=date(2026, 7, 10),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.p1,
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        doc = generate_delivery_from_order(order)
+        self.assertEqual(doc.from_warehouse_id, wh_mobile.id)
+
     def test_from_warehouse_none_when_no_main_warehouse(self):
         order = Order.objects.create(
             user=self.user,
@@ -1991,6 +2070,36 @@ class VanLoadingAPITests(TestCase):
         self.assertEqual(moves[0].movement_type, StockMovement.MovementType.TRANSFER)
         self.assertEqual(moves[0].quantity, Decimal("-4.50"))
         self.assertEqual(moves[1].quantity, Decimal("4.50"))
+
+    def test_van_loading_consumes_reserved_when_available_insufficient(self):
+        """MG reserved stock is still physical on the shelf — van load may consume it."""
+        ps = ProductStock.objects.get(product=self.product, warehouse=self.wh_main)
+        ps.quantity_available = Decimal("10.00")
+        ps.quantity_reserved = Decimal("90.00")
+        ps.save(update_fields=["quantity_available", "quantity_reserved"])
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            reverse("delivery-document-van-loading"),
+            data={
+                "from_warehouse_id": str(self.wh_main.id),
+                "to_warehouse_id": str(self.wh_van.id),
+                "items": [{"product_id": str(self.product.id), "quantity": "90"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        main = ProductStock.objects.get(product=self.product, warehouse=self.wh_main)
+        van = ProductStock.objects.get(product=self.product, warehouse=self.wh_van)
+        self.assertEqual(main.quantity_available, Decimal("0.00"))
+        self.assertEqual(main.quantity_reserved, Decimal("10.00"))
+        self.assertEqual(van.quantity_available, Decimal("90.00"))
+
+        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        mv_out = StockMovement.objects.filter(
+            warehouse=self.wh_main, reference_id=doc.id
+        ).get()
+        self.assertEqual(mv_out.quantity_before, Decimal("100.00"))
+        self.assertEqual(mv_out.quantity_after, Decimal("10.00"))
 
     def test_van_loading_rejects_non_main_source(self):
         wh_other = Warehouse.objects.create(

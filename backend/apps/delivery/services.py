@@ -26,6 +26,26 @@ def active_main_warehouse_for_company(company_id):
     )
 
 
+def active_mobile_warehouse_for_company(company_id):
+    """First active mobile (van) warehouse for the company (by code), or ``None``."""
+    return (
+        Warehouse.objects.filter(
+            company_id=company_id,
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+            is_active=True,
+        )
+        .order_by("code")
+        .first()
+    )
+
+
+def default_from_warehouse_for_delivery(company_id):
+    """Prefer active van/mobile warehouse so WZ completion deducts from the van after loading; else main MG."""
+    return active_mobile_warehouse_for_company(
+        company_id
+    ) or active_main_warehouse_for_company(company_id)
+
+
 def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
     """
     Build a draft WZ for a **confirmed** order: one ``DeliveryItem`` per ``OrderItem``,
@@ -46,7 +66,7 @@ def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
             document_type=DeliveryDocument.DOC_TYPE_WZ,
             issue_date=timezone.localdate(),
             to_customer=order.customer,
-            from_warehouse=active_main_warehouse_for_company(order.company_id),
+            from_warehouse=default_from_warehouse_for_delivery(order.company_id),
             status=DeliveryDocument.STATUS_DRAFT,
         )
         for oi in order.items.select_related("product"):
@@ -59,6 +79,36 @@ def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
 
     doc.refresh_from_db()
     return doc
+
+
+def _deduct_from_main_for_van_loading(
+    st: ProductStock,
+    qty: Decimal,
+    *,
+    allow_negative_stock: bool,
+) -> tuple[Decimal, Decimal]:
+    """
+    Remove ``qty`` from main MG stock: decrement ``quantity_available`` first,
+    then ``quantity_reserved``. Legacy behavior: if negative stock allowed and still short,
+    the remainder is taken from available (possibly below zero).
+    Returns ``(quantity_total before, quantity_total after)``.
+    """
+    total_before = st.quantity_available + st.quantity_reserved
+    remainder = qty
+    take_a = min(st.quantity_available, remainder)
+    st.quantity_available -= take_a
+    remainder -= take_a
+    take_r = min(st.quantity_reserved, remainder)
+    st.quantity_reserved -= take_r
+    remainder -= take_r
+    if remainder > 0:
+        if allow_negative_stock:
+            st.quantity_available -= remainder
+        else:
+            raise AssertionError("van loading: insufficient stock after availability check")
+    st.save(update_fields=["quantity_available", "quantity_reserved"])
+    total_after = st.quantity_available + st.quantity_reserved
+    return total_before, total_after
 
 
 def create_van_loading_mm(
@@ -74,7 +124,7 @@ def create_van_loading_mm(
 ) -> DeliveryDocument:
     """
     Create an MM document (main → mobile), lines without ``order_item``, and move stock:
-    ``quantity_available`` decreases at the main warehouse and increases at the mobile one.
+    MG total (available + reserved) decreases; mobile ``quantity_available`` increases.
     """
     if from_warehouse.company_id != company_id or to_warehouse.company_id != company_id:
         raise ValidationError("Warehouses must belong to your company.")
@@ -95,6 +145,8 @@ def create_van_loading_mm(
     product_ids = [row["product_id"] for row in items]
     if len(product_ids) != len(set(product_ids)):
         raise ValidationError({"items": "Duplicate product_id in items is not allowed."})
+
+    allow_negative = bool(from_warehouse.allow_negative_stock)
 
     with transaction.atomic():
         products = {
@@ -144,13 +196,14 @@ def create_van_loading_mm(
         shortfalls = []
         for pid, need in qty_by_product.items():
             st = stocks_from[pid]
-            avail = st.quantity_available
-            if avail < need and not from_warehouse.allow_negative_stock:
+            total_at = st.quantity_available + st.quantity_reserved
+            if not allow_negative and total_at < need:
                 shortfalls.append(
                     {
                         "product_id": pid,
                         "product_name": products[pid].name,
-                        "quantity_available": str(avail),
+                        "quantity_available": str(st.quantity_available),
+                        "quantity_reserved": str(st.quantity_reserved),
                         "quantity_requested": str(need),
                     }
                 )
@@ -181,9 +234,11 @@ def create_van_loading_mm(
             )
 
             st_out = stocks_from[pid]
-            qty_before_out = st_out.quantity_available
-            st_out.quantity_available -= qty
-            st_out.save(update_fields=["quantity_available"])
+            qty_before_total, qty_after_total = _deduct_from_main_for_van_loading(
+                st_out,
+                qty,
+                allow_negative_stock=allow_negative,
+            )
             StockMovement.objects.create(
                 company_id=company_id,
                 product_id=product.id,
@@ -191,8 +246,8 @@ def create_van_loading_mm(
                 user=user,
                 movement_type=StockMovement.MovementType.TRANSFER,
                 quantity=-qty,
-                quantity_before=qty_before_out,
-                quantity_after=st_out.quantity_available,
+                quantity_before=qty_before_total,
+                quantity_after=qty_after_total,
                 reference_type="delivery",
                 reference_id=doc.id,
                 notes="Van loading (MM out)",

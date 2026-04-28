@@ -140,11 +140,15 @@ describe('deliveryService', () => {
 
   it('vanReconciliation posts to /delivery/van-reconciliation/:warehouseId/', async () => {
     const data = {
-      reconciliation_date: '2026-04-27',
-      notes: 'end of route',
-      items: [{ product_id: 'p1', quantity_actual: '5.000' }],
+      items: [{ product_id: 'p1', quantity_actual_remaining: '5.000' }],
     };
-    const res = { warehouse_id: 'w1', has_discrepancies: false, items: [] } as never;
+    const res = {
+      van_warehouse_id: 'w-van-1',
+      reconciliation_id: 'r1',
+      reconciled_at: new Date().toISOString(),
+      items_processed: 1,
+      discrepancies: [],
+    } as never;
     mocks.post.mockResolvedValue(res);
     const out = await deliveryService.vanReconciliation('w-van-1', data);
     expect(out).toBe(res);

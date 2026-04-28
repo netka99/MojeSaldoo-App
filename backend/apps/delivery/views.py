@@ -28,11 +28,11 @@ from .serializers import (
     VanReconciliationSerializer,
 )
 from .services import (
-    active_main_warehouse_for_company,
     apply_delivery_document_line_updates,
     apply_van_reconciliation,
     build_delivery_document_preview_data,
     create_van_loading_mm,
+    default_from_warehouse_for_delivery,
 )
 
 
@@ -538,7 +538,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 document_type=DeliveryDocument.DOC_TYPE_WZ,
                 issue_date=timezone.localdate(),
                 to_customer=order.customer,
-                from_warehouse=active_main_warehouse_for_company(company_id),
+                from_warehouse=default_from_warehouse_for_delivery(company_id),
                 status=DeliveryDocument.STATUS_DRAFT,
             )
             for oi, qty in lines:

@@ -12,7 +12,7 @@ import { useVanReconciliationMutation } from '@/query/use-delivery';
 import { cn } from '@/lib/utils';
 import type { Warehouse } from '@/types';
 import type { StockSnapshotItem } from '@/types';
-import type { VanReconciliationResult, VanReconciliationResultItem } from '@/types';
+import type { VanReconciliationResult } from '@/types';
 import type { VanReconciliationPayload } from '@/types';
 
 // One row in the reconciliation table: snapshot data + the user's "actual count" input
@@ -44,6 +44,13 @@ function discrepancyClass(diff: number): string {
   if (diff === 0) return 'text-muted-foreground';
   if (diff < 0) return 'text-destructive font-semibold';
   return 'text-amber-600 font-semibold';
+}
+
+function formatReconciledLabel(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  return d.toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 export function VanReconciliationPage() {
@@ -83,6 +90,8 @@ export function VanReconciliationPage() {
     enabled: Boolean(companyId),
   });
   const mobileWarehouses: Warehouse[] = mobileWarehousesData?.results ?? [];
+  const selectedWarehouseName =
+    mobileWarehouses.find((w) => w.id === selectedWarehouseId)?.name ?? '—';
 
   // Fetch stock snapshot for selected warehouse — only when user confirmed Step 1
   // We fetch this imperatively (manual trigger), so we use `enabled: false` and refetch on demand.
@@ -163,11 +172,9 @@ export function VanReconciliationPage() {
     setSubmitError(null);
 
     const payload: VanReconciliationPayload = {
-      reconciliation_date: reconciliationDate,
-      notes: notes.trim() || undefined,
       items: rows.map((r) => ({
         product_id: r.productId,
-        quantity_actual: parseQty(r.quantityActual).toFixed(3),
+        quantity_actual_remaining: parseQty(r.quantityActual).toFixed(3),
       })),
     };
 
@@ -446,16 +453,16 @@ export function VanReconciliationPage() {
             <div className="space-y-1 rounded-md bg-muted/40 px-4 py-3 text-sm">
               <p>
                 <span className="text-muted-foreground">Magazyn: </span>
-                <span className="font-semibold">{result.warehouse_name}</span>
+                <span className="font-semibold">{selectedWarehouseName}</span>
               </p>
               <p>
-                <span className="text-muted-foreground">Data: </span>
-                <span className="font-medium">{result.reconciliation_date}</span>
+                <span className="text-muted-foreground">Rozliczono: </span>
+                <span className="font-medium">{formatReconciledLabel(result.reconciled_at)}</span>
               </p>
-              {result.has_discrepancies ? (
+              {result.discrepancies.length > 0 ? (
                 <p className="text-destructive font-medium">
-                  Zarejestrowano {result.total_discrepancies}{' '}
-                  {result.total_discrepancies === 1 ? 'różnicę' : 'różnic'} w stanach
+                  Zarejestrowano {result.discrepancies.length}{' '}
+                  {result.discrepancies.length === 1 ? 'różnicę' : 'różnic'} w stanach
                 </p>
               ) : (
                 <p className="text-green-700 font-medium">
@@ -465,7 +472,7 @@ export function VanReconciliationPage() {
             </div>
 
             {/* RESULT TABLE — only show if there were discrepancies */}
-            {result.has_discrepancies && (
+            {result.discrepancies.length > 0 && (
               <div className="overflow-x-auto rounded-md border border-border">
                 <table className="w-full min-w-[480px] text-left text-sm">
                   <thead className="bg-muted/50">
@@ -478,59 +485,51 @@ export function VanReconciliationPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.items
-                      // Show only items with actual discrepancy (discrepancy != "0.000")
-                      .filter((item: VanReconciliationResultItem) => {
-                        const d = parseFloat(item.discrepancy);
-                        return Math.abs(d) > 0.0001;
-                      })
-                      .map((item: VanReconciliationResultItem) => {
-                        const diff = parseFloat(item.discrepancy);
-                        return (
-                          <tr
-                            key={item.product_id}
+                    {result.discrepancies.map((item) => {
+                      const diff = parseFloat(item.quantity_delta);
+                      return (
+                        <tr
+                          key={item.product_id}
+                          className={cn(
+                            'border-t border-border',
+                            diff < 0 && 'bg-destructive/5',
+                            diff > 0 && 'bg-amber-50',
+                          )}
+                        >
+                          <td className="px-3 py-2 font-medium">{item.product_name}</td>
+                          <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                            {parseFloat(item.quantity_expected).toLocaleString('pl-PL', {
+                              maximumFractionDigits: 3,
+                            })}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">
+                            {parseFloat(item.quantity_actual).toLocaleString('pl-PL', {
+                              maximumFractionDigits: 3,
+                            })}
+                          </td>
+                          <td
                             className={cn(
-                              'border-t border-border',
-                              diff < 0 && 'bg-destructive/5',
-                              diff > 0 && 'bg-amber-50',
+                              'px-3 py-2 text-right font-mono text-sm',
+                              discrepancyClass(diff),
                             )}
                           >
-                            <td className="px-3 py-2 font-medium">{item.product_name}</td>
-                            <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
-                              {parseFloat(item.quantity_expected).toLocaleString('pl-PL', {
-                                maximumFractionDigits: 3,
-                              })}{' '}
-                              {item.unit}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-xs">
-                              {parseFloat(item.quantity_actual).toLocaleString('pl-PL', {
-                                maximumFractionDigits: 3,
-                              })}{' '}
-                              {item.unit}
-                            </td>
-                            <td
+                            {formatDiscrepancy(diff, '')}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
                               className={cn(
-                                'px-3 py-2 text-right font-mono text-sm',
-                                discrepancyClass(diff),
+                                'rounded-full px-2 py-0.5 text-xs font-medium',
+                                item.discrepancy_type === 'damage'
+                                  ? 'bg-destructive/10 text-destructive'
+                                  : 'bg-amber-100 text-amber-800',
                               )}
                             >
-                              {formatDiscrepancy(diff, item.unit)}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span
-                                className={cn(
-                                  'rounded-full px-2 py-0.5 text-xs font-medium',
-                                  item.movement_type === 'damage'
-                                    ? 'bg-destructive/10 text-destructive'
-                                    : 'bg-amber-100 text-amber-800',
-                                )}
-                              >
-                                {item.movement_type === 'damage' ? 'Szkoda/niedobór' : 'Korekta'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                              {item.discrepancy_type === 'damage' ? 'Szkoda/niedobór' : 'Korekta'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -13,12 +13,11 @@ import { productService } from '@/services/product.service';
 
 const mutateAsync = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
-    warehouse_id: 'w-van-1',
-    warehouse_name: 'Van Test',
-    reconciliation_date: '2026-04-27',
-    items: [],
-    total_discrepancies: 0,
-    has_discrepancies: false,
+    van_warehouse_id: 'w-van-1',
+    reconciliation_id: 'rec-1',
+    reconciled_at: '2026-04-27T18:00:00.000Z',
+    items_processed: 0,
+    discrepancies: [],
   }),
 );
 
@@ -139,8 +138,7 @@ describe('VanReconciliationPage', () => {
       expect(mutateAsync).toHaveBeenCalledWith({
         warehouseId: warehouse.id,
         data: {
-          reconciliation_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-          items: [{ product_id: 'p-1', quantity_actual: '10.000' }],
+          items: [{ product_id: 'p-1', quantity_actual_remaining: '10.000' }],
         },
       });
     });
@@ -167,20 +165,18 @@ describe('VanReconciliationPage', () => {
   it('renders result summary after successful reconciliation with discrepancy row', async () => {
     const user = userEvent.setup();
     mutateAsync.mockResolvedValueOnce({
-      warehouse_id: 'w-van-1',
-      warehouse_name: 'Van Test',
-      reconciliation_date: '2026-04-27',
-      has_discrepancies: true,
-      total_discrepancies: 1,
-      items: [
+      van_warehouse_id: 'w-van-1',
+      reconciliation_id: 'rec-1',
+      reconciled_at: '2026-04-27T18:00:00.000Z',
+      items_processed: 1,
+      discrepancies: [
         {
           product_id: 'p-1',
           product_name: 'Mąka',
-          unit: 'kg',
           quantity_expected: '10.000',
           quantity_actual: '8.000',
-          discrepancy: '-2.000',
-          movement_type: 'damage' as const,
+          quantity_delta: '-2.000',
+          discrepancy_type: 'damage',
         },
       ],
     });
@@ -195,6 +191,7 @@ describe('VanReconciliationPage', () => {
       expect(screen.getByRole('heading', { name: 'Rozliczenie zakończone' })).toBeInTheDocument();
     });
     expect(screen.getByText('Szkoda/niedobór')).toBeInTheDocument();
-    expect(screen.getByText('Van Test')).toBeInTheDocument();
+    expect(screen.getByText(/Magazyn:/)).toBeInTheDocument();
+    expect(screen.getByText('Van mobilny')).toBeInTheDocument();
   });
 });

@@ -10,10 +10,11 @@ import type {
 /** Ensures `export *` from `product.types` + `delivery.types` re-exports van reconciliation and stock snapshot. */
 describe('@/types barrel — van reconciliation + stock snapshot', () => {
   it('allows constructing shapes for the van reconciliation feature', () => {
-    const line: VanReconciliationItemPayload = { product_id: 'p-1', quantity_actual: '1.000' };
+    const line: VanReconciliationItemPayload = {
+      product_id: 'p-1',
+      quantity_actual_remaining: '1.00',
+    };
     const body: VanReconciliationPayload = {
-      reconciliation_date: '2026-04-27',
-      notes: 'x',
       items: [line],
     };
     const item: StockSnapshotItem = {
@@ -25,15 +26,14 @@ describe('@/types barrel — van reconciliation + stock snapshot', () => {
     };
     const snap: StockSnapshot = { warehouse_id: 'w-1', warehouse_name: 'W', items: [item] };
     const res: VanReconciliationResult = {
-      warehouse_id: 'w-1',
-      warehouse_name: 'W',
-      reconciliation_date: '2026-04-27',
-      items: [],
-      total_discrepancies: 0,
-      has_discrepancies: false,
+      van_warehouse_id: 'w-1',
+      reconciliation_id: null,
+      reconciled_at: new Date().toISOString(),
+      discrepancies: [],
+      items_processed: 0,
     };
-    expect(body.items[0].quantity_actual).toBe('1.000');
+    expect(body.items[0].quantity_actual_remaining).toBe('1.00');
     expect(snap.items[0].product_id).toBe('p-1');
-    expect(res.has_discrepancies).toBe(false);
+    expect(res.discrepancies.length).toBe(0);
   });
 });

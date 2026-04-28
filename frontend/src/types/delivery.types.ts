@@ -139,36 +139,35 @@ export interface VanLoadingPayload {
   items: VanLoadingItemPayload[];
 }
 
-// Van reconciliation types
+// Van reconciliation types (POST /api/delivery/van-reconciliation/:id/)
 
 export interface VanReconciliationItemPayload {
   product_id: string;
-  quantity_actual: string; // decimal string, e.g. "5.000"
+  /** Decimal string, e.g. "5.00" — physical count remaining on the van. */
+  quantity_actual_remaining: string;
 }
 
 export interface VanReconciliationPayload {
-  reconciliation_date: string; // "YYYY-MM-DD"
-  notes?: string;
+  /** Backend `VanReconciliationSerializer` only validates `items`. */
   items: VanReconciliationItemPayload[];
 }
 
-export interface VanReconciliationResultItem {
+export interface VanReconciliationDiscrepancy {
   product_id: string;
   product_name: string;
-  unit: string;
   quantity_expected: string;
   quantity_actual: string;
-  discrepancy: string; // negative = shortage, positive = surplus
-  movement_type: 'damage' | 'adjustment';
+  quantity_delta: string;
+  discrepancy_type: 'damage' | 'adjustment';
 }
 
+/** Response from `apply_van_reconciliation()` / POST van-reconciliation. */
 export interface VanReconciliationResult {
-  warehouse_id: string;
-  warehouse_name: string;
-  reconciliation_date: string;
-  items: VanReconciliationResultItem[];
-  total_discrepancies: number;
-  has_discrepancies: boolean;
+  van_warehouse_id: string;
+  reconciliation_id: string | null;
+  reconciled_at: string;
+  items_processed: number;
+  discrepancies: VanReconciliationDiscrepancy[];
 }
 
 /** `GET /api/delivery/:id/preview/` — print-oriented payload. */

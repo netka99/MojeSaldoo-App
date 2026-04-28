@@ -224,12 +224,11 @@ describe('use-delivery', () => {
     const queryClient = createTestQueryClient();
     const spy = vi.spyOn(queryClient, 'invalidateQueries');
     const apiResult = {
-      warehouse_id: 'w1',
-      warehouse_name: 'Van',
-      reconciliation_date: '2026-04-27',
-      items: [],
-      total_discrepancies: 0,
-      has_discrepancies: false,
+      van_warehouse_id: 'w1',
+      reconciliation_id: 'rid',
+      reconciled_at: new Date().toISOString(),
+      items_processed: 0,
+      discrepancies: [],
     } as never;
     deliveryServiceMock.vanReconciliation.mockResolvedValue(apiResult);
 
@@ -238,8 +237,7 @@ describe('use-delivery', () => {
     });
 
     const payload = {
-      reconciliation_date: '2026-04-27',
-      items: [{ product_id: 'p1', quantity_actual: '1.000' }],
+      items: [{ product_id: 'p1', quantity_actual_remaining: '1.000' }],
     };
     await result.current.mutateAsync({ warehouseId: 'w-van', data: payload });
     expect(deliveryServiceMock.vanReconciliation).toHaveBeenCalledWith('w-van', payload);
