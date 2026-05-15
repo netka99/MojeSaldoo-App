@@ -19,6 +19,23 @@ export function useCustomerListQuery(page: number, search: string) {
   });
 }
 
+/** Fetches all active customers in a single request (up to 500). Used on the orders page. */
+export function useAllActiveCustomersQuery(search: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: [...customerKeys.all, 'all-active', companyId, search] as const,
+    queryFn: () =>
+      customerService.fetchList({
+        is_active: true,
+        page_size: 500,
+        search: search || undefined,
+        ordering: 'name',
+      }),
+  });
+}
+
 export function useCustomerQuery(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: id ? customerKeys.detail(id) : [...customerKeys.details(), 'pending'],

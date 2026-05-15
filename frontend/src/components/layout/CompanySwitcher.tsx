@@ -167,7 +167,7 @@ export function CompanySwitcher() {
       {open && !isSwitching && (
         <ul
           id={listId}
-          className="absolute left-0 right-0 z-[200] mt-1 max-h-60 overflow-auto rounded-md border border-zinc-200 bg-white p-1 text-foreground shadow-lg dark:border-zinc-600 dark:bg-zinc-950"
+          className="absolute left-0 right-0 z-[200] mt-1 max-h-60 overflow-auto rounded-md border border-zinc-200 bg-surface-card p-1 text-foreground shadow-lg dark:border-zinc-600 dark:bg-zinc-950"
           role="listbox"
           aria-label="Firmy"
         >

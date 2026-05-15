@@ -17,6 +17,15 @@ const MOVEMENT_TYPES: StockMovementType[] = [
   'damage',
 ];
 
+const MOVEMENT_TYPE_LABELS_PL: Record<StockMovementType, string> = {
+  purchase: 'Zakup',
+  sale: 'Sprzedaż',
+  return: 'Zwrot',
+  adjustment: 'Korekta',
+  transfer: 'Przesunięcie',
+  damage: 'Ubytek / uszkodzenie',
+};
+
 export function ProductAdjustStockPage() {
   const { id: productId } = useParams<{ id: string }>();
   const location = useLocation();
@@ -47,11 +56,11 @@ export function ProductAdjustStockPage() {
     e.preventDefault();
     setSubmitError(null);
     if (!warehouseId) {
-      setSubmitError('Choose a warehouse.');
+      setSubmitError('Wybierz magazyn.');
       return;
     }
     if (!quantityChange.trim()) {
-      setSubmitError('Enter a quantity change.');
+      setSubmitError('Podaj zmianę ilości.');
       return;
     }
     try {
@@ -66,7 +75,7 @@ export function ProductAdjustStockPage() {
       });
       navigate('/products');
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Stock update failed');
+      setSubmitError(err instanceof Error ? err.message : 'Nie udało się zaktualizować stanu');
     }
   };
 
@@ -74,36 +83,41 @@ export function ProductAdjustStockPage() {
     <div className="mx-auto max-w-lg space-y-4 p-6">
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={() => navigate('/products')}>
-          Back to products
+          Wróć do listy produktów
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate(`/products/${productId}/edit`)}>
+          Dane produktu
         </Button>
       </div>
 
       {productQ.isError && (
         <p className="text-sm text-destructive" role="alert">
-          {productQ.error instanceof Error ? productQ.error.message : 'Could not load product'}
+          {productQ.error instanceof Error ? productQ.error.message : 'Nie udało się wczytać produktu'}
         </p>
       )}
 
       {product && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Adjust stock</CardTitle>
+            <CardTitle className="text-lg">Korekta stanu magazynowego</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Product: <span className="font-medium text-foreground">{product.name}</span>
+              Produkt: <span className="font-medium text-foreground">{product.name}</span>
             </p>
           </CardHeader>
           <CardContent>
-            {warehousesQ.isLoading && <p className="text-sm text-muted-foreground">Loading warehouses…</p>}
+            {warehousesQ.isLoading && <p className="text-sm text-muted-foreground">Ładowanie magazynów…</p>}
             {warehousesQ.isError && (
-              <p className="text-sm text-destructive">Could not load warehouses. Create one with POST /api/warehouses/ first.</p>
+              <p className="text-sm text-destructive">
+                Nie udało się wczytać magazynów. Upewnij się, że w systemie zdefiniowano co najmniej jeden magazyn.
+              </p>
             )}
             {!warehousesQ.isLoading && warehouses.length === 0 && (
               <p className="mb-4 text-sm text-muted-foreground">
-                No warehouses yet.{' '}
-                <Link to="/products" className="text-primary underline">
-                  Back to list
-                </Link>{' '}
-                — create a warehouse via the API (e.g. code <code className="text-xs">MG</code>).
+                Brak magazynów.{' '}
+                <Link to="/warehouses/new" className="text-primary underline">
+                  Dodaj magazyn
+                </Link>
+                {' '}lub skonfiguruj magazyn w ustawieniach.
               </p>
             )}
             {warehouses.length > 0 && (
@@ -115,7 +129,7 @@ export function ProductAdjustStockPage() {
                 )}
                 <div className="space-y-2">
                   <label htmlFor="warehouse" className="text-sm font-medium">
-                    Warehouse
+                    Magazyn
                   </label>
                   <select
                     id="warehouse"
@@ -124,7 +138,7 @@ export function ProductAdjustStockPage() {
                     onChange={(e) => setWarehouseId(e.target.value)}
                     required
                   >
-                    <option value="">Select…</option>
+                    <option value="">Wybierz…</option>
                     {warehouses.map((w) => (
                       <option key={w.id} value={w.id}>
                         {w.code} — {w.name}
@@ -133,16 +147,16 @@ export function ProductAdjustStockPage() {
                   </select>
                 </div>
                 <Input
-                  label="Quantity change"
-                  helperText="Positive adds stock, negative removes (if allowed)."
+                  label="Zmiana ilości"
+                  helperText="Wartość dodatnia zwiększa stan, ujemna zmniejsza (jeśli dozwolone)."
                   value={quantityChange}
                   onChange={(e) => setQuantityChange(e.target.value)}
-                  placeholder="e.g. 10 or -2"
+                  placeholder="np. 10 lub -2"
                   required
                 />
                 <div className="space-y-2">
                   <label htmlFor="movement-type" className="text-sm font-medium">
-                    Movement type
+                    Typ ruchu
                   </label>
                   <select
                     id="movement-type"
@@ -152,14 +166,14 @@ export function ProductAdjustStockPage() {
                   >
                     {MOVEMENT_TYPES.map((t) => (
                       <option key={t} value={t}>
-                        {t}
+                        {MOVEMENT_TYPE_LABELS_PL[t]}
                       </option>
                     ))}
                   </select>
                 </div>
-                <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                <Input label="Notatki (opcjonalnie)" value={notes} onChange={(e) => setNotes(e.target.value)} />
                 <Button type="submit" loading={updateStock.isPending}>
-                  Apply
+                  Zastosuj
                 </Button>
               </form>
             )}

@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { motion } from 'framer-motion';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import { IosToggle } from '@/components/ui/IosToggle';
+import { cn } from '@/lib/utils';
 import type { Customer, CustomerWrite } from '@/types';
 
 /** Polish NIP checksum (matches backend `CustomerSerializer.validate_nip_format`). */
@@ -25,7 +27,6 @@ function validatePhoneDigits(phone: string): boolean {
   return digits.length >= 9 && digits.length <= 15;
 }
 
-/** Number inputs can send "", "0.", ".5" — normalize before a strict 2-dp check (blocks submit and POST if invalid). */
 function normalizeCreditLimitInput(s: string): string {
   let t = s.trim();
   if (t === '' || t === '.') return '0';
@@ -37,28 +38,28 @@ function normalizeCreditLimitInput(s: string): string {
 const creditLimitStr = z
   .string()
   .transform(normalizeCreditLimitInput)
-  .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), { message: 'Use up to 2 decimal places' });
+  .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), { message: 'Maks. 2 miejsca po przecinku' });
 
 export const customerFormSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(255),
+  name: z.string().min(1, 'Nazwa jest wymagana').max(255),
   company_name: z.string().max(255),
   nip: z.string().refine((s) => !s.trim() || validateNipChecksum(s), {
-    message: 'Invalid NIP: 10 digits and the last digit must match the Polish check digit (or leave empty)',
+    message: 'Nieprawidłowy NIP (10 cyfr i suma kontrolna) lub pozostaw puste',
   }),
   email: z.string().refine((s) => !s.trim() || z.string().email().safeParse(s.trim()).success, {
-    message: 'Invalid email',
+    message: 'Nieprawidłowy adres email',
   }),
   phone: z.string().max(20).refine(validatePhoneDigits, {
-    message: 'Phone should contain 9–15 digits',
+    message: 'Telefon: 9–15 cyfr lub puste',
   }),
   street: z.string().max(255),
   city: z.string().max(100),
   postal_code: z.string().max(10),
-  country: z.string().length(2, 'Use 2-letter country code'),
+  country: z.string().length(2, 'Kod kraju ISO-2 (np. PL)'),
   distance_km: z
     .string()
     .refine((s) => s.trim() === '' || /^\d+$/.test(s.trim()), {
-      message: 'Whole kilometers only, or leave empty',
+      message: 'Tylko kilometry całkowite lub puste',
     }),
   delivery_days: z.string().max(50),
   payment_terms: z.preprocess(
@@ -69,12 +70,12 @@ export const customerFormSchema = z.object({
     },
     z
       .string()
-      .min(1, 'Required')
-      .regex(/^\d+$/, 'Whole days')
+      .min(1, 'Wymagane')
+      .regex(/^\d+$/, 'Liczba całkowita (dni)')
       .refine((s) => {
         const n = Number.parseInt(s, 10);
         return n >= 0 && n <= 36500;
-      }, 'Must be between 0 and 36500'),
+      }, 'Od 0 do 36500 dni'),
   ),
   credit_limit: creditLimitStr,
   is_active: z.boolean(),
@@ -139,6 +140,101 @@ function formValuesToCustomerWrite(values: CustomerFormValues, id?: string): Cus
   };
 }
 
+const ksefFieldInputClass = cn(
+  'h-11 min-h-[44px] rounded-xl border-0 bg-secondary px-3.5 text-[15px] text-foreground shadow-none',
+  'placeholder:text-muted-foreground focus:bg-secondary focus:shadow-none focus:ring-2 focus:ring-primary/30',
+);
+
+function iconBoxClass() {
+  return 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-light text-primary';
+}
+
+type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
+
+function IconUser(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconPhone(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M22 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.12.9.33 1.78.63 2.63a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.45-1.2a2 2 0 012.11-.45c.85.3 1.73.51 2.63.63A2 2 0 0122 16.92z"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconMapPin(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1118 0z"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="10" r="2.5" stroke="currentColor" strokeWidth={1.75} />
+    </svg>
+  );
+}
+
+function IconCredit(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth={1.75} />
+      <path d="M2 10h20" stroke="currentColor" strokeWidth={1.75} />
+    </svg>
+  );
+}
+
+const sectionMotion = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 380, damping: 32 } },
+};
+
+function FormSection({
+  title,
+  Icon,
+  children,
+}: {
+  title: string;
+  Icon: IconComp;
+  children: ReactNode;
+}) {
+  return (
+    <motion.section
+      variants={sectionMotion}
+      initial="hidden"
+      animate="show"
+      className="shadow-soft rounded-2xl bg-surface-card p-4"
+    >
+      <div className="mb-4 flex items-center gap-2.5">
+        <div className={iconBoxClass()}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </motion.section>
+  );
+}
+
 export interface CustomerFormProps {
   customer?: Customer | null;
   onSubmit: (data: CustomerWrite) => void | Promise<void>;
@@ -171,7 +267,6 @@ export function CustomerForm({
 
   useEffect(() => {
     reset(customer ? customerToFormDefaults(customer) : EMPTY_CUSTOMER_DEFAULTS);
-    // Reset when the loaded entity identity changes (id/updated_at), not on every parent re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer?.id, customer?.updated_at, reset]);
 
@@ -179,106 +274,171 @@ export function CustomerForm({
     await onSubmit(formValuesToCustomerWrite(values, customer?.id));
   });
 
+  const inField = (name: keyof CustomerFormValues) =>
+    cn(ksefFieldInputClass, errors[name] && 'ring-2 ring-destructive/40 focus:ring-destructive/40');
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{customer ? 'Edit customer' : 'New customer'}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form noValidate onSubmit={submit} className="space-y-4">
-          {hasSubmitErrors && (
-            <p
-              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-              role="alert"
-            >
-              Some fields are invalid. Please fix the highlighted values and try again.
-            </p>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Display name" {...register('name')} error={errors.name?.message} required />
-            <Input label="Company name" {...register('company_name')} error={errors.company_name?.message} />
-          </div>
+    <form noValidate onSubmit={submit} className="space-y-4 pb-4">
+      {hasSubmitErrors && (
+        <p
+          className="rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          role="alert"
+        >
+          Popraw pola oznaczone błędami i spróbuj ponownie.
+        </p>
+      )}
 
+      <div className="space-y-4">
+        <FormSection title="Dane podstawowe" Icon={IconUser}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
-              label="NIP"
-              {...register('nip')}
-              error={errors.nip?.message}
-              maxLength={10}
-              helperText="Polish NIP: 10 digits, last is a check digit. Leave empty if not used."
+              label="Nazwa wyświetlana"
+              placeholder="np. Sklep u Jana"
+              required
+              {...register('name')}
+              error={errors.name?.message}
+              className={inField('name')}
             />
-            <Input label="Email" type="email" {...register('email')} error={errors.email?.message} />
-          </div>
-
-          <Input label="Phone" {...register('phone')} error={errors.phone?.message} />
-
-          <Input label="Street" {...register('street')} error={errors.street?.message} />
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="City" {...register('city')} error={errors.city?.message} />
-            <Input label="Postal code" {...register('postal_code')} error={errors.postal_code?.message} />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Country (ISO-2)" {...register('country')} error={errors.country?.message} maxLength={2} />
             <Input
-              label="Distance (km)"
+              label="Nazwa firmy"
+              placeholder="Opcjonalnie"
+              {...register('company_name')}
+              error={errors.company_name?.message}
+              className={inField('company_name')}
+            />
+          </div>
+          <Input
+            label="NIP"
+            placeholder="10 cyfr"
+            maxLength={10}
+            {...register('nip')}
+            error={errors.nip?.message}
+            helperText="Polski NIP z sumą kontrolną lub puste."
+            className={inField('nip')}
+          />
+        </FormSection>
+
+        <FormSection title="Kontakt" Icon={IconPhone}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Email"
+              type="email"
+              placeholder="kontakt@firma.pl"
+              {...register('email')}
+              error={errors.email?.message}
+              className={inField('email')}
+            />
+            <Input
+              label="Telefon"
+              placeholder="+48 600 000 000"
+              {...register('phone')}
+              error={errors.phone?.message}
+              className={inField('phone')}
+            />
+          </div>
+        </FormSection>
+
+        <FormSection title="Adres" Icon={IconMapPin}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Kraj (ISO-2)"
+              placeholder="PL"
+              maxLength={2}
+              {...register('country')}
+              error={errors.country?.message}
+              className={inField('country')}
+            />
+            <Input
+              label="Miasto"
+              placeholder="Warszawa"
+              {...register('city')}
+              error={errors.city?.message}
+              className={inField('city')}
+            />
+          </div>
+          <Input
+            label="Ulica"
+            placeholder="ul. Przykładowa 1"
+            {...register('street')}
+            error={errors.street?.message}
+            className={inField('street')}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Kod pocztowy"
+              placeholder="00-000"
+              {...register('postal_code')}
+              error={errors.postal_code?.message}
+              className={inField('postal_code')}
+            />
+            <Input
+              label="Odległość (km)"
               type="number"
               min={0}
+              placeholder="np. 12"
               {...register('distance_km')}
               error={errors.distance_km?.message}
-              helperText="Optional"
+              className={inField('distance_km')}
             />
           </div>
+          <Input
+            label="Dni dostawy (opis)"
+            placeholder="np. pon., śr., pt."
+            {...register('delivery_days')}
+            error={errors.delivery_days?.message}
+            className={inField('delivery_days')}
+          />
+        </FormSection>
 
+        <FormSection title="Płatność i limit" Icon={IconCredit}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
-              label="Delivery days (text)"
-              {...register('delivery_days')}
-              error={errors.delivery_days?.message}
-              helperText="Optional note, e.g. Mon–Fri"
-            />
-            <Input
-              label="Payment terms (days)"
+              label="Termin płatności (dni)"
               type="number"
               min={0}
+              placeholder="14"
+              required
               {...register('payment_terms')}
               error={errors.payment_terms?.message}
+              className={inField('payment_terms')}
+            />
+            <Input
+              label="Limit kredytowy"
+              placeholder="0"
+              {...register('credit_limit')}
+              error={errors.credit_limit?.message}
+              className={inField('credit_limit')}
             />
           </div>
+        </FormSection>
+      </div>
 
-          <Input label="Credit limit" {...register('credit_limit')} error={errors.credit_limit?.message} />
-
-          <Controller
-            name="is_active"
-            control={control}
-            render={({ field }) => (
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-input"
-                  checked={field.value}
-                  onChange={(e) => field.onChange(e.target.checked)}
-                  onBlur={field.onBlur}
-                  ref={field.ref}
-                />
-                Active
-              </label>
-            )}
+      <Controller
+        name="is_active"
+        control={control}
+        render={({ field }) => (
+          <IosToggle
+            checked={field.value}
+            onChange={field.onChange}
+            label="Aktywny kontrahent"
+            description="Widoczny przy zamówieniach i fakturach"
+            disabled={isLoading}
           />
+        )}
+      />
 
-          <div className="flex flex-wrap gap-2 pt-2">
-            <Button type="submit" loading={isLoading}>
-              {submitLabel ?? (customer ? 'Save changes' : 'Create customer')}
+      <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button type="submit" className="w-full sm:flex-1" loading={isLoading}>
+            {submitLabel ?? (customer ? 'Zapisz zmiany' : 'Zapisz kontrahenta')}
+          </Button>
+          {onCancel && (
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={onCancel} disabled={isLoading}>
+              Anuluj
             </Button>
-            {onCancel && (
-              <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
-                Cancel
-              </Button>
-            )}
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+          )}
+        </div>
+      </div>
+    </form>
   );
 }

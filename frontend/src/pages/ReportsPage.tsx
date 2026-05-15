@@ -141,7 +141,7 @@ function ReportsPageContent() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-foreground">Raporty</h1>
+        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Raporty</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Podsumowanie sprzedaży, rankingi i status KSeF dla aktywnej firmy.
         </p>
@@ -191,13 +191,13 @@ function ReportsPageContent() {
                   <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Zamówienia
                   </dt>
-                  <dd className="mt-1 text-2xl font-semibold tabular-nums">{sales.data.totalOrders}</dd>
+                  <dd className="mt-1 text-[1.5rem] font-semibold tracking-tight tabular-nums">{sales.data.totalOrders}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Suma brutto
                   </dt>
-                  <dd className="mt-1 text-2xl font-semibold tabular-nums">
+                  <dd className="mt-1 text-[1.5rem] font-semibold tracking-tight tabular-nums">
                     {formatMoney(sales.data.totalGross)}
                   </dd>
                 </div>
@@ -205,7 +205,7 @@ function ReportsPageContent() {
                   <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Śr. wartość zamówienia
                   </dt>
-                  <dd className="mt-1 text-2xl font-semibold tabular-nums">
+                  <dd className="mt-1 text-[1.5rem] font-semibold tracking-tight tabular-nums">
                     {formatMoney(sales.data.avgOrderValue)}
                   </dd>
                 </div>

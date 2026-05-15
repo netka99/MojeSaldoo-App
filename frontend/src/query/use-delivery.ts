@@ -7,6 +7,7 @@ import type {
   DeliveryDocumentCreate,
   DeliveryDocumentPatch,
   DeliveryUpdateLinesPayload,
+  PendingReturnItem,
   VanLoadingPayload,
   VanReconciliationPayload,
 } from '@/types';
@@ -82,7 +83,8 @@ export function useDeleteDeliveryMutation() {
 export function useSaveDeliveryMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deliveryService.saveDocument(id),
+    mutationFn: ({ id, returnItems }: { id: string; returnItems?: PendingReturnItem[] }) =>
+      deliveryService.saveDocument(id, returnItems),
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
@@ -143,6 +145,21 @@ export function useGenerateDeliveryForOrderMutation() {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+export function useBatchGenerateDeliveryMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderIds: string[]) => deliveryService.generateForOrders(orderIds),
+    onSuccess: (data: { documents: DeliveryDocument[] }) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      for (const doc of data.documents) {
+        void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+        void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
+      }
     },
   });
 }

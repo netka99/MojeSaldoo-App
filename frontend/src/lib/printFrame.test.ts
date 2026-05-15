@@ -9,7 +9,7 @@ describe('openPrintFrame', () => {
   const createEl = document.createElement.bind(document);
 
   beforeEach(() => {
-    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+    globalThis.requestAnimationFrame = (cb: (time: number) => void) => {
       queueMicrotask(() => cb(0));
       return 0;
     };
@@ -24,11 +24,11 @@ describe('openPrintFrame', () => {
     const el = document.createElement('div');
     Object.defineProperty(el, 'contentDocument', { get: () => null, configurable: true });
     Object.defineProperty(el, 'contentWindow', { get: () => null, configurable: true });
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: unknown) => {
+    vi.spyOn(document, 'createElement').mockImplementation((tag, options) => {
       if (tag === 'iframe') {
         return el as unknown as HTMLIFrameElement;
       }
-      return createEl(tag, options) as never;
+      return createEl(tag, options);
     });
 
     expect(

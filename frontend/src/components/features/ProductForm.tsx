@@ -1,28 +1,29 @@
-import { useEffect } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useEffect, type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { motion } from 'framer-motion';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import { IosToggle } from '@/components/ui/IosToggle';
 import { cn } from '@/lib/utils';
 import type { Product, ProductWrite } from '@/types';
 
 const decimalStr = z
   .string()
-  .min(1, 'Required')
-  .regex(/^\d+(\.\d{1,2})?$/, 'Use up to 2 decimal places, e.g. 12.50');
+  .min(1, 'Wymagane')
+  .regex(/^\d+(\.\d{1,2})?$/, 'Format: np. 12.50 (kropka jako separator)');
 
 const minStockStr = z
   .string()
-  .regex(/^\d*(\.\d{0,2})?$/, 'Invalid number')
+  .regex(/^\d*(\.\d{0,2})?$/, 'Nieprawidłowa liczba')
   .transform((s) => (s.trim() === '' ? '0' : s))
-  .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), 'Use up to 2 decimal places');
+  .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), 'Maks. 2 miejsca po przecinku');
 
 export const productFormSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(255),
+  name: z.string().min(1, 'Nazwa jest wymagana').max(255),
   description: z.string().max(5000),
-  unit: z.string().min(1, 'Unit is required').max(20),
+  unit: z.string().min(1, 'Jednostka jest wymagana').max(20),
   price_net: decimalStr,
   price_gross: decimalStr,
   vat_rate: decimalStr,
@@ -34,7 +35,7 @@ export const productFormSchema = z.object({
   shelf_life_days: z
     .string()
     .refine((s) => s.trim() === '' || /^\d+$/.test(s.trim()), {
-      message: 'Whole days only, or leave empty',
+      message: 'Tylko liczba całkowita dni lub puste',
     }),
   is_active: z.boolean(),
 });
@@ -57,6 +58,8 @@ const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
   is_active: true,
 };
 
+const VAT_PRESETS = ['0', '5', '8', '23'] as const;
+
 function productToFormDefaults(product: Product): ProductFormValues {
   return {
     name: product.name,
@@ -64,7 +67,11 @@ function productToFormDefaults(product: Product): ProductFormValues {
     unit: product.unit,
     price_net: String(product.price_net),
     price_gross: String(product.price_gross),
-    vat_rate: String(product.vat_rate),
+    vat_rate: (() => {
+      const r = String(product.vat_rate).replace(',', '.').trim();
+      const n = Number(r);
+      return Number.isFinite(n) ? String(n) : r;
+    })(),
     sku: product.sku ?? '',
     barcode: product.barcode ?? '',
     pkwiu: product.pkwiu ?? '',
@@ -95,14 +102,98 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
   };
 }
 
-const textareaClassName = cn(
-  'flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background',
-  'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-  'disabled:cursor-not-allowed disabled:opacity-50',
+const ksefFieldInputClass = cn(
+  'h-11 min-h-[44px] rounded-xl border-0 bg-secondary px-3.5 text-[15px] text-foreground shadow-none',
+  'placeholder:text-muted-foreground focus:bg-secondary focus:shadow-none focus:ring-2 focus:ring-primary/30',
 );
 
+const ksefTextareaClass = cn(
+  ksefFieldInputClass,
+  'min-h-[88px] resize-none py-2.5 leading-snug',
+);
+
+type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
+
+function IconPackage(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" stroke="currentColor" strokeWidth={1.75} />
+    </svg>
+  );
+}
+
+function IconTag(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M12 2H2v10l9.29 9.29a1 1 0 001.41 0l6.59-6.59a1 1 0 000-1.41L12 2zM7 7h.01"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconBox(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M21 8l-9 4-9-4M21 8v8l-9 4-9-4V8M3 8l9 4 9-4M12 4v16"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+const sectionMotion = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 380, damping: 32 } },
+};
+
+function iconBoxClass() {
+  return 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-light text-primary';
+}
+
+function FormSection({
+  title,
+  Icon,
+  children,
+}: {
+  title: string;
+  Icon: IconComp;
+  children: ReactNode;
+}) {
+  return (
+    <motion.section
+      variants={sectionMotion}
+      initial="hidden"
+      animate="show"
+      className="shadow-soft rounded-2xl bg-surface-card p-4"
+    >
+      <div className="mb-4 flex items-center gap-2.5">
+        <div className={iconBoxClass()}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </motion.section>
+  );
+}
+
 export interface ProductFormProps {
-  /** When set, form starts in edit mode with these values. */
   product?: Product | null;
   onSubmit: (data: ProductWrite) => void | Promise<void>;
   onCancel?: () => void;
@@ -127,8 +218,21 @@ export function ProductForm({
     handleSubmit,
     control,
     reset,
+    setValue,
     formState: { errors },
   } = form;
+
+  const priceNet = useWatch({ control, name: 'price_net' });
+  const vatRate = useWatch({ control, name: 'vat_rate' });
+
+  useEffect(() => {
+    const net = priceNet?.trim() ?? '';
+    const vat = vatRate?.trim() ?? '';
+    if (/^\d+(\.\d{1,2})?$/.test(net) && /^\d+(\.\d{1,2})?$/.test(vat)) {
+      const gross = (Number(net) * (1 + Number(vat) / 100)).toFixed(2);
+      setValue('price_gross', gross, { shouldValidate: true });
+    }
+  }, [priceNet, vatRate, setValue]);
 
   useEffect(() => {
     reset(product ? productToFormDefaults(product) : EMPTY_PRODUCT_DEFAULTS);
@@ -139,118 +243,195 @@ export function ProductForm({
     await onSubmit(formValuesToProductWrite(values, product?.id));
   });
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{product ? 'Edit product' : 'New product'}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form noValidate onSubmit={submit} className="space-y-4">
-          <Input label="Name" {...register('name')} error={errors.name?.message} required />
+  const inField = (name: keyof ProductFormValues) =>
+    cn(ksefFieldInputClass, errors[name] && 'ring-2 ring-destructive/40 focus:ring-destructive/40');
 
+  const normalizedVat =
+    vatRate != null && String(vatRate).trim() !== ''
+      ? String(Number(String(vatRate).replace(',', '.').trim()))
+      : '';
+  const vatPresetActive = (VAT_PRESETS as readonly string[]).includes(normalizedVat);
+
+  return (
+    <form noValidate onSubmit={submit} className="space-y-4 pb-4">
+      <div className="space-y-4">
+        <FormSection title="Dane podstawowe" Icon={IconPackage}>
+          <Input
+            label="Nazwa"
+            placeholder="np. Kartacze"
+            required
+            {...register('name')}
+            error={errors.name?.message}
+            className={inField('name')}
+          />
           <div className="space-y-2">
-            <label htmlFor="product-description" className="text-sm font-medium leading-none">
-              Description
+            <label htmlFor="product-description" className="text-sm font-medium leading-none text-foreground">
+              Opis
             </label>
             <textarea
               id="product-description"
-              className={cn(textareaClassName, errors.description && 'border-destructive')}
+              placeholder="Opcjonalny opis produktu"
+              className={cn(ksefTextareaClass, errors.description && 'ring-2 ring-destructive/40')}
               {...register('description')}
             />
             {errors.description?.message && (
               <p className="text-xs text-destructive">{errors.description.message}</p>
             )}
           </div>
-
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Unit" {...register('unit')} error={errors.unit?.message} required />
-            <Input label="VAT rate" {...register('vat_rate')} error={errors.vat_rate?.message} required />
+            <Input
+              label="Jednostka"
+              placeholder="szt"
+              required
+              {...register('unit')}
+              error={errors.unit?.message}
+              className={inField('unit')}
+            />
+            <Input
+              label="Termin przydatności (dni)"
+              type="number"
+              min={0}
+              placeholder="np. 30"
+              {...register('shelf_life_days')}
+              error={errors.shelf_life_days?.message}
+              className={inField('shelf_life_days')}
+            />
           </div>
+        </FormSection>
 
+        <FormSection title="Cennik i VAT" Icon={IconTag}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Price (net)" {...register('price_net')} error={errors.price_net?.message} required />
-            <Input label="Price (gross)" {...register('price_gross')} error={errors.price_gross?.message} required />
+            <Input
+              label="Cena netto"
+              inputMode="decimal"
+              {...register('price_net')}
+              error={errors.price_net?.message}
+              className={inField('price_net')}
+            />
+            <Input
+              label="Cena brutto"
+              inputMode="decimal"
+              {...register('price_gross')}
+              error={errors.price_gross?.message}
+              className={inField('price_gross')}
+            />
           </div>
+          <div className="space-y-2">
+            {vatPresetActive ? (
+              <>
+                <p className="text-sm font-medium text-foreground">Stawka VAT</p>
+                <Controller
+                  name="vat_rate"
+                  control={control}
+                  render={({ field }) => (
+                    <div className="flex flex-wrap gap-2">
+                      {VAT_PRESETS.map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => field.onChange(v)}
+                          className={cn(
+                            'h-11 min-w-[3.25rem] flex-1 rounded-xl text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                            normalizedVat === v
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-secondary text-foreground',
+                          )}
+                        >
+                          {v}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                />
+              </>
+            ) : (
+              <Input
+                label="Stawka VAT (%)"
+                inputMode="decimal"
+                {...register('vat_rate')}
+                error={errors.vat_rate?.message}
+                className={inField('vat_rate')}
+                helperText="Niestandardowa stawka z katalogu — wpisz wartość ręcznie."
+              />
+            )}
+          </div>
+        </FormSection>
 
+        <FormSection title="Magazyn i kody" Icon={IconBox}>
           <Input
             label="Kod PKWiU"
             type="text"
             placeholder="np. 10.89.19.0"
-            helperText="Wymagane do wysyłki faktur do KSeF"
+            helperText="Przydatne przy fakturach KSeF"
             {...register('pkwiu')}
             error={errors.pkwiu?.message}
+            className={inField('pkwiu')}
           />
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="SKU" {...register('sku')} error={errors.sku?.message} />
-            <Input label="Barcode" {...register('barcode')} error={errors.barcode?.message} />
-          </div>
-
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
-              label="Min stock alert"
-              {...register('min_stock_alert')}
-              error={errors.min_stock_alert?.message}
+              label="SKU"
+              {...register('sku')}
+              error={errors.sku?.message}
+              className={inField('sku')}
             />
             <Input
-              label="Shelf life (days)"
-              type="number"
-              min={0}
-              {...register('shelf_life_days')}
-              error={errors.shelf_life_days?.message}
-              helperText="Optional; leave empty if not applicable"
+              label="Kod kreskowy"
+              {...register('barcode')}
+              error={errors.barcode?.message}
+              className={inField('barcode')}
             />
           </div>
+          <Input
+            label="Alert minimalnego stanu"
+            inputMode="decimal"
+            {...register('min_stock_alert')}
+            error={errors.min_stock_alert?.message}
+            className={inField('min_stock_alert')}
+          />
+        </FormSection>
+      </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Controller
-              name="track_batches"
-              control={control}
-              render={({ field }) => (
-                <label className="flex cursor-pointer items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-input"
-                    checked={field.value}
-                    onChange={(e) => field.onChange(e.target.checked)}
-                    onBlur={field.onBlur}
-                    ref={field.ref}
-                  />
-                  Track batches
-                </label>
-              )}
+      <div className="space-y-3">
+        <Controller
+          name="track_batches"
+          control={control}
+          render={({ field }) => (
+            <IosToggle
+              checked={field.value}
+              onChange={field.onChange}
+              label="Śledzenie partii (FIFO)"
+              description="Rejestruj partie towaru przy przyjęciu"
+              disabled={isLoading}
             />
-            <Controller
-              name="is_active"
-              control={control}
-              render={({ field }) => (
-                <label className="flex cursor-pointer items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-input"
-                    checked={field.value}
-                    onChange={(e) => field.onChange(e.target.checked)}
-                    onBlur={field.onBlur}
-                    ref={field.ref}
-                  />
-                  Active
-                </label>
-              )}
+          )}
+        />
+        <Controller
+          name="is_active"
+          control={control}
+          render={({ field }) => (
+            <IosToggle
+              checked={field.value}
+              onChange={field.onChange}
+              label="Aktywny w katalogu"
+              description="Widoczny przy zamówieniach i fakturach"
+              disabled={isLoading}
             />
-          </div>
+          )}
+        />
+      </div>
 
-          <div className="flex flex-wrap gap-2 pt-2">
-            <Button type="submit" loading={isLoading}>
-              {submitLabel ?? (product ? 'Save changes' : 'Create product')}
+      <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button type="submit" className="w-full sm:flex-1" loading={isLoading}>
+            {submitLabel ?? (product ? 'Zapisz zmiany' : 'Zapisz produkt')}
+          </Button>
+          {onCancel && (
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={onCancel} disabled={isLoading}>
+              Anuluj
             </Button>
-            {onCancel && (
-              <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
-                Cancel
-              </Button>
-            )}
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+          )}
+        </div>
+      </div>
+    </form>
   );
 }

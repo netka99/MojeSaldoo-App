@@ -59,7 +59,7 @@ describe('WarehouseList', () => {
   it('loads warehouses and shows heading', async () => {
     renderList(<WarehouseList />);
 
-    expect(screen.getByRole('heading', { name: /warehouses/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /magazyny/i })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mocks.fetchList).toHaveBeenCalledWith({
@@ -69,24 +69,26 @@ describe('WarehouseList', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('1 warehouse')).toBeInTheDocument();
+      expect(screen.getByText('1 magazyn')).toBeInTheDocument();
     });
 
     expect(screen.getByText('MG')).toBeInTheDocument();
     expect(screen.getByText('Main')).toBeInTheDocument();
   });
 
-  it('calls onDelete when Delete is clicked', async () => {
-    const onDelete = vi.fn().mockResolvedValue(undefined);
+  it('calls onRowClick when a data row is activated', async () => {
+    const onRowClick = vi.fn();
     const user = userEvent.setup();
-    renderList(<WarehouseList onDelete={onDelete} />);
+    renderList(<WarehouseList onRowClick={onRowClick} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+      expect(screen.getByText('MG')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    const rows = screen.getAllByRole('row');
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    await user.click(rows[1]!);
 
-    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ code: 'MG' }));
+    expect(onRowClick).toHaveBeenCalledWith(expect.objectContaining({ code: 'MG' }));
   });
 });

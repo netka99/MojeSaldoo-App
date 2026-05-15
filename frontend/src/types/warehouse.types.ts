@@ -6,6 +6,14 @@ export const WAREHOUSE_TYPES = ['main', 'mobile', 'customer', 'external'] as con
 
 export type WarehouseType = (typeof WAREHOUSE_TYPES)[number];
 
+/** Polish labels for `warehouse_type` (UI only; API values stay English enums). */
+export const WAREHOUSE_TYPE_LABELS_PL: Record<WarehouseType, string> = {
+  main: 'Magazyn główny',
+  mobile: 'Mobilny',
+  customer: 'U klienta',
+  external: 'Zewnętrzny',
+};
+
 export interface Warehouse {
   id: string;
   user: number;

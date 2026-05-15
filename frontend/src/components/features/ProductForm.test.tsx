@@ -1,11 +1,29 @@
 /**
  * @vitest-environment jsdom
  */
+import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ProductForm, productFormSchema } from './ProductForm';
 import type { Product } from '@/types';
+
+vi.mock('framer-motion', () => {
+  function passthrough(Tag: 'section') {
+    return function MotionMock({
+      children,
+      ...rest
+    }: React.PropsWithChildren<Record<string, unknown>>) {
+      const { variants: _v, initial: _i, animate: _a, transition: _t, ...domProps } = rest;
+      return React.createElement(Tag, domProps as Record<string, unknown>, children);
+    };
+  }
+  return {
+    motion: {
+      section: passthrough('section'),
+    },
+  };
+});
 
 const baseProduct: Product = {
   id: '550e8400-e29b-41d4-a716-446655440000',
@@ -97,25 +115,21 @@ describe('productFormSchema', () => {
 });
 
 describe('ProductForm', () => {
-  it('renders create mode title', () => {
+  it('renders create mode submit', () => {
     render(<ProductForm onSubmit={vi.fn()} />);
-    expect(screen.getByRole('heading', { name: /new product/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /create product/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /zapisz produkt/i })).toBeInTheDocument();
   });
 
   it('renders edit mode title when product is provided', () => {
     render(<ProductForm product={baseProduct} onSubmit={vi.fn()} />);
-    expect(screen.getByRole('heading', { name: /edit product/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /zapisz zmiany/i })).toBeInTheDocument();
   });
 
   it('renders Kod PKWiU field with placeholder and KSeF help text', () => {
     render(<ProductForm onSubmit={vi.fn()} />);
     expect(screen.getByRole('textbox', { name: /kod pkwiu/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('np. 10.89.19.0')).toBeInTheDocument();
-    expect(
-      screen.getByText('Wymagane do wysyłki faktur do KSeF'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Przydatne przy fakturach KSeF')).toBeInTheDocument();
   });
 
   it('prefills pkwiu in edit mode', () => {
@@ -136,9 +150,9 @@ describe('ProductForm', () => {
     expect(nameInput).toBeTruthy();
     await user.clear(nameInput!);
 
-    await user.click(screen.getByRole('button', { name: /create product/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz produkt/i }));
 
-    expect(await screen.findByText('Name is required')).toBeInTheDocument();
+    expect(await screen.findByText('Nazwa jest wymagana')).toBeInTheDocument();
   });
 
   it('submits create payload with normalized nullables', async () => {
@@ -150,7 +164,7 @@ describe('ProductForm', () => {
     await user.clear(nameInput);
     await user.type(nameInput, 'Mleko 2%');
 
-    await user.click(screen.getByRole('button', { name: /create product/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz produkt/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
 
@@ -185,7 +199,7 @@ describe('ProductForm', () => {
     const pkwiuInput = screen.getByRole('textbox', { name: /kod pkwiu/i });
     await user.type(pkwiuInput, '  10.89.19.0  ');
 
-    await user.click(screen.getByRole('button', { name: /create product/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz produkt/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit).toHaveBeenCalledWith(
@@ -205,7 +219,7 @@ describe('ProductForm', () => {
     await user.clear(nameInput);
     await user.type(nameInput, 'Updated');
 
-    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz zmiany/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
 
@@ -217,12 +231,12 @@ describe('ProductForm', () => {
     );
   });
 
-  it('calls onCancel when Cancel is clicked', async () => {
+  it('calls onCancel when Anuluj is clicked', async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
     render(<ProductForm onSubmit={vi.fn()} onCancel={onCancel} />);
 
-    await user.click(screen.getByRole('button', { name: /cancel/i }));
+    await user.click(screen.getByRole('button', { name: /anuluj/i }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });

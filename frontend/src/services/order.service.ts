@@ -6,6 +6,8 @@ import type { Order, OrderCreate, OrderUpdate, PaginatedOrders } from '../types'
  */
 export type OrderListParams = {
   page?: number;
+  /** When supported by the list endpoint, request a larger page (e.g. day views). */
+  page_size?: number;
   search?: string;
   /** One of: `delivery_date`, `-delivery_date`, `created_at`, `-created_at`, `total_gross`, `-total_gross` (see backend `ordering_fields`). */
   ordering?: string;

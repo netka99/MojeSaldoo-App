@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InvoicePreviewPayload } from '@/types';
 
 const { openPrintFrameMock } = vi.hoisted(() => ({
-  openPrintFrameMock: vi.fn(() => true),
+  openPrintFrameMock: vi.fn((_opts?: unknown) => true),
 }));
 
 vi.mock('@/lib/printFrame', () => ({
@@ -62,7 +62,7 @@ describe('openInvoicePrintWindow', () => {
         rootId: 'invoice-print-root',
       }),
     );
-    const arg = openPrintFrameMock.mock.calls[0][0] as { element: unknown };
+    const arg = openPrintFrameMock.mock.calls[0]?.[0] as { element: unknown };
     expect(arg.element).toBeDefined();
   });
 });

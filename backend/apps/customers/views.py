@@ -20,7 +20,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         filters.OrderingFilter,
     ]
     filterset_class = CustomerFilter
-    search_fields = ["name", "nip"]
+    search_fields = ["name", "company_name", "nip", "city"]
     ordering_fields = [
         "name",
         "company_name",

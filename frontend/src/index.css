@@ -2,41 +2,115 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom CSS Variables */
+/* Luminous Ledger — design tokens (hex / project-specific; page bg uses ksef-flow --background) */
 :root {
-  /* Primary color - Purple/Violet (main actions) */
-  --color-primary-50: #eef2ff;
-  --color-primary-100: #e0e7ff;
-  --color-primary-200: #c7d2fe;
-  --color-primary-300: #a5b4fc;
-  --color-primary-400: #818cf8;
-  --color-primary-500: #6366f1;
-  --color-primary-600: #4f46e5;
-  --color-primary-700: #4338ca;
-  --color-primary-800: #3730a3;
-  --color-primary-900: #312e81;
+  /* Page / screen tone aligned with ksef-flow hsl(220 20% 97%) */
+  --surface: hsl(220 20% 97%);
+  --surface-low: hsl(220 14% 96%);
+  --surface-container: hsl(220 13% 94%);
+  --surface-highest: hsl(220 13% 91%);
+  --surface-card: #ffffff;
 
-  /* Secondary color - Cyan (add, positive actions) */
-  --color-secondary-50: #ecfeff;
-  --color-secondary-100: #cffafe;
-  --color-secondary-200: #a5f3fc;
-  --color-secondary-300: #67e8f9;
-  --color-secondary-400: #22d3ee;
-  --color-secondary-500: #06b6d4;
-  --color-secondary-600: #0891b2;
-  --color-secondary-700: #0e7490;
-  --color-secondary-800: #155e75;
-  --color-secondary-900: #164e63;
+  --primary: #5856d6;
+  --primary-light: #eeeeff;
+  --on-primary: #ffffff;
 
-  /* Accent color - Orange (returns, warnings) */
-  --color-accent-50: #fff7ed;
-  --color-accent-100: #ffedd5;
-  --color-accent-200: #fed7aa;
-  --color-accent-300: #fdba74;
-  --color-accent-400: #fb923c;
-  --color-accent-500: #f97316;
-  --color-accent-600: #ea580c;
-  --color-accent-700: #c2410c;
-  --color-accent-800: #9a3412;
-  --color-accent-900: #7c2d12;
+  --on-surface: #1a1c1f;
+  --on-surface-variant: #464554;
+  --outline-variant: #c7c4d6;
+
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --success: #18794e;
+  --success-container: #d1fae5;
+  --warning: #a25100;
+  --warning-container: #ffe8d6;
+
+  --shadow-ambient: 0 4px 40px rgba(26, 28, 31, 0.06);
+  --shadow-float: 0 8px 40px rgba(26, 28, 31, 0.1);
+
+  /*
+   * Shadcn / Tailwind hsl(var(--name)) — core neutrals aligned with ksef-flow
+   * https://github.com/netka99/ksef-flow/blob/main/src/index.css
+   */
+  --background: 220 20% 97%;
+  --foreground: 220 20% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 20% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 20% 10%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 220 20% 25%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 10% 50%;
+  --accent: 235 60% 97%;
+  --accent-foreground: 235 70% 50%;
+  --destructive: 0 65% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  /* Focus ring: keep app primary hue (~235°) like ksef-flow */
+  --ring: 235 70% 60%;
+  --radius: 0.875rem;
+}
+
+.dark {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222.2 84% 4.9%;
+  --popover-foreground: 210 40% 98%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 224.3 76.3% 94.1%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+}
+
+body {
+  background-color: hsl(var(--background));
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+  color: hsl(var(--foreground));
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer components {
+  .shadow-soft {
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.04),
+      0 4px 12px rgba(0, 0, 0, 0.04);
+  }
+}
+
+@layer utilities {
+  .safe-area-pt {
+    padding-top: max(env(safe-area-inset-top), 1rem);
+  }
+
+  .safe-area-pb {
+    padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }

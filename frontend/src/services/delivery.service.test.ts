@@ -120,6 +120,14 @@ describe('deliveryService', () => {
     expect(mocks.post).toHaveBeenCalledWith('/delivery/d1/update-lines/', payload);
   });
 
+  it('generateForOrders posts /delivery/generate-for-orders/', async () => {
+    mocks.post.mockResolvedValue({ documents: [{ id: 'd1' }] });
+    await deliveryService.generateForOrders(['o-1', 'o-2']);
+    expect(mocks.post).toHaveBeenCalledWith('/delivery/generate-for-orders/', {
+      order_ids: ['o-1', 'o-2'],
+    });
+  });
+
   it('generateForOrder GETs /delivery/generate-for-order/:orderId/', async () => {
     mocks.get.mockResolvedValue({ id: 'd-new' });
     await deliveryService.generateForOrder('o-99');

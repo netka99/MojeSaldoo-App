@@ -52,6 +52,8 @@ export const orderKeys = {
   all: ['orders'] as const,
   lists: () => [...orderKeys.all, 'list'] as const,
   list: (params: OrderListKeyParams) => [...orderKeys.lists(), params] as const,
+  byDate: (date: string, companyId: string) =>
+    [...orderKeys.lists(), { delivery_date: date, companyId }] as const,
   details: () => [...orderKeys.all, 'detail'] as const,
   detail: (id: string) => [...orderKeys.details(), id] as const,
 };

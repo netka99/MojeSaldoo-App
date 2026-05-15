@@ -7,12 +7,14 @@ import { createTestQueryClient } from '@/query/query-client';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { orderKeys } from './keys';
 import {
+  buildOrderListApiFilters,
   useCancelOrderMutation,
   useConfirmOrderMutation,
   useCreateOrderMutation,
   useDeleteOrderMutation,
   useOrderListQuery,
   useOrderQuery,
+  useOrdersByDateQuery,
 } from './use-orders';
 
 const orderServiceMock = vi.hoisted(() => ({
@@ -37,6 +39,16 @@ vi.mock('@/context/AuthContext', () => ({
 describe('use-orders', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('buildOrderListApiFilters builds filters only for non-empty fields', () => {
+    expect(buildOrderListApiFilters('', '', '', '')).toEqual({});
+    expect(buildOrderListApiFilters('  test ', 'confirmed' as const, '2026-01-10', '2026-01-20')).toEqual({
+      search: 'test',
+      status: 'confirmed',
+      delivery_date_after: '2026-01-10',
+      delivery_date_before: '2026-01-20',
+    });
   });
 
   it('useOrderListQuery fetches with page, filters, and orderKeys.List', async () => {
@@ -69,6 +81,55 @@ describe('use-orders', () => {
         })
       )
     ).toEqual(pageData);
+  });
+
+  it('useOrdersByDateQuery with valid date calls fetchList with delivery_date and page 1', async () => {
+    const pageData = { count: 0, next: null, previous: null, results: [] };
+    orderServiceMock.fetchList.mockResolvedValue(pageData);
+    const queryClient = createTestQueryClient();
+    const date = '2026-05-13';
+
+    const { result } = renderHook(() => useOrdersByDateQuery(date), {
+      wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(orderServiceMock.fetchList).toHaveBeenCalledWith({
+      delivery_date: date,
+      page: 1,
+      page_size: 100,
+    });
+  });
+
+  it('useOrdersByDateQuery with empty date does not call fetchList', async () => {
+    orderServiceMock.fetchList.mockResolvedValue({
+      count: 0,
+      next: null,
+      previous: null,
+      results: [],
+    });
+    const queryClient = createTestQueryClient();
+
+    renderHook(() => useOrdersByDateQuery(''), {
+      wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
+    });
+
+    await waitFor(() => expect(orderServiceMock.fetchList).not.toHaveBeenCalled());
+  });
+
+  it('useOrdersByDateQuery stores data under a key that includes date and companyId', async () => {
+    const pageData = { count: 1, next: null, previous: null, results: [{ id: 'o1' }] };
+    orderServiceMock.fetchList.mockResolvedValue(pageData);
+    const queryClient = createTestQueryClient();
+    const date = '2026-06-01';
+
+    const { result } = renderHook(() => useOrdersByDateQuery(date), {
+      wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(orderKeys.byDate(date, 'company-a')).not.toEqual(orderKeys.byDate(date, 'company-b'));
+    expect(queryClient.getQueryData(orderKeys.byDate(date, mockUser.current_company))).toEqual(pageData);
   });
 
   it('useOrderQuery loads detail by id', async () => {

@@ -251,7 +251,7 @@ export function VanLoadingPage() {
         </ol>
       </div>
 
-      <h1 className="text-2xl font-semibold">Załaduj Van</h1>
+      <h1 className="text-[1.5rem] font-semibold tracking-tight">Załaduj Van</h1>
 
       {(stepError || submitError) && (
         <p

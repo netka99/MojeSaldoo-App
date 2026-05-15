@@ -142,7 +142,7 @@ export function CreateCompanyDialog({
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-[10000] flex items-end justify-center bg-white p-4 sm:items-center"
+            className="fixed inset-0 z-[10000] flex items-end justify-center bg-surface-card p-4 sm:items-center"
             role="presentation"
             onClick={(e) => {
               if (isBusy) {
@@ -154,13 +154,13 @@ export function CreateCompanyDialog({
             }}
           >
             <div
-              className="max-h-[min(90vh,720px)] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-200 bg-white p-0 shadow-sm"
+              className="max-h-[min(90vh,720px)] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-200 bg-surface-card p-0 shadow-sm"
               role="dialog"
               aria-modal="true"
               aria-labelledby={titleId}
               onClick={(e) => e.stopPropagation()}
             >
-            <Card className="border-0 bg-white shadow-none">
+            <Card className="border-0 bg-surface-card shadow-none">
               <CardHeader>
                 <CardTitle id={titleId} className="text-xl">
                   Nowa firma

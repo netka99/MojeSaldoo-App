@@ -131,6 +131,18 @@
   white-space: pre-wrap;
 }
 
+.wz-print-returns-heading {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wz-print-empty-row td {
+  height: 22px;
+}
+
 .wz-print-signatures {
   margin-top: 28px;
   display: flex;

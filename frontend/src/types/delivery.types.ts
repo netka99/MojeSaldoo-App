@@ -3,7 +3,7 @@
  */
 
 /** `DeliveryDocument.document_type`. */
-export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ';
+export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW';
 
 /** `DeliveryDocument.status`. */
 export type DeliveryDocumentStatus =
@@ -35,6 +35,37 @@ export interface LinkedInvoiceRef {
   invoice_number: string;
 }
 
+/** One item in a linked ZW document (shown on the parent WZ page). */
+export interface LinkedZWItem {
+  id: string;
+  product_id: string;
+  product_name: string | null;
+  quantity_planned: string | number;
+  return_reason: string;
+}
+
+/** A ZW document linked to a WZ (shown as a read-only block on the WZ detail page). */
+export interface LinkedZWDocument {
+  id: string;
+  document_number: string | null;
+  issue_date: string;
+  status: DeliveryDocumentStatus;
+  items: LinkedZWItem[];
+}
+
+/** One return line sent to `POST /api/delivery/{id}/save/` when collecting returns. */
+export interface PendingReturnItem {
+  product_id: string;
+  product_name?: string;  // UI-only — not sent to API
+  quantity: string;       // decimal string, e.g. "2.00"
+  return_reason?: string;
+}
+
+/** Optional body for `POST /api/delivery/{id}/save/` */
+export interface SaveDeliveryPayload {
+  return_items?: PendingReturnItem[];
+}
+
 /** Full document as returned from GET (includes nested `items`). */
 export interface DeliveryDocument {
   id: string;
@@ -63,6 +94,10 @@ export interface DeliveryDocument {
   /** True when an invoice references this delivery document (editing blocked server-side). */
   locked_for_edit?: boolean;
   linked_invoices?: LinkedInvoiceRef[];
+  /** For ZW documents: the WZ that triggered this return. */
+  linked_wz_id?: string | null;
+  /** ZW return documents linked to this WZ. */
+  return_documents?: LinkedZWDocument[];
   items: DeliveryItem[];
 }
 
@@ -218,10 +253,25 @@ export interface DeliveryDocumentPreviewItem {
   unit: string;
 }
 
+export interface DeliveryDocumentPreviewReturnItem {
+  product_name: string;
+  quantity_planned: string;
+  return_reason: string;
+  unit: string;
+}
+
+export interface DeliveryDocumentPreviewReturnDocument {
+  id: string;
+  document_number: string;
+  issue_date: string;
+  items: DeliveryDocumentPreviewReturnItem[];
+}
+
 export interface DeliveryDocumentPreviewPayload {
   document: DeliveryDocumentPreviewDocument;
   company: DeliveryDocumentPreviewCompany;
   customer: DeliveryDocumentPreviewCustomer;
   from_warehouse: DeliveryDocumentPreviewWarehouse | null;
   items: DeliveryDocumentPreviewItem[];
+  return_documents?: DeliveryDocumentPreviewReturnDocument[];
 }

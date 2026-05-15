@@ -487,13 +487,136 @@ def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
             }
         )
 
+    return_documents_out = []
+    for zw in doc.return_documents.all().order_by("created_at"):
+        zw_items = []
+        for it in zw.items.all().order_by("created_at"):
+            product = it.product
+            zw_items.append(
+                {
+                    "product_name": product.name,
+                    "quantity_planned": _fmt_decimal(it.quantity_planned),
+                    "return_reason": it.return_reason or "",
+                    "unit": product.unit or "",
+                }
+            )
+        return_documents_out.append(
+            {
+                "id": str(zw.id),
+                "document_number": zw.document_number or "",
+                "issue_date": str(zw.issue_date),
+                "items": zw_items,
+            }
+        )
+
     return {
         "document": document_block,
         "company": company_block,
         "customer": customer_block,
         "from_warehouse": from_warehouse,
         "items": items_out,
+        "return_documents": return_documents_out,
     }
+
+
+def create_zw_from_pending_returns(
+    *,
+    wz_doc: DeliveryDocument,
+    return_items: list[dict],
+    user,
+) -> DeliveryDocument:
+    """
+    Create a ZW (Zwrot Zewnętrzny) document from pending return lines collected during
+    a WZ delivery, and add returned stock back to the van/source warehouse.
+
+    :param wz_doc: The WZ document being saved; its ``from_warehouse`` receives the stock.
+    :param return_items: List of ``{product_id, quantity, return_reason}`` dicts.
+    :param user: Authenticated user (for audit).
+    :returns: The created (``saved``) ZW document.
+    """
+    if not return_items:
+        raise ValueError("return_items must not be empty.")
+
+    company_id = wz_doc.company_id
+    van_warehouse = wz_doc.from_warehouse  # stock goes back here
+
+    product_ids = [str(row["product_id"]) for row in return_items]
+    if len(product_ids) != len(set(product_ids)):
+        raise ValidationError({"return_items": "Duplicate product_id in return items."})
+
+    with transaction.atomic():
+        products = {
+            str(p.id): p
+            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
+        }
+        missing = [pid for pid in product_ids if pid not in products]
+        if missing:
+            raise ValidationError(
+                {"return_items": f"Unknown product_id(s): {missing}."}
+            )
+
+        zw_doc = DeliveryDocument.objects.create(
+            company_id=company_id,
+            order=None,
+            user=user,
+            document_type=DeliveryDocument.DOC_TYPE_ZW,
+            issue_date=timezone.localdate(),
+            from_warehouse=None,      # coming from external customer
+            to_warehouse=van_warehouse,
+            to_customer=wz_doc.to_customer,
+            linked_wz=wz_doc,
+            status=DeliveryDocument.STATUS_SAVED,
+            driver_name=wz_doc.driver_name or "",
+            notes=f"Zwrot do WZ {wz_doc.document_number or wz_doc.id}",
+        )
+
+        for row in return_items:
+            pid = str(row["product_id"])
+            qty = Decimal(str(row["quantity"]))
+            reason = (row.get("return_reason") or "").strip()
+
+            DeliveryItem.objects.create(
+                delivery_document=zw_doc,
+                order_item=None,
+                product=products[pid],
+                quantity_planned=qty,
+                quantity_actual=qty,
+                quantity_returned=Decimal("0"),
+                return_reason=reason,
+            )
+
+            # Add stock back to van/source warehouse (if set)
+            if van_warehouse is not None:
+                st, _ = ProductStock.objects.select_for_update().get_or_create(
+                    company_id=company_id,
+                    product_id=pid,
+                    warehouse_id=van_warehouse.id,
+                    defaults={
+                        "quantity_available": Decimal("0"),
+                        "quantity_reserved": Decimal("0"),
+                        "quantity_total": Decimal("0"),
+                    },
+                )
+                qty_before = st.quantity_available
+                st.quantity_available += qty
+                st.save(update_fields=["quantity_available"])
+                StockMovement.objects.create(
+                    company_id=company_id,
+                    product_id=pid,
+                    warehouse_id=van_warehouse.id,
+                    user=user,
+                    movement_type=StockMovement.MovementType.RETURN,
+                    quantity=qty,
+                    quantity_before=qty_before,
+                    quantity_after=st.quantity_available,
+                    reference_type="delivery_return",
+                    reference_id=zw_doc.id,
+                    notes=f"Zwrot od klienta (ZW do WZ {wz_doc.document_number or wz_doc.id})",
+                    created_by=user,
+                )
+
+    zw_doc.refresh_from_db()
+    return zw_doc
 
 
 def _delivery_effective_actual(item: DeliveryItem) -> Decimal:

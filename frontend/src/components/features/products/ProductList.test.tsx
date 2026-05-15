@@ -65,7 +65,7 @@ describe('ProductList', () => {
   it('loads products and shows heading', async () => {
     renderList(<ProductList />);
 
-    expect(screen.getByRole('heading', { name: /products/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /produkty/i })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mocks.fetchList).toHaveBeenCalledWith({
@@ -76,7 +76,7 @@ describe('ProductList', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('1 item')).toBeInTheDocument();
+      expect(screen.getByText('1 produkt')).toBeInTheDocument();
     });
   });
 
@@ -98,7 +98,7 @@ describe('ProductList', () => {
 
     renderList(<ProductList />);
 
-    expect(await screen.findByText(/no products match this filter/i)).toBeInTheDocument();
+    expect(await screen.findByText(/brak produktów spełniających ten filtr/i)).toBeInTheDocument();
   });
 
   it('shows error and retries fetch', async () => {
@@ -113,7 +113,7 @@ describe('ProductList', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Network down');
 
-    await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await userEvent.click(screen.getByRole('button', { name: /spróbuj ponownie/i }));
 
     await waitFor(() => {
       expect(mocks.fetchList).toHaveBeenCalledTimes(2);
@@ -143,9 +143,9 @@ describe('ProductList', () => {
     const table1 = await screen.findByRole('table');
     expect(await within(table1).findByText('Page1')).toBeInTheDocument();
 
-    expect(screen.getByRole('navigation', { name: /pagination/i })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: /paginacja/i })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /^next$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^następna$/i }));
 
     await waitFor(() => {
       expect(mocks.fetchList).toHaveBeenLastCalledWith({
@@ -166,7 +166,7 @@ describe('ProductList', () => {
 
     await waitFor(() => expect(mocks.fetchList).toHaveBeenCalledTimes(1));
 
-    await user.type(screen.getByLabelText(/filter products by sku/i), 'abc');
+    await user.type(screen.getByLabelText(/filtruj produkty po kodzie sku/i), 'abc');
 
     await waitFor(
       () => {
@@ -187,7 +187,7 @@ describe('ProductList', () => {
     const table = await screen.findByRole('table');
     await within(table).findByText('Mleko');
 
-    const editButtons = screen.getAllByRole('button', { name: /^edit$/i });
+    const editButtons = screen.getAllByRole('button', { name: /^edytuj$/i });
     await userEvent.click(editButtons[0]!);
 
     expect(onEdit).toHaveBeenCalledTimes(1);

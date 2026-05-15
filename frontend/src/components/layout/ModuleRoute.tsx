@@ -21,16 +21,17 @@ function ModuleNotEnabledView({ module }: { module: ModuleName }) {
     <div className="mx-auto max-w-lg p-6" role="status" aria-labelledby={descriptionId}>
       <Card>
         <CardHeader>
-          <CardTitle>Module not enabled</CardTitle>
+          <CardTitle>Moduł wyłączony</CardTitle>
           <CardDescription id={descriptionId}>
-            {MODULE_CARD_COPY[module].title} is turned off. Enable it in company settings to use this part of the app.
+            Moduł „{MODULE_CARD_COPY[module].title}” jest wyłączony. Włącz go w ustawieniach firmy, aby korzystać z tej części
+            aplikacji.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">{MODULE_CARD_COPY[module].description}</p>
           <div className="mt-4">
             <Link to={SETTINGS_PATH} replace className={primaryLinkClass}>
-              Open company settings
+              Otwórz ustawienia firmy
             </Link>
           </div>
         </CardContent>
@@ -62,7 +63,7 @@ export function ModuleRouteGate({ module, children }: ModuleRouteGateProps) {
   if (isPending) {
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status" aria-live="polite">
-        Loading company modules…
+        Ładowanie modułów firmy…
       </div>
     );
   }

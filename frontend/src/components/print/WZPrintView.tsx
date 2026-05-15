@@ -1,6 +1,7 @@
 import type {
   DeliveryDocumentPreviewPayload,
   DeliveryDocumentPreviewItem,
+  DeliveryDocumentPreviewReturnDocument,
   DeliveryDocumentType,
 } from '@/types';
 import './WZPrintView.css';
@@ -17,6 +18,7 @@ const DOC_TYPE_LABEL_PL: Record<DeliveryDocumentType, string> = {
   WZ: 'WZ — Wydanie zewnętrzne',
   MM: 'MM — Przesunięcie międzymagazynowe',
   PZ: 'PZ — Przyjęcie zewnętrzne',
+  ZW: 'ZW — Zwrot zewnętrzny',
 };
 
 function formatQty(value: string | null | undefined): string {
@@ -51,7 +53,7 @@ export type WZPrintViewProps = {
 };
 
 export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
-  const { document: doc, customer, from_warehouse, items } = preview;
+  const { document: doc, customer, from_warehouse, items, return_documents = [] } = preview;
   const typeLabel = DOC_TYPE_LABEL_PL[doc.document_type] ?? doc.document_type;
   const rows = buildRows(items ?? []);
 
@@ -148,6 +150,48 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
           <strong>Uwagi:</strong> {doc.notes}
         </section>
       ) : null}
+
+      {/* Return confirmation table — real ZW rows when linked, otherwise blank rows */}
+      <div className="wz-print-table-wrap" aria-label="Potwierdzenie zwrotów">
+        <p className="wz-print-returns-heading">
+          Potwierdzenie przyjęcia zwrotów / opakowań
+        </p>
+        <table className="wz-print-table">
+          <thead>
+            <tr>
+              <th className="narrow center" scope="col">Nr</th>
+              <th scope="col">Nazwa produktu</th>
+              <th className="num" scope="col">Ilość</th>
+              <th scope="col">Powód zwrotu</th>
+            </tr>
+          </thead>
+          <tbody>
+            {return_documents && return_documents.length > 0
+              ? return_documents.flatMap((zw: DeliveryDocumentPreviewReturnDocument) => zw.items).map((item, i) => (
+                  <tr key={i}>
+                    <td className="center">{i + 1}</td>
+                    <td>{item.product_name}</td>
+                    <td className="num">{item.quantity_planned} {item.unit}</td>
+                    <td>{item.return_reason || '—'}</td>
+                  </tr>
+                ))
+              : [1, 2, 3, 4].map((n) => (
+                  <tr key={n} className="wz-print-empty-row">
+                    <td className="center">{n}</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                  </tr>
+                ))
+            }
+          </tbody>
+        </table>
+        {return_documents && return_documents.length > 0 && return_documents[0].document_number && (
+          <p className="wz-print-notes" style={{ marginTop: '4px' }}>
+            Nr dokumentu ZW: {return_documents.map((zw: DeliveryDocumentPreviewReturnDocument) => zw.document_number).join(', ')}
+          </p>
+        )}
+      </div>
 
       <section className="wz-print-signatures" aria-label="Podpisy">
         <div className="wz-print-signature">

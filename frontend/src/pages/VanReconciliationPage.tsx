@@ -198,7 +198,7 @@ export function VanReconciliationPage() {
         <Button type="button" variant="outline" size="sm" onClick={() => navigate('/delivery')}>
           ← Dokumenty dostawy
         </Button>
-        <h1 className="text-2xl font-semibold">Rozlicz Van</h1>
+        <h1 className="text-[1.5rem] font-semibold tracking-tight">Rozlicz Van</h1>
       </div>
 
       {/* ERROR BANNER */}

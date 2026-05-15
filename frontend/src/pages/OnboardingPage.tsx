@@ -109,7 +109,7 @@ function OnboardingStep2({ companyId, onBack, onComplete }: OnboardingStep2Props
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-2xl">Włącz moduły</CardTitle>
+        <CardTitle className="text-[1.5rem] font-semibold tracking-tight">Włącz moduły</CardTitle>
         <CardDescription>Wybierz, z czego będziesz korzystać. Część modułów zależy od innych.</CardDescription>
       </CardHeader>
       <CardContent>
@@ -290,7 +290,7 @@ export function OnboardingPage() {
   if (companiesQueryPending || !onboardingEntryDecided) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/20 text-sm text-muted-foreground">
-        Loading…
+        Ładowanie…
       </div>
     );
   }
@@ -330,7 +330,7 @@ export function OnboardingPage() {
         {step === 1 && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-2xl">Utwórz firmę</CardTitle>
+              <CardTitle className="text-[1.5rem] font-semibold tracking-tight">Utwórz firmę</CardTitle>
               <CardDescription>Podstawowe dane twojej organizacji (PL).</CardDescription>
             </CardHeader>
             <CardContent>
@@ -410,7 +410,7 @@ export function OnboardingPage() {
         {step === 3 && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-2xl">Gotowe!</CardTitle>
+              <CardTitle className="text-[1.5rem] font-semibold tracking-tight">Gotowe!</CardTitle>
               <CardDescription>Twoja firma i moduły zostały zapisane.</CardDescription>
             </CardHeader>
             <CardContent>

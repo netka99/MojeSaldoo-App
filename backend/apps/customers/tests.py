@@ -129,6 +129,25 @@ class CustomerViewSetAPITests(TestCase):
         names = {row["name"] for row in response.data["results"]}
         self.assertEqual(names, {"My client"})
 
+    def test_search_matches_city_and_company_name(self):
+        Customer.objects.create(
+            user=self.user,
+            company=self.co_user,
+            name="Sklep",
+            company_name="Gdańsk Retail Sp. z o.o.",
+            city="Gdańsk",
+        )
+        self.client.force_authenticate(user=self.user)
+        r_city = self.client.get(reverse("customer-list"), {"search": "Gdań"})
+        self.assertEqual(r_city.status_code, status.HTTP_200_OK)
+        names_city = {row["name"] for row in r_city.data["results"]}
+        self.assertIn("Sklep", names_city)
+
+        r_legal = self.client.get(reverse("customer-list"), {"search": "Retail"})
+        self.assertEqual(r_legal.status_code, status.HTTP_200_OK)
+        names_legal = {row["name"] for row in r_legal.data["results"]}
+        self.assertIn("Sklep", names_legal)
+
     def test_create_assigns_current_user(self):
         self.client.force_authenticate(user=self.user)
         response = self.client.post(

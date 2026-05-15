@@ -1,12 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { warehouseService } from '@/services/warehouse.service';
 import type { WarehouseWrite } from '@/types';
-import { warehouseKeys } from './keys';
+import { stockSnapshotKeys, warehouseKeys } from './keys';
 
 export function useWarehouseListQuery(page = 1) {
   return useQuery({
     queryKey: warehouseKeys.list({ page }),
     queryFn: () => warehouseService.fetchList({ page, ordering: 'code' }),
+  });
+}
+
+export function useWarehouseQuery(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: id ? warehouseKeys.detail(id) : [...warehouseKeys.details(), 'pending'],
+    queryFn: () => warehouseService.fetchById(id!),
+    enabled: Boolean(id) && enabled,
   });
 }
 
@@ -27,6 +35,7 @@ export function useUpdateWarehouseMutation() {
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.byWarehouse(id) });
     },
   });
 }
@@ -35,8 +44,10 @@ export function useDeleteWarehouseMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => warehouseService.deleteItem(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.byWarehouse(id) });
     },
   });
 }

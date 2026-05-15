@@ -28,7 +28,7 @@ function PostAuthLoginRedirect({ from }: { from: string }) {
   if (isPending) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/30 text-sm text-muted-foreground">
-        Loading…
+        Ładowanie…
       </div>
     );
   }
@@ -57,7 +57,7 @@ export function LoginPage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/30 text-sm text-muted-foreground">
-        Loading…
+        Ładowanie…
       </div>
     );
   }
@@ -81,11 +81,11 @@ export function LoginPage() {
     } catch (err) {
       if (isAxiosError(err) && err.message === 'Network Error') {
         setError(
-          `Cannot reach the API (${API_BASE_URL}). Run Django on port 8000 and open the app from Vite (http://localhost:3000). Remove VITE_API_BASE_URL from .env for dev unless you have configured CORS for that host.`,
+          `Brak połączenia z API (${API_BASE_URL}). Uruchom Django na porcie 8000 i otwórz aplikację z Vite (http://localhost:3000). Usuń VITE_API_BASE_URL z pliku .env w dev, chyba że skonfigurowałeś CORS dla tego hosta.`,
         );
         return;
       }
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(err instanceof Error ? err.message : 'Logowanie nie powiodło się');
     } finally {
       setLoading(false);
     }
@@ -95,9 +95,9 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-muted/30 p-6">
       <Card className="w-full max-w-md shadow-sm">
         <CardHeader>
-          <CardTitle className="text-xl">Sign in</CardTitle>
+          <CardTitle className="text-xl">Logowanie</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Use your Django user credentials (same as <code className="text-xs">createsuperuser</code>).
+            Użyj danych użytkownika Django (tak jak przy <code className="text-xs">createsuperuser</code>).
           </p>
         </CardHeader>
         <CardContent>
@@ -108,7 +108,7 @@ export function LoginPage() {
               </p>
             )}
             <Input
-              label="Username"
+              label="Nazwa użytkownika"
               name="username"
               autoComplete="username"
               value={username}
@@ -116,7 +116,7 @@ export function LoginPage() {
               required
             />
             <Input
-              label="Password"
+              label="Hasło"
               name="password"
               type="password"
               autoComplete="current-password"
@@ -126,7 +126,7 @@ export function LoginPage() {
             />
             <div className="flex flex-wrap gap-2 pt-2">
               <Button type="submit" loading={loading}>
-                Log in
+                Zaloguj się
               </Button>
               <Link
                 to="/"
@@ -135,7 +135,7 @@ export function LoginPage() {
                   loading && 'pointer-events-none opacity-50',
                 )}
               >
-                Cancel
+                Anuluj
               </Link>
             </div>
           </form>

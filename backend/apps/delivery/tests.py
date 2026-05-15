@@ -966,6 +966,92 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["items"][0]["quantity_planned"], "2.50")
 
+    def _url_generate_batch(self):
+        return reverse("delivery-document-generate-for-orders")
+
+    def test_post_generate_for_orders_creates_one_wz_per_confirmed_order(self):
+        self.client.force_authenticate(user=self.user)
+        o1 = self._confirmed_order_with_line()
+        o2 = self._confirmed_order_with_line()
+        r = self.client.post(
+            self._url_generate_batch(),
+            data={"order_ids": [str(o2.id), str(o1.id)]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertIn("documents", r.data)
+        self.assertEqual(len(r.data["documents"]), 2)
+        nums = {row["document_number"] for row in r.data["documents"]}
+        ids = {row["id"] for row in r.data["documents"]}
+        self.assertEqual(len(nums), 2)
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(DeliveryDocument.objects.filter(pk__in=ids).count(), 2)
+
+    def test_post_generate_for_orders_not_confirmed_returns_400_with_ids(self):
+        self.client.force_authenticate(user=self.user)
+        ok = self._confirmed_order_with_line()
+        bad = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 5, 1),
+            delivery_date=date(2026, 5, 15),
+            status=Order.STATUS_DRAFT,
+        )
+        OrderItem.objects.create(
+            order=bad,
+            product=self.product,
+            quantity=Decimal("1.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        r = self.client.post(
+            self._url_generate_batch(),
+            data={"order_ids": [str(ok.id), str(bad.id)]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertEqual(r.data["not_confirmed_order_ids"], [str(bad.id)])
+
+    def test_post_generate_for_orders_other_company_order_returns_404(self):
+        co_other = Company.objects.create(name="Foreign Co")
+        cust_other = Customer.objects.create(name="Foreign", company=co_other)
+        product_foreign = Product.objects.create(
+            name="Foreign prod",
+            company=co_other,
+            price_net=Decimal("1.00"),
+            price_gross=Decimal("1.00"),
+        )
+        o_foreign = Order.objects.create(
+            user=self.user,
+            customer=cust_other,
+            company=co_other,
+            order_date=date(2026, 5, 1),
+            delivery_date=date(2026, 5, 15),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=o_foreign,
+            product=product_foreign,
+            quantity=Decimal("2.00"),
+            unit_price_net=Decimal("1.00"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"),
+            discount_percent=Decimal("0.00"),
+        )
+
+        self.client.force_authenticate(user=self.user)
+        o_local = self._confirmed_order_with_line()
+        r = self.client.post(
+            self._url_generate_batch(),
+            data={"order_ids": [str(o_local.id), str(o_foreign.id)]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND, r.data)
+        self.assertIn(str(o_foreign.id), r.data["missing_order_ids"])
+
     def test_post_complete_updates_lines_and_order(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()

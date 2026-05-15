@@ -64,11 +64,11 @@ describe('LoginPage', () => {
 
     renderLogin();
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Logowanie' })).toBeInTheDocument());
 
-    await userEvent.type(screen.getByLabelText(/username/i), 'carol');
-    await userEvent.type(screen.getByLabelText(/^password$/i), 'secret-pass');
-    await userEvent.click(screen.getByRole('button', { name: 'Log in' }));
+    await userEvent.type(screen.getByLabelText(/nazwa użytkownika/i), 'carol');
+    await userEvent.type(screen.getByLabelText(/^hasło$/i), 'secret-pass');
+    await userEvent.click(screen.getByRole('button', { name: 'Zaloguj się' }));
 
     await waitFor(() => expect(authApi.login).toHaveBeenCalledWith('carol', 'secret-pass'));
     await waitFor(() => expect(screen.getByTestId('dashboard')).toBeInTheDocument());
@@ -94,11 +94,11 @@ describe('LoginPage', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Logowanie' })).toBeInTheDocument());
 
-    await userEvent.type(screen.getByLabelText(/username/i), 'carol');
-    await userEvent.type(screen.getByLabelText(/^password$/i), 'x');
-    await userEvent.click(screen.getByRole('button', { name: 'Log in' }));
+    await userEvent.type(screen.getByLabelText(/nazwa użytkownika/i), 'carol');
+    await userEvent.type(screen.getByLabelText(/^hasło$/i), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Zaloguj się' }));
 
     await waitFor(() => expect(screen.getByTestId('customers')).toBeInTheDocument());
   });
@@ -113,10 +113,10 @@ describe('LoginPage', () => {
 
     renderLogin();
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument());
-    await userEvent.type(screen.getByLabelText(/username/i), 'carol');
-    await userEvent.type(screen.getByLabelText(/^password$/i), 'x');
-    await userEvent.click(screen.getByRole('button', { name: 'Log in' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Logowanie' })).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText(/nazwa użytkownika/i), 'carol');
+    await userEvent.type(screen.getByLabelText(/^hasło$/i), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Zaloguj się' }));
 
     await waitFor(() => expect(companyService.getMyCompanies).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByTestId('onboarding')).toBeInTheDocument());
@@ -129,6 +129,6 @@ describe('LoginPage', () => {
     renderLogin('/login');
 
     await waitFor(() => expect(screen.getByTestId('dashboard')).toBeInTheDocument());
-    expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Logowanie' })).not.toBeInTheDocument();
   });
 });

@@ -13,6 +13,7 @@ import {
   useDeliveryListQuery,
   useDeliveryQuery,
   useGenerateDeliveryForOrderMutation,
+  useBatchGenerateDeliveryMutation,
   usePatchDeliveryMutation,
   useSaveDeliveryMutation,
   useStartDeliveryMutation,
@@ -29,6 +30,7 @@ const deliveryServiceMock = vi.hoisted(() => ({
   startDelivery: vi.fn(),
   completeDelivery: vi.fn(),
   generateForOrder: vi.fn(),
+  generateForOrders: vi.fn(),
   vanReconciliation: vi.fn(),
 }));
 
@@ -160,8 +162,8 @@ describe('use-delivery', () => {
       wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
     });
 
-    await result.current.mutateAsync('d1');
-    expect(deliveryServiceMock.saveDocument).toHaveBeenCalledWith('d1');
+    await result.current.mutateAsync({ id: 'd1' });
+    expect(deliveryServiceMock.saveDocument).toHaveBeenCalledWith('d1', undefined);
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d1') });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d1') });
@@ -218,6 +220,31 @@ describe('use-delivery', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-new') });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d-new') });
     expect(spy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+  });
+
+  it('useBatchGenerateDeliveryMutation POSTs order_ids and invalidates caches', async () => {
+    const queryClient = createTestQueryClient();
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    const payload = {
+      documents: [
+        { id: 'd-new-a', items: [] },
+        { id: 'd-new-b', items: [] },
+      ] as never,
+    };
+    deliveryServiceMock.generateForOrders.mockResolvedValue(payload);
+
+    const { result } = renderHook(() => useBatchGenerateDeliveryMutation(), {
+      wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
+    });
+
+    await result.current.mutateAsync(['o1', 'o2']);
+    expect(deliveryServiceMock.generateForOrders).toHaveBeenCalledWith(['o1', 'o2']);
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
+    expect(spy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-new-a') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d-new-a') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-new-b') });
+    expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d-new-b') });
   });
 
   it('useVanReconciliationMutation calls service and invalidates delivery + products', async () => {

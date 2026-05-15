@@ -7,6 +7,7 @@ import type {
   DeliveryDocumentPreviewPayload,
   DeliveryUpdateLinesPayload,
   PaginatedDeliveryDocuments,
+  PendingReturnItem,
   VanLoadingPayload,
   VanReconciliationPayload,
   VanReconciliationResult,
@@ -45,7 +46,13 @@ export const deliveryService = {
 
   deleteDocument: (id: string) => api.delete<Record<string, never>>(`${basePath}${id}/`),
 
-  saveDocument: (id: string) => api.post<DeliveryDocument>(`${basePath}${id}/save/`, {}),
+  saveDocument: (id: string, returnItems?: PendingReturnItem[]) =>
+    api.post<DeliveryDocument>(
+      `${basePath}${id}/save/`,
+      returnItems && returnItems.length > 0
+        ? { return_items: returnItems.map(({ product_id, quantity, return_reason }) => ({ product_id, quantity, return_reason })) }
+        : {},
+    ),
 
   startDelivery: (id: string) =>
     api.post<DeliveryDocument>(`${basePath}${id}/start-delivery/`, {}),
@@ -59,6 +66,12 @@ export const deliveryService = {
   /** `GET` — creates draft WZ from confirmed order (remaining quantities per line on the server). */
   generateForOrder: (orderId: string) =>
     api.get<DeliveryDocument>(`${basePath}generate-for-order/${orderId}/`),
+
+  /** `POST` — batch create draft WZ for multiple confirmed orders (one round-trip). */
+  generateForOrders: (orderIds: string[]) =>
+    api.post<{ documents: DeliveryDocument[] }>(`${basePath}generate-for-orders/`, {
+      order_ids: orderIds,
+    }),
 
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),

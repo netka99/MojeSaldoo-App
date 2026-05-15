@@ -149,13 +149,13 @@ describe('buildInvoiceListFilters + badge helpers', () => {
   });
 
   it('invoice status badge classes', () => {
-    expect(invoiceStatusBadgeClassName('draft')).toContain('gray');
+    expect(invoiceStatusBadgeClassName('draft')).toContain('surface-container');
     expect(invoiceStatusBadgeClassName('paid')).toContain('green');
     expect(invoiceStatusBadgeClassName('cancelled')).toContain('red');
   });
 
   it('KSeF status badge classes', () => {
-    expect(invoiceKsefStatusBadgeClassName('not_sent')).toContain('gray');
+    expect(invoiceKsefStatusBadgeClassName('not_sent')).toContain('surface-container');
     expect(invoiceKsefStatusBadgeClassName('accepted')).toContain('green');
     expect(invoiceKsefStatusBadgeClassName('rejected')).toContain('red');
   });

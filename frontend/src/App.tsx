@@ -15,15 +15,24 @@ const CustomersPage = lazy(() =>
 const CustomerCreatePage = lazy(() =>
   import('./pages/CustomerCreatePage').then((m) => ({ default: m.CustomerCreatePage })),
 );
+const CustomerEditPage = lazy(() =>
+  import('./pages/CustomerEditPage').then((m) => ({ default: m.CustomerEditPage })),
+);
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then((m) => ({ default: m.ProductsPage })));
 const ProductCreatePage = lazy(() =>
   import('./pages/ProductCreatePage').then((m) => ({ default: m.ProductCreatePage })),
+);
+const ProductEditPage = lazy(() =>
+  import('./pages/ProductEditPage').then((m) => ({ default: m.ProductEditPage })),
 );
 const ProductAdjustStockPage = lazy(() =>
   import('./pages/ProductAdjustStockPage').then((m) => ({ default: m.ProductAdjustStockPage })),
 );
 const WarehousesPage = lazy(() =>
   import('./pages/WarehousesPage').then((m) => ({ default: m.WarehousesPage })),
+);
+const WarehouseDetailPage = lazy(() =>
+  import('./pages/WarehouseDetailPage').then((m) => ({ default: m.WarehouseDetailPage })),
 );
 const WarehouseCreatePage = lazy(() =>
   import('./pages/WarehouseCreatePage').then((m) => ({ default: m.WarehouseCreatePage })),
@@ -81,8 +90,8 @@ function RouteFallback() {
 function AppPlaceholderPage({ title }: { title: string }) {
   return (
     <div className="max-w-2xl p-6">
-      <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">This section is not implemented yet.</p>
+      <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">{title}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">Ta sekcja nie jest jeszcze zaimplementowana.</p>
     </div>
   );
 }
@@ -117,6 +126,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/customers/:id/edit"
+                  element={
+                    <ModuleRouteGate module="customers">
+                      <CustomerEditPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/products"
                   element={
                     <ModuleRouteGate module="products">
@@ -129,6 +146,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="products">
                       <ProductCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/products/:id/edit"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <ProductEditPage />
                     </ModuleRouteGate>
                   }
                 />
@@ -153,6 +178,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="warehouses">
                       <WarehouseCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/warehouses/:id"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <WarehouseDetailPage />
                     </ModuleRouteGate>
                   }
                 />

@@ -33,57 +33,57 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmit, isLoad
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50">
+    <div className="flex items-center justify-center min-h-screen bg-surface">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">Welcome to MojeSaldoo</CardTitle>
-          <p className="text-gray-600">Create your account to get started</p>
+          <CardTitle className="text-[2.75rem] font-bold tracking-tight">Witaj w MojeSaldoo</CardTitle>
+          <p className="text-on-surface-variant">Załóż konto, aby rozpocząć</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <Input
-                label="First Name"
+                label="Imię"
                 value={formData.firstName}
                 onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                 required
               />
               <Input
-                label="Last Name"
+                label="Nazwisko"
                 value={formData.lastName}
                 onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
                 required
               />
             </div>
             <Input
-              label="Email"
+              label="E-mail"
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               required
             />
             <Input
-              label="Company Name"
+              label="Nazwa firmy"
               value={formData.companyName}
               onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
               required
             />
             <Input
-              label="Password"
+              label="Hasło"
               type="password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               required
             />
             <Input
-              label="Confirm Password"
+              label="Powtórz hasło"
               type="password"
               value={formData.confirmPassword}
               onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
               required
             />
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Creating Account...' : 'Create Account'}
+              {isLoading ? 'Tworzenie konta…' : 'Utwórz konto'}
             </Button>
           </form>
         </CardContent>

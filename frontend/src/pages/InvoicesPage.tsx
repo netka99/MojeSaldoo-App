@@ -52,7 +52,7 @@ const selectClassName = cn(
 export function invoiceStatusBadgeClassName(status: InvoiceStatus): string {
   switch (status) {
     case 'draft':
-      return 'bg-gray-100 text-gray-800';
+      return 'bg-surface-container text-on-surface';
     case 'issued':
       return 'bg-blue-100 text-blue-800';
     case 'sent':
@@ -64,14 +64,14 @@ export function invoiceStatusBadgeClassName(status: InvoiceStatus): string {
     case 'cancelled':
       return 'bg-red-100 text-red-800';
     default:
-      return 'bg-gray-100 text-gray-800';
+      return 'bg-surface-container text-on-surface';
   }
 }
 
 export function invoiceKsefStatusBadgeClassName(status: InvoiceKsefStatus): string {
   switch (status) {
     case 'not_sent':
-      return 'bg-gray-100 text-gray-700';
+      return 'bg-surface-container text-on-surface-variant';
     case 'pending':
       return 'bg-amber-100 text-amber-900';
     case 'sent':
@@ -81,7 +81,7 @@ export function invoiceKsefStatusBadgeClassName(status: InvoiceKsefStatus): stri
     case 'rejected':
       return 'bg-red-100 text-red-800';
     default:
-      return 'bg-gray-100 text-gray-700';
+      return 'bg-surface-container text-on-surface-variant';
   }
 }
 
@@ -143,7 +143,7 @@ function InvoicesPageContent() {
   return (
     <div className="space-y-4 p-6">
       <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold text-foreground">Faktury</h1>
+        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Faktury</h1>
         <Link
           to="/invoices/new"
           className="inline-flex h-10 shrink-0 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -153,9 +153,9 @@ function InvoicesPageContent() {
       </div>
 
       <Card className="mx-auto w-full max-w-6xl shadow-sm">
-        <CardHeader className="flex flex-col gap-4 border-b border-border pb-6">
+        <CardHeader className="flex flex-col gap-4 pb-6">
           <div>
-            <CardTitle className="text-xl sm:text-2xl">Lista faktur</CardTitle>
+            <CardTitle className="text-xl sm:text-[1.5rem]">Lista faktur</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               {isFetching ? 'Ładowanie…' : `Znaleziono: ${count}`}
             </p>
@@ -267,7 +267,7 @@ function InvoicesPageContent() {
         <CardContent className="pt-6">
           {isError && (
             <div
-              className="mb-4 flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+              className="mb-4 flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
               role="alert"
             >
               <p className="text-sm text-destructive">{queryErrorMessage(error)}</p>
@@ -277,129 +277,136 @@ function InvoicesPageContent() {
             </div>
           )}
 
-          <ul className="divide-y divide-border md:hidden">
-            {items.map((row: Invoice) => (
-              <li key={row.id} className="py-4">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <Link
-                      to={`/invoices/${row.id}`}
-                      className="min-w-0 font-medium text-primary hover:underline"
-                    >
-                      {row.invoice_number ?? row.id.slice(0, 8)}
-                    </Link>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-                        invoiceStatusBadgeClassName(row.status),
-                      )}
-                    >
-                      {INVOICE_STATUS_LABELS_PL[row.status]}
-                    </span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{row.order.customer_name || '—'}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Wyst.: {formatIssueDate(row.issue_date)} · Płatność: {formatIssueDate(row.due_date)}
-                  </p>
-                  <p className="text-sm font-medium">{formatGross(row.total_gross)}</p>
-                  <span
-                    className={cn(
-                      'w-fit rounded-full px-2 py-0.5 text-xs font-medium',
-                      invoiceKsefStatusBadgeClassName(row.ksef_status),
-                    )}
-                  >
-                    {INVOICE_KSEF_STATUS_LABELS_PL[row.ksef_status]}
-                  </span>
-                  <Link
-                    to={`/orders/${row.order.id}`}
-                    className="text-xs font-medium text-primary hover:underline"
-                  >
-                    Zamówienie
-                  </Link>
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
-            <table className="min-w-full divide-y divide-border text-sm" aria-label="Lista faktur">
-              <thead className="bg-muted/50">
-                <tr>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Nr faktury
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Klient
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Data wystawienia
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Termin płatności
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                    Wartość brutto
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Status
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Status KSeF
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border bg-card">
-                {items.map((row: Invoice) => (
-                  <tr key={row.id} className="hover:bg-muted/30">
-                    <td className="whitespace-nowrap px-4 py-3 font-medium">
-                      <div className="flex flex-col">
-                        <Link to={`/invoices/${row.id}`} className="text-primary hover:underline">
-                          {row.invoice_number ?? row.id.slice(0, 8)}
-                        </Link>
-                        <Link
-                          to={`/orders/${row.order.id}`}
-                          className="text-xs font-normal text-primary hover:underline"
-                        >
-                          Zamówienie
-                        </Link>
-                      </div>
-                    </td>
-                    <td className="max-w-[220px] truncate px-4 py-3 text-muted-foreground" title={row.order.customer_name}>
-                      {row.order.customer_name || '—'}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                      {formatIssueDate(row.issue_date)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                      {formatIssueDate(row.due_date)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">
-                      {formatGross(row.total_gross)}
-                    </td>
-                    <td className="px-4 py-3">
+          <div className="bg-surface-card rounded-2xl overflow-hidden md:hidden">
+            <ul className="flex flex-col gap-1">
+              {items.map((row: Invoice) => (
+                <li key={row.id}>
+                  <div className="flex flex-col gap-2 px-4 py-4 transition-colors active:bg-surface-low hover:bg-surface-low/60">
+                    <div className="flex items-start justify-between gap-3">
+                      <Link
+                        to={`/invoices/${row.id}`}
+                        className="min-w-0 font-medium text-primary hover:underline"
+                      >
+                        {row.invoice_number ?? row.id.slice(0, 8)}
+                      </Link>
                       <span
                         className={cn(
-                          'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
+                          'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
                           invoiceStatusBadgeClassName(row.status),
                         )}
                       >
                         {INVOICE_STATUS_LABELS_PL[row.status]}
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={cn(
-                          'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
-                          invoiceKsefStatusBadgeClassName(row.ksef_status),
-                        )}
-                      >
-                        {INVOICE_KSEF_STATUS_LABELS_PL[row.ksef_status]}
-                      </span>
-                    </td>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{row.order.customer_name || '—'}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Wyst.: {formatIssueDate(row.issue_date)} · Płatność: {formatIssueDate(row.due_date)}
+                    </p>
+                    <p className="text-sm font-medium">{formatGross(row.total_gross)}</p>
+                    <span
+                      className={cn(
+                        'w-fit rounded-full px-2 py-0.5 text-xs font-medium',
+                        invoiceKsefStatusBadgeClassName(row.ksef_status),
+                      )}
+                    >
+                      {INVOICE_KSEF_STATUS_LABELS_PL[row.ksef_status]}
+                    </span>
+                    <Link
+                      to={`/orders/${row.order.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Zamówienie
+                    </Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="hidden md:block">
+            <div className="overflow-x-auto rounded-2xl bg-surface-card">
+              <table className="min-w-full text-sm" aria-label="Lista faktur">
+                <thead className="bg-surface-low/80">
+                  <tr>
+                    <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                      Nr faktury
+                    </th>
+                    <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                      Klient
+                    </th>
+                    <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                      Data wystawienia
+                    </th>
+                    <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                      Termin płatności
+                    </th>
+                    <th scope="col" className="px-4 py-4 text-right font-medium text-muted-foreground">
+                      Wartość brutto
+                    </th>
+                    <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                      Status
+                    </th>
+                    <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                      Status KSeF
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {items.map((row: Invoice) => (
+                    <tr key={row.id} className="transition-colors hover:bg-surface-low/50 active:bg-surface-low">
+                      <td className="whitespace-nowrap px-4 py-4 font-medium">
+                        <div className="flex flex-col">
+                          <Link to={`/invoices/${row.id}`} className="text-primary hover:underline">
+                            {row.invoice_number ?? row.id.slice(0, 8)}
+                          </Link>
+                          <Link
+                            to={`/orders/${row.order.id}`}
+                            className="text-xs font-normal text-primary hover:underline"
+                          >
+                            Zamówienie
+                          </Link>
+                        </div>
+                      </td>
+                      <td
+                        className="max-w-[220px] truncate px-4 py-4 text-muted-foreground"
+                        title={row.order.customer_name}
+                      >
+                        {row.order.customer_name || '—'}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">
+                        {formatIssueDate(row.issue_date)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">
+                        {formatIssueDate(row.due_date)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-right font-medium tabular-nums">
+                        {formatGross(row.total_gross)}
+                      </td>
+                      <td className="px-4 py-4">
+                        <span
+                          className={cn(
+                            'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
+                            invoiceStatusBadgeClassName(row.status),
+                          )}
+                        >
+                          {INVOICE_STATUS_LABELS_PL[row.status]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span
+                          className={cn(
+                            'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
+                            invoiceKsefStatusBadgeClassName(row.ksef_status),
+                          )}
+                        >
+                          {INVOICE_KSEF_STATUS_LABELS_PL[row.ksef_status]}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {!isFetching && items.length === 0 && !isError && (
@@ -410,7 +417,7 @@ function InvoicesPageContent() {
 
           {totalPages > 1 && (
             <nav
-              className="mt-6 flex flex-col items-stretch justify-between gap-3 border-t border-border pt-4 sm:flex-row sm:items-center"
+              className="mt-6 flex flex-col items-stretch justify-between gap-3 pt-4 sm:flex-row sm:items-center"
               aria-label="Stronicowanie listy faktur"
             >
               <p className="text-center text-sm text-muted-foreground sm:text-left">

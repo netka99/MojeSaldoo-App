@@ -1,11 +1,29 @@
 /**
  * @vitest-environment jsdom
  */
+import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CustomerForm, customerFormSchema, validateNipChecksum } from './CustomerForm';
 import type { Customer } from '@/types';
+
+vi.mock('framer-motion', () => {
+  function passthrough(Tag: 'section') {
+    return function MotionMock({
+      children,
+      ...rest
+    }: React.PropsWithChildren<Record<string, unknown>>) {
+      const { variants: _v, initial: _i, animate: _a, transition: _t, ...domProps } = rest;
+      return React.createElement(Tag, domProps as Record<string, unknown>, children);
+    };
+  }
+  return {
+    motion: {
+      section: passthrough('section'),
+    },
+  };
+});
 
 /** Valid Polish NIP (checksum matches backend rules). */
 const VALID_NIP = '5260250274';
@@ -85,7 +103,7 @@ describe('customerFormSchema', () => {
         credit_limit: '0',
         is_active: true,
       }),
-    ).toThrow(/Invalid NIP/);
+    ).toThrow(/Nieprawidłowy NIP/);
   });
 
   it('treats empty payment_terms as default 14 (cleared number input)', () => {
@@ -130,15 +148,14 @@ describe('customerFormSchema', () => {
 });
 
 describe('CustomerForm', () => {
-  it('renders create mode title', () => {
+  it('renders create mode actions', () => {
     render(<CustomerForm onSubmit={vi.fn()} />);
-    expect(screen.getByRole('heading', { name: /new customer/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /create customer/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /zapisz kontrahenta/i })).toBeInTheDocument();
   });
 
   it('renders edit mode when customer is provided', () => {
     render(<CustomerForm customer={baseCustomer} onSubmit={vi.fn()} />);
-    expect(screen.getByRole('heading', { name: /edit customer/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /zapisz zmiany/i })).toBeInTheDocument();
   });
 
   it('shows NIP validation error for invalid checksum', async () => {
@@ -148,9 +165,9 @@ describe('CustomerForm', () => {
     await user.type(container.querySelector<HTMLInputElement>('input[name="name"]')!, 'Firma');
     await user.type(container.querySelector<HTMLInputElement>('input[name="nip"]')!, '1234567890');
 
-    await user.click(screen.getByRole('button', { name: /create customer/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz kontrahenta/i }));
 
-    expect(await screen.findByText(/Invalid NIP/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Nieprawidłowy NIP/i)).toBeInTheDocument();
   });
 
   it('submits create payload with nullables and uppercase country', async () => {
@@ -163,7 +180,7 @@ describe('CustomerForm', () => {
     await user.clear(country);
     await user.type(country, 'pl');
 
-    await user.click(screen.getByRole('button', { name: /create customer/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz kontrahenta/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
 
@@ -187,7 +204,7 @@ describe('CustomerForm', () => {
     await user.clear(nameInput);
     await user.type(nameInput, 'ACME 2');
 
-    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await user.click(screen.getByRole('button', { name: /zapisz zmiany/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
 

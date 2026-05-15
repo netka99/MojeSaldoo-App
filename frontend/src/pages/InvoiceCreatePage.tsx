@@ -158,7 +158,7 @@ function InvoiceCreatePageContent() {
   return (
     <div className="space-y-4 p-6">
       <div className="mx-auto flex max-w-4xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold text-foreground">Nowa faktura z zamówienia</h1>
+        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Nowa faktura z zamówienia</h1>
         <Link to="/invoices" className="text-sm text-primary hover:underline">
           ← Lista faktur
         </Link>

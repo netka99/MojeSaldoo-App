@@ -13,7 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.invoices.models import Invoice
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderItem
 from apps.products.models import ProductStock, StockMovement, Warehouse
 from apps.users.permissions import IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
@@ -24,6 +24,7 @@ from .serializers import (
     DeliveryCompleteSerializer,
     DeliveryDocumentSerializer,
     DeliveryUpdateLinesSerializer,
+    SaveWithReturnsSerializer,
     VanLoadingSerializer,
     VanReconciliationSerializer,
 )
@@ -32,6 +33,7 @@ from .services import (
     apply_van_reconciliation,
     build_delivery_document_preview_data,
     create_van_loading_mm,
+    create_zw_from_pending_returns,
     default_from_warehouse_for_delivery,
 )
 
@@ -62,6 +64,17 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 "to_customer",
             )
             .prefetch_related("items", "items__product", "items__order_item")
+        )
+        qs = qs.prefetch_related(
+            Prefetch(
+                "return_documents",
+                queryset=DeliveryDocument.objects.prefetch_related(
+                    Prefetch(
+                        "items",
+                        queryset=DeliveryItem.objects.select_related("product"),
+                    )
+                ),
+            ),
         )
         qs = qs.prefetch_related(
             Prefetch(
@@ -123,7 +136,15 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="save")
     def save(self, request, pk=None):
-        """draft → saved."""
+        """draft → saved.
+
+        Optional body: ``{"return_items": [{"product_id": "...", "quantity": "2.00",
+        "return_reason": "Po terminie"}]}``
+        When ``return_items`` is present the system atomically:
+          1. Creates a ZW (Zwrot Zewnętrzny) document with those lines.
+          2. Adds returned stock back to the source warehouse (van).
+          3. Transitions the WZ to ``saved``.
+        """
         doc = self.get_object()
         if doc.is_locked_by_invoice():
             raise ValidationError(
@@ -138,9 +159,45 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 {"error": "Only draft documents can be saved."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        doc.status = DeliveryDocument.STATUS_SAVED
-        doc.user = request.user
-        doc.save(update_fields=["status", "user", "updated_at"])
+
+        # Parse optional return items
+        return_items = []
+        if request.data:
+            ser = SaveWithReturnsSerializer(data=request.data)
+            ser.is_valid(raise_exception=True)
+            return_items = ser.validated_data.get("return_items") or []
+
+        with transaction.atomic():
+            doc = (
+                DeliveryDocument.objects.select_for_update()
+                .select_related("company", "from_warehouse", "to_customer")
+                .get(pk=doc.pk)
+            )
+            if doc.status != DeliveryDocument.STATUS_DRAFT:
+                return Response(
+                    {"error": "Only draft documents can be saved."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if return_items:
+                create_zw_from_pending_returns(
+                    wz_doc=doc,
+                    return_items=[
+                        {
+                            "product_id": row["product_id"],
+                            "quantity": row["quantity"],
+                            "return_reason": row.get("return_reason") or "",
+                        }
+                        for row in return_items
+                    ],
+                    user=request.user,
+                )
+
+            doc.status = DeliveryDocument.STATUS_SAVED
+            doc.user = request.user
+            doc.save(update_fields=["status", "user", "updated_at"])
+
+        doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="start-delivery")
@@ -500,6 +557,42 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         )
         return Response(summary, status=status.HTTP_200_OK)
 
+    def _wz_planned_lines(self, order: Order) -> list[tuple[OrderItem, Decimal]]:
+        """Pairs of order item and remaining quantity to plan on a new WZ."""
+        rows: list[tuple[OrderItem, Decimal]] = []
+        for oi in order.items.select_related("product"):
+            remaining = oi.quantity - (oi.quantity_delivered or Decimal("0"))
+            if remaining > 0:
+                rows.append((oi, remaining))
+        return rows
+
+    def _persist_wz_draft_from_order(
+        self,
+        request,
+        order: Order,
+        lines: list[tuple[OrderItem, Decimal]],
+    ) -> DeliveryDocument:
+        company_id = request.user.current_company_id
+        doc = DeliveryDocument.objects.create(
+            company=order.company,
+            order=order,
+            user=request.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=timezone.localdate(),
+            to_customer=order.customer,
+            from_warehouse=default_from_warehouse_for_delivery(company_id),
+            status=DeliveryDocument.STATUS_DRAFT,
+        )
+        for oi, qty in lines:
+            DeliveryItem.objects.create(
+                delivery_document=doc,
+                order_item=oi,
+                product=oi.product,
+                quantity_planned=qty,
+            )
+        doc.refresh_from_db()
+        return doc
+
     @action(
         detail=False,
         methods=["get"],
@@ -518,12 +611,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        lines = []
-        for oi in order.items.select_related("product"):
-            remaining = oi.quantity - (oi.quantity_delivered or Decimal("0"))
-            if remaining > 0:
-                lines.append((oi, remaining))
-
+        lines = self._wz_planned_lines(order)
         if not lines:
             return Response(
                 {"error": "No remaining quantity to deliver for this order."},
@@ -531,23 +619,95 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
 
         with transaction.atomic():
-            doc = DeliveryDocument.objects.create(
-                company=order.company,
-                order=order,
-                user=request.user,
-                document_type=DeliveryDocument.DOC_TYPE_WZ,
-                issue_date=timezone.localdate(),
-                to_customer=order.customer,
-                from_warehouse=default_from_warehouse_for_delivery(company_id),
-                status=DeliveryDocument.STATUS_DRAFT,
-            )
-            for oi, qty in lines:
-                DeliveryItem.objects.create(
-                    delivery_document=doc,
-                    order_item=oi,
-                    product=oi.product,
-                    quantity_planned=qty,
-                )
-
-        doc.refresh_from_db()
+            doc = self._persist_wz_draft_from_order(request, order, lines)
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="generate-for-orders")
+    def generate_for_orders(self, request):
+        """Batch: generate WZ documents for a list of confirmed order IDs."""
+        raw_ids = request.data.get("order_ids", [])
+        if not isinstance(raw_ids, list):
+            return Response(
+                {"error": "order_ids must be a list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        id_list: list[str] = []
+        seen: set[str] = set()
+        for x in raw_ids:
+            sid = str(x)
+            if sid not in seen:
+                seen.add(sid)
+                id_list.append(sid)
+
+        if not id_list:
+            return Response(
+                {"error": "order_ids must not be empty."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        company_id = request.user.current_company_id
+        orders = list(
+            Order.objects.filter(company_id=company_id, pk__in=id_list)
+            .select_related("company", "customer")
+            .prefetch_related(
+                Prefetch(
+                    "items",
+                    queryset=OrderItem.objects.select_related("product"),
+                ),
+            ),
+        )
+        by_id = {str(o.id): o for o in orders}
+        missing = [oid for oid in id_list if oid not in by_id]
+        if missing:
+            return Response(
+                {
+                    "detail": "One or more orders were not found in this company.",
+                    "missing_order_ids": missing,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        not_confirmed = [
+            oid for oid in id_list if by_id[oid].status != Order.STATUS_CONFIRMED
+        ]
+        if not_confirmed:
+            return Response(
+                {
+                    "detail": "Every order must be confirmed to generate a delivery document.",
+                    "not_confirmed_order_ids": not_confirmed,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        line_sets: dict[str, list[tuple[OrderItem, Decimal]]] = {}
+        no_remaining: list[str] = []
+        for oid in id_list:
+            planned = self._wz_planned_lines(by_id[oid])
+            line_sets[oid] = planned
+            if not planned:
+                no_remaining.append(oid)
+        if no_remaining:
+            return Response(
+                {
+                    "detail": "No remaining quantity to deliver for one or more orders.",
+                    "no_remaining_quantity_order_ids": no_remaining,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created: list[DeliveryDocument] = []
+        with transaction.atomic():
+            for oid in id_list:
+                order = by_id[oid]
+                doc = self._persist_wz_draft_from_order(
+                    request,
+                    order,
+                    line_sets[oid],
+                )
+                created.append(doc)
+
+        serializer = self.get_serializer(created, many=True)
+        return Response(
+            {"documents": serializer.data},
+            status=status.HTTP_201_CREATED,
+        )

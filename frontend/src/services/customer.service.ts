@@ -11,6 +11,7 @@ interface PaginatedResponse<T> {
 /** Query params aligned with `CustomerViewSet` filters, search, ordering, and pagination. */
 export type CustomerListParams = {
   page?: number;
+  page_size?: number;
   search?: string;
   ordering?: string;
   name?: string;

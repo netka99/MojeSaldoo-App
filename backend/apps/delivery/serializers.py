@@ -134,6 +134,48 @@ class DeliveryUpdateLinesSerializer(serializers.Serializer):
     items = DeliveryLineMutationSerializer(many=True, allow_empty=False)
 
 
+class LinkedZWItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+
+    class Meta:
+        model = DeliveryItem
+        fields = ["id", "product_id", "product_name", "quantity_planned", "return_reason"]
+        read_only_fields = fields
+
+
+class LinkedZWSerializer(serializers.ModelSerializer):
+    """Minimal nested representation of ZW documents attached to a WZ."""
+    items = LinkedZWItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DeliveryDocument
+        fields = ["id", "document_number", "issue_date", "status", "items"]
+        read_only_fields = fields
+
+
+class PendingReturnItemSerializer(serializers.Serializer):
+    """One line in the ``return_items`` payload sent to ``POST .../save/``."""
+
+    product_id = serializers.UUIDField()
+    quantity = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+    )
+    return_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        default="",
+    )
+
+
+class SaveWithReturnsSerializer(serializers.Serializer):
+    """Optional body for ``POST .../save/`` when the driver is also collecting returns."""
+
+    return_items = PendingReturnItemSerializer(many=True, required=False, allow_empty=True)
+
+
 class DeliveryDocumentSerializer(serializers.ModelSerializer):
     order_id = serializers.PrimaryKeyRelatedField(
         queryset=Order.objects.all(),
@@ -160,10 +202,15 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     items = DeliveryItemSerializer(many=True, read_only=True)
+    return_documents = LinkedZWSerializer(many=True, read_only=True)
     order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     locked_for_edit = serializers.SerializerMethodField()
     linked_invoices = serializers.SerializerMethodField()
+    linked_wz_id = serializers.PrimaryKeyRelatedField(
+        source="linked_wz",
+        read_only=True,
+    )
 
     class Meta:
         model = DeliveryDocument
@@ -180,6 +227,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "from_warehouse_id",
             "to_warehouse_id",
             "to_customer_id",
+            "linked_wz_id",
             "status",
             "has_returns",
             "returns_notes",
@@ -192,6 +240,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "locked_for_edit",
             "linked_invoices",
             "items",
+            "return_documents",
         ]
         read_only_fields = [
             "id",
@@ -199,9 +248,11 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "company",
             "user",
             "status",
+            "linked_wz_id",
             "created_at",
             "updated_at",
             "items",
+            "return_documents",
             "order_number",
             "customer_name",
             "locked_for_edit",
@@ -236,6 +287,8 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     def get_customer_name(self, obj):
         if obj.order_id and obj.order.customer_id:
             return obj.order.customer.name
+        if obj.to_customer_id:
+            return obj.to_customer.name
         return None
 
     def get_locked_for_edit(self, obj):
@@ -250,7 +303,12 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     def validate(self, data):
         doc_type = data.get("document_type")
         order = data.get("order")
-        if not self.instance and doc_type != DeliveryDocument.DOC_TYPE_MM and not order:
+        # MM and ZW documents are not tied to a sales order
+        order_not_required = doc_type in (
+            DeliveryDocument.DOC_TYPE_MM,
+            DeliveryDocument.DOC_TYPE_ZW,
+        )
+        if not self.instance and not order_not_required and not order:
             raise serializers.ValidationError(
                 {"order_id": "This field is required for this document type."}
             )

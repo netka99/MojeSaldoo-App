@@ -22,11 +22,13 @@ class DeliveryDocument(models.Model):
     DOC_TYPE_WZ = "WZ"
     DOC_TYPE_MM = "MM"
     DOC_TYPE_PZ = "PZ"
+    DOC_TYPE_ZW = "ZW"
 
     DOC_TYPE_CHOICES = [
         (DOC_TYPE_WZ, "Wydanie Zewnętrzne"),
         (DOC_TYPE_MM, "Przesunięcie Międzymagazynowe"),
         (DOC_TYPE_PZ, "Przyjęcie Zewnętrzne"),
+        (DOC_TYPE_ZW, "Zwrot Zewnętrzny"),
     ]
 
     STATUS_DRAFT = "draft"
@@ -92,6 +94,14 @@ class DeliveryDocument(models.Model):
         null=True,
         blank=True,
         related_name="delivery_documents",
+    )
+    linked_wz = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="return_documents",
+        help_text="For ZW documents: the WZ that triggered this return.",
     )
     status = models.CharField(
         max_length=20,

@@ -1,11 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { orderService, type OrderListParams } from '@/services/order.service';
-import type { OrderCreate, Order } from '@/types';
+import type { OrderCreate, OrderUpdate, Order, OrderStatus } from '@/types';
 import { orderKeys } from './keys';
 
 /** Filters for `useOrderListQuery` (excludes `page` — pass page as the first argument). */
 export type OrderListFilters = Omit<OrderListParams, 'page'>;
+
+export function buildOrderListApiFilters(
+  search: string,
+  status: '' | OrderStatus,
+  dateFrom: string,
+  dateTo: string,
+): OrderListFilters {
+  const filters: OrderListFilters = {};
+  const t = search.trim();
+  if (t) filters.search = t;
+  if (status) filters.status = status;
+  if (dateFrom) filters.delivery_date_after = dateFrom;
+  if (dateTo) filters.delivery_date_before = dateTo;
+  return filters;
+}
 
 /**
  * Paginated list of orders. Cache key includes `page`, active company, and all filter fields.
@@ -18,6 +33,23 @@ export function useOrderListQuery(page: number, filters: OrderListFilters = {}) 
   return useQuery({
     queryKey: orderKeys.list({ page, companyId, ...filters }),
     queryFn: () => orderService.fetchList({ page, ...filters }),
+  });
+}
+
+/**
+ * All orders with delivery_date == date (exact day).
+ * Fetches all results (page_size=100) — day views don't need pagination.
+ * Disabled when date is empty string.
+ */
+export function useOrdersByDateQuery(date: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: orderKeys.byDate(date, companyId),
+    queryFn: () =>
+      orderService.fetchList({ delivery_date: date, page: 1, page_size: 100 }),
+    enabled: Boolean(date) && Boolean(companyId),
   });
 }
 
@@ -35,6 +67,18 @@ export function useCreateOrderMutation() {
     mutationFn: (body: OrderCreate) => orderService.createOrder(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+export function useUpdateOrderMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: OrderUpdate }) =>
+      orderService.updateOrder(id, body),
+    onSuccess: (data: Order) => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.detail(data.id) });
     },
   });
 }

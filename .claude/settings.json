@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls -1d \"d:\\\\Work\\\\MojeSaldoo App/backend/apps\"/*/)"
+      "Bash(ls -1d \"d:\\\\Work\\\\MojeSaldoo App/backend/apps\"/*/)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

@@ -144,18 +144,20 @@ function renderDeliveryRoute() {
 }
 
 describe('buildDeliveryListFilters + deliveryStatusBadgeClassName', () => {
-  it('always scopes to WZ and passes optional status / issue date range', () => {
-    expect(buildDeliveryListFilters('', '', '')).toEqual({ document_type: 'WZ' });
-    expect(buildDeliveryListFilters('saved', '2026-04-01', '2026-04-30')).toEqual({
+  it('builds filters with optional document type, status and date range', () => {
+    expect(buildDeliveryListFilters('', '', '')).toEqual({});
+    expect(buildDeliveryListFilters('', '', '', 'WZ')).toEqual({ document_type: 'WZ' });
+    expect(buildDeliveryListFilters('saved', '2026-04-01', '2026-04-30', 'WZ')).toEqual({
       document_type: 'WZ',
       status: 'saved',
       issue_date_after: '2026-04-01',
       issue_date_before: '2026-04-30',
     });
+    expect(buildDeliveryListFilters('', '', '', 'ZW')).toEqual({ document_type: 'ZW' });
   });
 
   it('uses badge colors for key delivery statuses', () => {
-    expect(deliveryStatusBadgeClassName('draft')).toContain('gray');
+    expect(deliveryStatusBadgeClassName('draft')).toContain('surface-container');
     expect(deliveryStatusBadgeClassName('saved')).toContain('blue');
     expect(deliveryStatusBadgeClassName('in_transit')).toContain('amber');
     expect(deliveryStatusBadgeClassName('delivered')).toContain('green');

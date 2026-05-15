@@ -64,14 +64,14 @@ describe('ModuleRouteGate reporting (/reports)', () => {
     useModuleGuardMock.mockReturnValue(false);
     renderReportsRoute();
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.getByText('Module not enabled')).toBeInTheDocument();
+    expect(screen.getByText('Moduł wyłączony')).toBeInTheDocument();
     expect(screen.queryByTestId('reports-page-content')).not.toBeInTheDocument();
   });
 
   it('shows loading state while company modules query is pending', () => {
     useCompanyModulesQueryMock.mockReturnValue({ isPending: true, data: undefined });
     renderReportsRoute();
-    expect(screen.getByText('Loading company modules…')).toBeInTheDocument();
+    expect(screen.getByText('Ładowanie modułów firmy…')).toBeInTheDocument();
   });
 
   it('blocks content when current_company is missing', () => {

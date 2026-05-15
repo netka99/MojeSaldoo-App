@@ -12,7 +12,7 @@ import { useOrderListQuery } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
 import { DELIVERY_STATUS_LABELS_PL, deliveryStatusFilterOptions } from '@/constants/deliveryStatusPl';
 import { cn } from '@/lib/utils';
-import type { DeliveryDocument, DeliveryDocumentStatus } from '@/types';
+import type { DeliveryDocument, DeliveryDocumentStatus, DeliveryDocumentType } from '@/types';
 
 const PAGE_SIZE = 20;
 const ORDER_SEARCH_DEBOUNCE_MS = 350;
@@ -39,7 +39,7 @@ const selectClassName = cn(
 export function deliveryStatusBadgeClassName(status: DeliveryDocumentStatus): string {
   switch (status) {
     case 'draft':
-      return 'bg-gray-100 text-gray-800';
+      return 'bg-surface-container text-on-surface';
     case 'saved':
       return 'bg-blue-100 text-blue-800';
     case 'in_transit':
@@ -49,18 +49,25 @@ export function deliveryStatusBadgeClassName(status: DeliveryDocumentStatus): st
     case 'cancelled':
       return 'bg-red-100 text-red-800';
     default:
-      return 'bg-gray-100 text-gray-800';
+      return 'bg-surface-container text-on-surface';
   }
 }
+
+const DOC_TYPE_LABELS_PL: Record<DeliveryDocumentType, string> = {
+  WZ: 'WZ',
+  MM: 'MM',
+  PZ: 'PZ',
+  ZW: 'ZW',
+};
 
 export function buildDeliveryListFilters(
   status: '' | DeliveryDocumentStatus,
   dateFrom: string,
   dateTo: string,
+  documentType: '' | DeliveryDocumentType = '',
 ): DeliveryListFilters {
-  const filters: DeliveryListFilters = {
-    document_type: 'WZ',
-  };
+  const filters: DeliveryListFilters = {};
+  if (documentType) filters.document_type = documentType;
   if (status) filters.status = status;
   if (dateFrom) filters.issue_date_after = dateFrom;
   if (dateTo) filters.issue_date_before = dateTo;
@@ -81,8 +88,9 @@ function DeliveryDocumentsPageContent() {
   const [status, setStatus] = useState<'' | DeliveryDocumentStatus>('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [documentType, setDocumentType] = useState<'' | DeliveryDocumentType>('WZ');
 
-  const listFilters = buildDeliveryListFilters(status, dateFrom, dateTo);
+  const listFilters = buildDeliveryListFilters(status, dateFrom, dateTo, documentType);
   const { data, isFetching, isError, error, refetch } = useDeliveryListQuery(page, listFilters);
   const items = data?.results ?? [];
   const count = data?.count ?? 0;
@@ -128,7 +136,7 @@ function DeliveryDocumentsPageContent() {
     <div className="space-y-4 p-6">
       <div className="mx-auto flex max-w-6xl flex-col gap-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-semibold text-foreground">Dokumenty WZ</h1>
+          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Dokumenty dostawy</h1>
         </div>
 
         <Card className="w-full shadow-sm">
@@ -203,12 +211,33 @@ function DeliveryDocumentsPageContent() {
       <Card className="mx-auto w-full max-w-6xl shadow-sm">
         <CardHeader className="flex flex-col gap-4 border-b border-border pb-6">
           <div>
-            <CardTitle className="text-xl sm:text-2xl">Lista dokumentów WZ</CardTitle>
+            <CardTitle className="text-xl sm:text-[1.5rem]">Lista dokumentów</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               {isFetching ? 'Ładowanie…' : `Znaleziono: ${count}`}
             </p>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-2">
+              <label htmlFor="delivery-type-filter" className="text-sm font-medium leading-none">
+                Typ dokumentu
+              </label>
+              <select
+                id="delivery-type-filter"
+                className={selectClassName}
+                value={documentType}
+                onChange={(e) => {
+                  setDocumentType((e.target.value as DeliveryDocumentType | '') || '');
+                  setPage(1);
+                }}
+                aria-label="Filtruj dokumenty po typie"
+              >
+                <option value="">Wszystkie typy</option>
+                <option value="WZ">WZ — Wydanie zewnętrzne</option>
+                <option value="ZW">ZW — Zwrot zewnętrzny</option>
+                <option value="MM">MM — Przesunięcie międzymagazynowe</option>
+                <option value="PZ">PZ — Przyjęcie zewnętrzne</option>
+              </select>
+            </div>
             <div className="space-y-2">
               <label htmlFor="delivery-status-filter" className="text-sm font-medium leading-none">
                 Status
@@ -260,7 +289,7 @@ function DeliveryDocumentsPageContent() {
         <CardContent className="pt-6">
           {isError && (
             <div
-              className="mb-4 flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+              className="mb-4 flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
               role="alert"
             >
               <p className="text-sm text-destructive">{queryErrorMessage(error)}</p>
@@ -281,14 +310,26 @@ function DeliveryDocumentsPageContent() {
                     >
                       {row.document_number ?? row.id.slice(0, 8)}
                     </Link>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-                        deliveryStatusBadgeClassName(row.status),
-                      )}
-                    >
-                      {DELIVERY_STATUS_LABELS_PL[row.status]}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-xs font-medium',
+                        row.document_type === 'ZW'
+                          ? 'bg-amber-100 text-amber-800'
+                          : row.document_type === 'MM'
+                            ? 'bg-purple-100 text-purple-800'
+                            : 'bg-blue-100 text-blue-800',
+                      )}>
+                        {row.document_type}
+                      </span>
+                      <span
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-xs font-medium',
+                          deliveryStatusBadgeClassName(row.status),
+                        )}
+                      >
+                        {DELIVERY_STATUS_LABELS_PL[row.status]}
+                      </span>
+                    </div>
                   </div>
                   <p className="text-sm text-muted-foreground">{row.customer_name || '—'}</p>
                   <p className="text-xs text-muted-foreground">
@@ -309,12 +350,15 @@ function DeliveryDocumentsPageContent() {
             ))}
           </ul>
 
-          <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
-            <table className="min-w-full divide-y divide-border text-sm" aria-label="Lista dokumentów WZ">
+          <div className="hidden overflow-x-auto rounded-2xl border border-border md:block">
+            <table className="min-w-full divide-y divide-border text-sm" aria-label="Lista dokumentów">
               <thead className="bg-muted/50">
                 <tr>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                    Numer WZ
+                    Numer dokumentu
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
+                    Typ
                   </th>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
                     Data wyst.
@@ -340,6 +384,18 @@ function DeliveryDocumentsPageContent() {
                       <Link to={`/delivery/${row.id}`} className="text-primary hover:underline">
                         {row.document_number ?? row.id.slice(0, 8)}
                       </Link>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className={cn(
+                        'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
+                        row.document_type === 'ZW'
+                          ? 'bg-amber-100 text-amber-800'
+                          : row.document_type === 'MM'
+                            ? 'bg-purple-100 text-purple-800'
+                            : 'bg-blue-100 text-blue-800',
+                      )}>
+                        {DOC_TYPE_LABELS_PL[row.document_type] ?? row.document_type}
+                      </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
                       {formatIssueDate(row.issue_date)}

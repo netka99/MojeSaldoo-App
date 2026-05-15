@@ -31,7 +31,7 @@ function errMsg(e: unknown): string {
 
 function AddressBlock({ title, lines }: { title: string; lines: string[] }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div className="rounded-2xl border border-border bg-card p-4">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
       <div className="mt-2 space-y-0.5 text-sm">
         {lines.length === 0 ? (
@@ -163,7 +163,7 @@ export function InvoiceDetailPage() {
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Faktura {numberLabel}</h1>
+          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Faktura {numberLabel}</h1>
           {invoice && preview?.invoice.order_number ? (
             <p className="mt-1 text-sm text-muted-foreground">
               Zamówienie:{' '}
@@ -292,7 +292,7 @@ export function InvoiceDetailPage() {
               <CardTitle className="text-base">Pozycje</CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
-              <div className="overflow-x-auto rounded-lg border border-border">
+              <div className="overflow-x-auto rounded-2xl border border-border">
                 <table className="min-w-full divide-y divide-border text-sm" aria-label="Pozycje faktury">
                   <thead className="bg-muted/50">
                     <tr>

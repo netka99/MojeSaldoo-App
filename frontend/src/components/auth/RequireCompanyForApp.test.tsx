@@ -52,7 +52,7 @@ describe('RequireCompanyForApp', () => {
 
   it('shows loading while companies are pending', () => {
     renderHarness();
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByText('Ładowanie…')).toBeInTheDocument();
     expect(screen.queryByTestId('app-shell')).not.toBeInTheDocument();
   });
 

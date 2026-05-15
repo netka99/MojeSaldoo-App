@@ -15,10 +15,10 @@ export function ProductsPage() {
     <div className="space-y-4 p-6">
       <div className="mx-auto flex max-w-6xl justify-end">
         <Button type="button" onClick={() => navigate('/products/new')}>
-          Add product
+          Dodaj produkt
         </Button>
       </div>
-      <ProductList />
+      <ProductList onRowClick={(p) => navigate(`/products/${p.id}/edit`)} />
     </div>
   );
 }

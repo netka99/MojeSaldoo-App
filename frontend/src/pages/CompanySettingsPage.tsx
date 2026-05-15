@@ -58,7 +58,7 @@ function ModuleSwitch({
     >
       <span
         className={cn(
-          'inline-block h-5 w-5 translate-x-0.5 transform rounded-full border-2 border-slate-300/90 bg-white shadow transition duration-200 ease-out',
+          'inline-block h-5 w-5 translate-x-0.5 transform rounded-full border-2 border-slate-300/90 bg-surface-card shadow transition duration-200 ease-out',
           'dark:border-slate-400 dark:bg-slate-50',
           enabled && 'translate-x-6 border-white/90 shadow-md',
         )}
@@ -223,7 +223,7 @@ export function CompanySettingsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Ustawienia firmy</h1>
+        <h1 className="text-[1.5rem] font-semibold tracking-tight">Ustawienia firmy</h1>
         <p className="text-sm text-muted-foreground">
           Dane organizacji i moduły bieżącej firmy.{' '}
           <Link to="/settings/company-data" className="font-medium text-primary underline-offset-4 hover:underline">

@@ -155,7 +155,7 @@ export function CertificateUploadPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8 p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Certyfikat KSeF</h1>
+        <h1 className="text-[1.5rem] font-semibold tracking-tight">Certyfikat KSeF</h1>
         <p className="text-sm text-muted-foreground">
           Wgraj plik .pem i klucz prywatny w celu integracji z KSeF.{' '}
           <Link to="/settings/company" className="font-medium text-primary underline-offset-4 hover:underline">

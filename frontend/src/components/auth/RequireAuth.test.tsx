@@ -58,7 +58,7 @@ describe('RequireAuth', () => {
 
     renderHarness('/secret');
 
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByText('Ładowanie…')).toBeInTheDocument();
     expect(screen.queryByTestId('secret')).not.toBeInTheDocument();
   });
 
