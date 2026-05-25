@@ -31,6 +31,7 @@ vi.mock('@/query/use-customers', () => ({
     data: { count: 1, next: null, previous: null, results: customerResults },
     isFetching: false,
   }),
+  useCustomerQuery: () => ({ data: undefined }),
 }));
 
 vi.mock('@/context/AuthContext', () => ({

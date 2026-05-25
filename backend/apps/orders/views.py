@@ -17,7 +17,7 @@ from apps.users.tenant import filter_queryset_for_current_company
 
 from .filters import OrderFilter
 from .models import Order
-from .serializers import OrderItemSerializer, OrderSerializer
+from .serializers import OrderChangeLogSerializer, OrderItemSerializer, OrderSerializer
 
 # Order was never reserved in draft; all later workflow statuses may still hold
 # line reservations from confirm() until released (e.g. on cancel).
@@ -332,3 +332,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.save()
 
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="changelog")
+    def changelog(self, request, pk=None):
+        """GET /{id}/changelog/ — change history for this order, newest first."""
+        order = self.get_object()
+        qs = order.changelog.select_related("changed_by").order_by("-changed_at")
+        data = OrderChangeLogSerializer(qs, many=True).data
+        return Response(data)

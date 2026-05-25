@@ -4,17 +4,18 @@ import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { isOrderCancellableStatus } from '@/lib/order-status-history';
 import { orderStatusBadgeClassName } from '@/lib/order-utils';
-import { useGenerateDeliveryForOrderMutation } from '@/query/use-delivery';
+import { useDeliveryByOrderQuery, useGenerateDeliveryForOrderMutation, useSyncWzFromOrderMutation } from '@/query/use-delivery';
 import {
   useCancelOrderMutation,
   useConfirmOrderMutation,
+  useOrderChangelogQuery,
   useOrderQuery,
   useUpdateOrderMutation,
 } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { openOrderPrintWindow } from '@/lib/openOrderPrintWindow';
-import type { OrderItem } from '@/types';
+import type { DeliveryDocument, OrderItem } from '@/types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
@@ -207,6 +208,245 @@ function ItemCard({ line, isDraft, index, onQtyChange, onRemove }: ItemCardProps
   );
 }
 
+/* ── Delivery docs section ─────────────────────────────────────── */
+
+const DELIVERY_STATUS_PL: Record<string, string> = {
+  draft: 'Szkic',
+  saved: 'Zapisano',
+  in_transit: 'W drodze',
+  delivered: 'Dostarczono',
+  cancelled: 'Anulowano',
+};
+
+function deliveryStatusBadgeClass(status: string): string {
+  switch (status) {
+    case 'saved':     return 'bg-emerald-50 text-emerald-700';
+    case 'in_transit':return 'bg-amber-50 text-amber-700';
+    case 'delivered': return 'bg-blue-50 text-blue-700';
+    case 'cancelled': return 'bg-red-50 text-red-600';
+    default:          return 'bg-muted text-muted-foreground';
+  }
+}
+
+function TruckIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M1 3h15v13H1zM16 8h4l3 3v5h-7V8z" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="5.5" cy="18.5" r="2.5" />
+      <circle cx="18.5" cy="18.5" r="2.5" />
+    </svg>
+  );
+}
+
+function ReturnIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M9 14l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 10h11a4 4 0 010 8h-1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronRightSmall() {
+  return (
+    <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+const plDateShort = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' });
+function shortDate(s: string | null | undefined): string {
+  if (!s) return '—';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? '—' : plDateShort.format(d);
+}
+
+/* ── Change history ─────────────────────────────────────────────── */
+const CHANGE_LABELS: Record<string, string> = {
+  added: 'Dodano',
+  removed: 'Usunięto',
+  qty_changed: 'Zmiana ilości',
+  price_changed: 'Zmiana ceny',
+};
+
+const plDateTime = new Intl.DateTimeFormat('pl-PL', {
+  day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+});
+
+function formatChangeLine(entry: { change_type: string; product_name: string; product_unit: string; quantity_before: string | null; quantity_after: string | null; unit_price_gross_before: string | null; unit_price_gross_after: string | null }): string {
+  const unit = entry.product_unit ? ` ${entry.product_unit}` : '';
+  switch (entry.change_type) {
+    case 'added':    return `${entry.product_name}: dodano ${entry.quantity_after}${unit}`;
+    case 'removed':  return `${entry.product_name}: usunięto (było ${entry.quantity_before}${unit})`;
+    case 'qty_changed': return `${entry.product_name}: ${entry.quantity_before} → ${entry.quantity_after}${unit}`;
+    case 'price_changed': return `${entry.product_name}: cena ${entry.unit_price_gross_before} → ${entry.unit_price_gross_after} zł`;
+    default: return entry.product_name;
+  }
+}
+
+function ChevronDownSmall() {
+  return (
+    <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronUpSmall() {
+  return (
+    <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M18 15l-6-6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChangeHistorySection({ orderId }: { orderId: string }) {
+  const [open, setOpen] = useState(false);
+  const { data: entries, isLoading } = useOrderChangelogQuery(open ? orderId : undefined);
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-5 py-4 text-[14px] font-medium text-foreground"
+        aria-expanded={open}
+      >
+        <span>Historia zmian</span>
+        {open ? <ChevronUpSmall /> : <ChevronDownSmall />}
+      </button>
+
+      {open && (
+        <div className="border-t border-border/40 px-5 pb-4 pt-3">
+          {isLoading && (
+            <p className="text-[13px] text-muted-foreground">Ładowanie…</p>
+          )}
+          {!isLoading && (!entries || entries.length === 0) && (
+            <p className="text-[13px] text-muted-foreground">Brak zapisanych zmian.</p>
+          )}
+          {entries && entries.length > 0 && (
+            <ul className="space-y-3">
+              {entries.map((entry) => (
+                <li key={entry.id} className="border-b border-border/40 pb-3 last:border-0 last:pb-0">
+                  <p className="text-[11px] text-muted-foreground">
+                    {plDateTime.format(new Date(entry.changed_at))}
+                    {entry.changed_by_name ? ` · ${entry.changed_by_name}` : ''}
+                    {entry.change_type !== 'qty_changed' && (
+                      <span className="ml-1 font-medium text-primary/80">
+                        [{CHANGE_LABELS[entry.change_type] ?? entry.change_type}]
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-[13px] text-foreground">{formatChangeLine(entry)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrderDeliveryDocs({ orderId }: { orderId: string }) {
+  const navigate = useNavigate();
+  const { data: docs, isLoading } = useDeliveryByOrderQuery(orderId);
+
+  const wzDocs = docs?.filter((d) => d.document_type === 'WZ') ?? [];
+  const totalZwCount = wzDocs.reduce((sum, wz) => sum + (wz.return_documents?.length ?? 0), 0);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 px-1 py-3 text-[13px] text-muted-foreground">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        Ładowanie dokumentów…
+      </div>
+    );
+  }
+
+  return (
+    <section aria-label="Dokumenty dostawy">
+      <div className="mb-2 flex items-center gap-2 px-1">
+        <TruckIcon />
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Dokumenty dostawy
+        </h3>
+        {wzDocs.length > 0 && (
+          <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+            {wzDocs.length} WZ{totalZwCount > 0 ? ` · ${totalZwCount} ZW` : ''}
+          </span>
+        )}
+      </div>
+
+      {wzDocs.length === 0 ? (
+        <p className="rounded-2xl bg-surface-card px-4 py-3 text-[13px] text-muted-foreground">
+          Brak dokumentów WZ dla tego zamówienia.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {wzDocs.map((wz) => (
+            <WzDocRow key={wz.id} wz={wz} onNavigate={() => navigate(`/delivery/${wz.id}`)} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WzDocRow({ wz, onNavigate }: { wz: DeliveryDocument; onNavigate: () => void }) {
+  const zwDocs = wz.return_documents ?? [];
+  const itemCount = wz.items.length;
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-surface-card shadow-soft">
+      {/* WZ row */}
+      <button
+        type="button"
+        onClick={onNavigate}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-low/40 active:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[14px] font-semibold text-foreground">
+              {wz.document_number ?? '—'}
+            </span>
+            <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', deliveryStatusBadgeClass(wz.status))}>
+              {DELIVERY_STATUS_PL[wz.status] ?? wz.status}
+            </span>
+            {wz.locked_for_edit && (
+              <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                Zafakturowane
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">
+            {shortDate(wz.issue_date)} · {itemCount} {itemCount === 1 ? 'pozycja' : itemCount <= 4 ? 'pozycje' : 'pozycji'}
+            {wz.driver_name ? ` · ${wz.driver_name}` : ''}
+          </p>
+        </div>
+        <ChevronRightSmall />
+      </button>
+
+      {/* ZW sub-rows */}
+      {zwDocs.map((zw) => (
+        <div
+          key={zw.id}
+          className="flex items-center gap-2 border-t border-border/40 bg-amber-50/60 px-4 py-2"
+        >
+          <ReturnIcon />
+          <span className="flex-1 text-[12px] text-amber-800">
+            {zw.document_number ?? 'ZW'} · {shortDate(zw.issue_date)}
+          </span>
+          <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', deliveryStatusBadgeClass(zw.status))}>
+            {DELIVERY_STATUS_PL[zw.status] ?? zw.status}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Page ──────────────────────────────────────────────────────── */
 export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -216,6 +456,7 @@ export function OrderDetailPage() {
   const confirmM = useConfirmOrderMutation();
   const cancelM = useCancelOrderMutation();
   const generateWzM = useGenerateDeliveryForOrderMutation();
+  const syncWzM = useSyncWzFromOrderMutation();
   const updateM = useUpdateOrderMutation();
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -226,6 +467,38 @@ export function OrderDetailPage() {
 
   /* isEditing: draft is always in edit mode; other statuses toggle via button */
   const [isEditing, setIsEditing] = useState(false);
+
+  /* ── WZ availability logic (B+C) ──────────────────────────────── */
+  const { data: wzDocs } = useDeliveryByOrderQuery(id, order?.status === 'confirmed');
+
+  const canGenerateWz = (() => {
+    if (order?.status !== 'confirmed') return false;
+    if (isEditing) return false;
+    const docs = wzDocs ?? [];
+
+    // C: block if any WZ is currently active (draft or in_transit)
+    const hasActiveWz = docs.some(
+      (d) => d.document_type === 'WZ' && (d.status === 'draft' || d.status === 'in_transit'),
+    );
+    if (hasActiveWz) return false;
+
+    // B: show if any order item has remaining undelivered quantity
+    const coveredQty = new Map<string, number>();
+    for (const doc of docs) {
+      if (doc.document_type !== 'WZ' || doc.status === 'cancelled') continue;
+      for (const item of doc.items) {
+        const prev = coveredQty.get(item.product_id) ?? 0;
+        coveredQty.set(item.product_id, prev + (parseFloat(String(item.quantity_planned)) || 0));
+      }
+    }
+    const items = order?.items ?? [];
+    if (items.length === 0) return false;
+    return items.some((item) => {
+      const ordered = parseFloat(String(item.quantity)) || 0;
+      const covered = coveredQty.get(item.product_id) ?? 0;
+      return ordered > covered;
+    });
+  })();
 
   /* Local editable lines */
   const [editLines, setEditLines] = useState<EditLine[]>([]);
@@ -265,7 +538,7 @@ export function OrderDetailPage() {
   };
 
   const handleSaveChanges = async () => {
-    if (!order || !isDraft) return;
+    if (!order) return;
     setActionError(null);
     try {
       await updateM.mutateAsync({
@@ -283,6 +556,15 @@ export function OrderDetailPage() {
           })),
         },
       });
+
+      // Auto-sync any draft/saved WZ linked to this order
+      const activeDraftWz = (wzDocs ?? []).filter(
+        (d) => d.document_type === 'WZ' && (d.status === 'draft' || d.status === 'saved'),
+      );
+      for (const wz of activeDraftWz) {
+        await syncWzM.mutateAsync(wz.id);
+      }
+
       setIsDirty(false);
       setIsEditing(false);
     } catch (e) {
@@ -339,7 +621,7 @@ export function OrderDetailPage() {
   return (
     <div className={cn(
       'flex min-h-screen flex-col bg-background',
-      'pb-[calc(83px+18rem+env(safe-area-inset-bottom))] md:pb-72',
+      'pb-[calc(83px+7rem+env(safe-area-inset-bottom))] md:pb-36',
     )}>
       {/* Sticky header */}
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/95 backdrop-blur-xl">
@@ -370,6 +652,19 @@ export function OrderDetailPage() {
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {/* Anuluj zamówienie — next to Edytuj when cancellable */}
+              {order && isOrderCancellableStatus(order.status) && !isEditing && (
+                <motion.button
+                  whileTap={{ scale: 0.94 }}
+                  type="button"
+                  onClick={() => void onCancel()}
+                  disabled={cancelM.isPending}
+                  className="flex h-10 items-center gap-1.5 rounded-full border border-destructive/40 bg-card px-3 text-[13px] font-medium text-destructive shadow-[0_2px_8px_rgba(0,0,0,0.08)] disabled:opacity-60"
+                  aria-label="Anuluj zamówienie"
+                >
+                  <span>{cancelM.isPending ? '…' : 'Anuluj'}</span>
+                </motion.button>
+              )}
               {/* Edytuj button — non-draft editable orders only */}
               {order && canEdit && !isDraft && !isEditing && (
                 <motion.button
@@ -459,117 +754,132 @@ export function OrderDetailPage() {
             {displayLines.length === 0 && (
               <p className="py-10 text-center text-sm text-muted-foreground">Brak pozycji.</p>
             )}
+
+            {/* Totals card — inline below items */}
+            <div className="rounded-2xl bg-card px-5 py-4 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
+              <div className="space-y-2">
+                <div className="flex justify-between text-[14px]">
+                  <span className="text-muted-foreground">Suma pozycji</span>
+                  <span className="tabular-nums text-foreground">{money(subtotalGross)}</span>
+                </div>
+                {totalDiscount > 0.001 && (
+                  <div className="flex justify-between text-[14px]">
+                    <span className="text-primary">Rabaty</span>
+                    <span className="tabular-nums text-primary">−{money(totalDiscount)}</span>
+                  </div>
+                )}
+                <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
+                  <span className="text-[17px] font-semibold text-foreground">Razem brutto</span>
+                  <span className="text-[22px] font-bold tabular-nums text-foreground">{money(totalGross)}</span>
+                </div>
+              </div>
+            </div>
           </>
+        )}
+
+        {/* Delivery documents — WZ + ZW linked to this order */}
+        {order && !isError && id && (
+          <OrderDeliveryDocs orderId={id} />
+        )}
+
+        {/* Change history */}
+        {order && !isError && id && (
+          <ChangeHistorySection orderId={id} />
         )}
       </main>
 
-      {/* Fixed bottom panel */}
+      {/* Fixed bottom panel — actions only, no totals */}
       {order && !isError && (
         <motion.div
           initial={{ y: 80, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           className={cn(
             'fixed left-0 right-0 z-40 px-5',
-            'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
+            'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
           )}
         >
-          <div className="mx-auto max-w-3xl rounded-2xl bg-card p-5 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
-            {/* Summary */}
-            <div className="mb-4 space-y-2">
-              <div className="flex justify-between text-[14px]">
-                <span className="text-muted-foreground">Suma pozycji</span>
-                <span className="tabular-nums text-foreground">{money(subtotalGross)}</span>
-              </div>
-              {totalDiscount > 0.001 && (
-                <div className="flex justify-between text-[14px]">
-                  <span className="text-primary">Rabaty</span>
-                  <span className="tabular-nums text-primary">−{money(totalDiscount)}</span>
-                </div>
-              )}
-              <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
-                <span className="text-[17px] font-semibold text-foreground">Razem brutto</span>
-                <span className="text-[22px] font-bold tabular-nums text-foreground">{money(totalGross)}</span>
-              </div>
-            </div>
-
-            {/* Actions */}
+          <div className="mx-auto max-w-3xl rounded-2xl bg-card p-4 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
             <div className="flex flex-col gap-2">
-              {/* Save changes (draft always, or non-draft when editing + dirty) */}
-              {(isDraft && isDirty) || (isEditing && isDirty) ? (
+
+              {/* Save changes (editing + dirty) */}
+              {((isDraft && isDirty) || (isEditing && isDirty)) && (
                 <motion.button
                   whileTap={{ scale: 0.98 }}
                   type="button"
                   onClick={() => void handleSaveChanges()}
-                  disabled={updateM.isPending}
-                  className="w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
+                  disabled={updateM.isPending || syncWzM.isPending}
+                  className="w-full rounded-xl bg-primary py-3 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
                 >
-                  {updateM.isPending ? 'Zapisywanie…' : 'Zapisz zmiany'}
+                  {syncWzM.isPending ? 'Aktualizacja WZ…' : updateM.isPending ? 'Zapisywanie…' : 'Zapisz zmiany'}
                 </motion.button>
-              ) : null}
+              )}
 
-              {/* Cancel edit mode (non-draft, not dirty) */}
+              {/* Done editing (non-dirty) */}
               {isEditing && !isDirty && (
                 <motion.button
                   whileTap={{ scale: 0.98 }}
                   type="button"
                   onClick={() => setIsEditing(false)}
-                  className="w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground"
+                  className="w-full rounded-xl bg-primary py-3 text-[15px] font-semibold text-primary-foreground"
                 >
                   Gotowe
                 </motion.button>
               )}
 
-              {/* Anuluj edycję (when editing + dirty) */}
+              {/* Discard edit changes */}
               {isEditing && isDirty && (
                 <motion.button
                   whileTap={{ scale: 0.98 }}
                   type="button"
                   onClick={() => { setEditLines(buildEditLines(order.items)); setIsDirty(false); setIsEditing(false); }}
                   disabled={updateM.isPending}
-                  className="w-full rounded-xl border border-border py-3 text-[14px] font-medium text-muted-foreground disabled:opacity-60"
+                  className="w-full rounded-xl border border-border py-2.5 text-[14px] font-medium text-muted-foreground disabled:opacity-60"
                 >
                   Anuluj zmiany
                 </motion.button>
               )}
 
-              {/* Confirm (draft + no dirty changes) */}
+              {/* Confirm draft */}
               {isDraft && !isDirty && (
                 <motion.button
                   whileTap={{ scale: 0.98 }}
                   type="button"
                   onClick={() => void onConfirm()}
                   disabled={confirmM.isPending || displayLines.length === 0}
-                  className="w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
+                  className="w-full rounded-xl bg-primary py-3 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
                 >
                   {confirmM.isPending ? 'Potwierdzanie…' : 'Potwierdź zamówienie'}
                 </motion.button>
               )}
 
-              {/* Generate WZ */}
-              {order.status === 'confirmed' && !isEditing && (
-                <motion.button
-                  whileTap={{ scale: 0.98 }}
-                  type="button"
-                  onClick={() => void onCreateWz()}
-                  disabled={generateWzM.isPending}
-                  className="w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
-                >
-                  {generateWzM.isPending ? 'Tworzenie WZ…' : 'Generuj WZ'}
-                </motion.button>
+              {/* Generuj WZ (1/3) + Wróć do zamówień (2/3) — side by side */}
+              {!isEditing && !isDraft && (
+                <div className="flex gap-2">
+                  {canGenerateWz && (
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      type="button"
+                      onClick={() => void onCreateWz()}
+                      disabled={generateWzM.isPending}
+                      className="w-1/3 shrink-0 rounded-xl bg-primary py-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-60"
+                    >
+                      {generateWzM.isPending ? 'WZ…' : 'Generuj WZ'}
+                    </motion.button>
+                  )}
+                  <motion.button
+                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    onClick={() => navigate(backUrl)}
+                    className={cn(
+                      'rounded-xl border border-border py-3 text-[14px] font-medium text-foreground',
+                      canGenerateWz ? 'flex-1' : 'w-full',
+                    )}
+                  >
+                    Wróć do zamówień
+                  </motion.button>
+                </div>
               )}
 
-              {/* Cancel order */}
-              {isOrderCancellableStatus(order.status) && !isEditing && (
-                <motion.button
-                  whileTap={{ scale: 0.98 }}
-                  type="button"
-                  onClick={() => void onCancel()}
-                  disabled={cancelM.isPending}
-                  className="w-full rounded-xl border border-destructive/40 py-3 text-[14px] font-medium text-destructive disabled:opacity-60"
-                >
-                  {cancelM.isPending ? 'Anulowanie…' : 'Anuluj zamówienie'}
-                </motion.button>
-              )}
             </div>
           </div>
         </motion.div>

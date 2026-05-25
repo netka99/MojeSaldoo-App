@@ -1,6 +1,11 @@
 import { type KeyboardEvent } from 'react';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
-import { formatDeliveryDate, formatMoneyGross, orderStatusBadgeClassName } from '@/lib/order-utils';
+import {
+  formatDeliveryDate,
+  formatMoneyGross,
+  formatOrderLineQuantityWithUnit,
+  orderStatusBadgeClassName,
+} from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import type { Order, OrderItem, OrderStatus } from '@/types';
 
@@ -70,17 +75,6 @@ function positionCountLabel(count: number): string {
     return `${count} pozycje`;
   }
   return `${count} pozycji`;
-}
-
-/** Quantity formatted for display with unit (e.g. `20 szt.`). */
-function formatLineQuantityWithUnit(quantity: string | number, unit: string): string {
-  const n = typeof quantity === 'string' ? Number.parseFloat(quantity) : quantity;
-  const u = (unit || 'szt.').trim();
-  if (!Number.isFinite(n)) return u ? `${String(quantity)} ${u}`.trim() : String(quantity);
-  const qty = Number.isInteger(n)
-    ? String(n)
-    : new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 }).format(n);
-  return u ? `${qty} ${u}` : qty;
 }
 
 function lineKey(item: OrderItem, index: number): string {
@@ -271,17 +265,23 @@ export function OrderShopCard({
       {items.length > 0 ? (
         <div className="mt-4 space-y-2">
           {items.map((item, index) => (
-            <div key={lineKey(item, index)} className="flex items-baseline justify-between gap-3 text-sm">
-              <span className="min-w-0 flex-1 text-foreground">
-                {item.product_name}
-                <span className="text-muted-foreground">
-                  {' · '}
-                  {formatLineQuantityWithUnit(item.quantity, item.product_unit)}
+            <div
+              key={lineKey(item, index)}
+              className={cn(
+                'min-w-0 text-sm',
+                'flex flex-nowrap items-baseline gap-2',
+                'sm:grid sm:grid-cols-[minmax(0,1fr)_5.5rem_8rem] sm:gap-x-4 sm:gap-y-0 sm:items-baseline',
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate text-foreground">{item.product_name}</span>
+              <div className="flex shrink-0 items-baseline justify-end gap-2 sm:contents">
+                <span className="w-[4rem] shrink-0 text-right tabular-nums text-foreground sm:w-auto">
+                  {formatOrderLineQuantityWithUnit(item.quantity, item.product_unit)}
                 </span>
-              </span>
-              <span className="shrink-0 tabular-nums font-medium text-foreground">
-                {formatMoneyGross(item.line_total_gross)}
-              </span>
+                <span className="min-w-[4.875rem] shrink-0 text-right tabular-nums font-medium text-foreground sm:min-w-0">
+                  {formatMoneyGross(item.line_total_gross)}
+                </span>
+              </div>
             </div>
           ))}
         </div>

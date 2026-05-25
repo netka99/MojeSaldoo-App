@@ -96,14 +96,23 @@ export interface DeliveryDocument {
   linked_invoices?: LinkedInvoiceRef[];
   /** For ZW documents: the WZ that triggered this return. */
   linked_wz_id?: string | null;
+  /** Document number of the linked WZ (read-only, from API). */
+  linked_wz_number?: string | null;
   /** ZW return documents linked to this WZ. */
   return_documents?: LinkedZWDocument[];
   items: DeliveryItem[];
 }
 
+/** `POST /api/delivery/create-standalone/` — create a draft WZ without an order. */
+export interface StandaloneWzCreate {
+  to_customer_id: string;
+  issue_date?: string;
+  items: Array<{ product_id: string; quantity_planned: string }>;
+}
+
 /** `POST /api/delivery/` — writable fields on `DeliveryDocumentSerializer` (status is server-controlled). */
 export interface DeliveryDocumentCreate {
-  order_id: string;
+  order_id?: string | null;
   document_type: DeliveryDocumentType;
   issue_date: string;
   from_warehouse_id?: string | null;

@@ -56,6 +56,7 @@ export const orderKeys = {
     [...orderKeys.lists(), { delivery_date: date, companyId }] as const,
   details: () => [...orderKeys.all, 'detail'] as const,
   detail: (id: string) => [...orderKeys.details(), id] as const,
+  changelog: (id: string) => [...orderKeys.details(), id, 'changelog'] as const,
 };
 
 /** List cache key: page + active company + filter fields (after `page` is stripped from `DeliveryListParams`). */

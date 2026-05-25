@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatDeliveryDateLong,
   formatMoneyGross,
+  formatOrderLineQuantityWithUnit,
   orderStatusBadgeClassName,
   sumOrdersGross,
 } from './order-utils';
@@ -83,6 +84,18 @@ describe('formatMoneyGross', () => {
   it('returns em dash for NaN input', () => {
     expect(formatMoneyGross('not-a-number')).toBe('—');
     expect(formatMoneyGross(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatOrderLineQuantityWithUnit', () => {
+  it('formats integers and uses default unit', () => {
+    expect(formatOrderLineQuantityWithUnit(20, '')).toBe('20 szt.');
+    expect(formatOrderLineQuantityWithUnit('3', 'kg')).toBe('3 kg');
+  });
+
+  it('uses pl-PL decimal formatting for non-integers', () => {
+    expect(formatOrderLineQuantityWithUnit(3.5, 'kg')).toMatch(/3/);
+    expect(formatOrderLineQuantityWithUnit(3.5, 'kg')).toContain('kg');
   });
 });
 

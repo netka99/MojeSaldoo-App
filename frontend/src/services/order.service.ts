@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Order, OrderCreate, OrderUpdate, PaginatedOrders } from '../types';
+import type { Order, OrderChangeLogEntry, OrderCreate, OrderUpdate, PaginatedOrders } from '../types';
 
 /**
  * Query string for `GET /api/orders/` — `OrderViewSet` + `OrderFilter` + pagination/search/ordering.
@@ -35,4 +35,6 @@ export const orderService = {
   cancelOrder: (id: string) => api.post<Order>(`/orders/${id}/cancel/`, {}),
 
   deleteOrder: (id: string) => api.delete<Record<string, never>>(`/orders/${id}/`),
+
+  fetchChangelog: (id: string) => api.get<OrderChangeLogEntry[]>(`/orders/${id}/changelog/`),
 };

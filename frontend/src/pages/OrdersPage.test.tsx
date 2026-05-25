@@ -2,15 +2,23 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { OrdersPage, todayIso } from './OrdersPage';
 import { authStorage } from '@/services/api';
-import type { Order } from '@/types';
+import type { Customer, Order, OrderItem } from '@/types';
 
 const useOrdersByDateQueryMock = vi.hoisted(() => vi.fn());
+
+/** Mutable customers-query shape for `@/query/use-customers` mock (avoids `useAuth`). */
+const customersQueryFixture = vi.hoisted(() => ({
+  results: [] as Customer[],
+  isPending: false,
+  isError: false,
+  error: null as Error | null,
+}));
 
 const generateWzMock = vi.hoisted(() => ({
   mutateAsync: vi.fn().mockResolvedValue({ id: 'wz-1' }),
@@ -39,11 +47,55 @@ vi.mock('@/query/use-delivery', async (importOriginal) => {
   };
 });
 
+function mockCustomer(id: string, name: string): Customer {
+  return {
+    id,
+    user: null,
+    name,
+    company_name: null,
+    nip: null,
+    email: null,
+    phone: null,
+    street: null,
+    city: null,
+    postal_code: null,
+    country: 'PL',
+    distance_km: null,
+    delivery_days: null,
+    payment_terms: 14,
+    credit_limit: '0',
+    is_active: true,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  };
+}
+
+vi.mock('@/query/use-customers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/query/use-customers')>();
+  return {
+    ...actual,
+    useAllActiveCustomersQuery: (_search: string) => ({
+      data: customersQueryFixture.isError
+        ? undefined
+        : {
+            count: customersQueryFixture.results.length,
+            next: null,
+            previous: null,
+            results: customersQueryFixture.results,
+          },
+      isPending: customersQueryFixture.isPending,
+      isError: customersQueryFixture.isError,
+      error: customersQueryFixture.error,
+      refetch: vi.fn(),
+    }),
+  };
+});
+
 function makeOrder(over: Partial<Order> = {}): Order {
   const id = over.id ?? 'ord-1';
   return {
     id,
-    customer_id: 'c-1',
+    customer_id: over.customer_id ?? id,
     customer_name: 'Jan Kowalski',
     company: 'co-1',
     user: null,
@@ -64,6 +116,23 @@ function makeOrder(over: Partial<Order> = {}): Order {
     confirmed_at: '2026-04-01T10:00:00Z',
     delivered_at: null,
     items: [],
+    ...over,
+  };
+}
+
+function makeOrderLine(
+  over: Partial<OrderItem> & Pick<OrderItem, 'id' | 'product_id' | 'product_name' | 'line_total_gross'>,
+): OrderItem {
+  return {
+    product_unit: 'szt.',
+    quantity: '1',
+    quantity_delivered: '0',
+    quantity_returned: '0',
+    unit_price_net: '10',
+    unit_price_gross: '12.30',
+    vat_rate: '23',
+    discount_percent: '0',
+    line_total_net: '10',
     ...over,
   };
 }
@@ -109,6 +178,10 @@ describe('OrdersPage', () => {
     vi.clearAllMocks();
     getToken.mockReturnValue('test-access-token');
     useModuleGuardMock.mockReturnValue(false);
+    customersQueryFixture.results = [mockCustomer('ord-1', 'Jan Kowalski')];
+    customersQueryFixture.isPending = false;
+    customersQueryFixture.isError = false;
+    customersQueryFixture.error = null;
     useOrdersByDateQueryMock.mockReturnValue({
       data: undefined,
       isPending: false,
@@ -158,6 +231,7 @@ describe('OrdersPage', () => {
   });
 
   it('renders one OrderShopCard per order', () => {
+    customersQueryFixture.results = [mockCustomer('a', 'Sklep A'), mockCustomer('b', 'Sklep B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'a', customer_name: 'Sklep A' }),
@@ -165,20 +239,21 @@ describe('OrdersPage', () => {
       ]),
     );
     renderOrders('/orders');
-    expect(screen.getByRole('button', { name: /Zamówienie Sklep A/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Zamówienie Sklep B/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sklep A, zamówienie/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sklep B, zamówienie/i })).toBeInTheDocument();
   });
 
   it('shows empty copy when there are no orders (shops)', () => {
+    customersQueryFixture.results = [];
     useOrdersByDateQueryMock.mockReturnValue(querySuccess([]));
     renderOrders('/orders');
-    expect(screen.getByText('Brak sklepów na ten dzień.')).toBeInTheDocument();
+    expect(screen.getByText('Brak aktywnych sklepów.')).toBeInTheDocument();
   });
 
   it('shows loading state while isFetching', () => {
     useOrdersByDateQueryMock.mockReturnValue({
       data: undefined,
-      isPending: false,
+      isPending: true,
       isFetching: true,
       isError: false,
       error: null,
@@ -191,29 +266,50 @@ describe('OrdersPage', () => {
 
   it('shows error state and retry button', () => {
     const refetch = vi.fn();
-    useOrdersByDateQueryMock.mockReturnValue({
-      data: undefined,
-      isPending: false,
-      isFetching: false,
-      isError: true,
-      error: new Error('fail'),
-      refetch,
-    });
+    customersQueryFixture.isError = true;
+    customersQueryFixture.error = new Error('fail');
+    customersQueryFixture.results = [];
+    useOrdersByDateQueryMock.mockReturnValue(querySuccess([]));
     renderOrders('/orders');
-    expect(screen.getByRole('alert')).toHaveTextContent('fail');
+    expect(screen.getByRole('alert')).toHaveTextContent('Nie udało się załadować listy sklepów');
     expect(screen.getByRole('button', { name: 'Spróbuj ponownie' })).toBeInTheDocument();
   });
 
-  it('bottom bar shows shop count and total gross', () => {
+  it('bottom bar shows distinct product count and total gross', () => {
+    customersQueryFixture.results = [mockCustomer('o1', 'A'), mockCustomer('o2', 'B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
-        makeOrder({ id: 'o1', customer_name: 'A', total_gross: '100.00' }),
-        makeOrder({ id: 'o2', customer_name: 'B', total_gross: '50.5' }),
+        makeOrder({
+          id: 'o1',
+          customer_name: 'A',
+          total_gross: '100.00',
+          items: [
+            makeOrderLine({
+              id: 'i1',
+              product_id: 'p1',
+              product_name: 'Produkt A',
+              line_total_gross: '100',
+            }),
+          ],
+        }),
+        makeOrder({
+          id: 'o2',
+          customer_name: 'B',
+          total_gross: '50.5',
+          items: [
+            makeOrderLine({
+              id: 'i2',
+              product_id: 'p2',
+              product_name: 'Produkt B',
+              line_total_gross: '50.50',
+            }),
+          ],
+        }),
       ]),
     );
     renderOrders('/orders');
-    const summaryToggle = screen.getByRole('button', { name: /2 sklepy/i });
-    expect(within(summaryToggle).getByText(/150/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Podsumowanie, 2 produkty/i })).toBeInTheDocument();
+    expect(screen.getByText('Suma pozycji').closest('div')?.textContent).toMatch(/150[,.]50/);
   });
 
   it('does not render Załaduj Van when delivery module disabled', () => {
@@ -258,6 +354,7 @@ describe('OrdersPage', () => {
 
   it('initial render: wzMode off, no checkboxes visible', () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('a', 'Sklep A'), mockCustomer('b', 'Sklep B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'a', customer_name: 'Sklep A' }),
@@ -270,6 +367,11 @@ describe('OrdersPage', () => {
 
   it('clicking "Generuj WZ" enters wzMode, pre-selects all confirmed orders', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [
+      mockCustomer('c1', 'Confirmed 1'),
+      mockCustomer('c2', 'Confirmed 2'),
+      mockCustomer('d1', 'Draft 1'),
+    ];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'c1', customer_name: 'Confirmed 1' }),
@@ -283,7 +385,7 @@ describe('OrdersPage', () => {
     await user.click(screen.getByRole('button', { name: 'Generuj WZ' }));
 
     const boxes = screen.getAllByRole('checkbox');
-    expect(boxes).toHaveLength(3);
+    expect(boxes).toHaveLength(2);
     const checked = boxes.filter((el) => (el as HTMLInputElement).checked);
     expect(checked).toHaveLength(2);
     expect(
@@ -301,6 +403,7 @@ describe('OrdersPage', () => {
 
   it("only confirmed orders' checkboxes are enabled (draft orders' checkboxes are disabled)", async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('ok', 'OK Shop'), mockCustomer('dr', 'Draft Shop')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'ok', customer_name: 'OK Shop' }),
@@ -312,11 +415,12 @@ describe('OrdersPage', () => {
     await user.click(screen.getByRole('button', { name: 'Generuj WZ' }));
 
     expect(screen.getByRole('checkbox', { name: /Zaznacz zamówienie ZAM\/2026\/ok/i })).not.toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: /Wybór niedostępny.*ZAM\/2026\/dr/i })).toBeDisabled();
+    expect(screen.queryByRole('checkbox', { name: /ZAM\/2026\/dr/i })).not.toBeInTheDocument();
   });
 
   it('deselecting all confirmed orders disables "Utwórz WZ" button', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('x', 'X'), mockCustomer('y', 'Y')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'x', customer_name: 'X' }),
@@ -335,6 +439,7 @@ describe('OrdersPage', () => {
 
   it('"Anuluj" resets selection mode and clears selections', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('z', 'Zeta')];
     useOrdersByDateQueryMock.mockReturnValue(querySuccess([makeOrder({ id: 'z', customer_name: 'Zeta' })]));
     const user = userEvent.setup();
     renderOrders('/orders');
@@ -349,6 +454,7 @@ describe('OrdersPage', () => {
 
   it('confirming selection calls generate WZ for each selected ID in order', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('ord-first', 'First'), mockCustomer('ord-second', 'Second')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'ord-first', customer_name: 'First' }),
@@ -375,6 +481,7 @@ describe('OrdersPage', () => {
 
   it('after all WZ generated, navigates to /delivery', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('oa', 'A'), mockCustomer('ob', 'B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'oa', customer_name: 'A' }),
@@ -398,6 +505,7 @@ describe('OrdersPage', () => {
 
   it('if one WZ fails after a success, shows partial error banner and stays on /orders', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('fail-a', 'Shop A'), mockCustomer('fail-b', 'Shop B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'fail-a', customer_name: 'Shop A' }),
@@ -424,6 +532,7 @@ describe('OrdersPage', () => {
 
   it('if all WZ generation fails, shows error without navigating', async () => {
     useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    customersQueryFixture.results = [mockCustomer('fail-a', 'Shop A'), mockCustomer('fail-b', 'Shop B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
         makeOrder({ id: 'fail-a', customer_name: 'Shop A' }),

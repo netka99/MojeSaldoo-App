@@ -8,6 +8,7 @@ import type {
   DeliveryDocumentPatch,
   DeliveryUpdateLinesPayload,
   PendingReturnItem,
+  StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
 } from '@/types';
@@ -26,6 +27,96 @@ export function useDeliveryListQuery(page: number, filters: DeliveryListFilters 
   return useQuery({
     queryKey: deliveryKeys.list({ page, companyId, ...filters }),
     queryFn: () => deliveryService.fetchList({ page, ...filters }),
+  });
+}
+
+/**
+ * All WZ/ZW delivery documents linked to a specific order.
+ * Returns the results array directly (no pagination — orders rarely exceed 20 WZ).
+ */
+export function useDeliveryByOrderQuery(orderId: string | undefined, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, order: orderId, include_items: true }),
+    queryFn: () => deliveryService.fetchList({ page: 1, order: orderId, include_items: true }),
+    enabled: Boolean(orderId) && Boolean(companyId) && enabled,
+    select: (data) => data.results,
+  });
+}
+
+/**
+ * All WZ/ZW delivery documents for a list of orders in one request.
+ * Pass an array of order IDs; returns all docs whose order is in that list.
+ */
+export function useDeliveryByOrdersQuery(orderIds: string[], enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const orderIdsKey = orderIds.slice().sort().join(',');
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, order_ids: orderIdsKey, include_items: true }),
+    queryFn: () => deliveryService.fetchList({ page: 1, order_ids: orderIdsKey, ordering: '-issue_date', include_items: true }),
+    enabled: orderIds.length > 0 && Boolean(companyId) && enabled,
+    select: (data) => data.results,
+  });
+}
+
+/**
+ * All WZ/ZW delivery documents for a specific customer (via to_customer filter).
+ * Returns the results array directly.
+ */
+export function useDeliveryByCustomerQuery(customerId: string | undefined, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, to_customer: customerId, include_items: true }),
+    queryFn: () => deliveryService.fetchList({ page: 1, to_customer: customerId, include_items: true }),
+    enabled: Boolean(customerId) && Boolean(companyId) && enabled,
+    select: (data) => data.results,
+  });
+}
+
+/**
+ * All WZ+ZW documents for a single issue_date day — used by the "Wg sklepu" grouped view.
+ * Fetches up to 200 docs (more than enough for one day's deliveries).
+ */
+export function useDeliveryByDayQuery(date: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, issue_date_after: date, issue_date_before: date, page_size: 200, include_items: true }),
+    queryFn: () =>
+      deliveryService.fetchList({
+        page: 1,
+        page_size: 200,
+        issue_date_after: date,
+        issue_date_before: date,
+        ordering: 'document_number',
+        include_items: true,
+      }),
+    enabled: Boolean(date) && Boolean(companyId),
+  });
+}
+
+/**
+ * All WZ+ZW documents for a date range — used by the "Wg sklepu" grouped view.
+ * Fetches up to 500 docs (enough for a week/month of deliveries).
+ */
+export function useDeliveryByRangeQuery(dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, issue_date_after: dateFrom, issue_date_before: dateTo, page_size: 500, include_items: true }),
+    queryFn: () =>
+      deliveryService.fetchList({
+        page: 1,
+        page_size: 500,
+        issue_date_after: dateFrom,
+        issue_date_before: dateTo,
+        ordering: 'document_number',
+        include_items: true,
+      }),
+    enabled: Boolean(dateFrom) && Boolean(dateTo) && Boolean(companyId),
   });
 }
 
@@ -51,6 +142,29 @@ export function useCreateDeliveryMutation() {
     mutationFn: (body: DeliveryDocumentCreate) => deliveryService.createDocument(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+    },
+  });
+}
+
+export function useAddReturnsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, returnItems }: { id: string; returnItems: PendingReturnItem[] }) =>
+      deliveryService.addReturns(id, returnItems),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+    },
+  });
+}
+
+export function useCreateStandaloneWzMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StandaloneWzCreate) => deliveryService.createStandaloneWz(body),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
     },
   });
 }
@@ -129,6 +243,20 @@ export function useUpdateDeliveryLinesMutation() {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+/**
+ * Sync an existing draft/saved WZ's items from the current order state.
+ */
+export function useSyncWzFromOrderMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (wzId: string) => deliveryService.syncFromOrder(wzId),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
     },
   });
 }

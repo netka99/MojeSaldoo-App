@@ -1,11 +1,27 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { OrdersDaySummary } from './OrdersDaySummary';
-import type { Order } from '@/types';
+import type { Order, OrderItem } from '@/types';
+
+function makeLine(over: Partial<OrderItem> & Pick<OrderItem, 'id' | 'product_id' | 'product_name'>): OrderItem {
+  return {
+    product_unit: 'szt.',
+    quantity: '1',
+    quantity_delivered: '0',
+    quantity_returned: '0',
+    unit_price_net: '10',
+    unit_price_gross: '12.30',
+    vat_rate: '23',
+    discount_percent: '0',
+    line_total_net: '10',
+    line_total_gross: '12.30',
+    ...over,
+  };
+}
 
 function makeOrder(over: Partial<Order> = {}): Order {
   return {
@@ -35,169 +51,165 @@ function makeOrder(over: Partial<Order> = {}): Order {
   };
 }
 
-const noop = () => {};
-
 describe('OrdersDaySummary', () => {
-  it('shows collapsed summary with correct shop count and total', () => {
+  it('shows compact strip: Suma pozycji, Suma (day total), and Podsumowanie toggle', () => {
     render(
       <OrdersDaySummary
         orders={[
-          makeOrder({ id: 'a', customer_name: 'A', total_gross: '10.50' }),
-          makeOrder({ id: 'b', customer_name: 'B', total_gross: '20.00' }),
-          makeOrder({ id: 'c', customer_name: 'C', total_gross: '5.00' }),
+          makeOrder({ id: 'a', customer_name: 'A', total_gross: '10.50', items: [] }),
+          makeOrder({ id: 'b', customer_name: 'B', total_gross: '20.00', items: [] }),
+          makeOrder({ id: 'c', customer_name: 'C', total_gross: '5.00', items: [] }),
         ]}
-        deliveryEnabled={false}
-        wzSelectionMode={false}
-        selectedCount={0}
-        confirmedCount={3}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
       />,
     );
-    const summaryToggle = screen.getByRole('button', { name: /3 sklepy/i });
-    expect(summaryToggle).toBeInTheDocument();
-    expect(within(summaryToggle).getByText(/35,50|35\.50/)).toBeInTheDocument();
+    expect(screen.getByText('Suma pozycji')).toBeInTheDocument();
+    expect(screen.getByText('Podsumowanie')).toBeInTheDocument();
+    expect(screen.getByText('Suma pozycji').closest('div')?.textContent).toMatch(/0[,.]00/);
+    const compactStrip = screen.getByText('Suma pozycji').closest('.space-y-1');
+    expect(compactStrip?.textContent).toMatch(/35[,.]50/);
+    expect(screen.getByRole('button', { name: /Podsumowanie, Brak produktów/i })).toBeInTheDocument();
   });
 
-  it('clicking bar toggles expanded state', async () => {
+  it('shows Zwrot row when quantity_returned > 0', () => {
+    render(
+      <OrdersDaySummary
+        orders={[
+          makeOrder({
+            total_gross: '100.00',
+            items: [
+              makeLine({
+                id: 'l1',
+                product_id: 'p1',
+                product_name: 'Kartacze',
+                quantity: '10',
+                quantity_returned: '2',
+                line_total_gross: '100',
+              }),
+            ],
+          }),
+        ]}
+      />,
+    );
+    const compact = screen.getByText('Suma pozycji').closest('.space-y-1');
+    expect(compact).toBeTruthy();
+    expect(within(compact as HTMLElement).getByText('Zwrot')).toBeInTheDocument();
+  });
+
+  it('clicking Podsumowanie toggles expanded state', async () => {
     const user = userEvent.setup();
     render(
       <OrdersDaySummary
-        orders={[makeOrder({ customer_name: 'Jeden Sklep' })]}
-        deliveryEnabled={false}
-        wzSelectionMode={false}
-        selectedCount={0}
-        confirmedCount={1}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
+        orders={[
+          makeOrder({
+            customer_name: 'Jeden Sklep',
+            total_gross: '12.30',
+            items: [
+              makeLine({
+                id: 'l1',
+                product_id: 'p-1',
+                product_name: 'Mąka',
+                quantity: '2',
+                line_total_gross: '12.30',
+              }),
+            ],
+          }),
+        ]}
       />,
     );
-    const toggle = screen.getByRole('button', { name: /1 sklep/i });
+    const toggle = screen.getByRole('button', { name: /Podsumowanie, 1 produkt/i });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('cell', { name: 'Jeden Sklep' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Mąka' })).toBeInTheDocument();
 
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('expanded state shows per-shop breakdown rows', async () => {
+  it('expanded state merges lines by product_id', async () => {
     const user = userEvent.setup();
     render(
       <OrdersDaySummary
         orders={[
-          makeOrder({ id: '1', customer_name: 'Alfa', total_gross: '10.00' }),
-          makeOrder({ id: '2', customer_name: 'Beta', total_gross: '20.00' }),
+          makeOrder({
+            id: '1',
+            customer_name: 'Alfa',
+            total_gross: '30.00',
+            items: [
+              makeLine({
+                id: 'a1',
+                product_id: 'milk',
+                product_name: 'Mleko',
+                quantity: '2',
+                line_total_gross: '20.00',
+              }),
+            ],
+          }),
+          makeOrder({
+            id: '2',
+            customer_name: 'Beta',
+            total_gross: '10.00',
+            items: [
+              makeLine({
+                id: 'b1',
+                product_id: 'milk',
+                product_name: 'Mleko',
+                quantity: '1',
+                line_total_gross: '10.00',
+              }),
+            ],
+          }),
         ]}
-        deliveryEnabled={false}
-        wzSelectionMode={false}
-        selectedCount={0}
-        confirmedCount={2}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
       />,
     );
-    await user.click(screen.getByRole('button', { name: /2 sklepy/i }));
+    await user.click(screen.getByRole('button', { name: /Podsumowanie, 1 produkt/i }));
 
-    expect(screen.getByRole('cell', { name: 'Alfa' })).toBeInTheDocument();
-    expect(screen.getByRole('cell', { name: 'Beta' })).toBeInTheDocument();
+    expect(screen.getAllByRole('cell', { name: 'Mleko' })).toHaveLength(1);
   });
 
-  it('expanded grand total row matches sum of individual totals', async () => {
+  it('expanded panel Razem matches lines subtotal', async () => {
     const user = userEvent.setup();
     render(
       <OrdersDaySummary
         orders={[
-          makeOrder({ id: '1', customer_name: 'S1', total_gross: '100.00' }),
-          makeOrder({ id: '2', customer_name: 'S2', total_gross: '50.50' }),
+          makeOrder({
+            id: '1',
+            customer_name: 'S1',
+            total_gross: '100.00',
+            items: [
+              makeLine({
+                id: 'l1',
+                product_id: 'p1',
+                product_name: 'A',
+                line_total_gross: '60',
+              }),
+              makeLine({
+                id: 'l2',
+                product_id: 'p2',
+                product_name: 'B',
+                line_total_gross: '40',
+              }),
+            ],
+          }),
+          makeOrder({
+            id: '2',
+            customer_name: 'S2',
+            total_gross: '50.50',
+            items: [
+              makeLine({
+                id: 'l3',
+                product_id: 'p3',
+                product_name: 'C',
+                line_total_gross: '50.50',
+              }),
+            ],
+          }),
         ]}
-        deliveryEnabled={false}
-        wzSelectionMode={false}
-        selectedCount={0}
-        confirmedCount={2}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
       />,
     );
-    await user.click(screen.getByRole('button', { name: /2 sklepy/i }));
-    const razemRow = screen.getByText('Razem').closest('div');
-    expect(razemRow?.textContent).toMatch(/150[,.]50/);
-  });
-
-  it('Generuj WZ button present when deliveryEnabled=true and not in selectionMode', () => {
-    render(
-      <OrdersDaySummary
-        orders={[makeOrder()]}
-        deliveryEnabled
-        wzSelectionMode={false}
-        selectedCount={0}
-        confirmedCount={2}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
-        onGenerateWz={vi.fn()}
-        onLoadVan={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'Generuj WZ' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Załaduj Van' })).toBeInTheDocument();
-  });
-
-  it('in selectionMode: shows Utwórz WZ (N) and Anuluj buttons, hides Generuj WZ', () => {
-    render(
-      <OrdersDaySummary
-        orders={[makeOrder()]}
-        deliveryEnabled
-        wzSelectionMode
-        selectedCount={4}
-        confirmedCount={1}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'Anuluj' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Utwórz WZ (4)' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Generuj WZ' })).not.toBeInTheDocument();
-  });
-
-  it('shows WZ progress text while generateWzPending and wzProgress set', () => {
-    render(
-      <OrdersDaySummary
-        orders={[makeOrder()]}
-        deliveryEnabled
-        wzSelectionMode
-        selectedIds={['a', 'b']}
-        selectedCount={2}
-        confirmedCount={2}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending
-        wzProgress={{ current: 2, total: 5 }}
-      />,
-    );
-    expect(screen.getByText('WZ (2/5)…')).toBeInTheDocument();
-  });
-
-  it('Utwórz WZ button disabled when selectedCount=0', () => {
-    render(
-      <OrdersDaySummary
-        orders={[makeOrder()]}
-        deliveryEnabled
-        wzSelectionMode
-        selectedCount={0}
-        confirmedCount={1}
-        onConfirmWzSelection={noop}
-        onCancelWzSelection={noop}
-        generateWzPending={false}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'Utwórz WZ (0)' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /Podsumowanie, 3 produkty/i }));
+    const panel = document.getElementById('orders-day-summary-panel');
+    expect(panel?.textContent).toMatch(/150[,.]50/);
   });
 });

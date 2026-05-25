@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -22,6 +23,7 @@ from .filters import DeliveryDocumentFilter
 from .models import DeliveryDocument, DeliveryItem
 from .serializers import (
     DeliveryCompleteSerializer,
+    DeliveryDocumentListSerializer,
     DeliveryDocumentSerializer,
     DeliveryUpdateLinesSerializer,
     SaveWithReturnsSerializer,
@@ -38,10 +40,19 @@ from .services import (
 )
 
 
+class DeliveryDocumentPagination(PageNumberPagination):
+    """Allows callers to request up to 500 results via ``?page_size=N``."""
+
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     """CRUD for delivery documents, scoped to ``request.user.current_company``."""
 
     serializer_class = DeliveryDocumentSerializer
+    pagination_class = DeliveryDocumentPagination
     permission_classes = [IsAuthenticated, IsCompanyMember]
     filterset_class = DeliveryDocumentFilter
     filter_backends = [
@@ -50,6 +61,15 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     ]
     ordering_fields = ("issue_date", "created_at", "document_number", "status")
     ordering = ["-created_at"]
+
+    def _wants_items(self) -> bool:
+        """Return True when the caller explicitly requests item data via ``?include_items``."""
+        return self.request.query_params.get("include_items", "").lower() in ("1", "true", "yes")
+
+    def get_serializer_class(self):
+        if self.action == "list" and not self._wants_items():
+            return DeliveryDocumentListSerializer
+        return DeliveryDocumentSerializer
 
     def get_queryset(self) -> QuerySet:
         qs = (
@@ -62,30 +82,34 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 "from_warehouse",
                 "to_warehouse",
                 "to_customer",
+                "linked_wz",
             )
-            .prefetch_related("items", "items__product", "items__order_item")
         )
-        qs = qs.prefetch_related(
-            Prefetch(
-                "return_documents",
-                queryset=DeliveryDocument.objects.prefetch_related(
-                    Prefetch(
-                        "items",
-                        queryset=DeliveryItem.objects.select_related("product"),
-                    )
+
+        if self.action != "list" or self._wants_items():
+            qs = qs.prefetch_related("items", "items__product", "items__order_item")
+            qs = qs.prefetch_related(
+                Prefetch(
+                    "return_documents",
+                    queryset=DeliveryDocument.objects.prefetch_related(
+                        Prefetch(
+                            "items",
+                            queryset=DeliveryItem.objects.select_related("product"),
+                        )
+                    ),
                 ),
-            ),
-        )
-        qs = qs.prefetch_related(
-            Prefetch(
-                "invoices",
-                queryset=Invoice.objects.order_by("created_at").only(
-                    "id",
-                    "delivery_document_id",
-                    "invoice_number",
+            )
+            qs = qs.prefetch_related(
+                Prefetch(
+                    "invoices",
+                    queryset=Invoice.objects.order_by("created_at").only(
+                        "id",
+                        "delivery_document_id",
+                        "invoice_number",
+                    ),
                 ),
-            ),
-        )
+            )
+
         return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
@@ -93,6 +117,83 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             user=self.request.user,
         )
+
+    @action(detail=False, methods=["post"], url_path="create-standalone")
+    def create_standalone(self, request):
+        """POST /delivery/create-standalone/ — create a draft WZ with items in one call.
+
+        Body:
+          {
+            "to_customer_id": "<uuid>",
+            "issue_date": "2026-05-19",          # optional, defaults to today
+            "items": [
+              {"product_id": "<uuid>", "quantity_planned": "3.00"},
+              ...
+            ]
+          }
+
+        Returns the created DeliveryDocument with items populated.
+        """
+        from apps.products.models import Product as ProductModel
+
+        company_id = request.user.current_company_id
+        to_customer_id = request.data.get("to_customer_id")
+        issue_date_raw = request.data.get("issue_date")
+        items_data = request.data.get("items", [])
+
+        if not to_customer_id:
+            return Response({"error": "to_customer_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not items_data:
+            return Response({"error": "At least one item is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.customers.models import Customer
+        try:
+            customer = Customer.objects.get(pk=to_customer_id, company_id=company_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Customer not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        issue_date = timezone.localdate()
+        if issue_date_raw:
+            from django.utils.dateparse import parse_date
+            parsed = parse_date(str(issue_date_raw))
+            if parsed:
+                issue_date = parsed
+
+        product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
+        products_by_id = {
+            str(p.pk): p
+            for p in ProductModel.objects.filter(pk__in=product_ids, company_id=company_id)
+        }
+
+        with transaction.atomic():
+            doc = DeliveryDocument.objects.create(
+                company=request.user.current_company,
+                user=request.user,
+                document_type=DeliveryDocument.DOC_TYPE_WZ,
+                issue_date=issue_date,
+                to_customer=customer,
+                from_warehouse=default_from_warehouse_for_delivery(company_id),
+                status=DeliveryDocument.STATUS_DRAFT,
+            )
+            for row in items_data:
+                pid = str(row.get("product_id", ""))
+                product = products_by_id.get(pid)
+                if not product:
+                    continue
+                try:
+                    qty = Decimal(str(row.get("quantity_planned", "1")))
+                except Exception:
+                    qty = Decimal("1")
+                if qty <= 0:
+                    continue
+                DeliveryItem.objects.create(
+                    delivery_document=doc,
+                    product=product,
+                    quantity_planned=qty,
+                )
+
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -495,6 +596,54 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
 
+    @action(detail=True, methods=["post"], url_path="add-returns")
+    def add_returns(self, request, pk=None):
+        """POST /{id}/add-returns/ — create a ZW document from return items without
+        changing the WZ status.  Works for any WZ in draft/saved/in_transit/delivered
+        that is not invoice-locked or cancelled.
+
+        Body: ``{"return_items": [{"product_id": "...", "quantity": "2.00",
+        "return_reason": "Po terminie"}]}``
+        """
+        doc = self.get_object()
+        if doc.is_locked_by_invoice():
+            raise ValidationError(
+                {"detail": "Delivery document is linked to an invoice and cannot be changed."}
+            )
+        if doc.status == DeliveryDocument.STATUS_CANCELLED:
+            return Response(
+                {"error": "Cannot add returns to a cancelled document."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if doc.document_type != DeliveryDocument.DOC_TYPE_WZ:
+            return Response(
+                {"error": "add-returns is only available for WZ documents."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ser = SaveWithReturnsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        return_items = ser.validated_data.get("return_items") or []
+        if not return_items:
+            return Response({"error": "return_items must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            create_zw_from_pending_returns(
+                wz_doc=doc,
+                return_items=[
+                    {
+                        "product_id": row["product_id"],
+                        "quantity": row["quantity"],
+                        "return_reason": row.get("return_reason") or "",
+                    }
+                    for row in return_items
+                ],
+                user=request.user,
+            )
+
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data)
+
     @action(detail=False, methods=["post"], url_path="van-loading")
     def van_loading(self, request):
         """Create MM (main → mobile), move ``quantity_available``, return the document."""
@@ -558,10 +707,34 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(summary, status=status.HTTP_200_OK)
 
     def _wz_planned_lines(self, order: Order) -> list[tuple[OrderItem, Decimal]]:
-        """Pairs of order item and remaining quantity to plan on a new WZ."""
+        """Pairs of order item and remaining quantity to plan on a new WZ.
+
+        Subtracts quantities already covered by delivered WZ (quantity_delivered on
+        the order item) AND quantities planned on active WZ drafts/in-transit that
+        have not yet been completed, to prevent double-booking.
+        """
+        # Sum quantity_planned per product across active (non-cancelled, non-completed) WZ
+        active_statuses = (
+            DeliveryDocument.STATUS_DRAFT,
+            DeliveryDocument.STATUS_SAVED,
+            DeliveryDocument.STATUS_IN_TRANSIT,
+        )
+        active_wz_qs = DeliveryDocument.objects.filter(
+            order=order,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            status__in=active_statuses,
+        ).prefetch_related("items")
+
+        planned_by_product: dict[int, Decimal] = defaultdict(Decimal)
+        for wz in active_wz_qs:
+            for item in wz.items.all():
+                planned_by_product[item.product_id] += item.quantity_planned or Decimal("0")
+
         rows: list[tuple[OrderItem, Decimal]] = []
         for oi in order.items.select_related("product"):
-            remaining = oi.quantity - (oi.quantity_delivered or Decimal("0"))
+            already_delivered = oi.quantity_delivered or Decimal("0")
+            already_planned = planned_by_product.get(oi.product_id, Decimal("0"))
+            remaining = oi.quantity - already_delivered - already_planned
             if remaining > 0:
                 rows.append((oi, remaining))
         return rows
@@ -581,7 +754,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             issue_date=timezone.localdate(),
             to_customer=order.customer,
             from_warehouse=default_from_warehouse_for_delivery(company_id),
-            status=DeliveryDocument.STATUS_DRAFT,
+            status=DeliveryDocument.STATUS_SAVED,
         )
         for oi, qty in lines:
             DeliveryItem.objects.create(
@@ -621,6 +794,88 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             doc = self._persist_wz_draft_from_order(request, order, lines)
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="sync-from-order")
+    def sync_from_order(self, request, pk=None):
+        """POST /{id}/sync-from-order/ — sync a draft/saved WZ's items to match the
+        current order quantities. Updates existing lines, adds missing ones, removes
+        lines whose order item was deleted (no WZ quantity can be negative).
+
+        Only allowed while the WZ has not yet left (draft or saved). Locked WZ
+        (invoice) and in_transit/delivered documents are rejected.
+        """
+        doc = self.get_object()
+
+        if doc.is_locked_by_invoice():
+            raise ValidationError({"detail": "Document is linked to an invoice and cannot be changed."})
+
+        allowed_statuses = (DeliveryDocument.STATUS_DRAFT, DeliveryDocument.STATUS_SAVED)
+        if doc.status not in allowed_statuses:
+            return Response(
+                {"error": f"Cannot sync a WZ in status '{doc.status}'. Only draft or saved documents can be synced."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if doc.document_type != DeliveryDocument.DOC_TYPE_WZ:
+            return Response(
+                {"error": "sync-from-order is only available for WZ documents."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not doc.order_id:
+            return Response({"error": "This WZ is not linked to an order."}, status=status.HTTP_400_BAD_REQUEST)
+
+        order = doc.order
+
+        # Compute planned qty per product for OTHER active WZ (exclude this doc)
+        active_statuses = (DeliveryDocument.STATUS_DRAFT, DeliveryDocument.STATUS_SAVED, DeliveryDocument.STATUS_IN_TRANSIT)
+        other_wz_qs = DeliveryDocument.objects.filter(
+            order=order,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            status__in=active_statuses,
+        ).exclude(pk=doc.pk).prefetch_related("items")
+
+        planned_by_other: dict[int, Decimal] = defaultdict(Decimal)
+        for wz in other_wz_qs:
+            for item in wz.items.all():
+                planned_by_other[item.product_id] += item.quantity_planned or Decimal("0")
+
+        # Build target lines: ordered qty - delivered - planned_by_other_wz
+        target: dict[int, tuple[OrderItem, Decimal]] = {}
+        for oi in order.items.select_related("product"):
+            already_delivered = oi.quantity_delivered or Decimal("0")
+            already_planned_elsewhere = planned_by_other.get(oi.product_id, Decimal("0"))
+            qty = oi.quantity - already_delivered - already_planned_elsewhere
+            if qty > 0:
+                target[oi.product_id] = (oi, qty)
+
+        with transaction.atomic():
+            existing_items = {item.product_id: item for item in doc.items.all()}
+
+            # Update or create items
+            for product_id, (oi, qty) in target.items():
+                if product_id in existing_items:
+                    wz_item = existing_items[product_id]
+                    wz_item.quantity_planned = qty
+                    wz_item.save(update_fields=["quantity_planned"])
+                else:
+                    DeliveryItem.objects.create(
+                        delivery_document=doc,
+                        order_item=oi,
+                        product=oi.product,
+                        quantity_planned=qty,
+                    )
+
+            # Remove items whose product is no longer in the order target
+            for product_id, wz_item in existing_items.items():
+                if product_id not in target:
+                    wz_item.delete()
+
+            doc.user = request.user
+            doc.save(update_fields=["user", "updated_at"])
+
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data)
 
     @action(detail=False, methods=["post"], url_path="generate-for-orders")
     def generate_for_orders(self, request):

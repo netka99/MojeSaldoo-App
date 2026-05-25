@@ -18,6 +18,9 @@ const CustomerCreatePage = lazy(() =>
 const CustomerEditPage = lazy(() =>
   import('./pages/CustomerEditPage').then((m) => ({ default: m.CustomerEditPage })),
 );
+const CustomerDetailPage = lazy(() =>
+  import('./pages/CustomerDetailPage').then((m) => ({ default: m.CustomerDetailPage })),
+);
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then((m) => ({ default: m.ProductsPage })));
 const ProductCreatePage = lazy(() =>
   import('./pages/ProductCreatePage').then((m) => ({ default: m.ProductCreatePage })),
@@ -58,6 +61,9 @@ const OrderDetailPage = lazy(() =>
 );
 const DeliveryDocumentsPage = lazy(() =>
   import('./pages/DeliveryDocumentsPage').then((m) => ({ default: m.DeliveryDocumentsPage })),
+);
+const DeliveryCreatePage = lazy(() =>
+  import('./pages/DeliveryCreatePage').then((m) => ({ default: m.DeliveryCreatePage })),
 );
 const VanLoadingPage = lazy(() =>
   import('./pages/VanLoadingPage').then((m) => ({ default: m.VanLoadingPage })),
@@ -130,6 +136,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="customers">
                       <CustomerEditPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/customers/:id"
+                  element={
+                    <ModuleRouteGate module="customers">
+                      <CustomerDetailPage />
                     </ModuleRouteGate>
                   }
                 />
@@ -218,6 +232,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="delivery">
                       <DeliveryDocumentsPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/delivery/new"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <DeliveryCreatePage />
                     </ModuleRouteGate>
                   }
                 />

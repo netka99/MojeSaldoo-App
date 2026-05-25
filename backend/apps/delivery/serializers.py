@@ -176,6 +176,62 @@ class SaveWithReturnsSerializer(serializers.Serializer):
     return_items = PendingReturnItemSerializer(many=True, required=False, allow_empty=True)
 
 
+class DeliveryDocumentListSerializer(serializers.ModelSerializer):
+    """Slim serializer for list endpoints — no items, return_documents, or invoice data.
+
+    Used when ``?include_items`` is not set, so the list endpoint stays fast even
+    for large page sizes (e.g. the "Wg sklepu" date-range fetch).
+    """
+
+    order_id = serializers.PrimaryKeyRelatedField(source="order", read_only=True)
+    to_customer_id = serializers.PrimaryKeyRelatedField(source="to_customer", read_only=True)
+    from_warehouse_id = serializers.PrimaryKeyRelatedField(source="from_warehouse", read_only=True)
+    to_warehouse_id = serializers.PrimaryKeyRelatedField(source="to_warehouse", read_only=True)
+    linked_wz_id = serializers.PrimaryKeyRelatedField(source="linked_wz", read_only=True)
+    order_number = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DeliveryDocument
+        fields = [
+            "id",
+            "company",
+            "order_id",
+            "order_number",
+            "customer_name",
+            "user",
+            "document_type",
+            "document_number",
+            "issue_date",
+            "from_warehouse_id",
+            "to_warehouse_id",
+            "to_customer_id",
+            "linked_wz_id",
+            "status",
+            "has_returns",
+            "returns_notes",
+            "driver_name",
+            "receiver_name",
+            "delivered_at",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_order_number(self, obj):
+        if obj.order_id:
+            return obj.order.order_number
+        return None
+
+    def get_customer_name(self, obj):
+        if obj.order_id and obj.order.customer_id:
+            return obj.order.customer.name
+        if obj.to_customer_id:
+            return obj.to_customer.name
+        return None
+
+
 class DeliveryDocumentSerializer(serializers.ModelSerializer):
     order_id = serializers.PrimaryKeyRelatedField(
         queryset=Order.objects.all(),
@@ -211,6 +267,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         source="linked_wz",
         read_only=True,
     )
+    linked_wz_number = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -228,6 +285,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "to_warehouse_id",
             "to_customer_id",
             "linked_wz_id",
+            "linked_wz_number",
             "status",
             "has_returns",
             "returns_notes",
@@ -278,6 +336,11 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             self.fields["to_customer_id"].queryset = Customer.objects.filter(
                 company_id=cc_id
             )
+
+    def get_linked_wz_number(self, obj):
+        if obj.linked_wz_id:
+            return obj.linked_wz.document_number or None
+        return None
 
     def get_order_number(self, obj):
         if obj.order_id:

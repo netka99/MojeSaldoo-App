@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { OrderDayDateNav } from './OrderDayDateNav';
 
@@ -60,13 +60,12 @@ describe('OrderDayDateNav', () => {
     expect(onChange).toHaveBeenCalledWith('2026-05-14');
   });
 
-  it('clicking the date label resets to today (calls onChange with today\'s date)', async () => {
-    vi.setSystemTime(new Date('2026-06-15T12:00:00'));
+  it('changing the native date input calls onChange with ISO date', () => {
     const onChange = vi.fn();
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<OrderDayDateNav date="2026-05-13" onChange={onChange} />);
-    await user.click(screen.getByText(/maja/i));
-    expect(onChange).toHaveBeenCalledWith('2026-06-15');
+    const input = screen.getByDisplayValue('2026-05-13');
+    fireEvent.change(input, { target: { value: '2026-07-01' } });
+    expect(onChange).toHaveBeenCalledWith('2026-07-01');
   });
 
   it('aria-live region updates when date prop changes', () => {

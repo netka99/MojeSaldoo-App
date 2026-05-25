@@ -5,6 +5,8 @@ export type OpenPrintFrameOptions = {
   title: string;
   rootId: string;
   element: ReactElement;
+  /** Additional CSS injected after the base print styles (e.g. page-break overrides). */
+  extraStyles?: string;
 };
 
 /**
@@ -12,7 +14,7 @@ export type OpenPrintFrameOptions = {
  * pop-up quirks and `createRoot` in a bare about:blank tab, which can yield a blank
  * page with cloned theme CSS).
  */
-export function openPrintFrame({ title, rootId, element }: OpenPrintFrameOptions): boolean {
+export function openPrintFrame({ title, rootId, element, extraStyles }: OpenPrintFrameOptions): boolean {
   if (typeof document === 'undefined') {
     return false;
   }
@@ -50,6 +52,12 @@ export function openPrintFrame({ title, rootId, element }: OpenPrintFrameOptions
 
   injectPrintBaseStyles(idoc);
   cloneAppStylesInto(idoc);
+  if (extraStyles) {
+    const s = idoc.createElement('style');
+    s.setAttribute('data-mojesaldoo-extra', '1');
+    s.textContent = extraStyles;
+    idoc.head.appendChild(s);
+  }
 
   const container = idoc.getElementById(rootId);
   if (!container) {

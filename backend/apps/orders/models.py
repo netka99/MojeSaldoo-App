@@ -328,3 +328,56 @@ class OrderItem(models.Model):
     class Meta:
         verbose_name = "Order Item"
         verbose_name_plural = "Order Items"
+
+
+class OrderChangeLog(models.Model):
+    """
+    Level-1 item-level audit entry written whenever an order is edited via the API.
+    One row per changed OrderItem per save. All writes happen inside the same
+    transaction.atomic() as the update, so failures roll back the log too.
+    """
+
+    CHANGE_ADDED = "added"
+    CHANGE_REMOVED = "removed"
+    CHANGE_QTY = "qty_changed"
+    CHANGE_PRICE = "price_changed"
+
+    CHANGE_TYPE_CHOICES = [
+        (CHANGE_ADDED, "Added"),
+        (CHANGE_REMOVED, "Removed"),
+        (CHANGE_QTY, "Quantity changed"),
+        (CHANGE_PRICE, "Price changed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name="changelog",
+        db_index=True,
+    )
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    changed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    change_type = models.CharField(max_length=20, choices=CHANGE_TYPE_CHOICES)
+    # Snapshot fields — written at change time so they survive product renames/deletions
+    product_id = models.UUIDField()
+    product_name = models.CharField(max_length=255, blank=True, default="")
+    product_unit = models.CharField(max_length=20, blank=True, default="")
+    quantity_before = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    quantity_after = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    unit_price_gross_before = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    unit_price_gross_after = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ["-changed_at"]
+        verbose_name = "Order Change Log"
+        verbose_name_plural = "Order Change Logs"
+
+    def __str__(self):
+        return f"{self.order_id} — {self.change_type} — {self.product_name}"

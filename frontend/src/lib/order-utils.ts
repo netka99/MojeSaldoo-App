@@ -73,3 +73,14 @@ export function sumOrdersGross(orders: Order[]): number {
   }
   return sum;
 }
+
+/** Order line quantity + unit for compact lists (e.g. `20 szt.` or `3,5 kg`). */
+export function formatOrderLineQuantityWithUnit(quantity: string | number, unit: string): string {
+  const n = typeof quantity === 'string' ? Number.parseFloat(quantity) : quantity;
+  const u = (unit || 'szt.').trim();
+  if (!Number.isFinite(n)) return u ? `${String(quantity)} ${u}`.trim() : String(quantity);
+  const qty = Number.isInteger(n)
+    ? String(n)
+    : new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 3 }).format(n);
+  return u ? `${qty} ${u}` : qty;
+}

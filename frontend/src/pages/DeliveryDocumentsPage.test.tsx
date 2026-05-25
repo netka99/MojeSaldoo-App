@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
@@ -12,12 +12,10 @@ import {
   deliveryStatusBadgeClassName,
 } from './DeliveryDocumentsPage';
 import { authStorage } from '@/services/api';
-import type { DeliveryListFilters } from '@/query/use-delivery';
 import type { DeliveryDocument } from '@/types';
-import type { Order } from '@/types';
 
-const useDeliveryListQueryMock = vi.hoisted(() =>
-  vi.fn(((_page: number, _filters: DeliveryListFilters) => ({
+const useDeliveryByRangeQueryMock = vi.hoisted(() =>
+  vi.fn(((_dateFrom: string, _dateTo: string) => ({
     data: {
       count: 0,
       next: null,
@@ -28,7 +26,7 @@ const useDeliveryListQueryMock = vi.hoisted(() =>
     isError: false,
     error: null,
     refetch: vi.fn(),
-  })) as (page: number, filters: DeliveryListFilters) => {
+  })) as (dateFrom: string, dateTo: string) => {
     data: { count: number; next: null; previous: null; results: DeliveryDocument[] };
     isFetching: boolean;
     isError: boolean;
@@ -37,40 +35,14 @@ const useDeliveryListQueryMock = vi.hoisted(() =>
   }),
 );
 
-const useOrderListQueryMock = vi.hoisted(() =>
-  vi.fn(((_page: number, _filters: Record<string, unknown>) => ({
-    data: {
-      count: 0,
-      next: null,
-      previous: null,
-      results: [] as Order[],
-    },
-    isFetching: false,
-  })) as (page: number, filters: Record<string, unknown>) => {
-    data: { count: number; next: null; previous: null; results: Order[] };
-    isFetching: boolean;
-  }),
-);
-
-const generateMutateMock = vi.hoisted(() => vi.fn());
-
 vi.mock('@/query/use-delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/query/use-delivery')>();
   return {
     ...actual,
-    useDeliveryListQuery: (page: number, filters: DeliveryListFilters) =>
-      useDeliveryListQueryMock(page, filters),
-    useGenerateDeliveryForOrderMutation: () => ({
-      mutate: generateMutateMock,
-      isPending: false,
-    }),
+    useDeliveryByRangeQuery: (dateFrom: string, dateTo: string) =>
+      useDeliveryByRangeQueryMock(dateFrom, dateTo),
   };
 });
-
-vi.mock('@/query/use-orders', () => ({
-  useOrderListQuery: (page: number, filters: Record<string, unknown>) =>
-    useOrderListQueryMock(page, filters),
-}));
 
 function makeDeliveryDoc(over: Partial<DeliveryDocument> = {}): DeliveryDocument {
   return {
@@ -100,33 +72,6 @@ function makeDeliveryDoc(over: Partial<DeliveryDocument> = {}): DeliveryDocument
   };
 }
 
-function makeOrder(over: Partial<Order> = {}): Order {
-  return {
-    id: 'ord-pick',
-    customer_id: 'c-1',
-    customer_name: 'Klient SP',
-    company: 'co-1',
-    user: null,
-    order_number: 'ZAM/2026/0099',
-    order_date: '2026-05-01',
-    delivery_date: '2026-05-10',
-    status: 'confirmed',
-    subtotal_net: '10',
-    subtotal_gross: '12',
-    discount_percent: '0',
-    discount_amount: '0',
-    total_net: '10',
-    total_gross: '12',
-    customer_notes: '',
-    internal_notes: '',
-    created_at: '2026-05-01T10:00:00Z',
-    updated_at: '2026-05-01T10:00:00Z',
-    confirmed_at: '2026-05-01T10:00:00Z',
-    delivered_at: null,
-    items: [],
-    ...over,
-  };
-}
 
 function renderDeliveryRoute() {
   return render(
@@ -134,7 +79,6 @@ function renderDeliveryRoute() {
       <MemoryRouter initialEntries={['/delivery']}>
         <Routes>
           <Route path="/delivery" element={<DeliveryDocumentsPage />} />
-          <Route path="/delivery/van-reconciliation" element={<div>Van reconciliation</div>} />
           <Route path="/login" element={<div>Logowanie</div>} />
           <Route path="/orders/:id" element={<div>Order</div>} />
         </Routes>
@@ -170,19 +114,13 @@ describe('DeliveryDocumentsPage', () => {
 
   beforeEach(() => {
     getToken.mockReturnValue('test-access-token');
-    generateMutateMock.mockReset();
-    useDeliveryListQueryMock.mockReset();
-    useDeliveryListQueryMock.mockImplementation((_page, _filters) => ({
+    useDeliveryByRangeQueryMock.mockReset();
+    useDeliveryByRangeQueryMock.mockImplementation((_dateFrom, _dateTo) => ({
       data: { count: 0, next: null, previous: null, results: [] },
       isFetching: false,
       isError: false,
       error: null,
       refetch: vi.fn(),
-    }));
-    useOrderListQueryMock.mockReset();
-    useOrderListQueryMock.mockImplementation(() => ({
-      data: { count: 0, next: null, previous: null, results: [] },
-      isFetching: false,
     }));
   });
 
@@ -196,28 +134,24 @@ describe('DeliveryDocumentsPage', () => {
     expect(screen.getByText('Logowanie')).toBeInTheDocument();
   });
 
-  it('renders title, WZ table headers, and Generuj WZ control', () => {
+  it('renders title and document list table headers', async () => {
+    const user = userEvent.setup();
     renderDeliveryRoute();
-    expect(screen.getByRole('heading', { name: 'Dokumenty WZ' })).toBeInTheDocument();
-    const table = screen.getByRole('table', { name: 'Lista dokumentów WZ' });
-    expect(within(table).getByRole('columnheader', { name: 'Numer WZ' })).toBeInTheDocument();
+    // Default view is "Wg sklepu" — switch to Lista to see the table
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    expect(screen.getByRole('heading', { name: 'Dokumenty' })).toBeInTheDocument();
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    expect(within(table).getByRole('columnheader', { name: 'Numer dokumentu' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Data wyst.' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Klient' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Kierowca' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Generuj WZ' })).toBeInTheDocument();
   });
 
-  it('navigates to /delivery/van-reconciliation when Rozlicz Van is clicked', async () => {
+  it('shows a row with document number, client, driver, and status label in Lista tab', async () => {
     const user = userEvent.setup();
-    renderDeliveryRoute();
-    await user.click(screen.getByRole('button', { name: 'Rozlicz Van' }));
-    expect(screen.getByText('Van reconciliation')).toBeInTheDocument();
-  });
-
-  it('shows a row with document number, client, driver, and status label', () => {
     const d = makeDeliveryDoc();
-    useDeliveryListQueryMock.mockReturnValue({
+    useDeliveryByRangeQueryMock.mockReturnValue({
       data: { count: 1, next: null, previous: null, results: [d] },
       isFetching: false,
       isError: false,
@@ -225,7 +159,8 @@ describe('DeliveryDocumentsPage', () => {
       refetch: vi.fn(),
     });
     renderDeliveryRoute();
-    const table = screen.getByRole('table', { name: 'Lista dokumentów WZ' });
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
     const wzLink = within(table).getByRole('link', { name: 'WZ/2026/0001' });
     expect(wzLink).toHaveAttribute('href', '/delivery/doc-1');
     expect(within(table).getByText('Jan Kowalski')).toBeInTheDocument();
@@ -233,71 +168,36 @@ describe('DeliveryDocumentsPage', () => {
     expect(within(table).getByText('Zapisano')).toBeInTheDocument();
   });
 
-  it('applies status filter with WZ scope to the delivery list query', async () => {
+  it('filters Lista client-side by status', async () => {
     const user = userEvent.setup();
+    const delivered = makeDeliveryDoc({ id: 'doc-delivered', document_number: 'WZ/2026/0001', status: 'delivered' });
+    const draft = makeDeliveryDoc({ id: 'doc-draft', document_number: 'WZ/2026/0002', status: 'draft' });
+    useDeliveryByRangeQueryMock.mockReturnValue({
+      data: { count: 2, next: null, previous: null, results: [delivered, draft] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
     renderDeliveryRoute();
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
     const select = screen.getByLabelText('Filtruj dokumenty po statusie');
     await user.selectOptions(select, 'delivered');
-    const last = useDeliveryListQueryMock.mock.calls.at(-1);
-    expect(last?.[0]).toBe(1);
-    expect(last?.[1]).toMatchObject({
-      document_type: 'WZ',
-      status: 'delivered',
-    });
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    expect(within(table).getByRole('link', { name: 'WZ/2026/0001' })).toBeInTheDocument();
+    expect(within(table).queryByRole('link', { name: 'WZ/2026/0002' })).not.toBeInTheDocument();
   });
 
-  it('sends issue date range in delivery list query params', async () => {
+  it('updates the range query when custom dates are typed', async () => {
     const user = userEvent.setup();
     renderDeliveryRoute();
     await user.clear(screen.getByLabelText('Data wystawienia od'));
     await user.type(screen.getByLabelText('Data wystawienia od'), '2026-06-01');
     await user.clear(screen.getByLabelText('Data wystawienia do'));
     await user.type(screen.getByLabelText('Data wystawienia do'), '2026-06-15');
-    const last = useDeliveryListQueryMock.mock.calls.at(-1);
-    expect(last?.[1]).toMatchObject({
-      document_type: 'WZ',
-      issue_date_after: '2026-06-01',
-      issue_date_before: '2026-06-15',
-    });
+    const last = useDeliveryByRangeQueryMock.mock.calls.at(-1);
+    expect(last?.[0]).toBe('2026-06-01');
+    expect(last?.[1]).toBe('2026-06-15');
   });
 
-  it('loads confirmed orders for the picker and calls generate mutate with selected id', async () => {
-    const user = userEvent.setup();
-    const o = makeOrder();
-    useOrderListQueryMock.mockImplementation((_page, _filters) => ({
-      data: { count: 1, next: null, previous: null, results: [o] },
-      isFetching: false,
-    }));
-    renderDeliveryRoute();
-    await waitFor(() => {
-      expect(useOrderListQueryMock).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({ status: 'confirmed' }),
-      );
-    });
-    const select = screen.getByLabelText('Zamówienie');
-    await user.selectOptions(select, o.id);
-    await user.click(screen.getByRole('button', { name: 'Generuj WZ' }));
-    expect(generateMutateMock).toHaveBeenCalled();
-    expect(generateMutateMock.mock.calls[0][0]).toBe(o.id);
-  });
-
-  it('debounces order search before updating the orders query', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    renderDeliveryRoute();
-    const input = screen.getByLabelText('Szukaj zamówienia');
-    const callsAtStart = useOrderListQueryMock.mock.calls.length;
-    await user.type(input, 'acme');
-    const withSearchBefore = useOrderListQueryMock.mock.calls
-      .slice(callsAtStart)
-      .filter((c) => (c[1] as { search?: string }).search === 'acme');
-    expect(withSearchBefore.length).toBe(0);
-    await vi.advanceTimersByTimeAsync(400);
-    const withSearchAfter = useOrderListQueryMock.mock.calls
-      .slice(callsAtStart)
-      .filter((c) => (c[1] as { search?: string }).search === 'acme');
-    expect(withSearchAfter.length).toBeGreaterThan(0);
-    vi.useRealTimers();
-  });
 });

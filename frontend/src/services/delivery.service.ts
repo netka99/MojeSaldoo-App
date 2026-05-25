@@ -8,6 +8,7 @@ import type {
   DeliveryUpdateLinesPayload,
   PaginatedDeliveryDocuments,
   PendingReturnItem,
+  StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
   VanReconciliationResult,
@@ -18,13 +19,22 @@ import type {
  */
 export type DeliveryListParams = {
   page?: number;
+  page_size?: number;
   /** One of: `issue_date`, `-issue_date`, `created_at`, `-created_at`, `document_number`, `status`, etc. */
   ordering?: string;
   order?: string;
+  order_ids?: string;
+  to_customer?: string;
   status?: string;
   document_type?: string;
   issue_date_after?: string;
   issue_date_before?: string;
+  /**
+   * When true, the list response includes nested `items`, `return_documents`, and `linked_invoices`.
+   * Omit for the paginated "Lista" view; pass `true` for "Wg sklepu" and other views that
+   * need line-item data to render product summaries or quantities.
+   */
+  include_items?: boolean;
 };
 
 const basePath = '/delivery/';
@@ -40,6 +50,9 @@ export const deliveryService = {
 
   createDocument: (data: DeliveryDocumentCreate) =>
     api.post<DeliveryDocument>(basePath, data),
+
+  createStandaloneWz: (data: StandaloneWzCreate) =>
+    api.post<DeliveryDocument>(`${basePath}create-standalone/`, data),
 
   patchDocument: (id: string, data: DeliveryDocumentPatch) =>
     api.patch<DeliveryDocument>(`${basePath}${id}/`, data),
@@ -62,6 +75,20 @@ export const deliveryService = {
 
   updateLines: (id: string, data: DeliveryUpdateLinesPayload) =>
     api.post<DeliveryDocument>(`${basePath}${id}/update-lines/`, data),
+
+  /** `POST` — sync an existing draft/saved WZ's items from the current order quantities. */
+  syncFromOrder: (wzId: string) =>
+    api.post<DeliveryDocument>(`${basePath}${wzId}/sync-from-order/`, {}),
+
+  /** `POST` — create a ZW return document linked to a WZ without changing WZ status. */
+  addReturns: (id: string, returnItems: PendingReturnItem[]) =>
+    api.post<DeliveryDocument>(`${basePath}${id}/add-returns/`, {
+      return_items: returnItems.map(({ product_id, quantity, return_reason }) => ({
+        product_id,
+        quantity,
+        return_reason,
+      })),
+    }),
 
   /** `GET` — creates draft WZ from confirmed order (remaining quantities per line on the server). */
   generateForOrder: (orderId: string) =>

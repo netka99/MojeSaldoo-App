@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { DELIVERY_STATUS_LABELS_PL } from '@/constants/deliveryStatusPl';
 import { deliveryStatusBadgeClassName } from '@/pages/DeliveryDocumentsPage';
 import {
+  useAddReturnsMutation,
   useCompleteDeliveryMutation,
   useDeliveryQuery,
   useDeliveryPreviewQuery,
@@ -505,6 +506,7 @@ export function DeliveryDocumentDetailPage() {
   const completeM = useCompleteDeliveryMutation();
   const patchM = usePatchDeliveryMutation();
   const updateLinesM = useUpdateDeliveryLinesMutation();
+  const addReturnsM = useAddReturnsMutation();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -693,8 +695,17 @@ export function DeliveryDocumentDetailPage() {
     if (!opened) setPrintError('Nie udało się otworzyć widoku drukowania. Odśwież stronę i spróbuj ponownie.');
   };
 
+  const onAddReturns = async () => {
+    if (!id || pendingReturns.length === 0) return;
+    setActionError(null);
+    try {
+      await addReturnsM.mutateAsync({ id, returnItems: pendingReturns });
+      setPendingReturns([]);
+    } catch (e) { setActionError(errMsg(e)); }
+  };
+
   const locked = Boolean(doc?.locked_for_edit);
-  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || patchM.isPending || updateLinesM.isPending;
+  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
 
   /* ── Items to display (filter 0-qty in edit mode) ───────────── */
   const displayItems = doc
@@ -870,6 +881,16 @@ export function DeliveryDocumentDetailPage() {
               </p>
             )}
 
+            {/* Linked WZ (for ZW documents) */}
+            {doc.document_type === 'ZW' && doc.linked_wz_id && (
+              <p className="px-1 text-[13px] text-muted-foreground">
+                Powiązany WZ:{' '}
+                <Link to={`/delivery/${doc.linked_wz_id}`} className="font-medium text-primary hover:underline">
+                  {doc.linked_wz_number ?? doc.linked_wz_id.slice(0, 8)}
+                </Link>
+              </p>
+            )}
+
             {/* Items label */}
             <p className="px-1 text-[13px] text-muted-foreground">
               {displayItems.length === 1
@@ -968,12 +989,24 @@ export function DeliveryDocumentDetailPage() {
               </div>
             )}
 
-            {/* Return items (draft WZ only) */}
-            {!isEditing && doc.status === 'draft' && doc.document_type === 'WZ' && (
-              <ReturnItemsSection
-                items={pendingReturns}
-                onChange={setPendingReturns}
-              />
+            {/* Return items — available for any non-locked, non-cancelled WZ */}
+            {!isEditing && doc.document_type === 'WZ' && !locked && doc.status !== 'cancelled' && (
+              <>
+                <ReturnItemsSection
+                  items={pendingReturns}
+                  onChange={setPendingReturns}
+                />
+                {/* For non-draft: separate submit button (draft submits via "Zapisz WZ") */}
+                {doc.status !== 'draft' && pendingReturns.length > 0 && (
+                  <Button
+                    type="button"
+                    onClick={() => void onAddReturns()}
+                    disabled={workflowBusy}
+                  >
+                    {addReturnsM.isPending ? 'Zapisywanie zwrotu…' : 'Dodaj zwrot'}
+                  </Button>
+                )}
+              </>
             )}
 
             {/* Workflow buttons */}

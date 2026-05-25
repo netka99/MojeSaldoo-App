@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import { useRef, type KeyboardEvent } from 'react';
 import { cn } from '@/lib/utils';
 
 export type OrderDayDateNavProps = {
@@ -29,10 +29,6 @@ function toIsoLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function todayIsoLocal(): string {
-  return toIsoLocal(new Date());
-}
-
 function shiftIsoDate(iso: string, deltaDays: number): string | null {
   const d = parseLocalDate(iso);
   if (!d) return null;
@@ -51,6 +47,25 @@ function formatDayNavLabel(iso: string): string {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+function isoDateForNativeInput(iso: string): string {
+  const t = iso.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : '';
+}
+
+function openNativeDatePicker(input: HTMLInputElement) {
+  const el = input as HTMLInputElement & { showPicker?: () => void | Promise<void> };
+  try {
+    if (typeof el.showPicker !== 'function') {
+      el.click();
+      return;
+    }
+    const result = el.showPicker();
+    void Promise.resolve(result).catch(() => el.click());
+  } catch {
+    el.click();
+  }
+}
+
 const ctrlBtn = cn(
   'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-input bg-background',
   'text-base font-medium text-foreground shadow-sm',
@@ -59,6 +74,8 @@ const ctrlBtn = cn(
 );
 
 export function OrderDayDateNav({ date, onChange }: OrderDayDateNavProps) {
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
   const goPrev = () => {
     const next = shiftIsoDate(date, -1);
     if (next) onChange(next);
@@ -86,6 +103,18 @@ export function OrderDayDateNav({ date, onChange }: OrderDayDateNavProps) {
       onKeyDownCapture={onKeyDownCapture}
       aria-label="Nawigacja dnia dostawy"
     >
+      <input
+        ref={dateInputRef}
+        type="date"
+        value={isoDateForNativeInput(date)}
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v) onChange(v);
+        }}
+      />
       <button type="button" className={ctrlBtn} aria-label="Poprzedni dzień" onClick={goPrev}>
         ‹
       </button>
@@ -95,7 +124,12 @@ export function OrderDayDateNav({ date, onChange }: OrderDayDateNavProps) {
           'min-w-0 rounded-2xl border border-transparent px-4 py-2 text-center text-base font-semibold text-foreground',
           'ring-offset-background hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         )}
-        onClick={() => onChange(todayIsoLocal())}
+        aria-haspopup="dialog"
+        aria-label={`Wybierz datę na kalendarzu (${formatDayNavLabel(date)})`}
+        onClick={() => {
+          const el = dateInputRef.current;
+          if (el) openNativeDatePicker(el);
+        }}
       >
         <span aria-live="polite">{formatDayNavLabel(date)}</span>
       </button>

@@ -98,6 +98,23 @@ export interface OrderCreate {
  */
 export type OrderUpdate = OrderCreate;
 
+export type OrderChangeType = 'added' | 'removed' | 'qty_changed' | 'price_changed';
+
+export interface OrderChangeLogEntry {
+  id: string;
+  changed_at: string;
+  changed_by: number | null;
+  changed_by_name: string;
+  change_type: OrderChangeType;
+  product_id: string;
+  product_name: string;
+  product_unit: string;
+  quantity_before: string | null;
+  quantity_after: string | null;
+  unit_price_gross_before: string | null;
+  unit_price_gross_after: string | null;
+}
+
 export interface PaginatedOrders {
   count: number;
   next: string | null;

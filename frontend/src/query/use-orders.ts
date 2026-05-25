@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { orderService, type OrderListParams } from '@/services/order.service';
-import type { OrderCreate, OrderUpdate, Order, OrderStatus } from '@/types';
+import type { OrderChangeLogEntry, OrderCreate, OrderUpdate, Order, OrderStatus } from '@/types';
 import { orderKeys } from './keys';
 
 /** Filters for `useOrderListQuery` (excludes `page` — pass page as the first argument). */
@@ -53,6 +53,22 @@ export function useOrdersByDateQuery(date: string) {
   });
 }
 
+/**
+ * All orders for a specific customer, sorted newest first.
+ * Returns the results array directly (no pagination — fetches up to 200 orders).
+ */
+export function useOrdersByCustomerQuery(customerId: string | undefined, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: orderKeys.list({ page: 1, companyId, customer: customerId, ordering: '-delivery_date' }),
+    queryFn: () =>
+      orderService.fetchList({ page: 1, customer: customerId, page_size: 200, ordering: '-delivery_date' }),
+    enabled: Boolean(customerId) && Boolean(companyId) && enabled,
+    select: (data) => data.results,
+  });
+}
+
 export function useOrderQuery(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: id ? orderKeys.detail(id) : [...orderKeys.details(), 'pending'],
@@ -79,7 +95,17 @@ export function useUpdateOrderMutation() {
     onSuccess: (data: Order) => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: orderKeys.detail(data.id) });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.changelog(data.id) });
     },
+  });
+}
+
+export function useOrderChangelogQuery(id: string | undefined) {
+  return useQuery({
+    queryKey: id ? orderKeys.changelog(id) : [...orderKeys.details(), 'changelog-pending'],
+    queryFn: () => orderService.fetchChangelog(id!),
+    enabled: Boolean(id),
+    select: (data): OrderChangeLogEntry[] => data,
   });
 }
 
