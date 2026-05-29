@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'apps.customers',
     'apps.orders',
     'apps.delivery',
+    'apps.van_routes',
     'apps.invoices',
     'apps.reporting',
 ]

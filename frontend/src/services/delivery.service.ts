@@ -27,6 +27,7 @@ export type DeliveryListParams = {
   to_customer?: string;
   status?: string;
   document_type?: string;
+  from_warehouse_id?: string;
   issue_date_after?: string;
   issue_date_before?: string;
   /**
@@ -90,9 +91,11 @@ export const deliveryService = {
       })),
     }),
 
-  /** `GET` — creates draft WZ from confirmed order (remaining quantities per line on the server). */
-  generateForOrder: (orderId: string) =>
-    api.get<DeliveryDocument>(`${basePath}generate-for-order/${orderId}/`),
+  /** `GET` — creates WZ from confirmed order. `vanWarehouseId` pins the from_warehouse to a specific van. */
+  generateForOrder: (orderId: string, vanWarehouseId?: string) => {
+    const qs = vanWarehouseId ? `?van_warehouse_id=${vanWarehouseId}` : '';
+    return api.get<DeliveryDocument>(`${basePath}generate-for-order/${orderId}/${qs}`);
+  },
 
   /** `POST` — batch create draft WZ for multiple confirmed orders (one round-trip). */
   generateForOrders: (orderIds: string[]) =>
@@ -103,6 +106,9 @@ export const deliveryService = {
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),
 
-  vanReconciliation: (warehouseId: string, data: VanReconciliationPayload) =>
-    api.post<VanReconciliationResult>(`/delivery/van-reconciliation/${warehouseId}/`, data),
+  vanReconciliation: (warehouseId: string, data: VanReconciliationPayload, routeId?: string) =>
+    api.post<VanReconciliationResult>(
+      `/delivery/van-reconciliation/${warehouseId}/${routeId ? `?route_id=${routeId}` : ''}`,
+      data,
+    ),
 };

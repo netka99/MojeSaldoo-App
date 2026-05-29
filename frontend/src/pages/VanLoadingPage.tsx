@@ -228,7 +228,7 @@ export function VanLoadingPage() {
 
     try {
       const doc = await vanLoading.mutateAsync(payload);
-      navigate(`/delivery/${doc.id}`, { replace: true, state: { fromVanLoading: true } });
+      navigate(`/delivery/${doc.id}/route`, { replace: true });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się załadować vana');
     }

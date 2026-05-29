@@ -18,6 +18,8 @@ export type OrderListParams = {
   delivery_date_before?: string;
   /** Delivered orders that have no invoice yet (django-filter). */
   without_invoice?: boolean;
+  /** Exclude orders already assigned to an active van route. */
+  exclude_routed?: boolean;
 };
 
 export const orderService = {

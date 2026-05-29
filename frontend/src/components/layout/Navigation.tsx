@@ -160,6 +160,28 @@ function IconSettingsOutline({ className }: { className?: string }) {
   );
 }
 
+function IconVanOutline({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 3h15v13H1z" />
+      <path d="M16 8l5 5-5 5" />
+      <circle cx="5.5" cy="18.5" r="1.5" />
+      <circle cx="18.5" cy="18.5" r="1.5" />
+    </svg>
+  );
+}
+
+function IconVanFilled({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <rect x="1" y="3" width="15" height="13" rx="1" />
+      <path d="M16 8l5 5-5 5V8z" />
+      <circle cx="5.5" cy="18.5" r="1.5" />
+      <circle cx="18.5" cy="18.5" r="1.5" />
+    </svg>
+  );
+}
+
 function IconSettingsFilled({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -242,6 +264,7 @@ const bottomNavBarClass = cn(
 /** Mobile-first glass bottom nav; sidebar stays visible from `md` up. */
 export function BottomNav() {
   const ordersEnabled = useModuleGuard('orders');
+  const deliveryEnabled = useModuleGuard('delivery');
   const invoicingEnabled = useModuleGuard('invoicing');
 
   return (
@@ -249,6 +272,9 @@ export function BottomNav() {
       <BottomNavItem to="/" end label="Pulpit" IconOutline={IconHomeOutline} IconFilled={IconHomeFilled} />
       {ordersEnabled ? (
         <BottomNavItem to="/orders" label="Sprzedaż" IconOutline={IconCartOutline} IconFilled={IconCartFilled} />
+      ) : null}
+      {deliveryEnabled ? (
+        <BottomNavItem to="/van-routes" label="Trasy" IconOutline={IconVanOutline} IconFilled={IconVanFilled} />
       ) : null}
       {invoicingEnabled ? (
         <BottomNavItem to="/invoices" label="Faktury" IconOutline={IconFileTextOutline} IconFilled={IconFileTextFilled} />

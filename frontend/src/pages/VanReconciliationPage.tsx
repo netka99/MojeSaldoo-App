@@ -1,28 +1,30 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
-import { useAuth } from '@/context/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
+import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { authStorage } from '@/services/api';
-import { warehouseService } from '@/services/warehouse.service';
-import { productService } from '@/services/product.service';
-import { useVanReconciliationMutation } from '@/query/use-delivery';
+import { useVanRouteQuery } from '@/query/use-van-routes';
+import { useDeliveryQuery, useVanWZListQuery, useVanReconciliationMutation } from '@/query/use-delivery';
+import { useStockSnapshotQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
-import type { Warehouse } from '@/types';
-import type { StockSnapshotItem } from '@/types';
 import type { VanReconciliationResult } from '@/types';
-import type { VanReconciliationPayload } from '@/types';
 
-// One row in the reconciliation table: snapshot data + the user's "actual count" input
+/* ─── Types ──────────────────────────────────────────────────────── */
+
+type Decision = 'return' | 'keep' | 'writeoff';
+
 type ReconciliationRow = {
   productId: string;
   productName: string;
-  sku: string | null;
   unit: string;
-  quantityExpected: number; // from stock snapshot
-  quantityActual: string; // user input (controlled, string)
+  // This route
+  loaded: number;       // from MM doc items
+  sold: number;         // from WZ docs
+  expectedThisRoute: number; // loaded - sold
+  // Van total (includes carry-over from previous routes)
+  totalVanStock: number;
+  carryOver: number;    // totalVanStock - expectedThisRoute (clamped to 0)
+  // User inputs
+  physicalCount: string;
+  decision: Decision;
 };
 
 function parseQty(s: string): number {
@@ -30,20 +32,9 @@ function parseQty(s: string): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
-function discrepancy(expected: number, actual: string): number {
-  return parseQty(actual) - expected;
-}
-
-function formatDiscrepancy(diff: number, unit: string): string {
-  if (diff === 0) return '—';
-  const sign = diff > 0 ? '+' : '';
-  return `${sign}${diff.toLocaleString('pl-PL', { maximumFractionDigits: 3 })} ${unit}`.trim();
-}
-
-function discrepancyClass(diff: number): string {
-  if (diff === 0) return 'text-muted-foreground';
-  if (diff < 0) return 'text-destructive font-semibold';
-  return 'text-amber-600 font-semibold';
+function fmt(n: number, unit = ''): string {
+  const s = Number.isInteger(n) ? String(n) : n.toFixed(2).replace('.', ',');
+  return unit ? `${s} ${unit}` : s;
 }
 
 function formatReconciledLabel(iso: string): string {
@@ -53,135 +44,167 @@ function formatReconciledLabel(iso: string): string {
   return d.toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+/* ─── Page ───────────────────────────────────────────────────────── */
+
 export function VanReconciliationPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const companyId = user?.current_company ?? '';
+  const [searchParams] = useSearchParams();
+
+  const urlWarehouseId = searchParams.get('warehouse_id') ?? '';
+  const urlRouteId = searchParams.get('route_id') ?? '';
 
   const reconcile = useVanReconciliationMutation();
 
-  // Phase: 'select-warehouse' | 'enter-counts' | 'result'
-  const [phase, setPhase] = useState<'select-warehouse' | 'enter-counts' | 'result'>('select-warehouse');
+  // Fetch route → to get mm_document id + date
+  const { data: route } = useVanRouteQuery(urlRouteId || undefined);
+  const mmDocId = route?.mm_document?.id;
+  const routeDate = route?.date ?? '';
 
-  // Step 1: which van warehouse to reconcile
-  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
-  const [reconciliationDate, setReconciliationDate] = useState<string>(
-    () => new Date().toISOString().slice(0, 10),
+  // Fetch MM document (what was loaded)
+  const { data: mmDoc } = useDeliveryQuery(mmDocId);
+
+  // Fetch WZ docs issued from this van on this date (what was sold)
+  const { data: vanWZDocs } = useVanWZListQuery(urlWarehouseId || undefined, routeDate);
+
+  // Current van stock snapshot
+  const { data: stockSnapshot, isLoading: snapshotLoading } = useStockSnapshotQuery(
+    urlWarehouseId || undefined,
   );
-  const [notes, setNotes] = useState<string>('');
 
-  // Step 2: rows populated from stock snapshot
-  const [rows, setRows] = useState<ReconciliationRow[]>([]);
-
-  // Validation error (shown below the form)
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // API submit error
+  // Result after submission
+  const [result, setResult] = useState<VanReconciliationResult | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Result from the API after successful reconciliation
-  const [result, setResult] = useState<VanReconciliationResult | null>(null);
+  /* ── Build rows ── */
+  const [rows, setRows] = useState<ReconciliationRow[]>([]);
+  const [initialised, setInitialised] = useState(false);
 
-  // Fetch mobile warehouses — only "mobile" type
-  const { data: mobileWarehousesData, isLoading: warehousesLoading } = useQuery({
-    queryKey: ['warehouses', 'mobile', companyId],
-    queryFn: () => warehouseService.fetchList({ warehouse_type: 'mobile', is_active: true, ordering: 'code' }),
-    enabled: Boolean(companyId),
-  });
-  const mobileWarehouses: Warehouse[] = mobileWarehousesData?.results ?? [];
-  const selectedWarehouseName =
-    mobileWarehouses.find((w) => w.id === selectedWarehouseId)?.name ?? '—';
-
-  // Fetch stock snapshot for selected warehouse — only when user confirmed Step 1
-  // We fetch this imperatively (manual trigger), so we use `enabled: false` and refetch on demand.
-  // Use a simple useQuery with `enabled` tied to `phase === 'enter-counts'`
-  const {
-    isLoading: snapshotLoading,
-    isError: snapshotError,
-    refetch: fetchSnapshot,
-  } = useQuery({
-    queryKey: ['stock-snapshot', selectedWarehouseId],
-    queryFn: () => productService.fetchStockSnapshot(selectedWarehouseId),
-    enabled: false, // manual only
-  });
-
-  function handleSelectWarehouse() {
-    if (!selectedWarehouseId) {
-      setFormError('Wybierz magazyn (van)');
-      return;
+  const stockByProductId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of stockSnapshot?.items ?? []) {
+      m.set(i.product_id, parseFloat(i.quantity_available) || 0);
     }
-    if (!reconciliationDate) {
-      setFormError('Podaj datę rozliczenia');
-      return;
-    }
-    setFormError(null);
-    setPhase('enter-counts');
+    return m;
+  }, [stockSnapshot]);
 
-    // Fetch stock snapshot for the selected warehouse
-    void fetchSnapshot().then((res) => {
-      const items: StockSnapshotItem[] = res.data?.items ?? [];
-
-      if (items.length === 0) {
-        // Empty van — pre-fill rows as empty, show informational state
-        setRows([]);
-      } else {
-        // Map snapshot to editable rows — actual count defaults to expected (zero discrepancy)
-        setRows(
-          items.map((item) => ({
-            productId: item.product_id,
-            productName: item.product_name,
-            sku: item.sku,
-            unit: item.unit,
-            quantityExpected: parseFloat(item.quantity_available),
-            quantityActual: item.quantity_available, // default = expected
-          })),
-        );
+  // Sum quantities sold per product across all WZ docs
+  const soldByProductId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const wz of vanWZDocs ?? []) {
+      if (wz.status === 'cancelled') continue;
+      for (const item of wz.items ?? []) {
+        const prev = m.get(item.product_id) ?? 0;
+        // quantity_actual if delivered, else quantity_planned
+        const qty = item.quantity_actual != null
+          ? parseFloat(String(item.quantity_actual))
+          : parseFloat(String(item.quantity_planned));
+        m.set(item.product_id, prev + (qty || 0));
       }
-    });
-  }
+    }
+    return m;
+  }, [vanWZDocs]);
 
-  function updateRowActual(productId: string, value: string) {
+  useEffect(() => {
+    if (initialised) return;
+    if (snapshotLoading) return;
+    if (!stockSnapshot) return;
+
+    // All products currently in the van
+    const allProducts = new Map<string, { name: string; unit: string }>();
+    for (const i of stockSnapshot.items ?? []) {
+      if ((parseFloat(i.quantity_available) || 0) > 0) {
+        allProducts.set(i.product_id, { name: i.product_name, unit: i.unit });
+      }
+    }
+    // Also include products that were loaded (they may already be sold = 0 in van)
+    for (const item of mmDoc?.items ?? []) {
+      if (!allProducts.has(item.product_id)) {
+        allProducts.set(item.product_id, {
+          name: item.product_name ?? item.product_id,
+          unit: '',
+        });
+      }
+    }
+
+    if (allProducts.size === 0) {
+      setRows([]);
+      setInitialised(true);
+      return;
+    }
+
+    // Loaded quantities from MM doc
+    const loadedByProductId = new Map<string, number>();
+    for (const item of mmDoc?.items ?? []) {
+      loadedByProductId.set(item.product_id, parseFloat(String(item.quantity_planned)) || 0);
+    }
+
+    const built: ReconciliationRow[] = [];
+    for (const [productId, { name, unit }] of allProducts) {
+      const loaded = loadedByProductId.get(productId) ?? 0;
+      const sold = soldByProductId.get(productId) ?? 0;
+      const expectedThisRoute = Math.max(0, loaded - sold);
+      const totalVanStock = stockByProductId.get(productId) ?? 0;
+      const carryOver = Math.max(0, totalVanStock - expectedThisRoute);
+
+      built.push({
+        productId,
+        productName: name,
+        unit,
+        loaded,
+        sold,
+        expectedThisRoute,
+        totalVanStock,
+        carryOver,
+        physicalCount: String(expectedThisRoute), // default: assume all this-route stock returns
+        decision: carryOver > 0 ? 'keep' : 'return', // carry-over defaults to keep
+      });
+    }
+
+    built.sort((a, b) => a.productName.localeCompare(b.productName, 'pl'));
+    setRows(built);
+    setInitialised(true);
+  }, [initialised, snapshotLoading, stockSnapshot, mmDoc, soldByProductId, stockByProductId]);
+
+  function updateRow(productId: string, field: 'physicalCount' | 'decision', value: string) {
     setRows((prev) =>
-      prev.map((r) => (r.productId === productId ? { ...r, quantityActual: value } : r)),
+      prev.map((r) => (r.productId === productId ? { ...r, [field]: value } : r)),
     );
   }
 
-  function goBackToWarehouseSelect() {
-    setPhase('select-warehouse');
-    setRows([]);
-    setFormError(null);
-    setSubmitError(null);
-  }
-
-  // Computed — rows with discrepancies (actual ≠ expected)
-  const rowsWithDiscrepancy = rows.filter(
-    (r) => Math.abs(discrepancy(r.quantityExpected, r.quantityActual)) > 0.0001,
-  );
-  const hasAnyDiscrepancy = rowsWithDiscrepancy.length > 0;
-
   async function onSubmit() {
-    // Validate all actual counts are valid numbers
-    for (const r of rows) {
-      const q = parseQty(r.quantityActual);
+    setSubmitError(null);
+
+    const returning = rows.filter((r) => r.decision === 'return');
+    const writingOff = rows.filter((r) => r.decision === 'writeoff');
+
+    for (const r of returning) {
+      const q = parseQty(r.physicalCount);
       if (Number.isNaN(q) || q < 0) {
         setSubmitError(`Nieprawidłowa ilość dla: ${r.productName}`);
         return;
       }
     }
-    setSubmitError(null);
 
-    const payload: VanReconciliationPayload = {
-      items: rows.map((r) => ({
+    // Build payload: 'return' rows use physicalCount, 'writeoff' rows use 0 (→ DAMAGE movement)
+    const items = [
+      ...returning.map((r) => ({
         product_id: r.productId,
-        quantity_actual_remaining: parseQty(r.quantityActual).toFixed(3),
+        quantity_actual_remaining: parseQty(r.physicalCount).toFixed(3),
       })),
-    };
+      ...writingOff.map((r) => ({
+        product_id: r.productId,
+        quantity_actual_remaining: '0.000',
+      })),
+    ];
 
     try {
-      const res = await reconcile.mutateAsync({ warehouseId: selectedWarehouseId, data: payload });
+      const res = await reconcile.mutateAsync({
+        warehouseId: urlWarehouseId,
+        data: { items },
+        routeId: urlRouteId || undefined,
+      });
       setResult(res);
-      setPhase('result');
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się rozliczyć vana');
     }
@@ -191,371 +214,329 @@ export function VanReconciliationPage() {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
+  /* ── Result screen ── */
+  if (result) {
+    const kept = rows.filter((r) => r.decision === 'keep');
+    const writtenOff = rows.filter((r) => r.decision === 'writeoff');
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-6 space-y-4">
+        <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border/40 bg-background/95 px-0 py-3 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2}>
+              <path d="M19 12H5m0 0l7 7M5 12l7-7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <h1 className="text-[17px] font-semibold tracking-tight">Rozliczenie zakończone</h1>
+        </div>
+
+        {/* MM-P summary */}
+        <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 space-y-1">
+          <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-400">Zwrot do magazynu głównego</p>
+          {result.mm_return_number ? (
+            <p className="text-sm text-emerald-700 dark:text-emerald-500">
+              Dokument MM-P: <span className="font-bold">{result.mm_return_number}</span>
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Brak produktów do zwrotu</p>
+          )}
+          <p className="text-[12px] text-muted-foreground">{formatReconciledLabel(result.reconciled_at)}</p>
+        </div>
+
+        {/* Kept in van */}
+        {kept.length > 0 && (
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
+            <p className="mb-2 text-sm font-semibold text-amber-800 dark:text-amber-400">
+              Zostaje w vanie na kolejny dzień
+            </p>
+            {kept.map((r) => (
+              <div key={r.productId} className="flex justify-between text-sm text-amber-700 dark:text-amber-500">
+                <span>{r.productName}</span>
+                <span className="tabular-nums font-semibold">{fmt(r.totalVanStock, r.unit)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Discrepancies */}
+        {result.discrepancies.length > 0 && (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3">
+            <p className="mb-2 text-sm font-semibold text-destructive">
+              Różnice w stanie ({result.discrepancies.length})
+            </p>
+            {result.discrepancies.map((d) => {
+              const delta = parseFloat(d.quantity_delta);
+              return (
+                <div key={d.product_id} className="flex justify-between text-sm">
+                  <span className="text-foreground">{d.product_name}</span>
+                  <span className={cn('tabular-nums font-semibold', delta < 0 ? 'text-destructive' : 'text-amber-600')}>
+                    {delta > 0 ? '+' : ''}{delta.toLocaleString('pl-PL', { maximumFractionDigits: 3 })}
+                    {' '}
+                    <span className="text-xs font-normal text-muted-foreground">
+                      ({d.discrepancy_type === 'damage' ? 'niedobór' : 'nadwyżka'})
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Written off */}
+        {writtenOff.length > 0 && (
+          <div className="rounded-2xl bg-destructive/5 border border-destructive/30 px-4 py-3">
+            <p className="mb-2 text-sm font-semibold text-destructive">
+              Odpisane (strata)
+            </p>
+            {writtenOff.map((r) => (
+              <div key={r.productId} className="flex justify-between text-sm text-destructive">
+                <span>{r.productName}</span>
+                <span className="tabular-nums font-semibold">{fmt(r.totalVanStock, r.unit)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {result.discrepancies.length === 0 && !kept.length && !writtenOff.length && (
+          <p className="text-center text-sm text-muted-foreground py-4">
+            Stan vana zgadzał się z systemem — brak różnic.
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="w-full rounded-xl py-3 text-base font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          {urlRouteId ? 'Wróć do tras' : 'Wróć do dokumentów'}
+        </button>
+      </div>
+    );
+  }
+
+  /* ── Enter counts screen ── */
+  const returningCount = rows.filter((r) => r.decision === 'return').length;
+  const writingOffCount = rows.filter((r) => r.decision === 'writeoff').length;
+
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
-      {/* HEADER */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => navigate('/delivery')}>
-          ← Dokumenty dostawy
-        </Button>
-        <h1 className="text-[1.5rem] font-semibold tracking-tight">Rozlicz Van</h1>
+    <div className="mx-auto max-w-3xl px-4 pt-6 pb-[calc(76px+83px+env(safe-area-inset-bottom))] md:pb-[calc(76px+env(safe-area-inset-bottom))] space-y-4">
+      {/* Header */}
+      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border/40 bg-background/95 px-0 py-3 backdrop-blur">
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2}>
+            <path d="M19 12H5m0 0l7 7M5 12l7-7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <div className="flex-1">
+          <h1 className="text-[17px] font-semibold tracking-tight">Rozlicz Van</h1>
+          {route && (
+            <p className="text-[12px] text-muted-foreground">
+              {route.van_name || route.van_warehouse_code} · {route.date}
+            </p>
+          )}
+        </div>
       </div>
 
-      {/* ERROR BANNER */}
-      {(formError || submitError) && (
-        <p
-          className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-          role="alert"
-        >
-          {formError || submitError}
+      {submitError && (
+        <p className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
+          {submitError}
         </p>
       )}
 
-      {/* PHASE 1, 2, 3 rendered below based on phase state */}
-
-      {phase === 'select-warehouse' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Krok 1 — Wybierz van do rozliczenia</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Wybierz mobilny magazyn (van), który chcesz rozliczyć. System pokaże aktualny stan
-              magazynu vana — wpisz ile faktycznie zostało na vannie.
-            </p>
-
-            {/* VAN WAREHOUSE SELECTOR */}
-            <div>
-              <label htmlFor="van-warehouse-select" className="mb-1 block text-sm font-medium">
-                Magazyn (van)
-              </label>
-              {warehousesLoading ? (
-                <p className="text-sm text-muted-foreground">Ładowanie magazynów…</p>
-              ) : (
-                <select
-                  id="van-warehouse-select"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={selectedWarehouseId}
-                  onChange={(e) => setSelectedWarehouseId(e.target.value)}
-                >
-                  <option value="">— wybierz —</option>
-                  {mobileWarehouses.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.code} — {w.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {!warehousesLoading && mobileWarehouses.length === 0 && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Brak mobilnych magazynów (typ: mobile). Utwórz van w ustawieniach magazynów.
-                </p>
-              )}
-            </div>
-
-            {/* RECONCILIATION DATE */}
-            <Input
-              id="reconciliation-date"
-              label="Data rozliczenia"
-              type="date"
-              value={reconciliationDate}
-              onChange={(e) => setReconciliationDate(e.target.value)}
-              required
-            />
-
-            {/* NOTES */}
-            <div>
-              <label htmlFor="reconciliation-notes" className="mb-1 block text-sm font-medium">
-                Notatki (opcjonalnie)
-              </label>
-              <textarea
-                id="reconciliation-notes"
-                className="min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                placeholder="np. koniec trasy, uwagi do niedoborów…"
-              />
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <Button type="button" onClick={handleSelectWarehouse}>
-                Dalej
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      {snapshotLoading && (
+        <div className="flex items-center justify-center py-16">
+          <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        </div>
       )}
 
-      {phase === 'enter-counts' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Krok 2 — Wpisz stan faktyczny</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Dla każdego produktu wpisz ile faktycznie jest na vannie. Różnice zostaną zaznaczone na
-              czerwono (niedobór) lub żółto (nadwyżka). Produkty bez różnicy nie generują ruchów
-              magazynowych.
-            </p>
-
-            {/* LOADING STATE */}
-            {snapshotLoading && (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                Ładowanie stanu magazynu vana…
-              </p>
-            )}
-
-            {/* ERROR STATE */}
-            {snapshotError && !snapshotLoading && (
-              <p
-                className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-                role="alert"
-              >
-                Nie udało się załadować stanu magazynu. Sprawdź połączenie i spróbuj ponownie.
-              </p>
-            )}
-
-            {/* EMPTY VAN STATE */}
-            {!snapshotLoading && !snapshotError && rows.length === 0 && (
-              <div className="rounded-md bg-muted/40 px-4 py-6 text-center">
-                <p className="text-sm font-medium text-foreground">Van jest pusty</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Ten magazyn nie ma żadnych produktów w stanie dostępnym. Nie ma czego rozliczać.
-                </p>
-              </div>
-            )}
-
-            {/* RECONCILIATION TABLE */}
-            {!snapshotLoading && rows.length > 0 && (
-              <>
-                <div className="overflow-x-auto rounded-md border border-border">
-                  <table className="w-full min-w-[520px] text-left text-sm">
-                    <thead className="bg-muted/50">
-                      <tr>
-                        <th className="px-3 py-2 font-medium">Produkt</th>
-                        <th className="px-3 py-2 font-medium">SKU</th>
-                        <th className="px-3 py-2 text-right font-medium">Stan wg systemu</th>
-                        <th className="px-3 py-2 text-right font-medium">J.m.</th>
-                        <th className="w-36 px-3 py-2 font-medium">Stan faktyczny</th>
-                        <th className="px-3 py-2 text-right font-medium">Różnica</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((r) => {
-                        const diff = discrepancy(r.quantityExpected, r.quantityActual);
-                        const hasDiff = Math.abs(diff) > 0.0001;
-                        return (
-                          <tr
-                            key={r.productId}
-                            className={cn(
-                              'border-t border-border',
-                              hasDiff && diff < 0 && 'bg-destructive/5',
-                              hasDiff && diff > 0 && 'bg-amber-50',
-                            )}
-                          >
-                            <td className="px-3 py-2 font-medium text-foreground">
-                              {r.productName}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
-                              {r.sku || '—'}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-sm text-muted-foreground">
-                              {r.quantityExpected.toLocaleString('pl-PL', {
-                                maximumFractionDigits: 3,
-                              })}
-                            </td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.unit || '—'}</td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className={cn(
-                                  'h-9 w-28 rounded-md border bg-background px-2 text-right text-sm',
-                                  hasDiff && diff < 0
-                                    ? 'border-destructive text-destructive font-semibold'
-                                    : hasDiff && diff > 0
-                                      ? 'border-amber-400 text-amber-700 font-semibold'
-                                      : 'border-input text-foreground',
-                                )}
-                                value={r.quantityActual}
-                                onChange={(e) => updateRowActual(r.productId, e.target.value)}
-                                aria-label={`Ilość faktyczna: ${r.productName}`}
-                              />
-                            </td>
-                            <td
-                              className={cn(
-                                'px-3 py-2 text-right font-mono text-sm',
-                                discrepancyClass(diff),
-                              )}
-                            >
-                              {formatDiscrepancy(diff, r.unit)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-border">
-                        <td colSpan={5} className="px-3 py-2 text-sm font-medium">
-                          {hasAnyDiscrepancy ? (
-                            <span className="text-destructive">
-                              Wykryto różnice w {rowsWithDiscrepancy.length} pozycjach
-                            </span>
-                          ) : (
-                            <span className="text-green-700">Brak różnic — wszystko się zgadza</span>
-                          )}
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-
-                {/* DISCREPANCY LEGEND */}
-                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block h-3 w-3 rounded bg-destructive/20" />
-                    Niedobór (szkody / zgubione)
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block h-3 w-3 rounded bg-amber-100" />
-                    Nadwyżka (korekta)
-                  </span>
-                </div>
-              </>
-            )}
-
-            <div className="flex flex-wrap justify-between gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={goBackToWarehouseSelect}>
-                Wstecz
-              </Button>
-              {rows.length > 0 && (
-                <Button
-                  type="button"
-                  onClick={() => void onSubmit()}
-                  disabled={reconcile.isPending}
-                >
-                  {reconcile.isPending ? 'Rozliczanie…' : 'Zatwierdź rozliczenie'}
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      {!snapshotLoading && rows.length === 0 && (
+        <div className="rounded-2xl bg-surface-card px-4 py-10 text-center shadow-soft">
+          <p className="font-semibold text-foreground">Van jest pusty</p>
+          <p className="mt-1 text-sm text-muted-foreground">Brak towaru do rozliczenia.</p>
+        </div>
       )}
 
-      {phase === 'result' && result !== null && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Rozliczenie zakończone</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1 rounded-md bg-muted/40 px-4 py-3 text-sm">
-              <p>
-                <span className="text-muted-foreground">Magazyn: </span>
-                <span className="font-semibold">{selectedWarehouseName}</span>
-              </p>
-              <p>
-                <span className="text-muted-foreground">Rozliczono: </span>
-                <span className="font-medium">{formatReconciledLabel(result.reconciled_at)}</span>
-              </p>
-              {result.discrepancies.length > 0 ? (
-                <p className="text-destructive font-medium">
-                  Zarejestrowano {result.discrepancies.length}{' '}
-                  {result.discrepancies.length === 1 ? 'różnicę' : 'różnic'} w stanach
-                </p>
-              ) : (
-                <p className="text-green-700 font-medium">
-                  Brak różnic — stan vana zgadzał się z systemem
-                </p>
-              )}
-            </div>
+      {!snapshotLoading && rows.length > 0 && (
+        <>
+          {/* Legend */}
+          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground px-1">
+            <span className="flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-primary/60 inline-block" />
+              Z tej trasy
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-400 inline-block" />
+              Z poprzedniej trasy
+            </span>
+          </div>
 
-            {/* RESULT TABLE — only show if there were discrepancies */}
-            {result.discrepancies.length > 0 && (
-              <div className="overflow-x-auto rounded-md border border-border">
-                <table className="w-full min-w-[480px] text-left text-sm">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">Produkt</th>
-                      <th className="px-3 py-2 text-right font-medium">Oczekiwano</th>
-                      <th className="px-3 py-2 text-right font-medium">Faktycznie</th>
-                      <th className="px-3 py-2 text-right font-medium">Różnica</th>
-                      <th className="px-3 py-2 font-medium">Typ ruchu</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.discrepancies.map((item) => {
-                      const diff = parseFloat(item.quantity_delta);
-                      return (
-                        <tr
-                          key={item.product_id}
-                          className={cn(
-                            'border-t border-border',
-                            diff < 0 && 'bg-destructive/5',
-                            diff > 0 && 'bg-amber-50',
-                          )}
-                        >
-                          <td className="px-3 py-2 font-medium">{item.product_name}</td>
-                          <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
-                            {parseFloat(item.quantity_expected).toLocaleString('pl-PL', {
-                              maximumFractionDigits: 3,
-                            })}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-xs">
-                            {parseFloat(item.quantity_actual).toLocaleString('pl-PL', {
-                              maximumFractionDigits: 3,
-                            })}
-                          </td>
-                          <td
-                            className={cn(
-                              'px-3 py-2 text-right font-mono text-sm',
-                              discrepancyClass(diff),
-                            )}
-                          >
-                            {formatDiscrepancy(diff, '')}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={cn(
-                                'rounded-full px-2 py-0.5 text-xs font-medium',
-                                item.discrepancy_type === 'damage'
-                                  ? 'bg-destructive/10 text-destructive'
-                                  : 'bg-amber-100 text-amber-800',
-                              )}
-                            >
-                              {item.discrepancy_type === 'damage' ? 'Szkoda/niedobór' : 'Korekta'}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+          {/* Rows */}
+          <div className="flex flex-col gap-3">
+            {rows.map((r) => {
+              const physical = parseQty(r.physicalCount);
+              const diff = physical - (r.decision === 'return' ? r.expectedThisRoute : 0);
+              const hasDiff = r.decision === 'return' && Math.abs(physical - r.expectedThisRoute) > 0.001;
+
+              return (
+                <div
+                  key={r.productId}
+                  className={cn(
+                    'rounded-2xl bg-surface-card px-4 py-3 shadow-soft',
+                    (r.decision === 'keep' || r.decision === 'writeoff') && 'opacity-70',
+                  )}
+                >
+                  {/* Product name + carry-over badge */}
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="font-semibold text-foreground">{r.productName}</span>
+                    {r.carryOver > 0 && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                        +{fmt(r.carryOver, r.unit)} z wcześniej
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Stats row */}
+                  <div className="mb-3 grid grid-cols-3 gap-2 text-[11px]">
+                    <div>
+                      <p className="text-muted-foreground">Załadowano</p>
+                      <p className="font-semibold tabular-nums text-foreground">{fmt(r.loaded, r.unit)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Sprzedano</p>
+                      <p className="font-semibold tabular-nums text-foreground">{fmt(r.sold, r.unit)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Oczekiwane</p>
+                      <p className="font-semibold tabular-nums text-foreground">{fmt(r.expectedThisRoute, r.unit)}</p>
+                    </div>
+                  </div>
+
+                  {/* Decision toggle */}
+                  <div className="mb-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateRow(r.productId, 'decision', 'return')}
+                      className={cn(
+                        'flex-1 rounded-xl py-2 text-[12px] font-semibold transition-colors',
+                        r.decision === 'return'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                      )}
+                    >
+                      Zwrot do MG
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateRow(r.productId, 'decision', 'keep')}
+                      className={cn(
+                        'flex-1 rounded-xl py-2 text-[12px] font-semibold transition-colors',
+                        r.decision === 'keep'
+                          ? 'bg-amber-400 text-white'
+                          : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                      )}
+                    >
+                      Zostaje w vanie
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateRow(r.productId, 'decision', 'writeoff')}
+                      className={cn(
+                        'flex-1 rounded-xl py-2 text-[12px] font-semibold transition-colors',
+                        r.decision === 'writeoff'
+                          ? 'bg-destructive text-destructive-foreground'
+                          : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                      )}
+                    >
+                      Odpisz
+                    </button>
+                  </div>
+
+                  {/* Physical count input — only when returning */}
+                  {r.decision === 'return' && (
+                    <div className="flex items-center gap-3">
+                      <label className="text-[12px] text-muted-foreground shrink-0">Stan faktyczny</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={r.physicalCount}
+                        onChange={(e) => updateRow(r.productId, 'physicalCount', e.target.value)}
+                        className={cn(
+                          'h-9 w-28 rounded-lg border bg-background px-2 text-right text-sm font-semibold',
+                          hasDiff && physical < r.expectedThisRoute
+                            ? 'border-destructive text-destructive'
+                            : hasDiff && physical > r.expectedThisRoute
+                              ? 'border-amber-400 text-amber-700'
+                              : 'border-input text-foreground',
+                        )}
+                        aria-label={`Stan faktyczny ${r.productName}`}
+                      />
+                      <span className="text-[12px] text-muted-foreground">{r.unit}</span>
+                      {hasDiff && (
+                        <span className={cn(
+                          'ml-auto text-[12px] font-semibold tabular-nums',
+                          diff < 0 ? 'text-destructive' : 'text-amber-600',
+                        )}>
+                          {diff > 0 ? '+' : ''}{fmt(diff, r.unit)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {r.decision === 'keep' && (
+                    <p className="text-[12px] text-amber-600 dark:text-amber-400">
+                      {fmt(r.totalVanStock, r.unit)} pozostaje w vanie — nie generuje MM-P
+                    </p>
+                  )}
+
+                  {r.decision === 'writeoff' && (
+                    <p className="text-[12px] text-destructive dark:text-destructive">
+                      {fmt(r.totalVanStock, r.unit)} zostanie odpisane — stratna (DAMAGE)
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {submitError && (
+            <p className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
+              {submitError}
+            </p>
+          )}
+        </>
+      )}
+
+      {/* Bottom bar */}
+      {!snapshotLoading && (
+        <div className="fixed left-0 right-0 bottom-[83px] md:bottom-0 z-30 border-t border-border/40 bg-background/95 px-4 pb-3 pt-3 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => void onSubmit()}
+            disabled={reconcile.isPending || rows.length === 0}
+            className={cn(
+              'w-full rounded-xl py-3 text-base font-semibold transition-colors',
+              !reconcile.isPending && rows.length > 0
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'bg-muted text-muted-foreground cursor-not-allowed',
             )}
-
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button variant="outline" onClick={() => navigate('/delivery')}>
-                Wróć do listy dokumentów
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  // Reset for a new reconciliation
-                  setPhase('select-warehouse');
-                  setSelectedWarehouseId('');
-                  setRows([]);
-                  setResult(null);
-                  setFormError(null);
-                  setSubmitError(null);
-                }}
-              >
-                Rozlicz kolejny van
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          >
+            {reconcile.isPending
+              ? 'Rozliczanie…'
+              : (() => {
+                  const parts = [];
+                  if (returningCount > 0) parts.push(`zwróć ${returningCount} poz. do MG`);
+                  if (writingOffCount > 0) parts.push(`odpisz ${writingOffCount} poz.`);
+                  return parts.length > 0 ? `Zatwierdź — ${parts.join(', ')}` : 'Zatwierdź — wszystko zostaje w vanie';
+                })()}
+          </button>
+        </div>
       )}
     </div>
   );

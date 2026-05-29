@@ -134,7 +134,7 @@ export function InvoiceDetailPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={() => navigate('/invoices')}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate(-1)}>
           ← Lista faktur
         </Button>
         <div className="flex flex-wrap items-center gap-2">

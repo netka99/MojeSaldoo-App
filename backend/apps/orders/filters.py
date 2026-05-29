@@ -15,6 +15,7 @@ class OrderFilter(django_filters.FilterSet):
         lookup_expr="lte",
     )
     without_invoice = django_filters.BooleanFilter(method="filter_without_invoice")
+    exclude_routed = django_filters.BooleanFilter(method="filter_exclude_routed")
 
     class Meta:
         model = Order
@@ -30,3 +31,17 @@ class OrderFilter(django_filters.FilterSet):
         return queryset.filter(
             status__in=(Order.STATUS_CONFIRMED, Order.STATUS_DELIVERED)
         ).exclude(id__in=invoiced_ids)
+
+    def filter_exclude_routed(self, queryset, name, value):
+        """Exclude orders already assigned to an active (non-closed) van route."""
+        if not value:
+            return queryset
+        from apps.van_routes.models import VanRoute
+
+        routed_order_ids = (
+            Order.objects.filter(
+                van_routes__status__in=VanRoute.ACTIVE_STATUSES,
+            )
+            .values_list("id", flat=True)
+        )
+        return queryset.exclude(id__in=routed_order_ids)

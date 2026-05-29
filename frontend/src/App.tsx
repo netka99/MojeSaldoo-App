@@ -65,11 +65,20 @@ const DeliveryDocumentsPage = lazy(() =>
 const DeliveryCreatePage = lazy(() =>
   import('./pages/DeliveryCreatePage').then((m) => ({ default: m.DeliveryCreatePage })),
 );
-const VanLoadingPage = lazy(() =>
-  import('./pages/VanLoadingPage').then((m) => ({ default: m.VanLoadingPage })),
-);
 const VanReconciliationPage = lazy(() =>
   import('./pages/VanReconciliationPage').then((m) => ({ default: m.VanReconciliationPage })),
+);
+const VanRoutesPage = lazy(() =>
+  import('./pages/VanRoutesPage').then((m) => ({ default: m.VanRoutesPage })),
+);
+const NewVanRoutePage = lazy(() =>
+  import('./pages/NewVanRoutePage').then((m) => ({ default: m.NewVanRoutePage })),
+);
+const VanRouteLoadPage = lazy(() =>
+  import('./pages/VanRouteLoadPage').then((m) => ({ default: m.VanRouteLoadPage })),
+);
+const VanRouteDashboardPage = lazy(() =>
+  import('./pages/VanRouteDashboardPage').then((m) => ({ default: m.VanRouteDashboardPage })),
 );
 const DeliveryDocumentDetailPage = lazy(() =>
   import('./pages/DeliveryDocumentDetailPage').then((m) => ({ default: m.DeliveryDocumentDetailPage })),
@@ -244,18 +253,42 @@ function App() {
                   }
                 />
                 <Route
-                  path="/delivery/van-loading"
-                  element={
-                    <ModuleRouteGate module="delivery">
-                      <VanLoadingPage />
-                    </ModuleRouteGate>
-                  }
-                />
-                <Route
                   path="/delivery/van-reconciliation"
                   element={
                     <ModuleRouteGate module="delivery">
                       <VanReconciliationPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/van-routes"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <VanRoutesPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/van-routes/new"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <NewVanRoutePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/van-routes/:routeId/load"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <VanRouteLoadPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/van-routes/:routeId"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <VanRouteDashboardPage />
                     </ModuleRouteGate>
                   }
                 />

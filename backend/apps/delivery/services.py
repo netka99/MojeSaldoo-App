@@ -283,11 +283,23 @@ def apply_van_reconciliation(
     user,
     van_warehouse: Warehouse,
     items: list[dict],
+    main_warehouse: Warehouse | None = None,
+    route=None,
 ) -> dict:
     """
-    End-of-day van count: compare physical ``quantity_actual_remaining`` to system total
-    on the mobile warehouse (``quantity_available`` + ``quantity_reserved``). Writes
-    movements: ``damage`` when actual < expected, ``adjustment`` when actual > expected.
+    Route closure reconciliation — proper document trail per Polish accounting rules:
+
+    1. MM-P  (van → MG): created for every product with ``quantity_actual_remaining > 0``.
+               Moves physical returns back to the main warehouse.
+    2. DAMAGE movement: for each product where physical count < system remaining
+               (shortage — loss, damage, theft).
+    3. ADJUSTMENT movement: for each product where physical count > system remaining
+               (overage — should be rare).
+    4. Van stock zeroed out.
+
+    ``main_warehouse``: MG that receives the return MM-P. Falls back to the first active
+    main warehouse for the company if not supplied.
+    ``route``: optional VanRoute — linked to the MM-P document's notes for traceability.
     """
     if van_warehouse.company_id != company_id:
         raise ValidationError("Warehouse must belong to your company.")
@@ -296,10 +308,19 @@ def apply_van_reconciliation(
             {"van_warehouse_id": "Warehouse must be a mobile (van) warehouse."}
         )
 
+    # Resolve main warehouse for MM-P
+    if main_warehouse is None:
+        main_warehouse = active_main_warehouse_for_company(company_id)
+    if main_warehouse is None:
+        raise ValidationError(
+            {"main_warehouse": "No active main warehouse found. Cannot create MM-P return document."}
+        )
+
     if not items:
         return {
             "van_warehouse_id": str(van_warehouse.id),
             "reconciliation_id": None,
+            "mm_return_number": None,
             "reconciled_at": timezone.now().isoformat(),
             "discrepancies": [],
             "items_processed": 0,
@@ -307,37 +328,31 @@ def apply_van_reconciliation(
 
     product_ids = [row["product_id"] for row in items]
     if len(product_ids) != len(set(product_ids)):
-        raise ValidationError(
-            {"items": "Duplicate product_id in items is not allowed."}
-        )
+        raise ValidationError({"items": "Duplicate product_id in items is not allowed."})
 
     run_id = uuid.uuid4()
     reconciled_at = timezone.now()
     discrepancies: list[dict] = []
+    mm_return_doc = None
 
     with transaction.atomic():
         products = {
             str(p.id): p
-            for p in Product.objects.filter(
-                company_id=company_id,
-                id__in=product_ids,
-            )
+            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
         }
         missing = [str(pid) for pid in product_ids if str(pid) not in products]
         if missing:
-            raise ValidationError(
-                {"items": f"Unknown or invalid product_id(s): {missing}."}
-            )
+            raise ValidationError({"items": f"Unknown or invalid product_id(s): {missing}."})
 
         sorted_rows = sorted(items, key=lambda r: str(r["product_id"]))
 
+        # Collect van stock and compute per-product plan
+        van_stocks: dict[str, ProductStock] = {}
         for row in sorted_rows:
-            product = products[str(row["product_id"])]
-            P = row["quantity_actual_remaining"]
-
+            pid = str(row["product_id"])
             st, _ = ProductStock.objects.select_for_update().get_or_create(
                 company_id=company_id,
-                product_id=product.id,
+                product_id=row["product_id"],
                 warehouse_id=van_warehouse.id,
                 defaults={
                     "quantity_available": Decimal("0"),
@@ -345,57 +360,177 @@ def apply_van_reconciliation(
                     "quantity_total": Decimal("0"),
                 },
             )
+            van_stocks[pid] = st
 
+        # ── 1. Create MM-P document (van → MG) for physical returns ──────────
+        return_lines = [
+            row for row in sorted_rows
+            if row["quantity_actual_remaining"] > Decimal("0")
+        ]
+
+        route_note = f" (trasa {route.id})" if route else ""
+        mm_return_doc = DeliveryDocument.objects.create(
+            company_id=company_id,
+            user=user,
+            document_type=DeliveryDocument.DOC_TYPE_MM,
+            issue_date=timezone.localdate(),
+            from_warehouse=van_warehouse,
+            to_warehouse=main_warehouse,
+            driver_name=route.driver_name if route else "",
+            notes=f"MM-P — zwrot towaru z vana do magazynu{route_note}",
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+
+        for row in return_lines:
+            pid = str(row["product_id"])
+            DeliveryItem.objects.create(
+                delivery_document=mm_return_doc,
+                product_id=row["product_id"],
+                quantity_planned=row["quantity_actual_remaining"],
+                quantity_actual=row["quantity_actual_remaining"],
+            )
+
+        # ── 2. Process each product — discrepancies + stock movements ─────────
+        for row in sorted_rows:
+            pid = str(row["product_id"])
+            product = products[pid]
+            P = row["quantity_actual_remaining"]   # quantity returned to MG
+            W_raw = row.get("quantity_writeoff")   # None = legacy mode
+            explicit_mode = W_raw is not None      # True = caller specified exact split
+            W = W_raw if W_raw is not None else Decimal("0")
+            st = van_stocks[pid]
             A = st.quantity_available
-            R = st.quantity_reserved
-            T = A + R
+            T = A + st.quantity_reserved            # total system stock on van
 
-            if P == T:
-                continue
+            # ── a. MM-P return: move P units van → MG ────────────────────────
+            if P > Decimal("0"):
+                qty_before_van = st.quantity_available
+                st.quantity_available = max(Decimal("0"), st.quantity_available - P)
+                st.save(update_fields=["quantity_available"])
+                StockMovement.objects.create(
+                    company_id=company_id,
+                    product_id=product.id,
+                    warehouse_id=van_warehouse.id,
+                    user=user,
+                    movement_type=StockMovement.MovementType.TRANSFER,
+                    quantity=-P,
+                    quantity_before=qty_before_van,
+                    quantity_after=st.quantity_available,
+                    reference_type="mm_return",
+                    reference_id=mm_return_doc.id,
+                    notes="MM-P van → MG",
+                    created_by=user,
+                )
+                # Add to MG
+                st_main, _ = ProductStock.objects.select_for_update().get_or_create(
+                    company_id=company_id,
+                    product_id=product.id,
+                    warehouse_id=main_warehouse.id,
+                    defaults={
+                        "quantity_available": Decimal("0"),
+                        "quantity_reserved": Decimal("0"),
+                        "quantity_total": Decimal("0"),
+                    },
+                )
+                qty_before_main = st_main.quantity_available
+                st_main.quantity_available += P
+                st_main.save(update_fields=["quantity_available"])
+                StockMovement.objects.create(
+                    company_id=company_id,
+                    product_id=product.id,
+                    warehouse_id=main_warehouse.id,
+                    user=user,
+                    movement_type=StockMovement.MovementType.TRANSFER,
+                    quantity=P,
+                    quantity_before=qty_before_main,
+                    quantity_after=st_main.quantity_available,
+                    reference_type="mm_return",
+                    reference_id=mm_return_doc.id,
+                    notes="MM-P van → MG",
+                    created_by=user,
+                )
 
-            R_new = min(R, P)
-            A_new = P - R_new
-            st.quantity_reserved = R_new
-            st.quantity_available = A_new
-            st.save(update_fields=["quantity_reserved", "quantity_available"])
-
-            delta_total = P - T
-            if delta_total < 0:
-                mtype = StockMovement.MovementType.DAMAGE
-                disc_type = "damage"
+            if explicit_mode:
+                # ── b. Explicit split mode: DAMAGE exactly W, keep T-P-W in van ─
+                if W > Decimal("0"):
+                    qty_before_van = st.quantity_available
+                    st.quantity_available = max(Decimal("0"), st.quantity_available - W)
+                    st.quantity_reserved = Decimal("0")
+                    st.save(update_fields=["quantity_available", "quantity_reserved"])
+                    StockMovement.objects.create(
+                        company_id=company_id,
+                        product_id=product.id,
+                        warehouse_id=van_warehouse.id,
+                        user=user,
+                        movement_type=StockMovement.MovementType.DAMAGE,
+                        quantity=-W,
+                        quantity_before=qty_before_van,
+                        quantity_after=st.quantity_available,
+                        reference_type="van_reconciliation",
+                        reference_id=run_id,
+                        notes=f"Odpisanie towaru z vana{route_note}",
+                        created_by=user,
+                    )
+                # Remainder (T - P - W) stays in van — no further action needed.
+                # Record as discrepancy only if caller over-reported (P + W > T).
+                total_removed = P + W
+                if total_removed > T:
+                    over = total_removed - T
+                    discrepancies.append(
+                        {
+                            "product_id": str(product.id),
+                            "product_name": product.name,
+                            "quantity_expected": str(T),
+                            "quantity_actual": str(T - over),
+                            "quantity_delta": str(-over),
+                            "discrepancy_type": "damage",
+                        }
+                    )
             else:
-                mtype = StockMovement.MovementType.ADJUSTMENT
-                disc_type = "adjustment"
-
-            StockMovement.objects.create(
-                company_id=company_id,
-                product_id=product.id,
-                warehouse_id=van_warehouse.id,
-                user=user,
-                movement_type=mtype,
-                quantity=delta_total,
-                quantity_before=T,
-                quantity_after=P,
-                reference_type="van_reconciliation",
-                reference_id=run_id,
-                notes="Van reconciliation",
-                created_by=user,
-            )
-
-            discrepancies.append(
-                {
-                    "product_id": str(product.id),
-                    "product_name": product.name,
-                    "quantity_expected": str(T),
-                    "quantity_actual": str(P),
-                    "quantity_delta": str(delta_total),
-                    "discrepancy_type": disc_type,
-                }
-            )
+                # ── c. Legacy mode: delta-based discrepancy, zero out van ────────
+                delta = P - T  # positive = surplus, negative = shortage
+                if delta != Decimal("0"):
+                    if st.quantity_available != Decimal("0") or st.quantity_reserved != Decimal("0"):
+                        st.quantity_available = Decimal("0")
+                        st.quantity_reserved = Decimal("0")
+                        st.save(update_fields=["quantity_available", "quantity_reserved"])
+                    mtype = StockMovement.MovementType.DAMAGE if delta < 0 else StockMovement.MovementType.ADJUSTMENT
+                    disc_type = "damage" if delta < 0 else "adjustment"
+                    StockMovement.objects.create(
+                        company_id=company_id,
+                        product_id=product.id,
+                        warehouse_id=van_warehouse.id,
+                        user=user,
+                        movement_type=mtype,
+                        quantity=delta,
+                        quantity_before=T,
+                        quantity_after=P,
+                        reference_type="van_reconciliation",
+                        reference_id=run_id,
+                        notes=f"Różnica przy rozliczeniu trasy{route_note}",
+                        created_by=user,
+                    )
+                    discrepancies.append(
+                        {
+                            "product_id": str(product.id),
+                            "product_name": product.name,
+                            "quantity_expected": str(T),
+                            "quantity_actual": str(P),
+                            "quantity_delta": str(delta),
+                            "discrepancy_type": disc_type,
+                        }
+                    )
+                elif P == Decimal("0"):
+                    # Zero out van stock entirely (nothing returned, nothing expected)
+                    if st.quantity_available != Decimal("0") or st.quantity_reserved != Decimal("0"):
+                        st.quantity_available = Decimal("0")
+                        st.quantity_reserved = Decimal("0")
+                        st.save(update_fields=["quantity_available", "quantity_reserved"])
 
     return {
         "van_warehouse_id": str(van_warehouse.id),
         "reconciliation_id": str(run_id),
+        "mm_return_number": mm_return_doc.document_number if mm_return_doc else None,
         "reconciled_at": reconciled_at.isoformat(),
         "discrepancies": discrepancies,
         "items_processed": len(items),

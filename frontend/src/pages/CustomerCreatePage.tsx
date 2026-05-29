@@ -37,7 +37,7 @@ export function CustomerCreatePage() {
       <header className="flex items-center gap-3">
         <button
           type="button"
-          onClick={() => navigate('/customers')}
+          onClick={() => navigate(-1)}
           className="shadow-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-card text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           aria-label="Wróć do listy"
         >
@@ -67,7 +67,7 @@ export function CustomerCreatePage() {
             setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć kontrahenta');
           }
         }}
-        onCancel={() => navigate('/customers')}
+        onCancel={() => navigate(-1)}
         isLoading={create.isPending}
       />
     </div>

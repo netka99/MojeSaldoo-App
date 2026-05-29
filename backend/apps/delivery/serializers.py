@@ -37,8 +37,23 @@ class VanReconciliationItemSerializer(serializers.Serializer):
     product_id = serializers.UUIDField()
     quantity_actual_remaining = serializers.DecimalField(
         max_digits=10,
-        decimal_places=2,
+        decimal_places=3,
         min_value=Decimal("0"),
+    )
+    # Optional explicit write-off quantity (pre-load carry-over handling).
+    # When provided (even as 0), activates "explicit split" mode:
+    #   P (quantity_actual_remaining) → MM-P return to MG
+    #   W (quantity_writeoff)         → DAMAGE write-off
+    #   T - P - W                     → stays in van
+    # When absent (None), falls back to legacy delta-based discrepancy logic
+    # (used by end-of-route VanReconciliationPage).
+    quantity_writeoff = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        min_value=Decimal("0"),
+        required=False,
+        allow_null=True,
+        default=None,
     )
 
 

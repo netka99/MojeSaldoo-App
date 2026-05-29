@@ -116,6 +116,14 @@ export const reportKeys = {
   inventory: (companyId: string) => [...reportKeys.all, 'inventory', companyId] as const,
 };
 
+export const vanRouteKeys = {
+  all: ['van-routes'] as const,
+  lists: () => [...vanRouteKeys.all, 'list'] as const,
+  list: (companyId: string) => [...vanRouteKeys.lists(), companyId] as const,
+  details: () => [...vanRouteKeys.all, 'detail'] as const,
+  detail: (id: string) => [...vanRouteKeys.details(), id] as const,
+};
+
 export const stockSnapshotKeys = {
   all: ['stock-snapshot'] as const,
   byWarehouse: (warehouseId: string) => [...stockSnapshotKeys.all, warehouseId] as const,

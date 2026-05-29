@@ -82,7 +82,7 @@ export function ProductAdjustStockPage() {
   return (
     <div className="mx-auto max-w-lg space-y-4 p-6">
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => navigate('/products')}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate(-1)}>
           Wróć do listy produktów
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => navigate(`/products/${productId}/edit`)}>

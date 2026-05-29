@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-page-enter {
+  animation: page-enter 0.25s ease-out both;
+}
+
 /* Luminous Ledger — design tokens (hex / project-specific; page bg uses ksef-flow --background) */
 :root {
   /* Page / screen tone aligned with ksef-flow hsl(220 20% 97%) */

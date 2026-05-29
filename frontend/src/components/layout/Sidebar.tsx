@@ -62,6 +62,9 @@ function NavSectionDokumenty() {
     <div className="space-y-1">
       <NavGroupTitle>Dokumenty</NavGroupTitle>
       <div className="space-y-0.5">
+        <ModuleNavItem module="delivery" to="/van-routes">
+          Trasy Vana
+        </ModuleNavItem>
         <ModuleNavItem module="delivery" to="/delivery">
           Dostawa
         </ModuleNavItem>

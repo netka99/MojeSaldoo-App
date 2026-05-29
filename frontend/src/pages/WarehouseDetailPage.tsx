@@ -58,7 +58,7 @@ export function WarehouseDetailPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={() => navigate('/warehouses')}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate(-1)}>
           Wróć do listy
         </Button>
       </div>
@@ -169,7 +169,7 @@ export function WarehouseDetailPage() {
                     setSubmitError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');
                   }
                 }}
-                onCancel={() => navigate('/warehouses')}
+                onCancel={() => navigate(-1)}
                 isLoading={update.isPending}
               />
 

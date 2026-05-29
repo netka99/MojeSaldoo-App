@@ -105,7 +105,10 @@ export interface DeliveryDocument {
 
 /** `POST /api/delivery/create-standalone/` — create a draft WZ without an order. */
 export interface StandaloneWzCreate {
-  to_customer_id: string;
+  /** Omit when the customer is not yet known (e.g. additional products WZ on a van route). */
+  to_customer_id?: string;
+  /** Pin the source warehouse to a specific van; defaults to the first active mobile warehouse. */
+  from_warehouse_id?: string;
   issue_date?: string;
   items: Array<{ product_id: string; quantity_planned: string }>;
 }
@@ -187,8 +190,14 @@ export interface VanLoadingPayload {
 
 export interface VanReconciliationItemPayload {
   product_id: string;
-  /** Decimal string, e.g. "5.00" — physical count remaining on the van. */
+  /** Decimal string — quantity returned to MG via MM-P. */
   quantity_actual_remaining: string;
+  /**
+   * Optional explicit write-off (DAMAGE). When provided, activates "split mode":
+   * P → MM-P return, W → DAMAGE, remainder stays in van.
+   * When absent, falls back to legacy delta-based discrepancy logic.
+   */
+  quantity_writeoff?: string;
 }
 
 export interface VanReconciliationPayload {
@@ -212,6 +221,7 @@ export interface VanReconciliationResult {
   reconciled_at: string;
   items_processed: number;
   discrepancies: VanReconciliationDiscrepancy[];
+  mm_return_number: string | null;
 }
 
 /** `GET /api/delivery/:id/preview/` — print-oriented payload. */

@@ -350,7 +350,7 @@ function InvoiceCreatePageContent() {
           ) : null}
 
           <div className="mx-auto flex max-w-4xl justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => navigate('/invoices')}>
+            <Button type="button" variant="outline" onClick={() => navigate(-1)}>
               Anuluj
             </Button>
             <Button type="submit" loading={generate.isPending} disabled={!formReady}>

@@ -502,6 +502,7 @@ export function OrderDetailPage() {
 
   /* Local editable lines */
   const [editLines, setEditLines] = useState<EditLine[]>([]);
+  const [editDate, setEditDate] = useState('');
   const [isDirty, setIsDirty] = useState(false);
 
   /* Sync edit lines when order loads / changes */
@@ -512,6 +513,11 @@ export function OrderDetailPage() {
       /* stay in editing mode if user had it open */
     }
   }, [order?.items]);
+
+  /* Sync editDate when order loads */
+  useEffect(() => {
+    if (order?.delivery_date) setEditDate(order.delivery_date);
+  }, [order?.delivery_date]);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -545,7 +551,7 @@ export function OrderDetailPage() {
         id,
         body: {
           customer_id: order.customer_id,
-          delivery_date: order.delivery_date,
+          delivery_date: editDate || order.delivery_date,
           items: editLines.map((l) => ({
             product_id: l.item.product_id,
             quantity: String(l.quantity),
@@ -630,7 +636,7 @@ export function OrderDetailPage() {
             <motion.button
               whileTap={{ scale: 0.94 }}
               type="button"
-              onClick={() => navigate(backUrl)}
+              onClick={() => navigate(-1)}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-card shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
               aria-label="Wróć"
             >
@@ -730,6 +736,20 @@ export function OrderDetailPage() {
 
         {order && !isError && (
           <>
+            {(isDraft || isEditing) && (
+              <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Data dostawy
+                </label>
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => { setEditDate(e.target.value); setIsDirty(true); }}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+                />
+              </div>
+            )}
+
             <p className="px-1 text-[13px] text-muted-foreground">
               {itemCountLabel(displayLines.length)}
               {(isDraft || isEditing) && isDirty && (

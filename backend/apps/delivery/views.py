@@ -124,8 +124,9 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         Body:
           {
-            "to_customer_id": "<uuid>",
-            "issue_date": "2026-05-19",          # optional, defaults to today
+            "to_customer_id": "<uuid>",          # optional — omit for unknown-client sales
+            "from_warehouse_id": "<uuid>",        # optional — override van warehouse
+            "issue_date": "2026-05-19",           # optional, defaults to today
             "items": [
               {"product_id": "<uuid>", "quantity_planned": "3.00"},
               ...
@@ -138,19 +139,20 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         company_id = request.user.current_company_id
         to_customer_id = request.data.get("to_customer_id")
+        from_warehouse_id = request.data.get("from_warehouse_id")
         issue_date_raw = request.data.get("issue_date")
         items_data = request.data.get("items", [])
 
-        if not to_customer_id:
-            return Response({"error": "to_customer_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         if not items_data:
             return Response({"error": "At least one item is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        from apps.customers.models import Customer
-        try:
-            customer = Customer.objects.get(pk=to_customer_id, company_id=company_id)
-        except Customer.DoesNotExist:
-            return Response({"error": "Customer not found."}, status=status.HTTP_400_BAD_REQUEST)
+        customer = None
+        if to_customer_id:
+            from apps.customers.models import Customer
+            try:
+                customer = Customer.objects.get(pk=to_customer_id, company_id=company_id)
+            except Customer.DoesNotExist:
+                return Response({"error": "Customer not found."}, status=status.HTTP_400_BAD_REQUEST)
 
         issue_date = timezone.localdate()
         if issue_date_raw:
@@ -158,6 +160,16 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             parsed = parse_date(str(issue_date_raw))
             if parsed:
                 issue_date = parsed
+
+        # Resolve from_warehouse — allow caller to pin a specific van warehouse.
+        from_warehouse = default_from_warehouse_for_delivery(company_id)
+        if from_warehouse_id:
+            try:
+                override_wh = Warehouse.objects.get(pk=from_warehouse_id, company_id=company_id)
+                if override_wh.warehouse_type == Warehouse.WarehouseType.MOBILE and override_wh.is_active:
+                    from_warehouse = override_wh
+            except Warehouse.DoesNotExist:
+                pass
 
         product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
         products_by_id = {
@@ -172,7 +184,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 document_type=DeliveryDocument.DOC_TYPE_WZ,
                 issue_date=issue_date,
                 to_customer=customer,
-                from_warehouse=default_from_warehouse_for_delivery(company_id),
+                from_warehouse=from_warehouse,
                 status=DeliveryDocument.STATUS_DRAFT,
             )
             for row in items_data:
@@ -411,18 +423,19 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     )
 
                 oi = item.order_item
-                oi.refresh_from_db()
                 net = actual - ret
-                if oi.quantity_delivered + net > oi.quantity:
-                    return Response(
-                        {
-                            "error": (
-                                f"Order line {oi.id} would exceed ordered quantity "
-                                f"({oi.quantity_delivered} + {net} > {oi.quantity})."
-                            )
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                if oi is not None:
+                    oi.refresh_from_db()
+                    if oi.quantity_delivered + net > oi.quantity:
+                        return Response(
+                            {
+                                "error": (
+                                    f"Order line {oi.id} would exceed ordered quantity "
+                                    f"({oi.quantity_delivered} + {net} > {oi.quantity})."
+                                )
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
 
                 item.quantity_actual = actual
                 item.quantity_returned = ret
@@ -439,9 +452,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     ]
                 )
 
-                oi.quantity_delivered += net
-                oi.quantity_returned += ret
-                oi.save(update_fields=["quantity_delivered", "quantity_returned"])
+                if oi is not None:
+                    oi.quantity_delivered += net
+                    oi.quantity_returned += ret
+                    oi.save(update_fields=["quantity_delivered", "quantity_returned"])
 
                 if ret > 0:
                     any_return = True
@@ -497,17 +511,28 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         )
                     stocks[pid] = st
 
+                # Mobile warehouses (vans) have no reservation — stock was moved
+                # in full by the MM loading document. Deduct quantity_available directly.
+                from_wh = doc.from_warehouse
+                is_mobile = (
+                    from_wh is not None
+                    and from_wh.warehouse_type == Warehouse.WarehouseType.MOBILE
+                )
+
                 shortfalls = []
                 for pid, need in sorted(sale_by_product.items(), key=lambda x: str(x[0])):
-                    if stocks[pid].quantity_reserved < need:
+                    st = stocks[pid]
+                    available = st.quantity_available if is_mobile else st.quantity_reserved
+                    field_label = "quantity_available" if is_mobile else "quantity_reserved"
+                    if available < need:
                         line = next(i for i, _, _ in line_ops if i.product_id == pid)
                         shortfalls.append(
                             {
                                 "product_id": str(pid),
                                 "product_name": line.product.name,
-                                "quantity_reserved": str(stocks[pid].quantity_reserved),
+                                field_label: str(available),
                                 "quantity_to_consume": str(need),
-                                "short_by": str(need - stocks[pid].quantity_reserved),
+                                "short_by": str(need - available),
                             }
                         )
                 if shortfalls:
@@ -520,8 +545,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         continue
                     stock = stocks[item.product_id]
                     qty_before_avail = stock.quantity_available
-                    stock.quantity_reserved -= actual
-                    stock.save(update_fields=["quantity_reserved"])
+                    if is_mobile:
+                        stock.quantity_available -= actual
+                        stock.save(update_fields=["quantity_available"])
+                    else:
+                        stock.quantity_reserved -= actual
+                        stock.save(update_fields=["quantity_reserved"])
                     StockMovement.objects.create(
                         company_id=doc.company_id,
                         product_id=item.product_id,
@@ -682,7 +711,14 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         url_path=r"van-reconciliation/(?P<van_warehouse_id>[^/.]+)",
     )
     def van_reconciliation(self, request, van_warehouse_id=None):
-        """End-of-day van count: compare physical stock to MV book and write movements."""
+        """End-of-route van count: compare physical stock to book and write movements.
+
+        Optional query param: route_id — if provided, resolves the VanRoute to get the
+        main warehouse for MM-P creation, and closes the route after reconciliation.
+        """
+        from apps.van_routes.models import VanRoute
+        from apps.van_routes.services import close_route
+
         ser = VanReconciliationSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         company_id = request.user.current_company_id
@@ -690,11 +726,24 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             Warehouse.objects.filter(company_id=company_id),
             pk=van_warehouse_id,
         )
+
+        # Resolve optional route
+        route = None
+        main_wh = None
+        route_id = request.query_params.get("route_id")
+        if route_id:
+            route = get_object_or_404(
+                VanRoute.objects.filter(company_id=company_id).select_related("main_warehouse"),
+                pk=route_id,
+            )
+            main_wh = route.main_warehouse
+
         rows = ser.validated_data.get("items") or []
         items = [
             {
                 "product_id": row["product_id"],
                 "quantity_actual_remaining": row["quantity_actual_remaining"],
+                "quantity_writeoff": row.get("quantity_writeoff", Decimal("0")),
             }
             for row in rows
         ]
@@ -703,7 +752,14 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             user=request.user,
             van_warehouse=van_wh,
             items=items,
+            main_warehouse=main_wh,
+            route=route,
         )
+
+        # Close the route after successful reconciliation
+        if route and route.status != VanRoute.STATUS_CLOSED:
+            close_route(route)
+
         return Response(summary, status=status.HTTP_200_OK)
 
     def _wz_planned_lines(self, order: Order) -> list[tuple[OrderItem, Decimal]]:
@@ -772,7 +828,13 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         url_path=r"generate-for-order/(?P<order_id>[^/.]+)",
     )
     def generate_for_order(self, request, order_id=None):
-        """Create a draft WZ from a confirmed order (remaining quantities per line)."""
+        """Create a draft WZ from a confirmed order (remaining quantities per line).
+
+        Optional query param: ``van_warehouse_id`` — if supplied and the warehouse is
+        a mobile warehouse for this company, it overrides the default ``from_warehouse``
+        so the WZ is issued from the correct van rather than the first active mobile
+        warehouse.
+        """
         company_id = request.user.current_company_id
         order = get_object_or_404(
             Order.objects.filter(company_id=company_id),
@@ -791,8 +853,36 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Resolve from_warehouse — allow caller to pin a specific van.
+        from_warehouse = default_from_warehouse_for_delivery(company_id)
+        van_warehouse_id = request.query_params.get("van_warehouse_id")
+        if van_warehouse_id:
+            try:
+                override_wh = Warehouse.objects.get(pk=van_warehouse_id, company_id=company_id)
+                if override_wh.warehouse_type == Warehouse.WarehouseType.MOBILE and override_wh.is_active:
+                    from_warehouse = override_wh
+            except Warehouse.DoesNotExist:
+                pass
+
         with transaction.atomic():
-            doc = self._persist_wz_draft_from_order(request, order, lines)
+            doc = DeliveryDocument.objects.create(
+                company=order.company,
+                order=order,
+                user=request.user,
+                document_type=DeliveryDocument.DOC_TYPE_WZ,
+                issue_date=timezone.localdate(),
+                to_customer=order.customer,
+                from_warehouse=from_warehouse,
+                status=DeliveryDocument.STATUS_SAVED,
+            )
+            for oi, qty in lines:
+                DeliveryItem.objects.create(
+                    delivery_document=doc,
+                    order_item=oi,
+                    product=oi.product,
+                    quantity_planned=qty,
+                )
+            doc.refresh_from_db()
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="sync-from-order")

@@ -599,7 +599,7 @@ export function DeliveryCreatePage() {
             <motion.button
               whileTap={{ scale: 0.92 }}
               type="button"
-              onClick={() => navigate('/delivery')}
+              onClick={() => navigate(-1)}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-card shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
               aria-label="Wróć do dokumentów dostawy"
             >

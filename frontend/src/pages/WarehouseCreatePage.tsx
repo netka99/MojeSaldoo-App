@@ -19,7 +19,7 @@ export function WarehouseCreatePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-6">
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => navigate('/warehouses')}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate(-1)}>
           Wróć do listy
         </Button>
       </div>
@@ -38,7 +38,7 @@ export function WarehouseCreatePage() {
             setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć magazynu');
           }
         }}
-        onCancel={() => navigate('/warehouses')}
+        onCancel={() => navigate(-1)}
         isLoading={create.isPending}
       />
     </div>

@@ -20,7 +20,7 @@ import { productService } from '@/services/product.service';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { openWZPrintWindow } from '@/lib/openWZPrintWindow';
-import type { DeliveryCompleteItemRow, DeliveryItem, LinkedZWDocument, PendingReturnItem } from '@/types';
+import type { DeliveryItem, LinkedZWDocument, PendingReturnItem } from '@/types';
 import type { Order, Product } from '@/types';
 
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
@@ -36,10 +36,6 @@ function errMsg(e: unknown): string {
   return 'Wystąpił błąd';
 }
 
-function qtyStr(v: string | number | null | undefined): string {
-  if (v === null || v === undefined) return '';
-  return String(v);
-}
 
 type LineLabelInput = Pick<DeliveryItem, 'order_item_id' | 'product_id'> & {
   product_name?: string | null;
@@ -59,27 +55,7 @@ export function productLabelForDeliveryLine(order: Order | undefined, line: Line
 
 type DeliveryLocationState = { fromVanLoading?: boolean };
 
-type LineEditState = {
-  quantity_actual: string;
-  quantity_returned: string;
-  return_reason: string;
-  is_damaged: boolean;
-  notes: string;
-};
 
-function buildInitialLineEdits(items: DeliveryItem[]): Record<string, LineEditState> {
-  const next: Record<string, LineEditState> = {};
-  for (const it of items) {
-    next[it.id] = {
-      quantity_actual: qtyStr(it.quantity_actual ?? it.quantity_planned),
-      quantity_returned: qtyStr(it.quantity_returned ?? '0'),
-      return_reason: it.return_reason ?? '',
-      is_damaged: Boolean(it.is_damaged),
-      notes: it.notes ?? '',
-    };
-  }
-  return next;
-}
 
 /* ── Icons ─────────────────────────────────────────────────────── */
 function ChevronLeftIcon() {
@@ -513,10 +489,6 @@ export function DeliveryDocumentDetailPage() {
 
   /* ── Pending returns (collected before saving WZ) ───────────── */
   const [pendingReturns, setPendingReturns] = useState<PendingReturnItem[]>([]);
-  const [completeOpen, setCompleteOpen] = useState(false);
-  const [lineEdits, setLineEdits] = useState<Record<string, LineEditState>>({});
-  const [receiverName, setReceiverName] = useState('');
-  const [returnsNotes, setReturnsNotes] = useState('');
   const [headerDraft, setHeaderDraft] = useState({ driver_name: '', notes: '', issue_date: '' });
   const [headerOpen, setHeaderOpen] = useState(false);
 
@@ -614,24 +586,6 @@ export function DeliveryDocumentDetailPage() {
     });
   }, [doc]);
 
-  useEffect(() => {
-    if (doc?.locked_for_edit) setCompleteOpen(false);
-  }, [doc?.locked_for_edit]);
-
-  const openCompleteForm = useCallback(() => {
-    if (!doc || doc.locked_for_edit) return;
-    setLineEdits(buildInitialLineEdits(doc.items));
-    setReceiverName(doc.receiver_name?.trim() ? doc.receiver_name : '');
-    setReturnsNotes(doc.returns_notes ?? '');
-    setCompleteOpen(true);
-    setActionError(null);
-  }, [doc]);
-
-  const closeCompleteForm = () => {
-    setCompleteOpen(false);
-    setActionError(null);
-  };
-
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
@@ -647,31 +601,6 @@ export function DeliveryDocumentDetailPage() {
     catch (e) { setActionError(errMsg(e)); }
   };
 
-  const onStart = async () => {
-    setActionError(null);
-    try { await startM.mutateAsync(id); }
-    catch (e) { setActionError(errMsg(e)); }
-  };
-
-  const onCompleteSubmit = async () => {
-    if (!doc) return;
-    setActionError(null);
-    const items: DeliveryCompleteItemRow[] = doc.items.map((it) => {
-      const row = lineEdits[it.id];
-      return {
-        id: it.id,
-        quantity_actual: row?.quantity_actual?.trim() ? row.quantity_actual : undefined,
-        quantity_returned: row?.quantity_returned?.trim() ? row.quantity_returned : '0',
-        return_reason: row?.return_reason ?? '',
-        is_damaged: row?.is_damaged ?? false,
-        notes: row?.notes ?? '',
-      };
-    });
-    try {
-      await completeM.mutateAsync({ id, data: { items, receiver_name: receiverName.trim() || undefined, returns_notes: returnsNotes.trim() || undefined } });
-      setCompleteOpen(false);
-    } catch (e) { setActionError(errMsg(e)); }
-  };
 
   const onHeaderSave = async () => {
     if (!id) return;
@@ -730,7 +659,7 @@ export function DeliveryDocumentDetailPage() {
             <motion.button
               whileTap={{ scale: 0.94 }}
               type="button"
-              onClick={() => navigate('/delivery')}
+              onClick={() => navigate(-1)}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-card shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
               aria-label="Wróć"
             >
@@ -1017,133 +946,22 @@ export function DeliveryDocumentDetailPage() {
                     {saveM.isPending ? 'Zapisywanie…' : 'Zapisz WZ'}
                   </Button>
                 )}
-                {doc.status === 'saved' && (
-                  <Button type="button" onClick={() => void onStart()} disabled={workflowBusy || locked} id="delivery-action-start">
-                    {startM.isPending ? 'Uruchamianie…' : 'Rozpocznij dostawę'}
-                  </Button>
-                )}
-                {doc.status === 'in_transit' && (
+                {(doc.status === 'saved' || doc.status === 'in_transit') && (
                   <Button
                     type="button"
-                    variant={completeOpen ? 'outline' : 'default'}
-                    onClick={() => (completeOpen ? closeCompleteForm() : openCompleteForm())}
-                    disabled={(workflowBusy && !completeOpen) || locked}
+                    onClick={async () => {
+                      setActionError(null);
+                      try {
+                        if (doc.status === 'saved') await startM.mutateAsync(id);
+                        await completeM.mutateAsync({ id, data: {} });
+                      } catch (e) { setActionError(errMsg(e)); }
+                    }}
+                    disabled={workflowBusy || locked}
                     id="delivery-action-complete-toggle"
                   >
-                    {completeOpen ? 'Anuluj formularz' : 'Zakończ dostawę'}
+                    {(startM.isPending || completeM.isPending) ? 'Zapisywanie…' : 'Zakończ dostawę'}
                   </Button>
                 )}
-              </div>
-            )}
-
-            {/* Complete delivery form */}
-            {doc.status === 'in_transit' && completeOpen && !locked && (
-              <div className="rounded-2xl border border-primary/30 bg-card p-4 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-                <h3 className="mb-1 text-[15px] font-semibold text-foreground">Zakończenie dostawy</h3>
-                <p className="mb-4 text-[13px] text-muted-foreground">
-                  Uzupełnij ilości faktycznie dostarczone i ewentualne zwroty.
-                </p>
-
-                <div className="mb-4 grid gap-3 sm:grid-cols-2">
-                  <Input
-                    label="Odbiorca"
-                    value={receiverName}
-                    onChange={(e) => setReceiverName(e.target.value)}
-                    id="delivery-complete-receiver"
-                  />
-                  <Input
-                    label="Uwagi do zwrotów"
-                    value={returnsNotes}
-                    onChange={(e) => setReturnsNotes(e.target.value)}
-                    id="delivery-complete-returns-notes"
-                  />
-                </div>
-
-                <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="min-w-full divide-y divide-border text-sm" aria-label="Linie WZ — zakończenie">
-                    <thead className="bg-muted/50">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Produkt</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Zaplan.</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Faktyczna</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Zwrot</th>
-                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Powód</th>
-                        <th className="px-3 py-2 text-center font-medium text-muted-foreground">Uszk.</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border bg-card">
-                      {doc.items.map((it) => {
-                        const row = lineEdits[it.id] ?? buildInitialLineEdits([it])[it.id];
-                        return (
-                          <tr key={it.id}>
-                            <td className="max-w-[180px] px-3 py-2 text-foreground">
-                              {productLabelForDeliveryLine(order, it)}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2 text-right text-muted-foreground">
-                              {qtyStr(it.quantity_planned)}
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                id={`qa-${it.id}`}
-                                type="text"
-                                inputMode="decimal"
-                                aria-label={`Ilość faktyczna ${it.id}`}
-                                className="flex h-9 w-full min-w-[5rem] rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                value={row.quantity_actual}
-                                onChange={(e) =>
-                                  setLineEdits((prev) => ({ ...prev, [it.id]: { ...row, quantity_actual: e.target.value } }))
-                                }
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                id={`qr-${it.id}`}
-                                type="text"
-                                inputMode="decimal"
-                                aria-label={`Zwrot ${it.id}`}
-                                className="flex h-9 w-full min-w-[5rem] rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                value={row.quantity_returned}
-                                onChange={(e) =>
-                                  setLineEdits((prev) => ({ ...prev, [it.id]: { ...row, quantity_returned: e.target.value } }))
-                                }
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="text"
-                                aria-label={`Powód zwrotu ${it.id}`}
-                                className="flex h-9 w-full min-w-[8rem] rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                value={row.return_reason}
-                                onChange={(e) =>
-                                  setLineEdits((prev) => ({ ...prev, [it.id]: { ...row, return_reason: e.target.value } }))
-                                }
-                              />
-                            </td>
-                            <td className="px-3 py-2 text-center">
-                              <input
-                                type="checkbox"
-                                checked={row.is_damaged}
-                                aria-label={`Uszkodzono ${it.id}`}
-                                onChange={(e) =>
-                                  setLineEdits((prev) => ({ ...prev, [it.id]: { ...row, is_damaged: e.target.checked } }))
-                                }
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" onClick={() => void onCompleteSubmit()} disabled={completeM.isPending} id="delivery-complete-submit">
-                    {completeM.isPending ? 'Wysyłanie…' : 'Potwierdź zakończenie dostawy'}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={closeCompleteForm} disabled={completeM.isPending}>
-                    Zamknij
-                  </Button>
-                </div>
               </div>
             )}
           </>

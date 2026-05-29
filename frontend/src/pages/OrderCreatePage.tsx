@@ -678,7 +678,8 @@ export function OrderCreatePage() {
       const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items };
       const order = await create.mutateAsync(body);
       await confirm.mutateAsync(order.id);
-      navigate(`/orders/${order.id}`);
+      const d = deliveryDate.trim();
+      navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć zamówienia');
     }

@@ -255,7 +255,7 @@ function OrdersPageContent() {
       const id = idsToRun[i]!;
       setWzProgress({ current: i + 1, total: idsToRun.length });
       try {
-        await generateWzM.mutateAsync(id);
+        await generateWzM.mutateAsync({ orderId: id });
         successCount += 1;
       } catch (e) {
         errors.push(e instanceof Error ? e.message : 'Nieznany błąd');
@@ -354,9 +354,9 @@ function OrdersPageContent() {
                 variant="outline"
                 size="sm"
                 className="shrink-0 rounded-full"
-                onClick={() => navigate(`/delivery/van-loading?date=${date}`)}
+                onClick={() => navigate('/van-routes')}
               >
-                Załaduj Van
+                Trasy Vana
               </Button>
               <Button
                 type="button"
