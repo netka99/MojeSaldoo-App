@@ -108,6 +108,7 @@ class VanRouteDetailSerializer(serializers.ModelSerializer):
             "status_display",
             "orders",
             "mm_document",
+            "reconciliation_summary",
             "created_at",
             "updated_at",
         ]

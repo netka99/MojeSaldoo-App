@@ -28,4 +28,10 @@ export const vanRouteService = {
     api.post<VanRoute>(`${base}${id}/confirm-loading/`, {}),
 
   close: (id: string) => api.post<VanRoute>(`${base}${id}/close/`, {}),
+
+  addOrders: (id: string, orderIds: string[]) =>
+    api.post<VanRoute>(`${base}${id}/add-orders/`, { order_ids: orderIds }),
+
+  removeOrders: (id: string, orderIds: string[]) =>
+    api.post<VanRoute>(`${base}${id}/remove-orders/`, { order_ids: orderIds }),
 };

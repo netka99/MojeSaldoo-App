@@ -23,6 +23,8 @@ export interface DeliveryItem {
   quantity_planned: string | number;
   quantity_actual: string | number | null;
   quantity_returned: string | number;
+  /** Purchase cost per unit — populated on PZ lines. */
+  unit_cost?: string | number | null;
   return_reason: string;
   is_damaged: boolean;
   notes: string;
@@ -80,8 +82,20 @@ export interface DeliveryDocument {
   document_number: string | null;
   issue_date: string;
   from_warehouse_id: string | null;
+  /** Human-readable name of the source warehouse (read-only, from API). */
+  from_warehouse_name?: string | null;
   to_warehouse_id: string | null;
+  /** Human-readable name of the destination warehouse (read-only, from API). */
+  to_warehouse_name?: string | null;
   to_customer_id: string | null;
+  /** Van route this document belongs to. */
+  van_route_id?: string | null;
+  /** Route delivery date (read-only, from API). */
+  van_route_date?: string | null;
+  /** Supplier FK — populated on PZ documents. */
+  from_supplier_id?: string | null;
+  /** Supplier name (read-only, from API). */
+  supplier_name?: string | null;
   status: DeliveryDocumentStatus;
   has_returns: boolean;
   returns_notes: string;
@@ -107,6 +121,8 @@ export interface DeliveryDocument {
 export interface StandaloneWzCreate {
   /** Omit when the customer is not yet known (e.g. additional products WZ on a van route). */
   to_customer_id?: string;
+  /** Link WZ to the active van route (from route dashboard). */
+  van_route_id?: string;
   /** Pin the source warehouse to a specific van; defaults to the first active mobile warehouse. */
   from_warehouse_id?: string;
   issue_date?: string;
@@ -121,10 +137,34 @@ export interface DeliveryDocumentCreate {
   from_warehouse_id?: string | null;
   to_warehouse_id?: string | null;
   to_customer_id?: string | null;
+  van_route_id?: string | null;
+  from_supplier_id?: string | null;
   has_returns?: boolean;
   returns_notes?: string;
   driver_name?: string;
   receiver_name?: string;
+  notes?: string;
+}
+
+/** `POST /api/delivery/create-pz/` — create a draft PZ with items in one call. */
+export interface PzCreateItem {
+  product_id: string;
+  quantity_planned: string;  // decimal string, e.g. "10.00"
+  unit_cost?: string | null; // decimal string, e.g. "5.5000"
+}
+
+export interface PzCreatePayload {
+  to_warehouse_id: string;
+  from_supplier_id?: string | null;
+  issue_date?: string;  // "YYYY-MM-DD", defaults to today
+  notes?: string;
+  items: PzCreateItem[];
+}
+
+/** `POST /api/delivery/:id/complete/` for PZ — optionally update quantity_actual per line. */
+export interface PzCompleteItemRow {
+  id: string;
+  quantity_actual?: string | number | null;
   notes?: string;
 }
 
@@ -291,6 +331,7 @@ export interface DeliveryDocumentPreviewPayload {
   company: DeliveryDocumentPreviewCompany;
   customer: DeliveryDocumentPreviewCustomer;
   from_warehouse: DeliveryDocumentPreviewWarehouse | null;
+  to_warehouse: DeliveryDocumentPreviewWarehouse | null;
   items: DeliveryDocumentPreviewItem[];
   return_documents?: DeliveryDocumentPreviewReturnDocument[];
 }

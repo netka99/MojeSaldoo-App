@@ -57,6 +57,8 @@ export function orderStatusBadgeClassName(status: OrderStatus): string {
     case 'loaded':
     case 'in_delivery':
       return 'bg-amber-100 text-amber-900';
+    case 'partially_delivered':
+      return 'bg-orange-100 text-orange-800';
     case 'invoiced':
       return 'bg-violet-100 text-violet-800';
     default:

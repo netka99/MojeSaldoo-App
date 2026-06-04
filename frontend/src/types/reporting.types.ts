@@ -65,6 +65,37 @@ export interface PaginatedReportingInvoices {
   results: ReportingInvoiceRow[];
 }
 
+/** Van route row inside `GET /api/reports/dashboard/`. */
+export type DashboardVanRoute = {
+  id: string;
+  driver_name: string;
+  van_name: string;
+  status: string;
+};
+
+/** Low-stock alert row inside `GET /api/reports/dashboard/`. */
+export type DashboardLowStockAlert = {
+  product_id: string;
+  product__name: string;
+  warehouse__id: string;
+  warehouse__name: string;
+  quantity_available: string | number;
+  product__min_stock_alert: string | number;
+};
+
+/** `GET /api/reports/dashboard/` */
+export type DashboardSummary = {
+  orders_pending_confirmation: number;
+  wz_in_transit: number;
+  invoices_overdue: {
+    count: number;
+    total_gross: string;
+  };
+  van_routes_today: DashboardVanRoute[];
+  low_stock_alerts: DashboardLowStockAlert[];
+  date: string;
+};
+
 /** Row from `GET /api/reports/inventory/`. */
 export type InventoryReportRow = {
   productName: string;

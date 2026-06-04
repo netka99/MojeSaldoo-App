@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MojeSaldoo</string>
+    <string name="title_activity_main">MojeSaldoo</string>
+    <string name="package_name">com.mojesaldoo.mobile</string>
+    <string name="custom_url_scheme">com.mojesaldoo.mobile</string>
+</resources>

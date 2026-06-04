@@ -3,6 +3,208 @@
 
 ---
 
+## ARCHITEKTURA MODUŁOWOŚCI (decyzja 2026-05-29)
+
+### Stan obecny systemu modułów
+
+Infrastruktura `CompanyModule` **istnieje** ale jest **dekoracyjna** — flagi `is_enabled` są zapisywane w bazie ale żaden widok ich nie sprawdza. Każda firma może wywołać każdy endpoint niezależnie od ustawień modułów.
+
+**Finalna lista 11 modułów (zaktualizowana w `backend/apps/users/models.py`):**
+
+```python
+# Rdzeń — dla firm handlowych zazwyczaj zawsze włączony
+"products"    → katalog produktów, stany magazynowe
+"customers"   → baza klientów
+"warehouses"  → magazyny, stany, ruchy
+"orders"      → zamówienia od klientów
+"delivery"    → WZ (wydania) + ZW (zwroty)
+"invoicing"   → faktury FV
+
+# Opcjonalne — zależnie od modelu biznesowego
+"van_routes"  → trasy vana, MM załadunek, rozliczenie trasy
+"purchasing"  → zakupy od dostawców, PZ, model Supplier
+"production"  → własna produkcja (PW/RW) — workflow planowany, flaga już teraz
+
+# Integracje
+"ksef"        → e-fakturowanie KSeF
+"reporting"   → raporty i analityka
+```
+
+**Dlaczego 11 i nie więcej:**
+- Moduł = cały obszar biznesowy którego dany typ firmy **w ogóle nie używa**
+- Cechy wewnątrz obszaru (FIFO, limity kredytowe, daty ważności) = opcje per produkt/klient, nie moduły
+- Granularność większa niż 11 = over-engineering dla MVP SaaS
+
+### Profile firm i które moduły włączają
+
+| Typ firmy | products | warehouses | orders | delivery | invoicing | van_routes | purchasing | production | ksef |
+|-----------|:--------:|:----------:|:------:|:--------:|:---------:|:----------:|:----------:|:----------:|:----:|
+| **Producent jedzenia** (własna produkcja → WZ do klientów) | ✅ | ✅ | ✅ | ✅ | ✅ | ❓ | ❌ | ✅ | ❓ |
+| **Dystrybutor z vanem** (kupuje PZ → sprzedaje z vana) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❓ |
+| **Hurtownia/sklep** (kupuje PZ → sprzedaje z magazynu) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❓ |
+| **Firma usługowa** (brak towaru fizycznego) | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❓ |
+
+`❓` = opcjonalne (firma decyduje), `❌` = wyłączone, `✅` = włączone
+
+**Uwaga `production`:** Workflow PW/RW jeszcze nie zaimplementowany. Flaga `production` istnieje już teraz żeby producent mógł mieć profil `production=ON, purchasing=OFF` — implementacja workflow przyjdzie w kolejnym MVP bez zmiany architektury modułów.
+
+### Co oznacza wyłączenie modułu
+
+| Moduł | Gdy wyłączony: Backend | Gdy wyłączony: Frontend |
+|-------|----------------------|------------------------|
+| `van_routes` | `/api/van-routes/` zwraca HTTP 403 | Brak "Trasy" w nawigacji, brak MM-loading flow |
+| `purchasing` | `/api/suppliers/` i `/api/delivery/create-pz/` zwracają HTTP 403 | Brak "Dostawcy" w nawigacji, brak przycisku "Nowe PZ" |
+| `delivery` | `/api/delivery/` zwraca HTTP 403 | Brak "Dostawy" w nawigacji |
+| `invoicing` | `/api/invoices/` zwraca HTTP 403 | Brak "Faktury" w nawigacji |
+| `warehouses` | `/api/warehouses/` zwraca HTTP 403 | Brak "Magazyny" |
+| `ksef` | Akcje KSeF zablokowane | Brak przycisku "Wyślij do KSeF" |
+
+### Plan egzekwowania modułów (co zaimplementować)
+
+**Krok M1 — Dodaj brakujące klucze do MODULE_CHOICES:**
+
+W `backend/apps/users/models.py`:
+```python
+MODULE_CHOICES = [
+    ("products",    "Products & Inventory"),
+    ("customers",   "Customers"),
+    ("warehouses",  "Warehouse Management"),
+    ("orders",      "Orders"),
+    ("delivery",    "Delivery & WZ Documents"),
+    ("invoicing",   "Invoicing"),
+    ("ksef",        "KSeF Integration"),
+    ("reporting",   "Reporting & Analytics"),
+    ("van_routes",  "Van Routes & Mobile Delivery"),   # NOWE
+    ("purchasing",  "Purchasing & Suppliers (PZ)"),    # NOWE
+]
+```
+Następnie: `python manage.py makemigrations users && python manage.py migrate`
+
+**Krok M2 — Permission class `ModuleRequired`:**
+
+Utwórz `backend/apps/users/permissions.py` (lub dodaj do istniejącego):
+```python
+from rest_framework.permissions import BasePermission
+from .models import CompanyModule
+
+
+def company_has_module(company, module_key: str) -> bool:
+    """Sprawdza czy firma ma włączony dany moduł."""
+    return CompanyModule.objects.filter(
+        company=company,
+        module=module_key,
+        is_enabled=True,
+    ).exists()
+
+
+class ModuleRequired(BasePermission):
+    """
+    Użycie w ViewSet:
+        module_required = 'van_routes'
+        permission_classes = [IsAuthenticated, ModuleRequired]
+
+    Zwraca HTTP 403 jeśli firma nie ma włączonego modułu.
+    """
+    message = "Ten moduł nie jest aktywny dla Twojej firmy."
+
+    def has_permission(self, request, view):
+        module_key = getattr(view, 'module_required', None)
+        if not module_key:
+            return True  # ViewSet nie wymaga modułu — przepuść
+        company = getattr(request.user, 'current_company', None)
+        if not company:
+            return False
+        return company_has_module(company, module_key)
+```
+
+**Krok M3 — Przypisz moduły do ViewSetów:**
+
+```python
+# backend/apps/van_routes/views.py
+class VanRouteViewSet(viewsets.ModelViewSet):
+    module_required = 'van_routes'
+    permission_classes = [IsAuthenticated, ModuleRequired]
+    # ... reszta bez zmian
+
+# backend/apps/suppliers/views.py (nowy)
+class SupplierViewSet(viewsets.ModelViewSet):
+    module_required = 'purchasing'
+    permission_classes = [IsAuthenticated, ModuleRequired]
+
+# backend/apps/delivery/views.py — akcja create-pz
+# W metodzie create_pz() dodaj na początku:
+if not company_has_module(company, 'purchasing'):
+    return Response(
+        {'detail': 'Moduł zakupów (PZ) nie jest aktywny dla tej firmy.'},
+        status=status.HTTP_403_FORBIDDEN
+    )
+
+# backend/apps/invoices/views.py
+class InvoiceViewSet(viewsets.ModelViewSet):
+    module_required = 'invoicing'
+    permission_classes = [IsAuthenticated, ModuleRequired]
+```
+
+**Krok M4 — Frontend: hook `useModules()` + ukrywanie nawigacji:**
+
+```typescript
+// frontend/src/query/use-modules.ts
+export const useModules = () => {
+  return useQuery({
+    queryKey: ['company-modules'],
+    queryFn: () => companyService.getModules(),  // GET /api/companies/{id}/modules/
+  });
+};
+
+// Pomocniczy hook:
+export const useHasModule = (moduleKey: string): boolean => {
+  const { data: modules } = useModules();
+  return modules?.find(m => m.module === moduleKey)?.is_enabled ?? false;
+};
+```
+
+```tsx
+// frontend/src/components/layout/Sidebar.tsx lub Navigation.tsx
+const hasVanRoutes = useHasModule('van_routes');
+const hasPurchasing = useHasModule('purchasing');
+const hasInvoicing = useHasModule('invoicing');
+
+// W nawigacji:
+{hasVanRoutes && <NavLink to="/van-routes">Trasy Van</NavLink>}
+{hasPurchasing && <NavLink to="/suppliers">Dostawcy</NavLink>}
+{hasPurchasing && <NavLink to="/delivery/pz/new">Nowe PZ</NavLink>}
+{hasInvoicing && <NavLink to="/invoices">Faktury</NavLink>}
+```
+
+**Krok M5 — Seeding modułów przy tworzeniu firmy:**
+
+Funkcja `_ensure_company_modules()` już istnieje w `backend/apps/users/views.py` i jest wywoływana przy listowaniu modułów. Sprawdź czy jest też wywoływana przy TWORZENIU firmy:
+```python
+# W widoku tworzenia firmy (CompanyCreateView lub rejestracja):
+company = Company.objects.create(...)
+_ensure_company_modules(company)
+# Lub od razu włącz podstawowe moduły dla nowej firmy:
+for key in ['products', 'customers', 'orders', 'delivery', 'invoicing']:
+    CompanyModule.objects.filter(company=company, module=key).update(is_enabled=True)
+```
+
+### Matryca zależności między modułami
+
+Niektóre moduły wymagają innych:
+
+```
+purchasing   → wymaga: products, warehouses
+van_routes   → wymaga: delivery, products, warehouses
+delivery     → wymaga: products, warehouses
+invoicing    → wymaga: orders, customers
+orders       → wymaga: products, customers
+ksef         → wymaga: invoicing
+```
+
+Gdy użytkownik próbuje włączyć `van_routes` a `delivery` jest wyłączone — system powinien ostrzec lub włączyć automatycznie.
+
+---
+
 ## ZAKRES MVP (decyzja 2026-05-29)
 
 Dokumenty w zakresie bieżącego MVP:

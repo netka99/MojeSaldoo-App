@@ -13,4 +13,5 @@ urlpatterns = [
     ),
     path("inventory/", views.InventoryReportView.as_view(), name="report-inventory"),
     path("ksef-status/", views.KsefStatusReportView.as_view(), name="report-ksef-status"),
+    path("dashboard/", views.DashboardSummaryView.as_view(), name="report-dashboard"),
 ]

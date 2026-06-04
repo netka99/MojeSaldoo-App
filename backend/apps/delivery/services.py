@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.orders.models import Order, OrderItem
-from apps.products.models import Product, ProductStock, StockMovement, Warehouse
+from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
 
 from .models import DeliveryDocument, DeliveryItem
 
@@ -37,6 +37,121 @@ def active_mobile_warehouse_for_company(company_id):
         .order_by("code")
         .first()
     )
+
+
+def apply_pz_receipt(pz_document: "DeliveryDocument", user) -> None:
+    """
+    Finalize a PZ (Przyjęcie Zewnętrzne) document: increase stock, create FIFO batches,
+    record StockMovement(PURCHASE) for every line with quantity_actual > 0.
+
+    Must be called inside or after the status transition to STATUS_DELIVERED.
+    Runs in its own atomic block — caller should NOT wrap in a separate atomic
+    unless they want to share the same transaction (both are safe).
+
+    Rules:
+    - to_warehouse  = warehouse receiving the goods (required).
+    - quantity_actual per line = quantity actually received (falls back to
+      quantity_planned when quantity_actual is NULL — e.g. draft PZ closed as-is).
+    - unit_cost per line = purchase price net/unit; stored on StockBatch.
+    - If product.track_batches is True, a StockBatch is created per line.
+    - StockMovement(PURCHASE) is always created (even for products without batches).
+    - Lines with effective quantity == 0 are silently skipped.
+    """
+    if pz_document.document_type != DeliveryDocument.DOC_TYPE_PZ:
+        raise ValueError(
+            f"apply_pz_receipt() called on document type '{pz_document.document_type}'; "
+            "expected 'PZ'."
+        )
+    if pz_document.status != DeliveryDocument.STATUS_DELIVERED:
+        raise ValueError(
+            f"apply_pz_receipt() called on status '{pz_document.status}'; "
+            "expected 'delivered'."
+        )
+
+    warehouse = pz_document.to_warehouse
+    if warehouse is None:
+        raise ValidationError(
+            {"to_warehouse": f"PZ {pz_document.document_number} has no destination warehouse."}
+        )
+
+    company_id = pz_document.company_id
+    issue_date = pz_document.issue_date or timezone.localdate()
+    supplier_label = (
+        pz_document.from_supplier.name
+        if pz_document.from_supplier_id
+        else ""
+    )
+    doc_label = pz_document.document_number or str(pz_document.id)
+
+    with transaction.atomic():
+        items = list(
+            pz_document.items.select_related("product").select_for_update()
+        )
+
+        for idx, item in enumerate(items, start=1):
+            # Effective received quantity: use actual if set, else planned
+            received_qty = (
+                item.quantity_actual
+                if item.quantity_actual is not None
+                else item.quantity_planned
+            )
+            if received_qty <= Decimal("0"):
+                continue
+
+            product = item.product
+
+            # ── 1. Update ProductStock ────────────────────────────────────────
+            stock, _ = ProductStock.objects.select_for_update().get_or_create(
+                company_id=company_id,
+                product=product,
+                warehouse=warehouse,
+                defaults={
+                    "quantity_available": Decimal("0"),
+                    "quantity_reserved": Decimal("0"),
+                    "quantity_total": Decimal("0"),
+                },
+            )
+            qty_before = stock.quantity_available
+            stock.quantity_available += received_qty
+            stock.save(update_fields=["quantity_available"])
+
+            # ── 2. Create StockBatch (FIFO) if product tracks batches ─────────
+            if product.track_batches:
+                batch_number = f"{doc_label}/{idx:02d}"
+                StockBatch.objects.create(
+                    company_id=company_id,
+                    product=product,
+                    warehouse=warehouse,
+                    batch_number=batch_number,
+                    received_date=issue_date,
+                    expiry_date=None,  # expiry per line planned in future PZ extension
+                    quantity_initial=received_qty,
+                    quantity_remaining=received_qty,
+                    unit_cost=(
+                        item.unit_cost.quantize(Decimal("0.01"))
+                        if item.unit_cost is not None
+                        else None
+                    ),
+                )
+
+            # ── 3. Record StockMovement(PURCHASE) ────────────────────────────
+            notes_parts = [f"Przyjęcie PZ {doc_label}"]
+            if supplier_label:
+                notes_parts.append(f"od {supplier_label}")
+            StockMovement.objects.create(
+                company_id=company_id,
+                product=product,
+                warehouse=warehouse,
+                user=user,
+                movement_type=StockMovement.MovementType.PURCHASE,
+                quantity=received_qty,
+                quantity_before=qty_before,
+                quantity_after=stock.quantity_available,
+                reference_type="delivery_document",
+                reference_id=pz_document.id,
+                notes=", ".join(notes_parts),
+                created_by=user,
+            )
 
 
 def default_from_warehouse_for_delivery(company_id):
@@ -121,6 +236,7 @@ def create_van_loading_mm(
     issue_date=None,
     driver_name: str = "",
     notes: str = "",
+    van_route=None,
 ) -> DeliveryDocument:
     """
     Create an MM document (main → mobile), lines without ``order_item``, and move stock:
@@ -219,6 +335,7 @@ def create_van_loading_mm(
             from_warehouse=from_warehouse,
             to_warehouse=to_warehouse,
             to_customer=None,
+            van_route=van_route,
             status=DeliveryDocument.STATUS_SAVED,
             driver_name=driver_name or "",
             notes=notes or "",
@@ -250,7 +367,7 @@ def create_van_loading_mm(
                 quantity_after=qty_after_total,
                 reference_type="delivery",
                 reference_id=doc.id,
-                notes="Van loading (MM out)",
+                notes="Załadunek MM — wydanie z magazynu",
                 created_by=user,
             )
 
@@ -269,7 +386,7 @@ def create_van_loading_mm(
                 quantity_after=st_in.quantity_available,
                 reference_type="delivery",
                 reference_id=doc.id,
-                notes="Van loading (MM in)",
+                notes="Załadunek MM — przyjęcie na van",
                 created_by=user,
             )
 
@@ -333,6 +450,7 @@ def apply_van_reconciliation(
     run_id = uuid.uuid4()
     reconciled_at = timezone.now()
     discrepancies: list[dict] = []
+    summary_items: list[dict] = []
     mm_return_doc = None
 
     with transaction.atomic():
@@ -379,6 +497,7 @@ def apply_van_reconciliation(
             driver_name=route.driver_name if route else "",
             notes=f"MM-P — zwrot towaru z vana do magazynu{route_note}",
             status=DeliveryDocument.STATUS_DELIVERED,
+            van_route=route,
         )
 
         for row in return_lines:
@@ -390,6 +509,33 @@ def apply_van_reconciliation(
                 quantity_actual=row["quantity_actual_remaining"],
             )
 
+        # ── 1b. Create RW document for write-offs (damage) ───────────────────
+        writeoff_lines = [
+            row for row in sorted_rows
+            if row.get("quantity_writeoff") is not None and row["quantity_writeoff"] > Decimal("0")
+        ]
+
+        rw_doc = None
+        if writeoff_lines:
+            rw_doc = DeliveryDocument.objects.create(
+                company_id=company_id,
+                user=user,
+                document_type=DeliveryDocument.DOC_TYPE_RW,
+                issue_date=timezone.localdate(),
+                from_warehouse=van_warehouse,
+                to_warehouse=None,
+                notes=f"RW — odpisanie towaru z vana{route_note}",
+                status=DeliveryDocument.STATUS_DELIVERED,
+                van_route=route,
+            )
+            for row in writeoff_lines:
+                DeliveryItem.objects.create(
+                    delivery_document=rw_doc,
+                    product_id=row["product_id"],
+                    quantity_planned=row["quantity_writeoff"],
+                    quantity_actual=row["quantity_writeoff"],
+                )
+
         # ── 2. Process each product — discrepancies + stock movements ─────────
         for row in sorted_rows:
             pid = str(row["product_id"])
@@ -400,7 +546,34 @@ def apply_van_reconciliation(
             W = W_raw if W_raw is not None else Decimal("0")
             st = van_stocks[pid]
             A = st.quantity_available
-            T = A + st.quantity_reserved            # total system stock on van
+            T = A + st.quantity_reserved            # total system stock on van (before changes)
+
+            # Build per-product summary (returned / kept / written_off)
+            kept = max(Decimal("0"), T - P - W)
+            if P > Decimal("0"):
+                summary_items.append({
+                    "action": "returned",
+                    "product_id": str(product.id),
+                    "product_name": product.name,
+                    "quantity": str(P),
+                    "unit": product.unit,
+                })
+            if W > Decimal("0"):
+                summary_items.append({
+                    "action": "written_off",
+                    "product_id": str(product.id),
+                    "product_name": product.name,
+                    "quantity": str(W),
+                    "unit": product.unit,
+                })
+            if kept > Decimal("0"):
+                summary_items.append({
+                    "action": "kept",
+                    "product_id": str(product.id),
+                    "product_name": product.name,
+                    "quantity": str(kept),
+                    "unit": product.unit,
+                })
 
             # ── a. MM-P return: move P units van → MG ────────────────────────
             if P > Decimal("0"):
@@ -418,7 +591,7 @@ def apply_van_reconciliation(
                     quantity_after=st.quantity_available,
                     reference_type="mm_return",
                     reference_id=mm_return_doc.id,
-                    notes="MM-P van → MG",
+                    notes="MM-P — zwrot z vana do magazynu",
                     created_by=user,
                 )
                 # Add to MG
@@ -446,7 +619,7 @@ def apply_van_reconciliation(
                     quantity_after=st_main.quantity_available,
                     reference_type="mm_return",
                     reference_id=mm_return_doc.id,
-                    notes="MM-P van → MG",
+                    notes="MM-P — zwrot z vana do magazynu",
                     created_by=user,
                 )
 
@@ -466,8 +639,8 @@ def apply_van_reconciliation(
                         quantity=-W,
                         quantity_before=qty_before_van,
                         quantity_after=st.quantity_available,
-                        reference_type="van_reconciliation",
-                        reference_id=run_id,
+                        reference_type="rw_writeoff",
+                        reference_id=rw_doc.id if rw_doc else run_id,
                         notes=f"Odpisanie towaru z vana{route_note}",
                         created_by=user,
                     )
@@ -531,9 +704,11 @@ def apply_van_reconciliation(
         "van_warehouse_id": str(van_warehouse.id),
         "reconciliation_id": str(run_id),
         "mm_return_number": mm_return_doc.document_number if mm_return_doc else None,
+        "rw_writeoff_number": rw_doc.document_number if rw_doc else None,
         "reconciled_at": reconciled_at.isoformat(),
         "discrepancies": discrepancies,
         "items_processed": len(items),
+        "summary_items": summary_items,
     }
 
 
@@ -605,6 +780,11 @@ def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
     if from_wh is not None:
         from_warehouse = {"name": from_wh.name, "code": from_wh.code}
 
+    to_wh = doc.to_warehouse
+    to_warehouse = None
+    if to_wh is not None:
+        to_warehouse = {"name": to_wh.name, "code": to_wh.code}
+
     items_out = []
     for it in doc.items.all().order_by("created_at"):
         product = it.product
@@ -649,6 +829,7 @@ def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
         "company": company_block,
         "customer": customer_block,
         "from_warehouse": from_warehouse,
+        "to_warehouse": to_warehouse,
         "items": items_out,
         "return_documents": return_documents_out,
     }
@@ -700,6 +881,7 @@ def create_zw_from_pending_returns(
             to_warehouse=van_warehouse,
             to_customer=wz_doc.to_customer,
             linked_wz=wz_doc,
+            van_route=wz_doc.van_route,
             status=DeliveryDocument.STATUS_SAVED,
             driver_name=wz_doc.driver_name or "",
             notes=f"Zwrot do WZ {wz_doc.document_number or wz_doc.id}",
@@ -1000,15 +1182,17 @@ def apply_delivery_document_line_updates(
     if doc.order_id and doc.status == DeliveryDocument.STATUS_DELIVERED:
         order = Order.objects.select_for_update().get(pk=doc.order_id)
         lines = list(order.items.all())
-        if lines and all(
-            (oi.quantity_delivered or Decimal("0")) >= oi.quantity for oi in lines
+        if lines and order.status not in (
+            Order.STATUS_DELIVERED,
+            Order.STATUS_INVOICED,
+            Order.STATUS_CANCELLED,
         ):
-            if order.status not in (
-                Order.STATUS_DELIVERED,
-                Order.STATUS_INVOICED,
-                Order.STATUS_CANCELLED,
-            ):
+            total_qty = sum(oi.quantity for oi in lines)
+            delivered_qty = sum(oi.quantity_delivered or Decimal("0") for oi in lines)
+            if delivered_qty >= total_qty:
                 order.update_status(Order.STATUS_DELIVERED)
+            elif delivered_qty > 0:
+                order.update_status(Order.STATUS_PARTIALLY_DELIVERED)
 
     return doc
 

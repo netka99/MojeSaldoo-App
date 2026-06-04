@@ -10,6 +10,7 @@ export type OrderStatus =
   | 'in_preparation'
   | 'loaded'
   | 'in_delivery'
+  | 'partially_delivered'
   | 'delivered'
   | 'invoiced'
   | 'cancelled';

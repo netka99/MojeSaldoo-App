@@ -115,6 +115,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice = self.get_object()
         if invoice.status != Invoice.STATUS_DRAFT:
             raise ValidationError({"detail": "Only draft invoices can be issued."})
+        if invoice.order_id:
+            has_delivered_wz = invoice.order.delivery_documents.filter(
+                document_type="WZ",
+                status="delivered",
+            ).exists()
+            if not has_delivered_wz:
+                return Response(
+                    {
+                        "detail": (
+                            f"Nie można wystawić faktury dla zamówienia "
+                            f"{invoice.order.order_number}. "
+                            f"Brak zatwierdzonego dokumentu WZ (wydania towaru). "
+                            f"Zakończ dostawę przed wystawieniem faktury."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         invoice.status = Invoice.STATUS_ISSUED
         invoice.user = request.user
         invoice.save(update_fields=["status", "user", "updated_at"])

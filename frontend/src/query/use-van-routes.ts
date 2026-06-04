@@ -7,7 +7,7 @@ import type {
   VanRoutePatch,
   VanRouteStartLoadingPayload,
 } from '@/types';
-import { vanRouteKeys, orderKeys } from './keys';
+import { vanRouteKeys, orderKeys, stockSnapshotKeys } from './keys';
 
 export function useVanRouteListQuery() {
   const { user } = useAuth();
@@ -81,6 +81,8 @@ export function useStartLoadingMutation() {
       void queryClient.invalidateQueries({ queryKey: ['delivery-documents'] });
       // Invalidate product stock so van stock shows up immediately in dashboard
       void queryClient.invalidateQueries({ queryKey: ['products'] });
+      // Invalidate stock snapshot so Stan Van updates immediately after MM is issued
+      void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.all });
     },
   });
 }
@@ -91,6 +93,20 @@ export function useConfirmLoadingMutation() {
   const companyId = user?.current_company ?? '';
   return useMutation({
     mutationFn: (id: string) => vanRouteService.confirmLoading(id),
+    onSuccess: (route: VanRoute) => {
+      queryClient.setQueryData(vanRouteKeys.detail(route.id), route);
+      void queryClient.invalidateQueries({ queryKey: vanRouteKeys.list(companyId) });
+    },
+  });
+}
+
+export function useAddOrdersToRouteMutation() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useMutation({
+    mutationFn: ({ id, orderIds }: { id: string; orderIds: string[] }) =>
+      vanRouteService.addOrders(id, orderIds),
     onSuccess: (route: VanRoute) => {
       queryClient.setQueryData(vanRouteKeys.detail(route.id), route);
       void queryClient.invalidateQueries({ queryKey: vanRouteKeys.list(companyId) });
@@ -109,6 +125,8 @@ export function useCloseVanRouteMutation() {
       void queryClient.invalidateQueries({ queryKey: vanRouteKeys.list(companyId) });
       // Refresh orders so status changes are reflected
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      // Invalidate stock snapshot so Stan Van reflects post-close state
+      void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.all });
     },
   });
 }

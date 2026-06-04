@@ -1,18 +1,29 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { authStorage } from '@/services/api';
-import { useVanRouteQuery, useCloseVanRouteMutation, useConfirmLoadingMutation } from '@/query/use-van-routes';
+import { useVanRouteQuery, useConfirmLoadingMutation, useAddOrdersToRouteMutation } from '@/query/use-van-routes';
 import {
-  useVanWZListQuery,
+  useVanRouteWZListQuery,
+  useDeliveryByOrdersQuery,
   useCreateStandaloneWzMutation,
   useDeliveryQuery,
   useGenerateDeliveryForOrderMutation,
   useAddReturnsMutation,
+  useSaveDeliveryMutation,
+  useStartDeliveryMutation,
+  useCompleteDeliveryMutation,
 } from '@/query/use-delivery';
 import { useStockSnapshotQuery } from '@/query/use-products';
 import { useOrderQuery } from '@/query/use-orders';
+import { orderService } from '@/services/order.service';
+import { customerService } from '@/services/customer.service';
+import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
-import type { DeliveryDocument, DeliveryItem, RouteOrder, VanRouteStatus } from '@/types';
+import { resolveCustomerIdFromSearch } from '@/lib/customer-picker-utils';
+import { countPendingWzDocs } from '@/lib/van-wz-utils';
+import type { DeliveryDocument, DeliveryItem, Order, RouteOrder, VanRouteStatus } from '@/types';
+import type { Customer } from '@/types/customer.types';
 
 /* ─── Helpers ────────────────────────────────────────────────────── */
 
@@ -67,6 +78,164 @@ function CheckIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" fill="none" className={className} stroke="currentColor" strokeWidth={2.5}>
       <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/* ─── Add orders sheet ───────────────────────────────────────────── */
+
+function AddOrdersSheet({
+  routeId,
+  date,
+  existingOrderIds,
+  onClose,
+}: {
+  routeId: string;
+  date: string;
+  existingOrderIds: Set<string>;
+  onClose: () => void;
+}) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const addOrders = useAddOrdersToRouteMutation();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['orders', 'add-to-route', date, companyId],
+    queryFn: () =>
+      orderService.fetchList({
+        delivery_date: date,
+        status: 'confirmed',
+        exclude_routed: true,
+        page_size: 100,
+        page: 1,
+      }),
+    enabled: Boolean(date) && Boolean(companyId),
+  });
+
+  const available = useMemo(
+    () => (data?.results ?? []).filter((o: Order) => !existingOrderIds.has(o.id)),
+    [data, existingOrderIds],
+  );
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function handleSubmit() {
+    if (selected.size === 0) return;
+    setError(null);
+    try {
+      await addOrders.mutateAsync({ id: routeId, orderIds: [...selected] });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się dodać zamówień');
+    }
+  }
+
+  return (
+    <div className="flex min-h-dvh w-full flex-col bg-background">
+      {/* Header */}
+      <div className="shrink-0 flex items-center gap-3 border-b border-border/40 bg-background/95 px-4 py-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
+          aria-label="Anuluj"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2}>
+            <path d="M19 12H5m0 0l7 7M5 12l7-7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[17px] font-semibold tracking-tight text-foreground">Dodaj zamówienia</h1>
+          <p className="text-[12px] text-muted-foreground">Potwierdzone na {date}</p>
+        </div>
+        {selected.size > 0 && (
+          <span className="shrink-0 rounded-full bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground">
+            {selected.size} zam.
+          </span>
+        )}
+      </div>
+
+      {/* List */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pt-4">
+        {isLoading && (
+          <div className="flex items-center justify-center py-10">
+            <span className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          </div>
+        )}
+        {!isLoading && available.length === 0 && (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            Brak dostępnych zamówień na ten dzień
+          </p>
+        )}
+        {available.map((order: Order) => {
+          const sel = selected.has(order.id);
+          return (
+            <button
+              key={order.id}
+              type="button"
+              onClick={() => toggle(order.id)}
+              className={cn(
+                'flex items-center gap-3 rounded-2xl px-4 py-3 text-left shadow-soft transition-colors',
+                sel ? 'bg-primary/10 ring-2 ring-primary/30' : 'bg-surface-card',
+              )}
+            >
+              <div
+                className={cn(
+                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+                  sel ? 'border-primary bg-primary' : 'border-border bg-background',
+                )}
+              >
+                {sel && (
+                  <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5 text-primary-foreground" stroke="currentColor" strokeWidth={3}>
+                    <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-foreground">{order.customer_name ?? '—'}</p>
+                <p className="text-[12px] text-muted-foreground">
+                  {order.order_number ?? '—'} · {order.items.length}{' '}
+                  {order.items.length === 1 ? 'produkt' : order.items.length < 5 ? 'produkty' : 'produktów'}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+        {error && (
+          <p className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+      </div>
+
+      {/* Bottom bar */}
+      <div className="shrink-0 border-t border-border/40 bg-background/95 px-4 pb-[calc(12px+83px+env(safe-area-inset-bottom))] pt-3 md:pb-[calc(12px+env(safe-area-inset-bottom))]">
+        <button
+          type="button"
+          onClick={() => void handleSubmit()}
+          disabled={addOrders.isPending || selected.size === 0}
+          className={cn(
+            'w-full rounded-xl py-3 text-base font-semibold transition-colors',
+            selected.size > 0 && !addOrders.isPending
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'bg-muted text-muted-foreground cursor-not-allowed',
+          )}
+        >
+          {addOrders.isPending
+            ? 'Dodawanie…'
+            : selected.size === 0
+              ? 'Wybierz zamówienia'
+              : `Dodaj ${selected.size} zamówień`}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -255,6 +424,86 @@ function ReturnForm({
   );
 }
 
+/* ─── Additional (standalone) WZ card ────────────────────────────── */
+
+function AdditionalWzCard({
+  wz,
+  onNavigate,
+}: {
+  wz: DeliveryDocument;
+  onNavigate: () => void;
+}) {
+  const [completing, setCompleting] = useState(false);
+  const [wzError, setWzError] = useState<string | null>(null);
+  const saveDelivery = useSaveDeliveryMutation();
+  const startDelivery = useStartDeliveryMutation();
+  const completeDelivery = useCompleteDeliveryMutation();
+
+  const label = wz.customer_name || wz.document_number || 'WZ dodatkowe';
+  const itemSummary = (wz.items ?? [])
+    .map((i) => `${i.product_name ?? '—'} × ${formatQty(i.quantity_planned)}`)
+    .join(', ');
+
+  async function handleComplete() {
+    setWzError(null);
+    setCompleting(true);
+    try {
+      if (wz.status === 'draft') await saveDelivery.mutateAsync({ id: wz.id });
+      if (wz.status === 'draft' || wz.status === 'saved') {
+        await startDelivery.mutateAsync(wz.id);
+      }
+      await completeDelivery.mutateAsync({ id: wz.id, data: {} });
+    } catch (e) {
+      setWzError(e instanceof Error ? e.message : 'Nie udało się zakończyć dostawy');
+    } finally {
+      setCompleting(false);
+    }
+  }
+
+  return (
+    <div className="shadow-soft w-full overflow-hidden rounded-2xl border-l-4 border-l-amber-400 bg-surface-card">
+      <div className="flex flex-col gap-2 p-3.5">
+        <div className="min-w-0">
+          <p className="truncate font-semibold text-foreground">{label}</p>
+          <p className="text-[12px] text-amber-600 font-medium">
+            {wz.document_number ?? 'WZ'} · do potwierdzenia
+          </p>
+          {itemSummary && (
+            <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{itemSummary}</p>
+          )}
+        </div>
+        {wzError && (
+          <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+            {wzError}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void handleComplete()}
+            disabled={completing}
+            className={cn(
+              'flex-1 rounded-xl py-2 text-sm font-semibold transition-colors',
+              !completing
+                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                : 'bg-muted text-muted-foreground cursor-not-allowed',
+            )}
+          >
+            {completing ? 'Potwierdzanie…' : 'Potwierdź dostawę'}
+          </button>
+          <button
+            type="button"
+            onClick={onNavigate}
+            className="rounded-xl border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+          >
+            Szczegóły
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Stop card ──────────────────────────────────────────────────── */
 
 function StopCard({
@@ -279,12 +528,18 @@ function StopCard({
   const [expanded, setExpanded] = useState(false);
   const [showReturn, setShowReturn] = useState(false);
   const [wzError, setWzError] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
+
+  const startDelivery = useStartDeliveryMutation();
+  const completeDelivery = useCompleteDeliveryMutation();
 
   const { data: orderDetail, isLoading: orderLoading } = useOrderQuery(order.id, expanded);
   // Fetch full WZ detail when expanded so we have return_documents
   const { data: wzDetail } = useDeliveryQuery(wz?.id, expanded && wz !== null);
 
-  const done = wz !== null;
+  const delivered = wz?.status === 'delivered';
+  const wzIssued = wz !== null && !delivered; // WZ created but not yet completed
+  const done = delivered;
   const zwDocs = wzDetail?.return_documents ?? [];
 
   async function handleCreateWz() {
@@ -296,10 +551,25 @@ function StopCard({
     }
   }
 
+  async function handleCompleteWz() {
+    if (!wz) return;
+    setWzError(null);
+    setCompleting(true);
+    try {
+      if (wz.status === 'saved') await startDelivery.mutateAsync(wz.id);
+      await completeDelivery.mutateAsync({ id: wz.id, data: {} });
+    } catch (e) {
+      setWzError(e instanceof Error ? e.message : 'Nie udało się zakończyć dostawy');
+    } finally {
+      setCompleting(false);
+    }
+  }
+
   return (
     <div className={cn(
       'shadow-soft w-full overflow-hidden rounded-2xl bg-surface-card text-left transition-colors',
       done && 'border-l-4 border-l-emerald-400',
+      wzIssued && 'border-l-4 border-l-amber-400',
       locked && 'opacity-40',
     )}>
       {/* Main clickable row — navigates on click */}
@@ -318,7 +588,7 @@ function StopCard({
         <div
           className={cn(
             'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold',
-            done ? 'bg-emerald-100 text-emerald-700' : 'bg-primary/10 text-primary',
+            done ? 'bg-emerald-100 text-emerald-700' : wzIssued ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary',
             locked && 'bg-gray-100 text-gray-400',
           )}
           aria-hidden
@@ -342,6 +612,8 @@ function StopCard({
                   </span>
                 ))}
               </>
+            ) : wzIssued ? (
+              <span className="font-medium text-amber-600">{wz!.document_number ?? 'WZ wystawiona'} · do potwierdzenia</span>
             ) : locked ? (
               <span className="text-amber-600 font-medium">Załaduj van, aby wystawić WZ</span>
             ) : (
@@ -433,7 +705,7 @@ function StopCard({
           {/* Action buttons */}
           {!showReturn && (
             <div className="flex gap-2">
-              {!done && (
+              {!done && !wzIssued && (
                 <button
                   type="button"
                   onClick={() => void handleCreateWz()}
@@ -447,6 +719,30 @@ function StopCard({
                 >
                   {isCreatingWz ? 'Tworzenie WZ…' : 'Utwórz WZ'}
                 </button>
+              )}
+              {wzIssued && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleCompleteWz()}
+                    disabled={completing}
+                    className={cn(
+                      'flex-1 rounded-xl py-2 text-sm font-semibold transition-colors',
+                      !completing
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        : 'bg-muted text-muted-foreground cursor-not-allowed',
+                    )}
+                  >
+                    {completing ? 'Potwierdzanie…' : 'Zakończ dostawę'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onNavigate}
+                    className="rounded-xl border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    Edytuj
+                  </button>
+                </>
               )}
               {done && (
                 <button
@@ -490,12 +786,23 @@ function AdditionalWzSheet({
   error,
 }: {
   stockItems: StockItem[];
-  onSubmit: (items: Array<{ product_id: string; quantity_planned: string }>) => void;
+  onSubmit: (items: Array<{ product_id: string; quantity_planned: string }>, customerId: string | null) => void;
   onClose: () => void;
   isPending: boolean;
   error: string | null;
 }) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
   const [qtys, setQtys] = useState<Map<string, number>>(new Map());
+  const [customerId, setCustomerId] = useState<string>('');
+  const [customerSearch, setCustomerSearch] = useState('');
+
+  const { data: customerData } = useQuery({
+    queryKey: ['customers', 'list', companyId, customerSearch],
+    queryFn: () => customerService.fetchList({ search: customerSearch || undefined, page_size: 50 }),
+    enabled: Boolean(companyId),
+  });
+  const customers: Customer[] = customerData?.results ?? [];
 
   const activeItems = stockItems.filter((i) => (qtys.get(i.product_id) ?? 0) > 0);
 
@@ -508,18 +815,26 @@ function AdditionalWzSheet({
     });
   }
 
+  // Auto-select when search text matches exactly one customer name
+  useEffect(() => {
+    if (customerId) return;
+    const resolved = resolveCustomerIdFromSearch('', customerSearch, customers);
+    if (resolved) setCustomerId(resolved);
+  }, [customerSearch, customers, customerId]);
+
   function handleSubmit() {
     const items = activeItems.map((i) => ({
       product_id: i.product_id,
       quantity_planned: (qtys.get(i.product_id) ?? 0).toFixed(3),
     }));
-    onSubmit(items);
+    const resolvedCustomerId = resolveCustomerIdFromSearch(customerId, customerSearch, customers);
+    onSubmit(items, resolvedCustomerId);
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+    <div className="flex min-h-dvh w-full flex-col bg-background">
       {/* Header */}
-      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border/40 bg-background/95 px-4 py-3 backdrop-blur">
+      <div className="shrink-0 flex items-center gap-3 border-b border-border/40 bg-background/95 px-4 py-3">
         <button
           type="button"
           onClick={onClose}
@@ -542,7 +857,50 @@ function AdditionalWzSheet({
       </div>
 
       {/* Product list */}
-      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pt-4 pb-[calc(76px+env(safe-area-inset-bottom))]">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pt-4">
+        {/* Customer picker */}
+        <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Klient (opcjonalnie)
+          </label>
+          <input
+            type="text"
+            placeholder="Szukaj klienta…"
+            value={customerSearch}
+            onChange={(e) => { setCustomerSearch(e.target.value); setCustomerId(''); }}
+            className="mb-2 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+          />
+          {customerId && (
+            <p className="rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">
+              Wybrany klient: {customers.find((c) => c.id === customerId)?.name ?? customerSearch}
+              <button
+                type="button"
+                onClick={() => { setCustomerId(''); setCustomerSearch(''); }}
+                className="ml-2 text-xs font-medium text-muted-foreground underline"
+              >
+                zmień
+              </button>
+            </p>
+          )}
+          {!customerId && customers.length > 0 && (
+            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+              {customers.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => { setCustomerId(c.id); setCustomerSearch(c.name); }}
+                  className="rounded-xl px-3 py-3 text-left text-sm font-medium text-foreground hover:bg-muted transition-colors border border-border/40 shrink-0"
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {!customerId && customerSearch && customers.length === 0 && (
+            <p className="text-xs text-muted-foreground">Nie znaleziono klienta</p>
+          )}
+        </div>
+
         {stockItems.length === 0 && (
           <p className="py-10 text-center text-sm text-muted-foreground">Brak towaru w vanie</p>
         )}
@@ -609,7 +967,7 @@ function AdditionalWzSheet({
       </div>
 
       {/* Bottom bar */}
-      <div className="fixed left-0 right-0 bottom-0 z-10 border-t border-border/40 bg-background/95 px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+      <div className="shrink-0 border-t border-border/40 bg-background/95 px-4 pb-[calc(12px+83px+env(safe-area-inset-bottom))] pt-3 md:pb-[calc(12px+env(safe-area-inset-bottom))]">
         <button
           type="button"
           onClick={handleSubmit}
@@ -636,16 +994,21 @@ export function VanRouteDashboardPage() {
   const { routeId } = useParams<{ routeId: string }>();
 
   const { data: route, isLoading: routeLoading, isError } = useVanRouteQuery(routeId);
-  const closeRoute = useCloseVanRouteMutation();
   const confirmLoading = useConfirmLoadingMutation();
   const createStandaloneWz = useCreateStandaloneWzMutation();
   const generateWz = useGenerateDeliveryForOrderMutation();
+  const startDeliveryPage = useStartDeliveryMutation();
+  const completeDeliveryPage = useCompleteDeliveryMutation();
 
   const vanWarehouseId = route?.van_warehouse_id;
   const date = route?.date ?? '';
 
-  /* ── WZ docs issued from this van on this date ── */
-  const { data: vanWZDocs, isLoading: wzLoading } = useVanWZListQuery(vanWarehouseId, date);
+  /* ── WZ docs linked to this van route ── */
+  const { data: vanWZDocs, isLoading: wzLoading } = useVanRouteWZListQuery(routeId);
+
+  /* ── WZ docs linked to the route's orders (fallback for WZ not tagged with van_route) ── */
+  const routeOrderIds = useMemo(() => (route?.orders ?? []).map((o) => o.id), [route?.orders]);
+  const { data: orderWZDocs } = useDeliveryByOrdersQuery(routeOrderIds, routeOrderIds.length > 0);
 
   /* ── Live van stock ── */
   const { data: stockSnapshot, isLoading: stockLoading } = useStockSnapshotQuery(vanWarehouseId);
@@ -657,23 +1020,52 @@ export function VanRouteDashboardPage() {
   /* ── Additional WZ sheet state ── */
   const [showAdditionalWz, setShowAdditionalWz] = useState(false);
   const [additionalWzError, setAdditionalWzError] = useState<string | null>(null);
+  const [showAddOrders, setShowAddOrders] = useState(false);
 
-  /* ── Map order_id → WZ ── */
+  /* ── Map order_id → WZ ──
+     Merges two sources:
+     1. Order-linked WZ docs (fallback — covers WZ created outside the van route context)
+     2. Van-route-linked WZ docs (higher priority — these are the "official" ones)
+  ── */
   const wzByOrderId = useMemo(() => {
     const m = new Map<string, DeliveryDocument>();
+    // Fallback: WZ docs linked to orders (regardless of van_route FK)
+    for (const wz of orderWZDocs ?? []) {
+      if (wz.order_id && wz.document_type === 'WZ') m.set(wz.order_id, wz);
+    }
+    // Override: WZ docs explicitly linked to this van route
     for (const wz of vanWZDocs ?? []) {
       if (wz.order_id) m.set(wz.order_id, wz);
     }
     return m;
-  }, [vanWZDocs]);
+  }, [vanWZDocs, orderWZDocs]);
 
   const stops = useMemo(
     () => (route?.orders ?? []).map((o) => ({ order: o, wz: wzByOrderId.get(o.id) ?? null })),
     [route?.orders, wzByOrderId],
   );
 
-  const doneCount = stops.filter((s) => s.wz !== null).length;
-  const allDone = stops.length > 0 && doneCount === stops.length;
+  const doneCount = stops.filter((s) => s.wz?.status === 'delivered').length;
+  const allStopsDone = stops.length === 0 || doneCount === stops.length;
+
+  const pendingWzDocs = useMemo(
+    () =>
+      (vanWZDocs ?? []).filter(
+        (wz) => wz.status !== 'delivered' && wz.status !== 'cancelled',
+      ),
+    [vanWZDocs],
+  );
+  const additionalWzPending = useMemo(
+    () => pendingWzDocs.filter((wz) => !wz.order_id),
+    [pendingWzDocs],
+  );
+  const additionalWzDelivered = useMemo(
+    () =>
+      (vanWZDocs ?? []).filter((wz) => !wz.order_id && wz.status === 'delivered'),
+    [vanWZDocs],
+  );
+  const pendingWzCount = countPendingWzDocs(vanWZDocs);
+  const allDone = allStopsDone && pendingWzCount === 0;
 
   const stockItems = useMemo(
     () => (stockSnapshot?.items ?? []).filter((i) => parseFloat(i.quantity_available) > 0),
@@ -695,12 +1087,26 @@ export function VanRouteDashboardPage() {
 
   const canClose = allDone && !isClosed && !isPlanned;
 
+  const reconciliationSummary = isClosed ? route?.reconciliation_summary ?? null : null;
+  const summaryReturned = reconciliationSummary?.items.filter((i) => i.action === 'returned') ?? [];
+  const summaryKept = reconciliationSummary?.items.filter((i) => i.action === 'kept') ?? [];
+  const summaryWrittenOff = reconciliationSummary?.items.filter((i) => i.action === 'written_off') ?? [];
+
   const handleCreateWz = useCallback(
     async (orderId: string) => {
-      const doc = await generateWz.mutateAsync({ orderId, vanWarehouseId });
-      navigate(`/delivery/${doc.id}`);
+      const doc = await generateWz.mutateAsync({ orderId, vanWarehouseId, vanRouteId: routeId });
+      // Auto-complete: assume full delivery with planned quantities.
+      // If this fails (e.g. stock issue), fall back to the detail page for manual completion.
+      try {
+        await startDeliveryPage.mutateAsync(doc.id);
+        await completeDeliveryPage.mutateAsync({ id: doc.id, data: {} });
+        // Stay on dashboard — stop will turn green after cache invalidation
+      } catch {
+        // Completion failed — navigate to WZ detail so driver can resolve manually
+        navigate(`/delivery/${doc.id}`);
+      }
     },
-    [generateWz, vanWarehouseId, navigate],
+    [generateWz, vanWarehouseId, routeId, navigate, startDeliveryPage, completeDeliveryPage],
   );
 
   const handleStopNavigate = useCallback(
@@ -715,21 +1121,22 @@ export function VanRouteDashboardPage() {
   );
 
   const handleAdditionalWzSubmit = useCallback(
-    async (items: Array<{ product_id: string; quantity_planned: string }>) => {
+    async (items: Array<{ product_id: string; quantity_planned: string }>, customerId: string | null) => {
       if (!vanWarehouseId) return;
       setAdditionalWzError(null);
       try {
-        const doc = await createStandaloneWz.mutateAsync({
+        await createStandaloneWz.mutateAsync({
           from_warehouse_id: vanWarehouseId,
+          van_route_id: routeId,
+          to_customer_id: customerId ?? undefined,
           items,
         });
         setShowAdditionalWz(false);
-        navigate(`/delivery/${doc.id}`);
       } catch (e) {
         setAdditionalWzError(e instanceof Error ? e.message : 'Nie udało się utworzyć WZ');
       }
     },
-    [vanWarehouseId, createStandaloneWz, navigate],
+    [vanWarehouseId, routeId, createStandaloneWz],
   );
 
   async function handleClose() {
@@ -738,7 +1145,6 @@ export function VanRouteDashboardPage() {
       if (route?.status === 'loading') {
         await confirmLoading.mutateAsync(routeId);
       }
-      await closeRoute.mutateAsync(routeId);
       navigate(
         `/delivery/van-reconciliation?warehouse_id=${vanWarehouseId}&route_id=${routeId}`,
       );
@@ -764,12 +1170,24 @@ export function VanRouteDashboardPage() {
 
   const isLoading = routeLoading || wzLoading;
 
+  // Show add orders sheet (planned routes only)
+  if (showAddOrders) {
+    return (
+      <AddOrdersSheet
+        routeId={routeId!}
+        date={date}
+        existingOrderIds={new Set((route?.orders ?? []).map((o) => o.id))}
+        onClose={() => setShowAddOrders(false)}
+      />
+    );
+  }
+
   // Show additional WZ sheet
   if (showAdditionalWz) {
     return (
       <AdditionalWzSheet
         stockItems={stockItems}
-        onSubmit={(items) => void handleAdditionalWzSubmit(items)}
+        onSubmit={(items, customerId) => void handleAdditionalWzSubmit(items, customerId)}
         onClose={() => { setShowAdditionalWz(false); setAdditionalWzError(null); }}
         isPending={createStandaloneWz.isPending}
         error={additionalWzError}
@@ -908,12 +1326,151 @@ export function VanRouteDashboardPage() {
           </div>
         )}
 
+        {/* Reconciliation summary (closed routes only) */}
+        {reconciliationSummary && (
+          <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Rozliczenie trasy
+            </h2>
+            {summaryReturned.length > 0 && (
+              <div className="mb-2">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Zwrot do MG</p>
+                {summaryReturned.map((item) => (
+                  <div key={item.product_id} className="flex justify-between text-sm">
+                    <span className="text-foreground">{item.product_name}</span>
+                    <span className="tabular-nums font-semibold text-foreground">{formatQty(parseFloat(item.quantity), item.unit)}</span>
+                  </div>
+                ))}
+                {reconciliationSummary.mm_return_number && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">{reconciliationSummary.mm_return_number}</p>
+                )}
+              </div>
+            )}
+            {summaryKept.length > 0 && (
+              <div className="mb-2">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Zostaje w vanie</p>
+                {summaryKept.map((item) => (
+                  <div key={item.product_id} className="flex justify-between text-sm">
+                    <span className="text-foreground">{item.product_name}</span>
+                    <span className="tabular-nums font-semibold text-foreground">{formatQty(parseFloat(item.quantity), item.unit)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {summaryWrittenOff.length > 0 && (
+              <div className="mb-2">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-destructive">Odpisano</p>
+                {summaryWrittenOff.map((item) => (
+                  <div key={item.product_id} className="flex justify-between text-sm">
+                    <span className="text-foreground">{item.product_name}</span>
+                    <span className="tabular-nums font-semibold text-destructive">{formatQty(parseFloat(item.quantity), item.unit)}</span>
+                  </div>
+                ))}
+                {reconciliationSummary.rw_writeoff_number && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">{reconciliationSummary.rw_writeoff_number}</p>
+                )}
+              </div>
+            )}
+            {summaryReturned.length === 0 && summaryKept.length === 0 && summaryWrittenOff.length === 0 && (
+              <p className="text-sm text-muted-foreground">Brak towaru do rozliczenia.</p>
+            )}
+          </div>
+        )}
+
+        {/* Open WZ blocking route close */}
+        {!isLoading && pendingWzDocs.length > 0 && (
+          <div className="rounded-2xl border border-amber-300/50 bg-amber-50 px-4 py-3 dark:bg-amber-950/30">
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              Otwarte WZ na tej trasie ({pendingWzDocs.length})
+            </p>
+            <ul className="mt-2 space-y-1">
+              {pendingWzDocs.map((wz) => (
+                <li key={wz.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/delivery/${wz.id}`)}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    {wz.document_number ?? wz.id.slice(0, 8)}
+                    {wz.customer_name ? ` · ${wz.customer_name}` : ''}
+                    {' '}
+                    <span className="text-amber-700 dark:text-amber-400">— {wz.status === 'draft' ? 'szkic' : wz.status === 'saved' ? 'zapisane' : 'w drodze'}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Delivered additional WZ */}
+        {!isLoading && additionalWzDelivered.length > 0 && (
+          <div>
+            <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              WZ dodatkowe — dostarczone ({additionalWzDelivered.length})
+            </h2>
+            <div className="flex flex-col gap-2">
+              {additionalWzDelivered.map((wz) => (
+                <button
+                  key={wz.id}
+                  type="button"
+                  onClick={() => navigate(`/delivery/${wz.id}`)}
+                  className="flex items-center gap-3 rounded-2xl border-l-4 border-l-emerald-400 bg-surface-card px-4 py-3 text-left shadow-soft transition-colors hover:bg-surface-low/40"
+                >
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                    <CheckIcon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-foreground">
+                      {wz.customer_name || 'WZ dodatkowe'}
+                    </p>
+                    <p className="text-[12px] text-emerald-600">
+                      {wz.document_number ?? 'WZ'} · dostarczono
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Pending additional WZ */}
+        {!isLoading && additionalWzPending.length > 0 && (
+          <div>
+            <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              WZ dodatkowe ({additionalWzPending.length})
+            </h2>
+            <div className="flex flex-col gap-2">
+              {additionalWzPending.map((wz) => (
+                <AdditionalWzCard
+                  key={wz.id}
+                  wz={wz}
+                  onNavigate={() => navigate(`/delivery/${wz.id}`)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Stops */}
         {!isLoading && (
           <div>
-            <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Przystanki ({stops.length})
-            </h2>
+            <div className="mb-2 flex items-center justify-between px-1">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Przystanki ({stops.length})
+              </h2>
+              {isPlanned && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddOrders(true)}
+                  className="flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" stroke="currentColor" strokeWidth={2.5}>
+                    <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+                  </svg>
+                  Dodaj zamówienie
+                </button>
+              )}
+            </div>
             {isPlanned && (
               <p className="mb-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
                 Załaduj van, aby móc wystawiać dokumenty WZ dla przystanków.
@@ -943,7 +1500,7 @@ export function VanRouteDashboardPage() {
       </div>
 
       {/* Fixed bottom bar */}
-      {!isClosed && (
+      {(!isClosed || (isClosed && stockItems.length > 0)) && (
         <div className="fixed left-0 right-0 z-30 bottom-[83px] md:bottom-0 border-t border-border/40 bg-background/95 px-4 pb-3 pt-3 backdrop-blur">
           {isPlanned ? (
             <button
@@ -957,19 +1514,21 @@ export function VanRouteDashboardPage() {
             <button
               type="button"
               onClick={() => void handleClose()}
-              disabled={!canClose || closeRoute.isPending}
+              disabled={!canClose && !isClosed}
               className={cn(
                 'w-full rounded-xl py-3 text-base font-semibold transition-colors',
-                canClose && !closeRoute.isPending
+                (canClose || isClosed) && !confirmLoading.isPending
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-muted text-muted-foreground cursor-not-allowed',
               )}
             >
-              {closeRoute.isPending
-                ? 'Zamykanie trasy…'
-                : canClose
+              {confirmLoading.isPending
+                ? 'Trwa potwierdzanie…'
+                : (canClose || isClosed)
                   ? 'Rozlicz Van'
-                  : `Dostarcz wszystkie przystanki (${doneCount}/${stops.length})`}
+                  : !allStopsDone
+                    ? `Dostarcz wszystkie przystanki (${doneCount}/${stops.length})`
+                    : `Potwierdź WZ (${pendingWzCount}) przed rozliczeniem`}
             </button>
           )}
         </div>

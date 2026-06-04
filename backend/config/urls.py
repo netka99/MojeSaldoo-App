@@ -10,6 +10,7 @@ urlpatterns = [
     # Business API (routers in apps.*/urls.py)
     path('api/', include('apps.products.urls')),
     path('api/', include('apps.customers.urls')),
+    path('api/', include('apps.suppliers.urls')),
     path('api/orders/', include('apps.orders.urls')),
     path('api/delivery/', include('apps.delivery.urls')),
     path('api/van-routes/', include('apps.van_routes.urls')),

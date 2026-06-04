@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { warehouseService } from '@/services/warehouse.service';
 import type { WarehouseWrite } from '@/types';
-import { stockSnapshotKeys, warehouseKeys } from './keys';
+import { stockSnapshotKeys, warehouseKeys, warehouseStockKeys } from './keys';
 
 export function useWarehouseListQuery(page = 1) {
   return useQuery({
@@ -49,5 +49,18 @@ export function useDeleteWarehouseMutation() {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.byWarehouse(id) });
     },
+  });
+}
+
+export function useWarehouseStockQuery(
+  warehouseId: string | undefined,
+  params?: { below_minimum?: boolean; search?: string },
+) {
+  return useQuery({
+    queryKey: warehouseId
+      ? warehouseStockKeys.byWarehouse(warehouseId, params)
+      : warehouseStockKeys.all,
+    queryFn: () => warehouseService.fetchStock(warehouseId!, params),
+    enabled: Boolean(warehouseId),
   });
 }

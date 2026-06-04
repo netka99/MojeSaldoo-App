@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
+import { useDashboardSummaryQuery } from '@/query/use-reports';
 import { cn } from '@/lib/utils';
 import type { ModuleName } from '@/types';
 
@@ -117,26 +118,11 @@ function IconTileProducts({ className }: { className?: string }) {
   );
 }
 
-function IconActivityOrder({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-const MOCK_ACTIVITY: { id: string; title: string; time: string; Icon: (p: { className?: string }) => React.ReactElement }[] = [
-  { id: '1', title: 'Nowe zamówienie #1042', time: '2 min temu', Icon: IconActivityOrder },
-  { id: '2', title: 'WZ-2024/089 — wydano', time: '15 min temu', Icon: IconTileWZ },
-  { id: '3', title: 'Faktura VAT opłacona', time: '1 godz. temu', Icon: IconActivityOrder },
-];
+const VAN_STATUS_LABELS: Record<string, string> = {
+  loading: 'Ładowanie',
+  in_progress: 'W trasie',
+  settling: 'Rozliczanie',
+};
 
 interface DashboardTileDef {
   key: string
@@ -147,19 +133,70 @@ interface DashboardTileDef {
 }
 
 const DASHBOARD_TILES: DashboardTileDef[] = [
-  { key: 'order', label: 'Zamówienie', to: '/orders/new', module: 'orders', Icon: IconTileOrder },
+  { key: 'order', label: 'Zamówienia', to: '/orders', module: 'orders', Icon: IconTileOrder },
   {
     key: 'zestawienie',
     label: 'Zestawienie',
-    to: '/delivery/van-reconciliation',
+    to: '/delivery',
     module: 'delivery',
     Icon: IconTileReconciliation,
   },
-  { key: 'van', label: 'Załaduj Van', to: '/delivery/van-loading', module: 'delivery', Icon: IconTileVan },
+  { key: 'van', label: 'Załaduj Van', to: '/van-routes', module: 'delivery', Icon: IconTileVan },
   { key: 'wz', label: 'WZ', to: '/delivery', module: 'delivery', Icon: IconTileWZ },
   { key: 'analytics', label: 'Analityka', to: '/reports', module: 'reporting', Icon: IconTileAnalytics },
   { key: 'products', label: 'Produkty', to: '/products', module: 'products', Icon: IconTileProducts },
 ];
+
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+  to,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  accent?: 'red' | 'amber' | 'blue';
+  to?: string;
+}) {
+  const accentClass =
+    accent === 'red'
+      ? 'border-red-200 bg-red-50'
+      : accent === 'amber'
+        ? 'border-amber-200 bg-amber-50'
+        : accent === 'blue'
+          ? 'border-blue-100 bg-blue-50'
+          : 'border-transparent bg-surface-card';
+
+  const inner = (
+    <div className={cn('rounded-2xl border p-4', accentClass)}>
+      <p className="text-xs font-medium text-on-surface-variant">{label}</p>
+      <p
+        className={cn(
+          'mt-1 text-2xl font-bold leading-none',
+          accent === 'red'
+            ? 'text-red-700'
+            : accent === 'amber'
+              ? 'text-amber-700'
+              : 'text-on-surface',
+        )}
+      >
+        {value}
+      </p>
+      {sub && <p className="mt-1 text-xs text-on-surface-variant">{sub}</p>}
+    </div>
+  );
+
+  if (to) {
+    return (
+      <Link to={to} className="no-underline">
+        {inner}
+      </Link>
+    );
+  }
+  return inner;
+}
 
 export const Home: React.FC = () => {
   const { user } = useAuth();
@@ -179,9 +216,18 @@ export const Home: React.FC = () => {
     ksef: useModuleGuard('ksef'),
   };
 
+  const dashQ = useDashboardSummaryQuery();
+  const d = dashQ.data;
+
   const displayName = user?.first_name?.trim() || user?.username?.trim() || 'Anna';
   const shortGreetingName = displayName.split(/\s+/)[0] ?? displayName;
   const initials = initialsFromUser(user?.first_name, user?.last_name, user?.username);
+
+  const overdueCount = d?.invoices_overdue.count ?? 0;
+  const overdueTotal = d ? Number.parseFloat(d.invoices_overdue.total_gross) : 0;
+  const overdueTotalFmt = Number.isNaN(overdueTotal)
+    ? '—'
+    : new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(overdueTotal);
 
   return (
     <div className="min-h-full bg-surface pb-6">
@@ -258,37 +304,92 @@ export const Home: React.FC = () => {
         })}
       </section>
 
-      <section className="mt-8 px-4">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-base font-semibold text-on-surface">Ostatnia aktywność</h2>
-          <Link to="/orders" className="shrink-0 text-sm font-medium text-primary no-underline hover:underline">
-            Zobacz wszystko
-          </Link>
-        </div>
-        <ul className="mt-2 list-none p-0" aria-label="Ostatnia aktywność">
-          {MOCK_ACTIVITY.map(({ id, title, time, Icon }) => (
-            <li key={id} className="flex gap-3 py-4">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-light">
-                <Icon className="h-5 w-5 text-primary" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-medium leading-snug text-on-surface">{title}</p>
-                <p className="mt-0.5 text-xs text-on-surface-variant">{time}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
+      {/* Operational stats */}
+      <section className="mt-6 grid grid-cols-2 gap-3 px-4">
+        <StatCard
+          label="Zamówienia do potwierdzenia"
+          value={d ? d.orders_pending_confirmation : '—'}
+          accent={d && d.orders_pending_confirmation > 0 ? 'amber' : undefined}
+          to="/orders"
+        />
+        <StatCard
+          label="WZ w trasie"
+          value={d ? d.wz_in_transit : '—'}
+          accent={d && d.wz_in_transit > 0 ? 'blue' : undefined}
+          to="/delivery"
+        />
+        <StatCard
+          label="Przeterminowane faktury"
+          value={d ? overdueCount : '—'}
+          sub={d && overdueCount > 0 ? overdueTotalFmt : undefined}
+          accent={d && overdueCount > 0 ? 'red' : undefined}
+          to="/invoices"
+        />
+        <StatCard
+          label="Produkty poniżej min."
+          value={d ? d.low_stock_alerts.length : '—'}
+          accent={d && d.low_stock_alerts.length > 0 ? 'red' : undefined}
+          to="/products"
+        />
       </section>
 
-      <section className="mt-2 px-4">
-        <div className="rounded-3xl bg-primary p-6">
-          <p className="text-sm font-medium text-white/70">Dzisiejsza Sprzedaż</p>
-          <p className="mt-2 text-[2.75rem] font-bold tracking-tight text-white">12,450.00 PLN</p>
-          <p className="mt-4 inline-flex rounded-full bg-white/20 px-3 py-1 text-xs font-medium text-white">
-            +12% vs wczoraj
-          </p>
-        </div>
-      </section>
+      {/* Today's van routes */}
+      {(d?.van_routes_today.length ?? 0) > 0 && (
+        <section className="mt-6 px-4">
+          <h2 className="mb-2 text-base font-semibold text-on-surface">Trasy dzisiaj</h2>
+          <ul className="list-none space-y-2 p-0">
+            {d!.van_routes_today.map((route) => (
+              <li key={route.id}>
+                <Link
+                  to={`/van-routes/${route.id}`}
+                  className="flex items-center justify-between rounded-2xl bg-surface-card px-4 py-3 no-underline"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-on-surface">{route.driver_name}</p>
+                    <p className="truncate text-xs text-on-surface-variant">{route.van_name}</p>
+                  </div>
+                  <span className="ml-3 shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                    {VAN_STATUS_LABELS[route.status] ?? route.status}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Low stock alerts */}
+      {(d?.low_stock_alerts.length ?? 0) > 0 && (
+        <section className="mt-6 px-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-base font-semibold text-on-surface">Niski stan magazynowy</h2>
+            <Link to="/products" className="shrink-0 text-sm font-medium text-primary no-underline hover:underline">
+              Wszystkie
+            </Link>
+          </div>
+          <ul className="mt-2 list-none space-y-2 p-0">
+            {d!.low_stock_alerts.map((row) => (
+              <li
+                key={`${row.product_id}-${row.warehouse__id}`}
+                className="flex items-center justify-between rounded-2xl bg-red-50 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-on-surface">{row.product__name}</p>
+                  <p className="truncate text-xs text-on-surface-variant">{row.warehouse__name}</p>
+                </div>
+                <div className="ml-3 shrink-0 text-right">
+                  <p className="text-sm font-semibold text-red-700">
+                    {Number(row.quantity_available).toLocaleString('pl-PL')}
+                  </p>
+                  <p className="text-xs text-on-surface-variant">
+                    min. {Number(row.product__min_stock_alert).toLocaleString('pl-PL')}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 };

@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.customers.models import Customer
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product, Warehouse
+from apps.suppliers.models import Supplier
 
 
 class DeliveryDocument(models.Model):
@@ -23,12 +24,14 @@ class DeliveryDocument(models.Model):
     DOC_TYPE_MM = "MM"
     DOC_TYPE_PZ = "PZ"
     DOC_TYPE_ZW = "ZW"
+    DOC_TYPE_RW = "RW"
 
     DOC_TYPE_CHOICES = [
         (DOC_TYPE_WZ, "Wydanie Zewnętrzne"),
         (DOC_TYPE_MM, "Przesunięcie Międzymagazynowe"),
         (DOC_TYPE_PZ, "Przyjęcie Zewnętrzne"),
         (DOC_TYPE_ZW, "Zwrot Zewnętrzny"),
+        (DOC_TYPE_RW, "Rozchód Wewnętrzny"),
     ]
 
     STATUS_DRAFT = "draft"
@@ -95,6 +98,14 @@ class DeliveryDocument(models.Model):
         blank=True,
         related_name="delivery_documents",
     )
+    from_supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="delivery_documents",
+        help_text="Dostawca — wypełniany dla dokumentów PZ.",
+    )
     linked_wz = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
@@ -102,6 +113,14 @@ class DeliveryDocument(models.Model):
         blank=True,
         related_name="return_documents",
         help_text="For ZW documents: the WZ that triggered this return.",
+    )
+    van_route = models.ForeignKey(
+        "van_routes.VanRoute",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="delivery_documents",
+        help_text="Van route (trip) this document belongs to.",
     )
     status = models.CharField(
         max_length=20,
@@ -216,6 +235,13 @@ class DeliveryItem(models.Model):
         decimal_places=2,
         default=Decimal("0"),
         validators=[MinValueValidator(Decimal("0"))],
+    )
+    unit_cost = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Cena zakupu netto per jednostka — wypełniana przy PZ.",
     )
     return_reason = models.CharField(max_length=255, blank=True, default="")
     is_damaged = models.BooleanField(default=False)

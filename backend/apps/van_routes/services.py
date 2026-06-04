@@ -5,12 +5,82 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
-from apps.delivery.models import DeliveryDocument, DeliveryItem
+from apps.delivery.models import DeliveryItem
 from apps.delivery.services import create_van_loading_mm
 from apps.orders.models import Order
-from apps.products.models import ProductStock
+from apps.products.models import ProductStock, Warehouse
 
 from .models import VanRoute
+
+
+def get_van_route_for_document(company_id, van_route_id) -> VanRoute | None:
+    """Resolve van route for linking a delivery document; None if id omitted."""
+    if not van_route_id:
+        return None
+    try:
+        return VanRoute.objects.get(pk=van_route_id, company_id=company_id)
+    except VanRoute.DoesNotExist:
+        raise ValidationError({"van_route_id": "Van route not found or not accessible."})
+
+
+def validate_wz_van_route_link(
+    route: VanRoute,
+    *,
+    order: Order | None = None,
+    issue_date=None,
+    from_warehouse=None,
+) -> None:
+    """
+    Raise ValidationError when a WZ document should not be linked to this van route.
+
+    Order WZ: order must be on the route, issue_date must match route date.
+    Standalone WZ: issue_date must match route date; from_warehouse must match van.
+    """
+    if order is not None:
+        if not route.orders.filter(pk=order.pk).exists():
+            raise ValidationError({"van_route_id": "Order is not assigned to this van route."})
+    if issue_date is not None and issue_date != route.date:
+        raise ValidationError(
+            {"van_route_id": "Document issue date must match the van route date."}
+        )
+    if from_warehouse is not None and str(from_warehouse.pk) != str(route.van_warehouse_id):
+        raise ValidationError(
+            {"van_route_id": "From warehouse must match the van route's warehouse."}
+        )
+
+
+def _validate_orders_for_route(company_id, order_ids: list) -> list:
+    """
+    Validate and return Order objects for assignment to a route.
+    Raises ValidationError if any order is invalid.
+    """
+    orders = list(Order.objects.filter(company_id=company_id, id__in=order_ids))
+    if len(orders) != len(order_ids):
+        raise ValidationError({"order_ids": "One or more orders not found or not accessible."})
+
+    already_routed = (
+        Order.objects.filter(id__in=order_ids, van_routes__status__in=VanRoute.ACTIVE_STATUSES)
+        .values_list("id", flat=True)
+    )
+    if already_routed:
+        raise ValidationError(
+            {"order_ids": f"Some orders are already assigned to an active route: {list(already_routed)}"}
+        )
+
+    terminal_orders = (
+        Order.objects.filter(
+            id__in=order_ids,
+            status__in=(Order.STATUS_DELIVERED, Order.STATUS_INVOICED),
+        )
+        .values_list("order_number", flat=True)
+    )
+    if terminal_orders:
+        numbers = ", ".join(n for n in terminal_orders if n)
+        raise ValidationError(
+            {"order_ids": f"Some orders have already been delivered or invoiced: {numbers}"}
+        )
+
+    return orders
 
 
 def create_van_route(
@@ -26,11 +96,9 @@ def create_van_route(
 ) -> VanRoute:
     """
     Create a new planned VanRoute and assign orders to it.
-    Validates that all orders belong to the company and are not already in an
-    active route.
+    Validates that all orders belong to the company, are not already in an
+    active route, have not already been delivered, and have no issued WZ.
     """
-    from apps.products.models import Warehouse
-
     if van_warehouse.company_id != company_id:
         raise ValidationError("Van warehouse must belong to your company.")
     if main_warehouse.company_id != company_id:
@@ -40,24 +108,23 @@ def create_van_route(
     if main_warehouse.warehouse_type != Warehouse.WarehouseType.MAIN:
         raise ValidationError({"main_warehouse_id": "Main warehouse must be a main (MG) warehouse."})
 
-    orders = list(
-        Order.objects.filter(company_id=company_id, id__in=order_ids)
-    )
-    if len(orders) != len(order_ids):
-        raise ValidationError({"order_ids": "One or more orders not found or not accessible."})
-
-    # Check none are already in an active route
-    already_routed = (
-        Order.objects.filter(
-            id__in=order_ids,
-            van_routes__status__in=VanRoute.ACTIVE_STATUSES,
-        )
-        .values_list("id", flat=True)
-    )
-    if already_routed:
+    # Block a second active route for the same van warehouse
+    existing_active = VanRoute.objects.filter(
+        company_id=company_id,
+        van_warehouse=van_warehouse,
+        status__in=VanRoute.ACTIVE_STATUSES,
+    ).first()
+    if existing_active:
         raise ValidationError(
-            {"order_ids": f"Some orders are already assigned to an active route: {list(already_routed)}"}
+            {
+                "van_warehouse_id": (
+                    f"Van warehouse already has an active route "
+                    f"({existing_active.status}). Close it before starting a new one."
+                )
+            }
         )
+
+    orders = _validate_orders_for_route(company_id, order_ids)
 
     with transaction.atomic():
         route = VanRoute.objects.create(
@@ -92,7 +159,8 @@ def start_loading(route: VanRoute, user, items: list[dict]) -> VanRoute:
         items=items,
         issue_date=route.date,
         driver_name=route.driver_name,
-        notes=f"Van route {route.id}",
+        notes=f"Załadunek trasy {route.id}",
+        van_route=route,
     )
 
     with transaction.atomic():

@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Warehouse, WarehouseWrite } from '../types';
+import type { Warehouse, WarehouseStockItem, WarehouseWrite } from '../types';
 
 interface PaginatedResponse<T> {
   count: number;
@@ -31,4 +31,7 @@ export const warehouseService = {
 
   partialUpdateItem: (id: string, body: Partial<WarehouseWrite>) =>
     api.patch<Warehouse>(`/warehouses/${id}/`, body),
+
+  fetchStock: (id: string, params?: { below_minimum?: boolean; search?: string }) =>
+    api.get<WarehouseStockItem[]>(`/warehouses/${id}/stock/`, { params }),
 };

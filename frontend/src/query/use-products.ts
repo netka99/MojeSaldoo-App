@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { productService, type StockUpdatePayload } from '@/services/product.service';
 import type { ProductWrite } from '@/types';
-import { productKeys, stockSnapshotKeys } from './keys';
+import { productKeys, stockMovementKeys, stockSnapshotKeys, type StockMovementParams } from './keys';
 
 export function useProductListQuery(page: number, sku: string) {
   return useQuery({
@@ -83,5 +83,13 @@ export function useStockSnapshotQuery(warehouseId: string | undefined) {
     queryKey: warehouseId ? stockSnapshotKeys.byWarehouse(warehouseId) : stockSnapshotKeys.all,
     queryFn: () => productService.fetchStockSnapshot(warehouseId!),
     enabled: Boolean(warehouseId),
+  });
+}
+
+export function useStockMovementsQuery(params: StockMovementParams) {
+  return useQuery({
+    queryKey: stockMovementKeys.list(params),
+    queryFn: () => productService.fetchStockMovements(params),
+    enabled: Boolean(params.product || params.warehouse),
   });
 }

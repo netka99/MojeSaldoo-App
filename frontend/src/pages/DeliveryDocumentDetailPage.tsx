@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Input } from '@/components/ui/Input';
@@ -8,6 +9,7 @@ import { deliveryStatusBadgeClassName } from '@/pages/DeliveryDocumentsPage';
 import {
   useAddReturnsMutation,
   useCompleteDeliveryMutation,
+  useCompletePzMutation,
   useDeliveryQuery,
   useDeliveryPreviewQuery,
   usePatchDeliveryMutation,
@@ -17,11 +19,14 @@ import {
 } from '@/query/use-delivery';
 import { useOrderQuery } from '@/query/use-orders';
 import { productService } from '@/services/product.service';
+import { customerService } from '@/services/customer.service';
 import { authStorage } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
+import { resolveCustomerIdFromSearch } from '@/lib/customer-picker-utils';
 import { cn } from '@/lib/utils';
 import { openWZPrintWindow } from '@/lib/openWZPrintWindow';
-import type { DeliveryItem, LinkedZWDocument, PendingReturnItem } from '@/types';
-import type { Order, Product } from '@/types';
+import type { DeliveryDocument, DeliveryItem, LinkedZWDocument, PendingReturnItem } from '@/types';
+import type { Customer, Order, Product } from '@/types';
 
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
 
@@ -108,7 +113,7 @@ function PlusIcon() {
   );
 }
 
-/* ── WZ item card ───────────────────────────────────────────────── */
+/* ── WZ / PZ item card ──────────────────────────────────────────── */
 interface WZItemCardProps {
   item: DeliveryItem;
   label: string;
@@ -117,9 +122,10 @@ interface WZItemCardProps {
   onQtyChange: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
   index: number;
+  isPZ?: boolean;
 }
 
-function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, index }: WZItemCardProps) {
+function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, index, isPZ }: WZItemCardProps) {
   const qtyActual =
     item.quantity_actual !== null && item.quantity_actual !== undefined && item.quantity_actual !== ''
       ? parseFloat(String(item.quantity_actual))
@@ -127,6 +133,7 @@ function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, in
   const qtyReturned = parseFloat(String(item.quantity_returned)) || 0;
   const displayQty = isEditing ? editQty : parseFloat(String(item.quantity_planned)) || 0;
   const qtyDisplay = Number.isInteger(displayQty) ? String(displayQty) : displayQty.toFixed(2);
+  const unitCost = item.unit_cost != null ? parseFloat(String(item.unit_cost)) : null;
 
   return (
     <motion.div
@@ -147,7 +154,7 @@ function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, in
           <h4 className="truncate text-[15px] font-medium text-foreground">{label}</h4>
           {!isEditing && (
             <p className="mt-0.5 text-[13px] text-muted-foreground">
-              Zaplanowano:{' '}
+              {isPZ ? 'Do przyjęcia:' : 'Zaplanowano:'}{' '}
               <span className="font-semibold tabular-nums text-foreground">{qtyDisplay} szt.</span>
             </p>
           )}
@@ -193,21 +200,29 @@ function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, in
             </div>
           </>
         ) : (
-          /* Read-only: actual + returned if present */
+          /* Read-only: actual + returned + unit_cost if present */
           <div className="flex flex-wrap gap-x-4 gap-y-0.5">
             {qtyActual !== null && (
               <span className="text-[13px] text-muted-foreground">
-                Faktyczne:{' '}
+                {isPZ ? 'Przyjęto:' : 'Faktyczne:'}{' '}
                 <span className="font-semibold tabular-nums text-foreground">
                   {Number.isInteger(qtyActual) ? qtyActual : qtyActual.toFixed(2)} szt.
                 </span>
               </span>
             )}
-            {qtyReturned > 0 && (
+            {!isPZ && qtyReturned > 0 && (
               <span className="text-[13px] text-muted-foreground">
                 Zwrot:{' '}
                 <span className="font-semibold tabular-nums text-foreground">
                   {Number.isInteger(qtyReturned) ? qtyReturned : qtyReturned.toFixed(2)} szt.
+                </span>
+              </span>
+            )}
+            {isPZ && unitCost !== null && Number.isFinite(unitCost) && (
+              <span className="text-[13px] text-muted-foreground">
+                Cena netto:{' '}
+                <span className="font-semibold tabular-nums text-foreground">
+                  {unitCost.toFixed(2)} zł
                 </span>
               </span>
             )}
@@ -459,6 +474,106 @@ function LinkedZWSection({ documents, isEditing, zwItemEdits, onZwItemChange }: 
   );
 }
 
+/* ── Standalone WZ customer (no order) ─────────────────────────── */
+
+function StandaloneWzCustomerSection({
+  doc,
+  locked,
+}: {
+  doc: DeliveryDocument;
+  locked: boolean;
+}) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const patchM = usePatchDeliveryMutation();
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerId, setCustomerId] = useState('');
+  const [assignError, setAssignError] = useState<string | null>(null);
+
+  const showPicker = !locked && doc.status === 'draft' && !doc.customer_name;
+
+  const { data: customerData } = useQuery({
+    queryKey: ['customers', 'wz-assign', companyId, customerSearch],
+    queryFn: () => customerService.fetchList({ search: customerSearch || undefined, page_size: 50 }),
+    enabled: Boolean(companyId) && showPicker,
+  });
+  const customers: Customer[] = customerData?.results ?? [];
+
+  useEffect(() => {
+    if (customerId) return;
+    const resolved = resolveCustomerIdFromSearch('', customerSearch, customers);
+    if (resolved) setCustomerId(resolved);
+  }, [customerSearch, customers, customerId]);
+
+  async function handleAssignCustomer() {
+    const resolved = resolveCustomerIdFromSearch(customerId, customerSearch, customers);
+    if (!resolved) {
+      setAssignError('Wybierz klienta z listy lub wpisz dokładną nazwę.');
+      return;
+    }
+    setAssignError(null);
+    try {
+      await patchM.mutateAsync({ id: doc.id, data: { to_customer_id: resolved } });
+    } catch (e) {
+      setAssignError(e instanceof Error ? e.message : 'Nie udało się zapisać klienta');
+    }
+  }
+
+  if (doc.document_type !== 'WZ' || doc.order_id) return null;
+
+  return (
+    <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
+      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Odbiorca</p>
+      {doc.customer_name ? (
+        <p className="text-base font-semibold text-foreground">{doc.customer_name}</p>
+      ) : showPicker ? (
+        <div className="mt-2 space-y-2">
+          <p className="text-sm text-muted-foreground">Nie przypisano klienta do tego WZ.</p>
+          <input
+            type="text"
+            placeholder="Szukaj klienta…"
+            value={customerSearch}
+            onChange={(e) => { setCustomerSearch(e.target.value); setCustomerId(''); }}
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+          />
+          {customerId && (
+            <p className="text-sm font-semibold text-primary">
+              Wybrany: {customers.find((c) => c.id === customerId)?.name ?? customerSearch}
+            </p>
+          )}
+          {!customerId && customers.length > 0 && (
+            <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+              {customers.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => { setCustomerId(c.id); setCustomerSearch(c.name); }}
+                  className="rounded-xl border border-border/40 px-3 py-2 text-left text-sm font-medium hover:bg-muted"
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {assignError && (
+            <p className="text-xs text-destructive">{assignError}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleAssignCustomer()}
+            disabled={patchM.isPending}
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {patchM.isPending ? 'Zapisywanie…' : 'Przypisz klienta'}
+          </button>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">—</p>
+      )}
+    </div>
+  );
+}
+
 /* ── Page ──────────────────────────────────────────────────────── */
 export function DeliveryDocumentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -480,6 +595,7 @@ export function DeliveryDocumentDetailPage() {
   const saveM = useSaveDeliveryMutation();
   const startM = useStartDeliveryMutation();
   const completeM = useCompleteDeliveryMutation();
+  const completePzM = useCompletePzMutation();
   const patchM = usePatchDeliveryMutation();
   const updateLinesM = useUpdateDeliveryLinesMutation();
   const addReturnsM = useAddReturnsMutation();
@@ -634,7 +750,8 @@ export function DeliveryDocumentDetailPage() {
   };
 
   const locked = Boolean(doc?.locked_for_edit);
-  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
+  const isPZ = doc?.document_type === 'PZ';
+  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || completePzM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
 
   /* ── Items to display (filter 0-qty in edit mode) ───────────── */
   const displayItems = doc
@@ -810,6 +927,46 @@ export function DeliveryDocumentDetailPage() {
               </p>
             )}
 
+            <StandaloneWzCustomerSection doc={doc} locked={locked} />
+
+            {doc.van_route_id && (
+              <p className="px-1 text-[13px] text-muted-foreground">
+                Trasa vana:{' '}
+                <Link
+                  to={`/van-routes/${doc.van_route_id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {doc.van_route_date
+                    ? new Date(`${doc.van_route_date}T12:00:00`).toLocaleDateString('pl-PL')
+                    : doc.van_route_id.slice(0, 8)}
+                </Link>
+              </p>
+            )}
+
+            {/* MM: show source → destination warehouse */}
+            {doc.document_type === 'MM' && (doc.from_warehouse_name || doc.to_warehouse_name) && (
+              <p className="px-1 text-[13px] text-muted-foreground">
+                <span className="font-medium text-foreground">{doc.from_warehouse_name ?? '—'}</span>
+                {' → '}
+                <span className="font-medium text-foreground">{doc.to_warehouse_name ?? '—'}</span>
+              </p>
+            )}
+
+            {/* PZ: supplier + receiving warehouse info */}
+            {isPZ && (
+              <div className="rounded-2xl border border-blue-400/40 bg-blue-50/60 dark:bg-blue-950/20 px-4 py-3 text-[13px] text-muted-foreground">
+                <p className="font-medium text-foreground mb-1">Przyjęcie zewnętrzne (PZ)</p>
+                {doc.supplier_name && (
+                  <p>Dostawca: <span className="font-medium text-foreground">{doc.supplier_name}</span></p>
+                )}
+                {doc.status !== 'delivered' && (
+                  <p className="mt-1 text-[12px] text-blue-700 dark:text-blue-300">
+                    Kliknij „Zaksięguj PZ" aby przyjąć towar na magazyn.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Linked WZ (for ZW documents) */}
             {doc.document_type === 'ZW' && doc.linked_wz_id && (
               <p className="px-1 text-[13px] text-muted-foreground">
@@ -843,6 +1000,7 @@ export function DeliveryDocumentDetailPage() {
                 onQtyChange={handleEditQtyChange}
                 onRemove={handleEditRemove}
                 index={i}
+                isPZ={isPZ}
               />
             ))}
 
@@ -918,7 +1076,7 @@ export function DeliveryDocumentDetailPage() {
               </div>
             )}
 
-            {/* Return items — available for any non-locked, non-cancelled WZ */}
+            {/* Return items — available for any non-locked, non-cancelled WZ (not PZ) */}
             {!isEditing && doc.document_type === 'WZ' && !locked && doc.status !== 'cancelled' && (
               <>
                 <ReturnItemsSection
@@ -941,12 +1099,30 @@ export function DeliveryDocumentDetailPage() {
             {/* Workflow buttons */}
             {!isEditing && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {doc.status === 'draft' && (
+                {/* ── PZ workflow ── */}
+                {isPZ && doc.status !== 'delivered' && doc.status !== 'cancelled' && (
+                  <Button
+                    type="button"
+                    onClick={async () => {
+                      setActionError(null);
+                      try {
+                        await completePzM.mutateAsync({ id });
+                      } catch (e) { setActionError(errMsg(e)); }
+                    }}
+                    disabled={workflowBusy || locked}
+                    id="delivery-action-complete-pz"
+                  >
+                    {completePzM.isPending ? 'Księgowanie…' : 'Zaksięguj PZ'}
+                  </Button>
+                )}
+
+                {/* ── WZ/MM/ZW workflow ── */}
+                {!isPZ && doc.status === 'draft' && (
                   <Button type="button" onClick={() => void onSave()} disabled={workflowBusy || locked} id="delivery-action-save">
                     {saveM.isPending ? 'Zapisywanie…' : 'Zapisz WZ'}
                   </Button>
                 )}
-                {(doc.status === 'saved' || doc.status === 'in_transit') && (
+                {!isPZ && (doc.status === 'saved' || doc.status === 'in_transit') && (
                   <Button
                     type="button"
                     onClick={async () => {

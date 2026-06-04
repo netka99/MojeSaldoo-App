@@ -94,6 +94,19 @@ def generate_invoice_from_order(
     """
     if order.company_id != company.id:
         raise ValidationError("Order does not belong to the current company.")
+
+    existing = Invoice.objects.filter(
+        company_id=company.id,
+        order_id=order.id,
+        status__in=["draft", "issued", "sent", "paid", "overdue"],
+    ).first()
+    if existing:
+        raise ValidationError(
+            f"Zamówienie {order.order_number} ma już aktywną fakturę "
+            f"{existing.invoice_number or existing.id} (status: {existing.status}). "
+            f"Anuluj istniejącą fakturę przed wygenerowaniem nowej."
+        )
+
     if order.status not in _ORDER_STATUSES_INVOICEABLE:
         raise ValidationError(
             "Order must be confirmed, delivered, or invoiced before generating an invoice."

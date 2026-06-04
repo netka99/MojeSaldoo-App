@@ -114,6 +114,7 @@ export const reportKeys = {
   reportingInvoices: (p: ReportingInvoicesListKeyParams) =>
     [...reportKeys.all, 'invoices', p] as const,
   inventory: (companyId: string) => [...reportKeys.all, 'inventory', companyId] as const,
+  dashboard: (companyId: string) => [...reportKeys.all, 'dashboard', companyId] as const,
 };
 
 export const vanRouteKeys = {
@@ -127,4 +128,42 @@ export const vanRouteKeys = {
 export const stockSnapshotKeys = {
   all: ['stock-snapshot'] as const,
   byWarehouse: (warehouseId: string) => [...stockSnapshotKeys.all, warehouseId] as const,
+};
+
+export const warehouseStockKeys = {
+  all: ['warehouse-stock'] as const,
+  byWarehouse: (warehouseId: string, params?: object) =>
+    [...warehouseStockKeys.all, warehouseId, params ?? {}] as const,
+};
+
+export type StockMovementParams = {
+  product?: string;
+  warehouse?: string;
+  type?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+};
+
+export const stockMovementKeys = {
+  all: ['stock-movements'] as const,
+  list: (params: StockMovementParams) => [...stockMovementKeys.all, 'list', params] as const,
+};
+
+export type SupplierListKeyParams = {
+  page: number;
+  companyId: string;
+  search?: string;
+  ordering?: string;
+};
+
+export const supplierKeys = {
+  all: ['suppliers'] as const,
+  lists: () => [...supplierKeys.all, 'list'] as const,
+  list: (params: SupplierListKeyParams) => [...supplierKeys.lists(), params] as const,
+  /** Stable key for full dropdown list (no pagination, no filters). */
+  all_active: (companyId: string) => [...supplierKeys.lists(), { companyId, page_size: 500 }] as const,
+  details: () => [...supplierKeys.all, 'detail'] as const,
+  detail: (id: string) => [...supplierKeys.details(), id] as const,
 };

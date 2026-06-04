@@ -53,12 +53,17 @@ export type WZPrintViewProps = {
 };
 
 export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
-  const { document: doc, customer, from_warehouse, items, return_documents = [] } = preview;
+  const { document: doc, customer, from_warehouse, to_warehouse, items, return_documents = [] } = preview;
   const typeLabel = DOC_TYPE_LABEL_PL[doc.document_type] ?? doc.document_type;
   const rows = buildRows(items ?? []);
+  const isMM = doc.document_type === 'MM';
 
   const fromWhText = from_warehouse
     ? `${from_warehouse.name} (${from_warehouse.code})`
+    : '—';
+
+  const toWhText = to_warehouse
+    ? `${to_warehouse.name} (${to_warehouse.code})`
     : '—';
 
   const customerLines = [
@@ -97,15 +102,24 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
           <p className="wz-print-party-body">{fromWhText}</p>
         </div>
         <div className="wz-print-party-box">
-          <h2 className="wz-print-party-title">Odbiorca</h2>
-          {customerLines.length === 0 ? (
-            <p className="wz-print-party-body">—</p>
+          {isMM ? (
+            <>
+              <h2 className="wz-print-party-title">Do magazynu</h2>
+              <p className="wz-print-party-body">{toWhText}</p>
+            </>
           ) : (
-            <ul className="wz-print-party-lines">
-              {customerLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
+            <>
+              <h2 className="wz-print-party-title">Odbiorca</h2>
+              {customerLines.length === 0 ? (
+                <p className="wz-print-party-body">—</p>
+              ) : (
+                <ul className="wz-print-party-lines">
+                  {customerLines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </div>
       </section>

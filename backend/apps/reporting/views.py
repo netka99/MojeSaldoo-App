@@ -21,10 +21,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.delivery.models import DeliveryDocument
 from apps.invoices.models import Invoice
 from apps.orders.models import Order, OrderItem
 from apps.products.models import ProductStock
 from apps.users.permissions import IsCompanyMember
+from apps.van_routes.models import VanRoute
 
 from .serializers import ReportingInvoiceSerializer, ReportingRejectedInvoiceSerializer
 
@@ -274,3 +276,78 @@ class KsefStatusReportView(APIView):
                 "rejectedInvoices": rejected_data,
             }
         )
+
+
+class DashboardSummaryView(APIView):
+    """GET /api/reports/dashboard/ — operational summary for the current company."""
+
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        from django.db.models import F
+        company = request.user.current_company
+        today = __import__('django.utils.timezone', fromlist=['timezone']).timezone.localdate()
+
+        orders_pending = Order.objects.filter(
+            company=company, status=Order.STATUS_DRAFT
+        ).count()
+
+        wz_in_transit = DeliveryDocument.objects.filter(
+            company=company,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            status=DeliveryDocument.STATUS_IN_TRANSIT,
+        ).count()
+
+        inv_agg = Invoice.objects.filter(
+            company=company,
+            status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_SENT],
+            due_date__lt=today,
+        ).aggregate(count=Count('id'), total=Sum('total_gross'))
+
+        van_routes_today = list(
+            VanRoute.objects.filter(
+                company=company,
+                date=today,
+                status__in=[
+                    VanRoute.STATUS_LOADING,
+                    VanRoute.STATUS_IN_PROGRESS,
+                    VanRoute.STATUS_SETTLING,
+                ],
+            ).values('id', 'driver_name', 'van_name', 'status')
+        )
+        for r in van_routes_today:
+            r['id'] = str(r['id'])
+
+        low_stock = list(
+            ProductStock.objects.filter(
+                company=company,
+                product__is_active=True,
+                product__min_stock_alert__gt=0,
+            )
+            .filter(quantity_total__lt=F('product__min_stock_alert'))
+            .select_related('product', 'warehouse')
+            .order_by('product__name')
+            .values(
+                'product_id',
+                'product__name',
+                'warehouse__id',
+                'warehouse__name',
+                'quantity_available',
+                'product__min_stock_alert',
+            )[:10]
+        )
+        for row in low_stock:
+            row['product_id'] = str(row['product_id'])
+            row['warehouse__id'] = str(row['warehouse__id'])
+
+        return Response({
+            'orders_pending_confirmation': orders_pending,
+            'wz_in_transit': wz_in_transit,
+            'invoices_overdue': {
+                'count': inv_agg['count'] or 0,
+                'total_gross': str(inv_agg['total'] or 0),
+            },
+            'van_routes_today': van_routes_today,
+            'low_stock_alerts': low_stock,
+            'date': str(today),
+        })

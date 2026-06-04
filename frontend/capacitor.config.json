@@ -2,6 +2,9 @@
   "appId": "com.mojesaldoo.mobile",
   "appName": "MojeSaldoo",
   "webDir": "dist",
+  "android": {
+    "allowMixedContent": true
+  },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 3000,

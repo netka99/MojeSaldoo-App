@@ -22,7 +22,8 @@ function resolveApiBaseUrl(): string {
   const fromEnv = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '');
   if (fromEnv) return fromEnv;
   if (import.meta.env.DEV && typeof window !== 'undefined') return '/api';
-  return 'http://localhost:8000/api';
+  // Use local network IP for mobile devices to connect to computer's backend
+  return 'http://192.168.1.59:8000/api';
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
@@ -62,7 +63,10 @@ function drfFieldMessages(body: Record<string, unknown>): string | null {
       if (rows.length) {
         const parts = rows.map((row) => {
           const name = row.product_name ?? row.product_id;
-          return `${name}: dostępne ${row.quantity_available}, wymagane ${row.quantity_requested}`;
+          if (row.detail) return `${name}: ${row.detail}`;
+          const available = row.quantity_available ?? row.quantity_reserved ?? '?';
+          const needed = row.quantity_to_consume ?? row.quantity_requested ?? '?';
+          return `${name}: dostępne ${available}, wymagane ${needed}`;
         });
         messages.push(`Niewystarczający stan: ${parts.join('; ')}`);
       }

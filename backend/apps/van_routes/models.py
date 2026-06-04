@@ -80,9 +80,12 @@ class VanRoute(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="van_route",
+        related_name="loading_route",
         help_text="MM document created when the van is loaded.",
     )
+
+    # Populated after reconciliation — summary of returned/kept/written_off items
+    reconciliation_summary = models.JSONField(null=True, blank=True, default=None)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

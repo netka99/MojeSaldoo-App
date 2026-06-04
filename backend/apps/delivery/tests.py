@@ -19,7 +19,8 @@ from apps.delivery.services import (
 )
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product, ProductStock, StockMovement, Warehouse
-from apps.users.models import Company, CompanyMembership
+from apps.suppliers.models import Supplier
+from apps.users.models import Company, CompanyMembership, CompanyModule
 
 
 class DeliveryDocumentModelTests(TestCase):
@@ -2775,3 +2776,179 @@ class VanReconciliationAPITests(TestCase):
             reference_id=ref,
         ).count()
         self.assertEqual(counts, 2)
+
+
+class PZFlowAPITests(TestCase):
+    """End-to-end PZ flow: create-pz → complete → stock credited."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="pz-flow-user",
+            email="pz-flow@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="PZ Tenant")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+        # Enable delivery + purchasing modules
+        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="purchasing", is_enabled=True)
+
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG-PZ",
+            name="Main PZ",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="PZ Widget",
+            company=self.co,
+            price_net=Decimal("10.00"),
+            price_gross=Decimal("12.30"),
+        )
+        self.supplier = Supplier.objects.create(
+            company=self.co,
+            name="Dostawca Testowy",
+            nip="1234567890",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    # ── create-pz ──────────────────────────────────────────────────
+
+    def test_create_pz_returns_201_with_draft_document(self):
+        r = self.client.post("/api/delivery/create-pz/", {
+            "to_warehouse_id": str(self.wh.id),
+            "from_supplier_id": str(self.supplier.id),
+            "issue_date": "2026-05-29",
+            "items": [
+                {"product_id": str(self.product.id), "quantity_planned": "10.00", "unit_cost": "5.50"},
+            ],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(r.data["document_type"], "PZ")
+        self.assertEqual(r.data["status"], "draft")
+        self.assertTrue(r.data["document_number"].startswith("PZ/2026/"))
+        self.assertEqual(len(r.data["items"]), 1)
+        self.assertEqual(Decimal(r.data["items"][0]["quantity_planned"]), Decimal("10.00"))
+        self.assertEqual(Decimal(r.data["items"][0]["unit_cost"]), Decimal("5.5000"))
+
+    def test_create_pz_without_supplier_is_allowed(self):
+        r = self.client.post("/api/delivery/create-pz/", {
+            "to_warehouse_id": str(self.wh.id),
+            "items": [{"product_id": str(self.product.id), "quantity_planned": "5.00"}],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertIsNone(r.data["from_supplier_id"])
+
+    def test_create_pz_requires_to_warehouse(self):
+        r = self.client.post("/api/delivery/create-pz/", {
+            "items": [{"product_id": str(self.product.id), "quantity_planned": "5.00"}],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_pz_requires_items(self):
+        r = self.client.post("/api/delivery/create-pz/", {
+            "to_warehouse_id": str(self.wh.id),
+            "items": [],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_pz_supplier_name_visible_in_response(self):
+        r = self.client.post("/api/delivery/create-pz/", {
+            "to_warehouse_id": str(self.wh.id),
+            "from_supplier_id": str(self.supplier.id),
+            "items": [{"product_id": str(self.product.id), "quantity_planned": "3.00"}],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(r.data["supplier_name"], self.supplier.name)
+
+    # ── complete (receipt) ──────────────────────────────────────────
+
+    def _create_pz(self, qty="10.00", unit_cost="5.50"):
+        """Helper: create a draft PZ and return its id."""
+        r = self.client.post("/api/delivery/create-pz/", {
+            "to_warehouse_id": str(self.wh.id),
+            "from_supplier_id": str(self.supplier.id),
+            "items": [
+                {"product_id": str(self.product.id), "quantity_planned": qty, "unit_cost": unit_cost},
+            ],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        return r.data["id"]
+
+    def test_complete_pz_changes_status_to_delivered(self):
+        pz_id = self._create_pz()
+        r = self.client.post(f"/api/delivery/{pz_id}/complete/", {}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["status"], "delivered")
+        self.assertIsNotNone(r.data["delivered_at"])
+
+    def test_complete_pz_credits_stock_to_to_warehouse(self):
+        qty = Decimal("10.00")
+        pz_id = self._create_pz(qty=str(qty))
+        self.client.post(f"/api/delivery/{pz_id}/complete/", {}, format="json")
+
+        stock = ProductStock.objects.get(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh,
+        )
+        self.assertEqual(stock.quantity_available, qty)
+        self.assertEqual(stock.quantity_total, qty)
+
+    def test_complete_pz_creates_purchase_stock_movement(self):
+        pz_id = self._create_pz(qty="7.00")
+        doc_id = uuid.UUID(pz_id)
+        self.client.post(f"/api/delivery/{pz_id}/complete/", {}, format="json")
+
+        mv = StockMovement.objects.filter(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh,
+            movement_type=StockMovement.MovementType.PURCHASE,
+            reference_type="delivery_document",
+            reference_id=doc_id,
+        )
+        self.assertEqual(mv.count(), 1)
+        self.assertEqual(mv.first().quantity, Decimal("7.00"))
+
+    def test_complete_pz_twice_returns_400(self):
+        pz_id = self._create_pz()
+        self.client.post(f"/api/delivery/{pz_id}/complete/", {}, format="json")
+        r2 = self.client.post(f"/api/delivery/{pz_id}/complete/", {}, format="json")
+        self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_complete_pz_with_quantity_actual_override(self):
+        """Caller supplies quantity_actual for items; stock reflects actual not planned."""
+        pz_id = self._create_pz(qty="10.00")
+        doc = DeliveryDocument.objects.get(pk=pz_id)
+        item = doc.items.first()
+        r = self.client.post(f"/api/delivery/{pz_id}/complete/", {
+            "items": [{"id": str(item.id), "quantity_actual": "8.00"}],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+
+        stock = ProductStock.objects.get(
+            company=self.co, product=self.product, warehouse=self.wh
+        )
+        # apply_pz_receipt uses quantity_actual when set
+        self.assertEqual(stock.quantity_available, Decimal("8.00"))
+
+    def test_complete_pz_accumulates_stock_on_second_pz(self):
+        """Two PZ documents for the same product stack the stock."""
+        pz1 = self._create_pz(qty="5.00")
+        pz2 = self._create_pz(qty="3.00")
+        self.client.post(f"/api/delivery/{pz1}/complete/", {}, format="json")
+        self.client.post(f"/api/delivery/{pz2}/complete/", {}, format="json")
+
+        stock = ProductStock.objects.get(
+            company=self.co, product=self.product, warehouse=self.wh
+        )
+        self.assertEqual(stock.quantity_available, Decimal("8.00"))

@@ -5,9 +5,10 @@ import { authStorage } from '@/services/api';
 import { warehouseService } from '@/services/warehouse.service';
 import { orderService } from '@/services/order.service';
 import { useCreateVanRouteMutation } from '@/query/use-van-routes';
+import { useDeliveryByOrdersQuery } from '@/query/use-delivery';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
-import type { Order, OrderItem, Warehouse } from '@/types';
+import type { DeliveryDocument, Order, OrderItem, Warehouse } from '@/types';
 
 /* ─── Helpers ────────────────────────────────────────────────────── */
 
@@ -26,18 +27,26 @@ function ShopCard({
   order,
   selected,
   onToggle,
+  today,
+  wzDocs,
 }: {
   order: Order;
   selected: boolean;
   onToggle: () => void;
+  today: string;
+  wzDocs: DeliveryDocument[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const isOverdue = order.delivery_date && order.delivery_date < today;
+  const hasWz = wzDocs.length > 0;
 
   return (
     <div
       className={cn(
         'rounded-2xl bg-surface-card shadow-soft transition-all',
         selected && 'ring-2 ring-primary/40',
+        isOverdue && 'border border-destructive/30',
+        hasWz && 'border-l-4 border-l-amber-400',
       )}
     >
       {/* Header row */}
@@ -66,10 +75,37 @@ function ShopCard({
           onClick={() => setExpanded((v) => !v)}
         >
           <p className="truncate font-semibold text-foreground">{order.customer_name}</p>
-          <p className="text-[12px] text-muted-foreground">
-            {order.order_number ?? '—'} · {order.items.length}{' '}
-            {order.items.length === 1 ? 'produkt' : order.items.length < 5 ? 'produkty' : 'produktów'}
+          <p className="text-[12px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+            <span>{order.order_number ?? '—'}</span>
+            <span>·</span>
+            <span>{order.items.length}{' '}{order.items.length === 1 ? 'produkt' : order.items.length < 5 ? 'produkty' : 'produktów'}</span>
+            {order.delivery_date && (
+              <>
+                <span>·</span>
+                <span className={cn(isOverdue ? 'text-destructive font-semibold' : '')}>
+                  {isOverdue ? 'po terminie: ' : ''}{order.delivery_date}
+                </span>
+              </>
+            )}
           </p>
+          {hasWz && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {wzDocs.map((wz) => (
+                <span
+                  key={wz.id}
+                  className={cn(
+                    'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                    wz.status === 'delivered'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+                  )}
+                >
+                  {wz.document_number ?? 'WZ'}
+                  {wz.status === 'delivered' ? ' · dostarczono' : ' · otwarte'}
+                </span>
+              ))}
+            </div>
+          )}
         </button>
 
         {/* Expand toggle */}
@@ -147,23 +183,37 @@ export function NewVanRoutePage() {
   if (mobileWarehouses.length > 0 && !vanWarehouseId) setVanWarehouseId(mobileWarehouses[0]!.id);
   if (mainWarehouses.length > 0 && !mainWarehouseId) setMainWarehouseId(mainWarehouses[0]!.id);
 
-  /* ── Orders for date (exclude already routed) ── */
+  /* ── All undelivered confirmed orders (exclude already routed) ── */
   const { data: orderData, isLoading: ordersLoading } = useQuery({
-    queryKey: ['orders', 'new-route', date, companyId],
+    queryKey: ['orders', 'new-route', companyId],
     queryFn: () =>
       orderService.fetchList({
-        delivery_date: date,
         status: 'confirmed',
         exclude_routed: true,
-        page_size: 100,
+        page_size: 200,
         page: 1,
       }),
-    enabled: Boolean(date) && Boolean(companyId),
+    enabled: Boolean(companyId),
   });
   const availableOrders: Order[] = useMemo(
     () => orderData?.results ?? [],
     [orderData],
   );
+
+  /* ── WZ docs for available orders ── */
+  const availableOrderIds = useMemo(() => availableOrders.map((o) => o.id), [availableOrders]);
+  const { data: wzDocs } = useDeliveryByOrdersQuery(availableOrderIds, availableOrderIds.length > 0);
+  const wzByOrderId = useMemo(() => {
+    const m = new Map<string, DeliveryDocument[]>();
+    for (const wz of wzDocs ?? []) {
+      if (wz.order_id && wz.document_type === 'WZ') {
+        const list = m.get(wz.order_id) ?? [];
+        list.push(wz);
+        m.set(wz.order_id, list);
+      }
+    }
+    return m;
+  }, [wzDocs]);
 
   /* ── Selection helpers ── */
   function toggleOrder(id: string) {
@@ -326,7 +376,7 @@ export function NewVanRoutePage() {
         <div>
           <div className="mb-2 flex items-center justify-between px-1">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Przystanki na {date}
+              Zamówienia do dostarczenia ({availableOrders.length})
             </h2>
             {availableOrders.length > 0 && (
               <button
@@ -347,7 +397,7 @@ export function NewVanRoutePage() {
 
           {!ordersLoading && availableOrders.length === 0 && (
             <p className="rounded-2xl bg-surface-card px-4 py-6 text-center text-sm text-muted-foreground shadow-soft">
-              Brak dostępnych zamówień na wybrany dzień
+              Brak zamówień oczekujących na dostawę
             </p>
           )}
 
@@ -358,6 +408,8 @@ export function NewVanRoutePage() {
                 order={order}
                 selected={selectedOrderIds.has(order.id)}
                 onToggle={() => toggleOrder(order.id)}
+                today={todayIso()}
+                wzDocs={wzByOrderId.get(order.id) ?? []}
               />
             ))}
           </div>

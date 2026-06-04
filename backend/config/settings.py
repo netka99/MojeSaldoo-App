@@ -11,7 +11,7 @@ SECRET_KEY = 'django-insecure-your-secret-key-here'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 # Application definition
 INSTALLED_APPS = [
@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'apps.users',
     'apps.products',
     'apps.customers',
+    'apps.suppliers',
     'apps.orders',
     'apps.delivery',
     'apps.van_routes',
@@ -133,6 +134,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
+    "capacitor://localhost",
+    "http://localhost",
+    "https://localhost",
 ]
 
 # When Vite uses another port (3000 busy → 3001, etc.), still allow the SPA if it calls the API directly.

@@ -160,7 +160,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                                 "short_by": str(need_qty - stock.quantity_available),
                             }
                         )
-                if shortfalls:
+                if shortfalls and not main_wh.allow_negative_stock:
                     raise ValidationError({"stock": shortfalls})
 
             movement_user = order.user or request.user

@@ -21,6 +21,7 @@ class Order(models.Model):
     STATUS_IN_PREPARATION = "in_preparation"
     STATUS_LOADED = "loaded"
     STATUS_IN_DELIVERY = "in_delivery"
+    STATUS_PARTIALLY_DELIVERED = "partially_delivered"
     STATUS_DELIVERED = "delivered"
     STATUS_INVOICED = "invoiced"
     STATUS_CANCELLED = "cancelled"
@@ -31,6 +32,7 @@ class Order(models.Model):
         (STATUS_IN_PREPARATION, "In preparation"),
         (STATUS_LOADED, "Loaded"),
         (STATUS_IN_DELIVERY, "In delivery"),
+        (STATUS_PARTIALLY_DELIVERED, "Partially delivered"),
         (STATUS_DELIVERED, "Delivered"),
         (STATUS_INVOICED, "Invoiced"),
         (STATUS_CANCELLED, "Cancelled"),

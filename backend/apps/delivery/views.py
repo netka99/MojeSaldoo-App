@@ -32,6 +32,7 @@ from .serializers import (
 )
 from .services import (
     apply_delivery_document_line_updates,
+    apply_pz_receipt,
     apply_van_reconciliation,
     build_delivery_document_preview_data,
     create_van_loading_mm,
@@ -82,7 +83,9 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 "from_warehouse",
                 "to_warehouse",
                 "to_customer",
+                "from_supplier",
                 "linked_wz",
+                "van_route",
             )
         )
 
@@ -125,6 +128,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         Body:
           {
             "to_customer_id": "<uuid>",          # optional — omit for unknown-client sales
+            "van_route_id": "<uuid>",             # optional — link WZ to active van route
             "from_warehouse_id": "<uuid>",        # optional — override van warehouse
             "issue_date": "2026-05-19",           # optional, defaults to today
             "items": [
@@ -137,9 +141,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         """
         from apps.products.models import Product as ProductModel
 
+        from apps.van_routes.services import get_van_route_for_document, validate_wz_van_route_link
+
         company_id = request.user.current_company_id
         to_customer_id = request.data.get("to_customer_id")
         from_warehouse_id = request.data.get("from_warehouse_id")
+        van_route_id = request.data.get("van_route_id")
         issue_date_raw = request.data.get("issue_date")
         items_data = request.data.get("items", [])
 
@@ -171,6 +178,16 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             except Warehouse.DoesNotExist:
                 pass
 
+        van_route = get_van_route_for_document(company_id, van_route_id)
+        if van_route and not from_warehouse_id:
+            from_warehouse = van_route.van_warehouse
+        if van_route:
+            validate_wz_van_route_link(
+                van_route,
+                issue_date=issue_date,
+                from_warehouse=from_warehouse,
+            )
+
         product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
         products_by_id = {
             str(p.pk): p
@@ -185,6 +202,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 issue_date=issue_date,
                 to_customer=customer,
                 from_warehouse=from_warehouse,
+                van_route=van_route,
                 status=DeliveryDocument.STATUS_DRAFT,
             )
             for row in items_data:
@@ -335,9 +353,114 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         doc.save(update_fields=["status", "user", "updated_at"])
         return Response(self.get_serializer(doc).data)
 
+    @action(detail=False, methods=["post"], url_path="create-pz")
+    def create_pz(self, request):
+        """POST /delivery/create-pz/ — create a draft PZ document with items in one call.
+
+        Body:
+          {
+            "to_warehouse_id": "<uuid>",      # required — receiving warehouse
+            "from_supplier_id": "<uuid>",     # optional
+            "issue_date": "2026-05-29",       # optional, defaults to today
+            "notes": "...",                   # optional
+            "items": [
+              {"product_id": "<uuid>", "quantity_planned": "10.00", "unit_cost": "5.50"},
+              ...
+            ]
+          }
+        """
+        from apps.products.models import Product as ProductModel
+        from apps.suppliers.models import Supplier
+
+        company_id = request.user.current_company_id
+
+        to_warehouse_id = request.data.get("to_warehouse_id")
+        from_supplier_id = request.data.get("from_supplier_id")
+        issue_date_raw = request.data.get("issue_date")
+        notes = request.data.get("notes", "")
+        items_data = request.data.get("items", [])
+
+        if not to_warehouse_id:
+            return Response(
+                {"error": "to_warehouse_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not items_data:
+            return Response(
+                {"error": "At least one item is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            to_warehouse = Warehouse.objects.get(pk=to_warehouse_id, company_id=company_id)
+        except Warehouse.DoesNotExist:
+            return Response({"error": "Warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from_supplier = None
+        if from_supplier_id:
+            try:
+                from_supplier = Supplier.objects.get(pk=from_supplier_id, company_id=company_id)
+            except Supplier.DoesNotExist:
+                return Response({"error": "Supplier not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        issue_date = timezone.localdate()
+        if issue_date_raw:
+            from django.utils.dateparse import parse_date
+            parsed = parse_date(str(issue_date_raw))
+            if parsed:
+                issue_date = parsed
+
+        product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
+        products_by_id = {
+            str(p.pk): p
+            for p in ProductModel.objects.filter(pk__in=product_ids, company_id=company_id)
+        }
+
+        with transaction.atomic():
+            doc = DeliveryDocument.objects.create(
+                company=request.user.current_company,
+                user=request.user,
+                document_type=DeliveryDocument.DOC_TYPE_PZ,
+                issue_date=issue_date,
+                to_warehouse=to_warehouse,
+                from_supplier=from_supplier,
+                notes=notes or "",
+                status=DeliveryDocument.STATUS_DRAFT,
+            )
+            for row in items_data:
+                pid = str(row.get("product_id", ""))
+                product = products_by_id.get(pid)
+                if not product:
+                    continue
+                try:
+                    qty = Decimal(str(row.get("quantity_planned", "1")))
+                except Exception:
+                    qty = Decimal("1")
+                if qty <= 0:
+                    continue
+                unit_cost = None
+                if row.get("unit_cost") is not None:
+                    try:
+                        unit_cost = Decimal(str(row["unit_cost"]))
+                    except Exception:
+                        pass
+                DeliveryItem.objects.create(
+                    delivery_document=doc,
+                    product=product,
+                    quantity_planned=qty,
+                    unit_cost=unit_cost,
+                )
+
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["post"], url_path="complete")
     def complete(self, request, pk=None):
-        """in_transit → delivered; apply actual quantities and returns; sync order lines."""
+        """in_transit → delivered (WZ/MM); draft/saved/in_transit → delivered (PZ).
+
+        For PZ documents: applies stock receipt via apply_pz_receipt().
+        For WZ/MM: applies actual quantities, returns, and syncs order lines.
+        """
         doc = self.get_object()
         if doc.is_locked_by_invoice():
             raise ValidationError(
@@ -347,6 +470,66 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     )
                 },
             )
+
+        # ── PZ branch ──────────────────────────────────────────────────────────
+        if doc.document_type == DeliveryDocument.DOC_TYPE_PZ:
+            _PZ_ALLOWED = (
+                DeliveryDocument.STATUS_DRAFT,
+                DeliveryDocument.STATUS_SAVED,
+                DeliveryDocument.STATUS_IN_TRANSIT,
+            )
+            if doc.status not in _PZ_ALLOWED:
+                return Response(
+                    {"error": "PZ document is already delivered or cancelled."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Optional: caller may supply quantity_actual (and notes) per item
+            ser = DeliveryCompleteSerializer(data=request.data)
+            ser.is_valid(raise_exception=True)
+            rows = ser.validated_data.get("items") or []
+            payload_by_id = {str(row["id"]): row for row in rows}
+
+            with transaction.atomic():
+                doc = (
+                    DeliveryDocument.objects.select_for_update()
+                    .select_related("to_warehouse", "from_supplier", "company")
+                    .prefetch_related("items__product")
+                    .get(pk=doc.pk)
+                )
+                if doc.status not in _PZ_ALLOWED:
+                    return Response(
+                        {"error": "PZ document is already delivered or cancelled."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                for item in doc.items.all():
+                    row = payload_by_id.get(str(item.id))
+                    if not row:
+                        continue
+                    changed = []
+                    actual = row.get("quantity_actual")
+                    if actual is not None:
+                        item.quantity_actual = actual
+                        changed.append("quantity_actual")
+                    item_notes = row.get("notes")
+                    if item_notes is not None:
+                        item.notes = item_notes
+                        changed.append("notes")
+                    if changed:
+                        item.save(update_fields=changed)
+
+                doc.status = DeliveryDocument.STATUS_DELIVERED
+                doc.delivered_at = timezone.now()
+                doc.user = request.user
+                doc.save(update_fields=["status", "delivered_at", "user", "updated_at"])
+
+                apply_pz_receipt(doc, request.user)
+
+            doc.refresh_from_db()
+            return Response(self.get_serializer(doc).data)
+        # ── end PZ branch ──────────────────────────────────────────────────────
+
         if doc.status != DeliveryDocument.STATUS_IN_TRANSIT:
             return Response(
                 {"error": "Only documents in transit can be completed."},
@@ -565,6 +748,63 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         created_by=request.user,
                     )
 
+                # ── Release orphaned main-warehouse reservation (mobile WZ only) ──
+                # When an order is confirmed, stock is reserved on the MAIN warehouse.
+                # The MM loading physically moves stock to the van but leaves the reservation
+                # intact (it deducts from available first). Now that the van has delivered,
+                # release those reservations so they don't inflate quantity_total on main.
+                if is_mobile and doc.order_id:
+                    main_wh_for_release = (
+                        Warehouse.objects.filter(
+                            company_id=doc.company_id,
+                            warehouse_type=Warehouse.WarehouseType.MAIN,
+                            is_active=True,
+                        )
+                        .order_by("code")
+                        .first()
+                    )
+                    if main_wh_for_release is not None:
+                        main_release_stocks = {}
+                        for pid in sale_by_product:
+                            try:
+                                main_st = ProductStock.objects.select_for_update().get(
+                                    company_id=doc.company_id,
+                                    product_id=pid,
+                                    warehouse_id=main_wh_for_release.id,
+                                )
+                                if main_st.quantity_reserved > 0:
+                                    main_release_stocks[pid] = main_st
+                            except ProductStock.DoesNotExist:
+                                pass
+
+                        for item, actual, _ret in line_ops:
+                            if actual <= 0:
+                                continue
+                            main_st = main_release_stocks.get(item.product_id)
+                            if main_st is None:
+                                continue
+                            release = min(main_st.quantity_reserved, actual)
+                            if release <= 0:
+                                continue
+                            qty_res_before = main_st.quantity_reserved
+                            main_st.quantity_reserved -= release
+                            # Stock is gone (delivered from van) — do NOT add to available.
+                            main_st.save(update_fields=["quantity_reserved"])
+                            StockMovement.objects.create(
+                                company_id=doc.company_id,
+                                product_id=item.product_id,
+                                warehouse_id=main_wh_for_release.id,
+                                user=movement_user,
+                                movement_type=StockMovement.MovementType.SALE,
+                                quantity=-release,
+                                quantity_before=qty_res_before,
+                                quantity_after=main_st.quantity_reserved,
+                                reference_type="delivery",
+                                reference_id=doc.id,
+                                notes="Zwolnienie rezerwacji MG po wydaniu z vana",
+                                created_by=request.user,
+                            )
+
                 for item, actual, ret in line_ops:
                     if ret <= 0:
                         continue
@@ -612,15 +852,17 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             if doc.order_id:
                 order = Order.objects.select_for_update().get(pk=doc.order_id)
                 lines = list(order.items.all())
-                if lines and all(
-                    (oi.quantity_delivered or Decimal("0")) >= oi.quantity for oi in lines
+                if lines and order.status not in (
+                    Order.STATUS_DELIVERED,
+                    Order.STATUS_INVOICED,
+                    Order.STATUS_CANCELLED,
                 ):
-                    if order.status not in (
-                        Order.STATUS_DELIVERED,
-                        Order.STATUS_INVOICED,
-                        Order.STATUS_CANCELLED,
-                    ):
+                    total_qty = sum(oi.quantity for oi in lines)
+                    delivered_qty = sum(oi.quantity_delivered or Decimal("0") for oi in lines)
+                    if delivered_qty >= total_qty:
                         order.update_status(Order.STATUS_DELIVERED)
+                    elif delivered_qty > 0:
+                        order.update_status(Order.STATUS_PARTIALLY_DELIVERED)
 
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
@@ -756,9 +998,17 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             route=route,
         )
 
-        # Close the route after successful reconciliation
-        if route and route.status != VanRoute.STATUS_CLOSED:
-            close_route(route)
+        # Save reconciliation summary to route, then close it
+        if route:
+            route.reconciliation_summary = {
+                "reconciled_at": summary["reconciled_at"],
+                "mm_return_number": summary.get("mm_return_number"),
+                "rw_writeoff_number": summary.get("rw_writeoff_number"),
+                "items": summary.get("summary_items", []),
+            }
+            route.save(update_fields=["reconciliation_summary", "updated_at"])
+            if route.status != VanRoute.STATUS_CLOSED:
+                close_route(route)
 
         return Response(summary, status=status.HTTP_200_OK)
 
@@ -830,11 +1080,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     def generate_for_order(self, request, order_id=None):
         """Create a draft WZ from a confirmed order (remaining quantities per line).
 
-        Optional query param: ``van_warehouse_id`` — if supplied and the warehouse is
-        a mobile warehouse for this company, it overrides the default ``from_warehouse``
-        so the WZ is issued from the correct van rather than the first active mobile
-        warehouse.
+        Optional query params:
+          ``van_warehouse_id`` — pin from_warehouse to a specific van.
+          ``van_route_id`` — link WZ to a van route (order must be on that route).
         """
+        from apps.van_routes.services import get_van_route_for_document, validate_wz_van_route_link
+
         company_id = request.user.current_company_id
         order = get_object_or_404(
             Order.objects.filter(company_id=company_id),
@@ -864,6 +1115,18 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             except Warehouse.DoesNotExist:
                 pass
 
+        van_route_id = request.query_params.get("van_route_id")
+        van_route = get_van_route_for_document(company_id, van_route_id)
+        if van_route:
+            if not from_warehouse_id:
+                from_warehouse = van_route.van_warehouse
+            validate_wz_van_route_link(
+                van_route,
+                order=order,
+                issue_date=timezone.localdate(),
+                from_warehouse=from_warehouse,
+            )
+
         with transaction.atomic():
             doc = DeliveryDocument.objects.create(
                 company=order.company,
@@ -873,6 +1136,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 issue_date=timezone.localdate(),
                 to_customer=order.customer,
                 from_warehouse=from_warehouse,
+                van_route=van_route,
                 status=DeliveryDocument.STATUS_SAVED,
             )
             for oi, qty in lines:

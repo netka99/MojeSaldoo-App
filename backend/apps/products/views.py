@@ -15,9 +15,11 @@ from .filters import ProductFilter
 from .models import Product, ProductStock, StockMovement, Warehouse
 from .serializers import (
     ProductSerializer,
+    StockMovementListSerializer,
     StockMovementSerializer,
     StockUpdateSerializer,
     WarehouseSerializer,
+    WarehouseStockItemSerializer,
 )
 from apps.users.tenant import filter_queryset_for_current_company
 
@@ -271,3 +273,78 @@ class WarehouseViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             user=self.request.user,
         )
+
+    @action(detail=True, methods=["get"], url_path="stock")
+    def stock(self, request, pk=None):
+        """GET /api/warehouses/{id}/stock/ — all ProductStock rows for this warehouse.
+
+        Query params:
+          ?below_minimum=true  — only items below min_stock_alert
+          ?search=name         — filter by product name (icontains)
+        """
+        warehouse = self.get_object()
+        company = request.user.current_company
+
+        qs = (
+            ProductStock.objects.filter(
+                warehouse=warehouse,
+                company_id=company.id,
+                product__is_active=True,
+            )
+            .select_related("product")
+            .order_by("product__name")
+        )
+
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(product__name__icontains=search)
+
+        below_minimum = request.query_params.get("below_minimum", "").lower() == "true"
+        if below_minimum:
+            qs = [
+                s for s in qs
+                if s.product.min_stock_alert and s.quantity_total < s.product.min_stock_alert
+            ]
+
+        serializer = WarehouseStockItemSerializer(qs, many=True)
+        return Response(serializer.data)
+
+
+class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only list/detail of StockMovements for the current company.
+
+    Filter params: ?product={uuid}, ?warehouse={uuid}, ?type={TYPE},
+                   ?date_from=YYYY-MM-DD, ?date_to=YYYY-MM-DD
+    """
+
+    serializer_class = StockMovementListSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ["created_at"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self) -> QuerySet:
+        company = self.request.user.current_company
+        qs = (
+            StockMovement.objects.filter(company=company)
+            .select_related("product", "warehouse", "created_by")
+        )
+
+        product_id = self.request.query_params.get("product")
+        warehouse_id = self.request.query_params.get("warehouse")
+        movement_type = self.request.query_params.get("type")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+        if warehouse_id:
+            qs = qs.filter(warehouse_id=warehouse_id)
+        if movement_type:
+            qs = qs.filter(movement_type=movement_type)
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+
+        return qs

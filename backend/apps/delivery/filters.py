@@ -37,4 +37,4 @@ class DeliveryDocumentFilter(django_filters.FilterSet):
 
     class Meta:
         model = DeliveryDocument
-        fields = ["order", "status", "document_type", "to_customer"]
+        fields = ["order", "status", "document_type", "to_customer", "van_route"]

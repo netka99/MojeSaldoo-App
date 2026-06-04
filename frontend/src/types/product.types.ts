@@ -44,3 +44,22 @@ export interface StockSnapshot {
   warehouse_name: string;
   items: StockSnapshotItem[];
 }
+
+/** Rich read-only movement row — from GET /products/stock-movements/. */
+export interface StockMovementListItem {
+  id: string;
+  product: string;
+  product_name: string;
+  warehouse: string;
+  warehouse_name: string;
+  movement_type: string;
+  quantity: string | number;
+  quantity_before: string | number;
+  quantity_after: string | number;
+  reference_type: string | null;
+  reference_id: string | null;
+  reference_number: string | null;
+  notes: string;
+  created_at: string;
+  created_by_name: string | null;
+}

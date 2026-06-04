@@ -349,12 +349,17 @@ function ChangeHistorySection({ orderId }: { orderId: string }) {
   );
 }
 
-function OrderDeliveryDocs({ orderId }: { orderId: string }) {
+function OrderDeliveryDocs({ orderId, items }: { orderId: string; items?: OrderItem[] }) {
   const navigate = useNavigate();
   const { data: docs, isLoading } = useDeliveryByOrderQuery(orderId);
 
   const wzDocs = docs?.filter((d) => d.document_type === 'WZ') ?? [];
   const totalZwCount = wzDocs.reduce((sum, wz) => sum + (wz.return_documents?.length ?? 0), 0);
+
+  const totalOrdered = items?.reduce((s, i) => s + (parseFloat(String(i.quantity)) || 0), 0) ?? 0;
+  const totalDelivered = items?.reduce((s, i) => s + (parseFloat(String(i.quantity_delivered)) || 0), 0) ?? 0;
+  const showProgress = items && items.length > 0 && wzDocs.length > 0;
+  const isPartial = totalDelivered > 0 && totalDelivered < totalOrdered;
 
   if (isLoading) {
     return (
@@ -388,6 +393,21 @@ function OrderDeliveryDocs({ orderId }: { orderId: string }) {
           {wzDocs.map((wz) => (
             <WzDocRow key={wz.id} wz={wz} onNavigate={() => navigate(`/delivery/${wz.id}`)} />
           ))}
+        </div>
+      )}
+
+      {showProgress && (
+        <div className={cn(
+          'mt-2 rounded-xl px-4 py-2.5 text-[13px]',
+          isPartial
+            ? 'bg-orange-50 text-orange-800'
+            : 'bg-green-50 text-green-800',
+        )}>
+          Dostarczone łącznie:{' '}
+          <strong>{totalDelivered} / {totalOrdered}</strong>
+          {isPartial && (
+            <span className="ml-2">· brakuje {(totalOrdered - totalDelivered).toFixed(2).replace(/\.?0+$/, '')} szt.</span>
+          )}
         </div>
       )}
     </section>
@@ -799,7 +819,7 @@ export function OrderDetailPage() {
 
         {/* Delivery documents — WZ + ZW linked to this order */}
         {order && !isError && id && (
-          <OrderDeliveryDocs orderId={id} />
+          <OrderDeliveryDocs orderId={id} items={order.items} />
         )}
 
         {/* Change history */}

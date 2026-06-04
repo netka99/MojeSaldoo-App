@@ -79,6 +79,24 @@ function NavSectionDokumenty() {
   );
 }
 
+function NavSectionZakupy() {
+  const purchasingEnabled = useModuleGuard('purchasing');
+  if (!purchasingEnabled) return null;
+  return (
+    <div className="space-y-1">
+      <NavGroupTitle>Zakupy</NavGroupTitle>
+      <div className="space-y-0.5">
+        <ModuleNavItem module="purchasing" to="/suppliers">
+          Dostawcy
+        </ModuleNavItem>
+        <ModuleNavItem module="purchasing" to="/delivery/new-pz">
+          Nowe PZ
+        </ModuleNavItem>
+      </div>
+    </div>
+  );
+}
+
 function NavSectionAdministracja() {
   const anyEnabled = useModuleGuard('reporting');
   if (!anyEnabled) {
@@ -120,6 +138,7 @@ export function Sidebar() {
         <NavSectionSprzedaz />
         <NavSectionMagazyn />
         <NavSectionDokumenty />
+        <NavSectionZakupy />
         <NavSectionAdministracja />
       </nav>
 

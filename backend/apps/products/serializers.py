@@ -1,9 +1,10 @@
 from decimal import Decimal
 
+from django.apps import apps
 from django.db.models import Sum
 from rest_framework import serializers
 
-from .models import Product, StockMovement, Warehouse
+from .models import Product, ProductStock, StockMovement, Warehouse
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -130,6 +131,95 @@ class StockMovementSerializer(serializers.ModelSerializer):
             "created_at",
             "created_by",
         ]
+
+
+class WarehouseStockItemSerializer(serializers.ModelSerializer):
+    """ProductStock row enriched with product details — for GET /warehouses/{id}/stock/."""
+
+    product_id = serializers.UUIDField(source="product.id", read_only=True)
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+    product_unit = serializers.CharField(source="product.unit", read_only=True)
+    min_stock_alert = serializers.DecimalField(
+        source="product.min_stock_alert",
+        max_digits=10,
+        decimal_places=3,
+        read_only=True,
+    )
+    is_below_minimum = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductStock
+        fields = [
+            "id",
+            "product_id",
+            "product_name",
+            "product_sku",
+            "product_unit",
+            "quantity_available",
+            "quantity_reserved",
+            "quantity_total",
+            "min_stock_alert",
+            "is_below_minimum",
+        ]
+
+    def get_is_below_minimum(self, obj) -> bool:
+        alert = obj.product.min_stock_alert
+        if not alert:
+            return False
+        return obj.quantity_total < alert
+
+
+class StockMovementListSerializer(serializers.ModelSerializer):
+    """Rich read-only view of a StockMovement — for GET /products/stock-movements/."""
+
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    warehouse_name = serializers.CharField(source="warehouse.name", read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+    reference_number = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StockMovement
+        fields = [
+            "id",
+            "product",
+            "product_name",
+            "warehouse",
+            "warehouse_name",
+            "movement_type",
+            "quantity",
+            "quantity_before",
+            "quantity_after",
+            "reference_type",
+            "reference_id",
+            "reference_number",
+            "notes",
+            "created_at",
+            "created_by_name",
+        ]
+        read_only_fields = fields
+
+    def get_created_by_name(self, obj) -> str | None:
+        if obj.created_by_id is None:
+            return None
+        return getattr(obj.created_by, "email", None)
+
+    def get_reference_number(self, obj) -> str | None:
+        if not obj.reference_type or not obj.reference_id:
+            return None
+        ref_type = obj.reference_type.lower()
+        try:
+            if ref_type in ("delivery", "delivery_document"):
+                DeliveryDocument = apps.get_model("delivery", "DeliveryDocument")
+                doc = DeliveryDocument.objects.filter(pk=obj.reference_id).only("document_number").first()
+                return doc.document_number if doc else None
+            if ref_type == "order":
+                Order = apps.get_model("orders", "Order")
+                doc = Order.objects.filter(pk=obj.reference_id).only("order_number").first()
+                return doc.order_number if doc else None
+        except Exception:
+            return None
+        return None
 
 
 class StockUpdateSerializer(serializers.Serializer):

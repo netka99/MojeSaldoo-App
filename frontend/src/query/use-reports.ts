@@ -105,4 +105,17 @@ export function useInventoryReportQuery() {
   });
 }
 
+/** Operational dashboard summary (`GET /reports/dashboard/`). Refetches every 60 s. */
+export function useDashboardSummaryQuery() {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.dashboard(companyId),
+    queryFn: () => reportingService.fetchDashboardSummary(),
+    enabled: Boolean(companyId),
+    refetchInterval: 60_000,
+  });
+}
+
 export { TOP_LIMIT };

@@ -30,3 +30,17 @@ export interface Warehouse {
 
 export type WarehouseWrite = Omit<Warehouse, 'id' | 'created_at' | 'updated_at' | 'user'> &
   Partial<Pick<Warehouse, 'id'>>;
+
+/** ProductStock row enriched with product details — from GET /warehouses/{id}/stock/. */
+export interface WarehouseStockItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  product_sku: string | null;
+  product_unit: string;
+  quantity_available: string | number;
+  quantity_reserved: string | number;
+  quantity_total: string | number;
+  min_stock_alert: string | number | null;
+  is_below_minimum: boolean;
+}

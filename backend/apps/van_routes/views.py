@@ -17,7 +17,7 @@ from .serializers import (
     VanRoutePatchSerializer,
     VanRouteStartLoadingSerializer,
 )
-from .services import close_route, confirm_loading, create_van_route, start_loading
+from .services import _validate_orders_for_route, close_route, confirm_loading, create_van_route, start_loading
 
 
 class VanRouteViewSet(viewsets.ModelViewSet):
@@ -115,6 +115,60 @@ class VanRouteViewSet(viewsets.ModelViewSet):
         """Driver confirms van is loaded; route goes in_progress."""
         route = self.get_object()
         route = confirm_loading(route)
+        return Response(VanRouteDetailSerializer(route).data)
+
+    @action(detail=True, methods=["post"], url_path="add-orders")
+    def add_orders_action(self, request, pk=None):
+        """Add orders to a planned route. Only allowed while status is 'planned'."""
+        route = self.get_object()
+        if route.status != VanRoute.STATUS_PLANNED:
+            return Response(
+                {"detail": "Orders can only be added to a planned route."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order_ids = request.data.get("order_ids", [])
+        if not order_ids:
+            return Response({"detail": "order_ids is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.orders.models import Order
+
+        company_id = request.user.current_company_id
+        # Exclude already-assigned orders
+        existing_ids = set(route.orders.values_list("id", flat=True))
+        new_ids = [oid for oid in order_ids if str(oid) not in {str(e) for e in existing_ids}]
+        if not new_ids:
+            return Response(VanRouteDetailSerializer(route).data)
+
+        try:
+            orders = _validate_orders_for_route(company_id, new_ids)
+        except Exception as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        route.orders.add(*orders)
+        route.refresh_from_db()
+        return Response(VanRouteDetailSerializer(route).data)
+
+    @action(detail=True, methods=["post"], url_path="remove-orders")
+    def remove_orders_action(self, request, pk=None):
+        """Remove orders from a planned route. Only allowed while status is 'planned'."""
+        route = self.get_object()
+        if route.status != VanRoute.STATUS_PLANNED:
+            return Response(
+                {"detail": "Orders can only be removed from a planned route."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order_ids = request.data.get("order_ids", [])
+        if not order_ids:
+            return Response({"detail": "order_ids is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.orders.models import Order
+
+        orders_to_remove = Order.objects.filter(
+            company_id=request.user.current_company_id,
+            id__in=order_ids,
+            van_routes=route,
+        )
+        route.orders.remove(*orders_to_remove)
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="close")

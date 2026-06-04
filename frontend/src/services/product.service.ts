@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Product, ProductWrite, StockSnapshot } from '../types';
+import type { Product, ProductWrite, StockMovementListItem, StockSnapshot } from '../types';
 
 interface PaginatedResponse<T> {
   count: number;
@@ -81,4 +81,17 @@ export const productService = {
 
   fetchStockSnapshot: (warehouseId: string) =>
     api.get<StockSnapshot>('/products/stock-snapshot/', { params: { warehouse_id: warehouseId } }),
+
+  fetchStockMovements: (params?: {
+    product?: string;
+    warehouse?: string;
+    type?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    page_size?: number;
+  }) => api.get<{ count: number; next: string | null; previous: string | null; results: StockMovementListItem[] }>(
+    '/stock-movements/',
+    { params },
+  ),
 };

@@ -28,6 +28,16 @@ function queryErrorMessage(err: unknown): string {
   return 'Nie udało się załadować dokumentów';
 }
 
+/** Highest document number first (WZ/2026/0009 before 0001). */
+function compareDeliveryDocumentsNewestNumberFirst(a: DeliveryDocument, b: DeliveryDocument): number {
+  const na = a.document_number?.trim() ?? '';
+  const nb = b.document_number?.trim() ?? '';
+  if (na && nb) return nb.localeCompare(na, 'pl', { numeric: true });
+  if (na) return -1;
+  if (nb) return 1;
+  return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+}
+
 const selectClassName = cn(
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
   'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
@@ -505,7 +515,10 @@ function DeliveryDocumentsPageContent() {
 
   // --- Single shared query ---
   const { data, isFetching, isError, error, refetch } = useDeliveryByRangeQuery(dateFrom, dateTo);
-  const docs = data?.results ?? [];
+  const docs = useMemo(
+    () => [...(data?.results ?? [])].sort(compareDeliveryDocumentsNewestNumberFirst),
+    [data?.results],
+  );
   const totalCount = data?.count ?? 0;
   // Only warn when we hit the hard cap of 500 — normal paginated responses
   // (e.g. 20 of 34) are handled correctly once the backend honours page_size.

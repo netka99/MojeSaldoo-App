@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { authStorage } from '@/services/api';
-import { useVanRouteQuery, useStartLoadingMutation, useConfirmLoadingMutation } from '@/query/use-van-routes';
+import { useVanRouteQuery, useStartLoadingMutation, useConfirmLoadingMutation, useAddOrdersToRouteMutation } from '@/query/use-van-routes';
 import { useStockSnapshotQuery } from '@/query/use-products';
 import { useVanReconciliationMutation } from '@/query/use-delivery';
+import { orderService } from '@/services/order.service';
+import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
-import type { OrderItem, RouteOrder } from '@/types';
+import type { Order, OrderItem, RouteOrder } from '@/types';
 
 /* ─── Types ──────────────────────────────────────────────────────── */
 
@@ -171,22 +174,128 @@ function CarryOverSection({
   );
 }
 
+/* ─── Add orders sheet ───────────────────────────────────────────── */
+
+function AddOrdersSheet({
+  routeId,
+  date,
+  existingOrderIds,
+  onClose,
+}: {
+  routeId: string;
+  date: string;
+  existingOrderIds: Set<string>;
+  onClose: () => void;
+}) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const addOrders = useAddOrdersToRouteMutation();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['orders', 'add-to-route', date, companyId],
+    queryFn: () =>
+      orderService.fetchList({ delivery_date: date, status: 'confirmed', exclude_routed: true, page_size: 100, page: 1 }),
+    enabled: Boolean(date) && Boolean(companyId),
+  });
+
+  const available = useMemo(
+    () => (data?.results ?? []).filter((o: Order) => !existingOrderIds.has(o.id)),
+    [data, existingOrderIds],
+  );
+
+  function toggle(id: string) {
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+
+  async function handleSubmit() {
+    if (selected.size === 0) return;
+    setError(null);
+    try {
+      await addOrders.mutateAsync({ id: routeId, orderIds: [...selected] });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się dodać zamówień');
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border/40 bg-background/95 px-4 py-3 backdrop-blur">
+        <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted" aria-label="Anuluj">
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2}><path d="M19 12H5m0 0l7 7M5 12l7-7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[17px] font-semibold tracking-tight text-foreground">Dodaj zamówienia</h1>
+          <p className="text-[12px] text-muted-foreground">Potwierdzone na {date}</p>
+        </div>
+        {selected.size > 0 && (
+          <span className="shrink-0 rounded-full bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground">{selected.size} zam.</span>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pt-4 pb-[calc(76px+env(safe-area-inset-bottom))]">
+        {isLoading && <div className="flex items-center justify-center py-10"><span className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}
+        {!isLoading && available.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">Brak dostępnych zamówień na ten dzień</p>}
+        {available.map((order: Order) => {
+          const sel = selected.has(order.id);
+          return (
+            <button key={order.id} type="button" onClick={() => toggle(order.id)}
+              className={cn('flex items-center gap-3 rounded-2xl px-4 py-3 text-left shadow-soft transition-colors', sel ? 'bg-primary/10 ring-2 ring-primary/30' : 'bg-surface-card')}>
+              <div className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors', sel ? 'border-primary bg-primary' : 'border-border bg-background')}>
+                {sel && <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5 text-primary-foreground" stroke="currentColor" strokeWidth={3}><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-foreground">{order.customer_name ?? '—'}</p>
+                <p className="text-[12px] text-muted-foreground">{order.order_number ?? '—'} · {order.items.length} poz.</p>
+              </div>
+            </button>
+          );
+        })}
+        {error && <p className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
+      </div>
+
+      <div className="fixed left-0 right-0 bottom-0 z-10 border-t border-border/40 bg-background/95 px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+        <button type="button" onClick={() => void handleSubmit()} disabled={addOrders.isPending || selected.size === 0}
+          className={cn('w-full rounded-xl py-3 text-base font-semibold transition-colors', selected.size > 0 && !addOrders.isPending ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-muted text-muted-foreground cursor-not-allowed')}>
+          {addOrders.isPending ? 'Dodawanie…' : selected.size === 0 ? 'Wybierz zamówienia' : `Dodaj ${selected.size} zamówień`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Order selector ─────────────────────────────────────────────── */
 
 function OrderSelector({
   orders,
   selectedIds,
   onToggle,
+  onAddOrders,
 }: {
   orders: RouteOrder[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
+  onAddOrders: () => void;
 }) {
   return (
     <div>
-      <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Zamówienia w tej trasie ({orders.length})
-      </h2>
+      <div className="mb-2 flex items-center justify-between px-1">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Zamówienia w tej trasie ({orders.length})
+        </h2>
+        <button
+          type="button"
+          onClick={onAddOrders}
+          className="flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" stroke="currentColor" strokeWidth={2.5}>
+            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+          </svg>
+          Dodaj zamówienie
+        </button>
+      </div>
       <div className="flex flex-col gap-2">
         {orders.map((order) => {
           const selected = selectedIds.has(order.id);
@@ -559,6 +668,9 @@ export function VanRouteLoadPage() {
     );
   }
 
+  /* ── Add orders sheet ── */
+  const [showAddOrders, setShowAddOrders] = useState(false);
+
   /* ── Extra products ── */
   const [extraQtys, setExtraQtys] = useState<Map<string, number>>(new Map());
   const [extraSearch, setExtraSearch] = useState('');
@@ -652,6 +764,22 @@ export function VanRouteLoadPage() {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
+  if (showAddOrders && routeId && route) {
+    return (
+      <AddOrdersSheet
+        routeId={routeId}
+        date={route.date}
+        existingOrderIds={new Set((route.orders ?? []).map((o) => o.id))}
+        onClose={() => {
+          setShowAddOrders(false);
+          // Reset rows so new order items get picked up on next render
+          setRowsInitialised(false);
+          setOrdersInitialised(false);
+        }}
+      />
+    );
+  }
+
   const isPending = startLoading.isPending || confirmLoading.isPending || reconcile.isPending;
   const mmItemCount = rows.filter((r) => r.loadQty > 0).length + [...extraQtys.values()].filter((q) => q > 0).length;
   const hasCarryOver = carryOverRows.length > 0;
@@ -712,11 +840,12 @@ export function VanRouteLoadPage() {
         )}
 
         {/* ── Order selector ── */}
-        {!routeLoading && (route?.orders?.length ?? 0) > 0 && (
+        {!routeLoading && (
           <OrderSelector
-            orders={route!.orders}
+            orders={route?.orders ?? []}
             selectedIds={selectedOrderIds}
             onToggle={toggleOrder}
+            onAddOrders={() => setShowAddOrders(true)}
           />
         )}
 

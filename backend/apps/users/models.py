@@ -56,14 +56,20 @@ class CompanyMembership(models.Model):
 
 class CompanyModule(models.Model):
     MODULE_CHOICES = [
-        ("products", "Products & Inventory"),
-        ("customers", "Customers"),
-        ("warehouses", "Warehouse Management"),
-        ("orders", "Orders"),
-        ("delivery", "Delivery & WZ Documents"),
-        ("invoicing", "Invoicing"),
-        ("ksef", "KSeF Integration"),
-        ("reporting", "Reporting & Analytics"),
+        # --- Rdzeń (zawsze włączony dla firm handlowych) ---
+        ("products",    "Products & Inventory"),        # katalog produktów, stany
+        ("customers",   "Customers"),                   # baza klientów
+        ("warehouses",  "Warehouse Management"),        # magazyny, stany, ruchy
+        ("orders",      "Orders"),                      # zamówienia od klientów
+        ("delivery",    "Delivery & WZ/ZW Documents"),  # WZ + ZW (wydania i zwroty)
+        ("invoicing",   "Invoicing"),                   # faktury FV
+        # --- Opcjonalne ---
+        ("van_routes",  "Van Routes & Mobile Delivery"), # trasy vana, MM załadunek, rozliczenie
+        ("purchasing",  "Purchasing & Suppliers (PZ)"),  # zakupy od dostawców, PZ
+        ("production",  "Own Production (PW/RW)"),       # własna produkcja — workflow PW/RW
+        # --- Integracje ---
+        ("ksef",        "KSeF Integration"),             # e-fakturowanie KSeF
+        ("reporting",   "Reporting & Analytics"),        # raporty, analityka
     ]
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="modules")
     module = models.CharField(max_length=50, choices=MODULE_CHOICES)

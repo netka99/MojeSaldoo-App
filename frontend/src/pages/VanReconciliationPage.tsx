@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { authStorage } from '@/services/api';
 import { useVanRouteQuery } from '@/query/use-van-routes';
-import { useDeliveryQuery, useVanWZListQuery, useVanReconciliationMutation } from '@/query/use-delivery';
+import { useDeliveryQuery, useVanRouteWZListQuery, useVanReconciliationMutation } from '@/query/use-delivery';
 import { useStockSnapshotQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
+import { countPendingWzDocs, sumDeliveredWzByProduct, sumPendingWzByProduct } from '@/lib/van-wz-utils';
 import type { VanReconciliationResult } from '@/types';
 
 /* ─── Types ──────────────────────────────────────────────────────── */
@@ -18,10 +19,13 @@ type ReconciliationRow = {
   // This route
   loaded: number;       // from MM doc items
   sold: number;         // from WZ docs
-  expectedThisRoute: number; // loaded - sold
-  // Van total (includes carry-over from previous routes)
+  expectedThisRoute: number; // loaded - sold (delivered WZ only)
   totalVanStock: number;
-  carryOver: number;    // totalVanStock - expectedThisRoute (clamped to 0)
+  /** Stock from a previous route (product not on this route's MM). */
+  carryOver: number;
+  /** On draft/saved/in_transit WZ — still in van, not sold yet. */
+  pendingWz: number;
+  loadedOnThisRoute: boolean;
   // User inputs
   physicalCount: string;
   decision: Decision;
@@ -65,10 +69,10 @@ export function VanReconciliationPage() {
   const { data: mmDoc } = useDeliveryQuery(mmDocId);
 
   // Fetch WZ docs issued from this van on this date (what was sold)
-  const { data: vanWZDocs } = useVanWZListQuery(urlWarehouseId || undefined, routeDate);
+  const { data: vanWZDocs } = useVanRouteWZListQuery(urlRouteId || undefined);
 
   // Current van stock snapshot
-  const { data: stockSnapshot, isLoading: snapshotLoading } = useStockSnapshotQuery(
+  const { data: stockSnapshot, isLoading: snapshotLoading, isFetching: snapshotFetching } = useStockSnapshotQuery(
     urlWarehouseId || undefined,
   );
 
@@ -78,7 +82,6 @@ export function VanReconciliationPage() {
 
   /* ── Build rows ── */
   const [rows, setRows] = useState<ReconciliationRow[]>([]);
-  const [initialised, setInitialised] = useState(false);
 
   const stockByProductId = useMemo(() => {
     const m = new Map<string, number>();
@@ -88,52 +91,28 @@ export function VanReconciliationPage() {
     return m;
   }, [stockSnapshot]);
 
-  // Sum quantities sold per product across all WZ docs
-  const soldByProductId = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const wz of vanWZDocs ?? []) {
-      if (wz.status === 'cancelled') continue;
-      for (const item of wz.items ?? []) {
-        const prev = m.get(item.product_id) ?? 0;
-        // quantity_actual if delivered, else quantity_planned
-        const qty = item.quantity_actual != null
-          ? parseFloat(String(item.quantity_actual))
-          : parseFloat(String(item.quantity_planned));
-        m.set(item.product_id, prev + (qty || 0));
-      }
-    }
-    return m;
-  }, [vanWZDocs]);
+  const soldByProductId = useMemo(() => sumDeliveredWzByProduct(vanWZDocs), [vanWZDocs]);
+  const pendingWzByProductId = useMemo(() => sumPendingWzByProduct(vanWZDocs), [vanWZDocs]);
+  const pendingWzDocCount = useMemo(() => countPendingWzDocs(vanWZDocs), [vanWZDocs]);
+
+  const rowsReady = !snapshotLoading && !snapshotFetching && Boolean(stockSnapshot);
 
   useEffect(() => {
-    if (initialised) return;
-    if (snapshotLoading) return;
-    if (!stockSnapshot) return;
+    if (!rowsReady) return;
 
-    // All products currently in the van
+    // Only products currently in the van with stock > 0 — these need a decision
     const allProducts = new Map<string, { name: string; unit: string }>();
     for (const i of stockSnapshot.items ?? []) {
       if ((parseFloat(i.quantity_available) || 0) > 0) {
         allProducts.set(i.product_id, { name: i.product_name, unit: i.unit });
       }
     }
-    // Also include products that were loaded (they may already be sold = 0 in van)
-    for (const item of mmDoc?.items ?? []) {
-      if (!allProducts.has(item.product_id)) {
-        allProducts.set(item.product_id, {
-          name: item.product_name ?? item.product_id,
-          unit: '',
-        });
-      }
-    }
 
     if (allProducts.size === 0) {
       setRows([]);
-      setInitialised(true);
       return;
     }
 
-    // Loaded quantities from MM doc
     const loadedByProductId = new Map<string, number>();
     for (const item of mmDoc?.items ?? []) {
       loadedByProductId.set(item.product_id, parseFloat(String(item.quantity_planned)) || 0);
@@ -141,11 +120,13 @@ export function VanReconciliationPage() {
 
     const built: ReconciliationRow[] = [];
     for (const [productId, { name, unit }] of allProducts) {
+      const loadedOnThisRoute = loadedByProductId.has(productId);
       const loaded = loadedByProductId.get(productId) ?? 0;
       const sold = soldByProductId.get(productId) ?? 0;
+      const pendingWz = pendingWzByProductId.get(productId) ?? 0;
       const expectedThisRoute = Math.max(0, loaded - sold);
       const totalVanStock = stockByProductId.get(productId) ?? 0;
-      const carryOver = Math.max(0, totalVanStock - expectedThisRoute);
+      const carryOver = loadedOnThisRoute ? 0 : totalVanStock;
 
       built.push({
         productId,
@@ -156,15 +137,25 @@ export function VanReconciliationPage() {
         expectedThisRoute,
         totalVanStock,
         carryOver,
-        physicalCount: String(expectedThisRoute), // default: assume all this-route stock returns
-        decision: carryOver > 0 ? 'keep' : 'return', // carry-over defaults to keep
+        pendingWz,
+        loadedOnThisRoute,
+        physicalCount: String(totalVanStock),
+        decision:
+          carryOver > 0 || pendingWz > 0 || expectedThisRoute <= 0
+            ? 'keep'
+            : 'return',
       });
     }
 
     built.sort((a, b) => a.productName.localeCompare(b.productName, 'pl'));
-    setRows(built);
-    setInitialised(true);
-  }, [initialised, snapshotLoading, stockSnapshot, mmDoc, soldByProductId, stockByProductId]);
+    setRows((prev) => {
+      const prevById = new Map(prev.map((r) => [r.productId, r]));
+      return built.map((b) => {
+        const p = prevById.get(b.productId);
+        return p ? { ...b, physicalCount: p.physicalCount, decision: p.decision } : b;
+      });
+    });
+  }, [rowsReady, stockSnapshot, mmDoc, soldByProductId, pendingWzByProductId, stockByProductId]);
 
   function updateRow(productId: string, field: 'physicalCount' | 'decision', value: string) {
     setRows((prev) =>
@@ -186,15 +177,25 @@ export function VanReconciliationPage() {
       }
     }
 
-    // Build payload: 'return' rows use physicalCount, 'writeoff' rows use 0 (→ DAMAGE movement)
+    // Always use explicit split mode (quantity_writeoff present) so the backend knows
+    // exactly what to return, what to damage, and what stays in the van.
+    // Kept rows are included with P=0, W=0 so they appear in the reconciliation summary.
+    const kept = rows.filter((r) => r.decision === 'keep');
     const items = [
       ...returning.map((r) => ({
         product_id: r.productId,
         quantity_actual_remaining: parseQty(r.physicalCount).toFixed(3),
+        quantity_writeoff: '0.000',
       })),
       ...writingOff.map((r) => ({
         product_id: r.productId,
         quantity_actual_remaining: '0.000',
+        quantity_writeoff: parseQty(r.physicalCount).toFixed(3),
+      })),
+      ...kept.map((r) => ({
+        product_id: r.productId,
+        quantity_actual_remaining: '0.000',
+        quantity_writeoff: '0.000',
       })),
     ];
 
@@ -350,20 +351,28 @@ export function VanReconciliationPage() {
         </p>
       )}
 
-      {snapshotLoading && (
+      {pendingWzDocCount > 0 && (
+        <p className="rounded-2xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300" role="status">
+          Masz {pendingWzDocCount}{' '}
+          {pendingWzDocCount === 1 ? 'dokument WZ' : 'dokumenty WZ'} bez potwierdzonej dostawy.
+          Potwierdź je na trasie przed rozliczeniem — inaczej „Sprzedano” będzie zaniżone.
+        </p>
+      )}
+
+      {(snapshotLoading || snapshotFetching) && !rowsReady && (
         <div className="flex items-center justify-center py-16">
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         </div>
       )}
 
-      {!snapshotLoading && rows.length === 0 && (
+      {rowsReady && rows.length === 0 && (
         <div className="rounded-2xl bg-surface-card px-4 py-10 text-center shadow-soft">
           <p className="font-semibold text-foreground">Van jest pusty</p>
           <p className="mt-1 text-sm text-muted-foreground">Brak towaru do rozliczenia.</p>
         </div>
       )}
 
-      {!snapshotLoading && rows.length > 0 && (
+      {rowsReady && rows.length > 0 && (
         <>
           {/* Legend */}
           <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground px-1">
@@ -398,6 +407,11 @@ export function VanReconciliationPage() {
                     {r.carryOver > 0 && (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
                         +{fmt(r.carryOver, r.unit)} z wcześniej
+                      </span>
+                    )}
+                    {r.pendingWz > 0 && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                        {fmt(r.pendingWz, r.unit)} — WZ niepotwierdzone
                       </span>
                     )}
                   </div>
@@ -514,15 +528,15 @@ export function VanReconciliationPage() {
       )}
 
       {/* Bottom bar */}
-      {!snapshotLoading && (
+      {rowsReady && (
         <div className="fixed left-0 right-0 bottom-[83px] md:bottom-0 z-30 border-t border-border/40 bg-background/95 px-4 pb-3 pt-3 backdrop-blur">
           <button
             type="button"
             onClick={() => void onSubmit()}
-            disabled={reconcile.isPending || rows.length === 0}
+            disabled={reconcile.isPending}
             className={cn(
               'w-full rounded-xl py-3 text-base font-semibold transition-colors',
-              !reconcile.isPending && rows.length > 0
+              !reconcile.isPending
                 ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                 : 'bg-muted text-muted-foreground cursor-not-allowed',
             )}
@@ -530,6 +544,7 @@ export function VanReconciliationPage() {
             {reconcile.isPending
               ? 'Rozliczanie…'
               : (() => {
+                  if (rows.length === 0) return 'Zatwierdź — van pusty, zamknij trasę';
                   const parts = [];
                   if (returningCount > 0) parts.push(`zwróć ${returningCount} poz. do MG`);
                   if (writingOffCount > 0) parts.push(`odpisz ${writingOffCount} poz.`);

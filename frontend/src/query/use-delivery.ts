@@ -8,11 +8,13 @@ import type {
   DeliveryDocumentPatch,
   DeliveryUpdateLinesPayload,
   PendingReturnItem,
+  PzCompleteItemRow,
+  PzCreatePayload,
   StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
 } from '@/types';
-import { deliveryKeys, orderKeys, vanRouteKeys } from './keys';
+import { deliveryKeys, orderKeys, vanRouteKeys, stockSnapshotKeys } from './keys';
 
 /** Filters for `useDeliveryListQuery` (excludes `page` — pass page as the first argument). */
 export type DeliveryListFilters = Omit<DeliveryListParams, 'page'>;
@@ -84,14 +86,22 @@ export function useDeliveryByDayQuery(date: string) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   return useQuery({
-    queryKey: deliveryKeys.list({ page: 1, companyId, issue_date_after: date, issue_date_before: date, page_size: 200, include_items: true }),
+    queryKey: deliveryKeys.list({
+      page: 1,
+      companyId,
+      issue_date_after: date,
+      issue_date_before: date,
+      page_size: 200,
+      include_items: true,
+      ordering: '-document_number',
+    }),
     queryFn: () =>
       deliveryService.fetchList({
         page: 1,
         page_size: 200,
         issue_date_after: date,
         issue_date_before: date,
-        ordering: 'document_number',
+        ordering: '-document_number',
         include_items: true,
       }),
     enabled: Boolean(date) && Boolean(companyId),
@@ -106,14 +116,22 @@ export function useDeliveryByRangeQuery(dateFrom: string, dateTo: string) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   return useQuery({
-    queryKey: deliveryKeys.list({ page: 1, companyId, issue_date_after: dateFrom, issue_date_before: dateTo, page_size: 500, include_items: true }),
+    queryKey: deliveryKeys.list({
+      page: 1,
+      companyId,
+      issue_date_after: dateFrom,
+      issue_date_before: dateTo,
+      page_size: 500,
+      include_items: true,
+      ordering: '-document_number',
+    }),
     queryFn: () =>
       deliveryService.fetchList({
         page: 1,
         page_size: 500,
         issue_date_after: dateFrom,
         issue_date_before: dateTo,
-        ordering: 'document_number',
+        ordering: '-document_number',
         include_items: true,
       }),
     enabled: Boolean(dateFrom) && Boolean(dateTo) && Boolean(companyId),
@@ -162,9 +180,18 @@ export function useCreateStandaloneWzMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: StandaloneWzCreate) => deliveryService.createStandaloneWz(body),
-    onSuccess: (doc: DeliveryDocument) => {
+    onSuccess: (doc: DeliveryDocument, body: StandaloneWzCreate) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      // Invalidate the van route WZ list so the new doc shows up on the dashboard
+      if (body.van_route_id) {
+        void queryClient.invalidateQueries({
+          predicate: (q) => {
+            const key = q.queryKey;
+            return Array.isArray(key) && key.some((k) => typeof k === 'object' && k !== null && 'van_route' in k && (k as Record<string, unknown>).van_route === body.van_route_id);
+          },
+        });
+      }
     },
   });
 }
@@ -229,6 +256,7 @@ export function useCompleteDeliveryMutation() {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.preview(doc.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.all });
     },
   });
 }
@@ -267,8 +295,15 @@ export function useSyncWzFromOrderMutation() {
 export function useGenerateDeliveryForOrderMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ orderId, vanWarehouseId }: { orderId: string; vanWarehouseId?: string }) =>
-      deliveryService.generateForOrder(orderId, vanWarehouseId),
+    mutationFn: ({
+      orderId,
+      vanWarehouseId,
+      vanRouteId,
+    }: {
+      orderId: string;
+      vanWarehouseId?: string;
+      vanRouteId?: string;
+    }) => deliveryService.generateForOrder(orderId, { vanWarehouseId, vanRouteId }),
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
@@ -294,9 +329,35 @@ export function useBatchGenerateDeliveryMutation() {
 }
 
 /**
- * All WZ documents issued from a specific van warehouse on a given date.
- * Used by VanRouteDashboardPage to determine which stops are done.
+ * WZ documents linked to a van route (trip).
+ * Used by VanRouteDashboardPage and VanReconciliationPage.
  */
+export function useVanRouteWZListQuery(routeId: string | undefined) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({
+      page: 1,
+      companyId,
+      document_type: 'WZ',
+      van_route: routeId,
+      page_size: 100,
+    }),
+    queryFn: () =>
+      deliveryService.fetchList({
+        page: 1,
+        document_type: 'WZ',
+        van_route: routeId,
+        page_size: 100,
+        include_items: true,
+      }),
+    enabled: Boolean(routeId) && Boolean(companyId),
+    select: (data) => data.results,
+    refetchInterval: 30_000,
+  });
+}
+
+/** @deprecated Prefer useVanRouteWZListQuery — warehouse+date pulls unrelated WZ. */
 export function useVanWZListQuery(vanWarehouseId: string | undefined, date: string) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
@@ -318,10 +379,38 @@ export function useVanWZListQuery(vanWarehouseId: string | undefined, date: stri
         issue_date_after: date,
         issue_date_before: date,
         page_size: 100,
+        include_items: true,
       }),
     enabled: Boolean(vanWarehouseId) && Boolean(date) && Boolean(companyId),
     select: (data) => data.results,
     refetchInterval: 30_000,
+  });
+}
+
+/** Create a draft PZ with items in one call. Invalidates delivery list. */
+export function useCreatePzMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PzCreatePayload) => deliveryService.createPz(body),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+    },
+  });
+}
+
+/** Complete a PZ (receipt goods into warehouse). Invalidates delivery + product stock. */
+export function useCompletePzMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, items }: { id: string; items?: PzCompleteItemRow[] }) =>
+      deliveryService.completePz(id, items),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      // Stock changed — refresh product stock cache
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
   });
 }
 
@@ -352,6 +441,8 @@ export function useVanReconciliationMutation() {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ['products'] });
       void queryClient.invalidateQueries({ queryKey: vanRouteKeys.all });
+      // Invalidate stock snapshot so Stan Van shows 0 immediately after reconciliation
+      void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.all });
     },
   });
 }

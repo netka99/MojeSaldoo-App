@@ -182,6 +182,11 @@ class Invoice(models.Model):
                 fields=["company", "invoice_number"],
                 name="invoices_invoice_company_invoice_number_uniq",
             ),
+            models.UniqueConstraint(
+                fields=["company", "order"],
+                condition=models.Q(status__in=["draft", "issued", "sent", "paid", "overdue"]),
+                name="invoices_unique_active_invoice_per_order",
+            ),
         ]
 
 

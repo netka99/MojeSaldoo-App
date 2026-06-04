@@ -31,6 +31,9 @@ const ProductEditPage = lazy(() =>
 const ProductAdjustStockPage = lazy(() =>
   import('./pages/ProductAdjustStockPage').then((m) => ({ default: m.ProductAdjustStockPage })),
 );
+const ProductMovementsPage = lazy(() =>
+  import('./pages/ProductMovementsPage').then((m) => ({ default: m.ProductMovementsPage })),
+);
 const WarehousesPage = lazy(() =>
   import('./pages/WarehousesPage').then((m) => ({ default: m.WarehousesPage })),
 );
@@ -82,6 +85,15 @@ const VanRouteDashboardPage = lazy(() =>
 );
 const DeliveryDocumentDetailPage = lazy(() =>
   import('./pages/DeliveryDocumentDetailPage').then((m) => ({ default: m.DeliveryDocumentDetailPage })),
+);
+const PZCreatePage = lazy(() =>
+  import('./pages/PZCreatePage').then((m) => ({ default: m.PZCreatePage })),
+);
+const SuppliersPage = lazy(() =>
+  import('./pages/SuppliersPage').then((m) => ({ default: m.SuppliersPage })),
+);
+const SupplierCreatePage = lazy(() =>
+  import('./pages/SupplierCreatePage').then((m) => ({ default: m.SupplierCreatePage })),
 );
 const InvoicesPage = lazy(() => import('./pages/InvoicesPage').then((m) => ({ default: m.InvoicesPage })));
 const InvoiceCreatePage = lazy(() =>
@@ -189,6 +201,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/products/:id/movements"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <ProductMovementsPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/warehouses"
                   element={
                     <ModuleRouteGate module="warehouses">
@@ -253,6 +273,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/delivery/new-pz"
+                  element={
+                    <ModuleRouteGate module="purchasing">
+                      <PZCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/delivery/van-reconciliation"
                   element={
                     <ModuleRouteGate module="delivery">
@@ -297,6 +325,22 @@ function App() {
                   element={
                     <ModuleRouteGate module="delivery">
                       <DeliveryDocumentDetailPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/suppliers"
+                  element={
+                    <ModuleRouteGate module="purchasing">
+                      <SuppliersPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/suppliers/new"
+                  element={
+                    <ModuleRouteGate module="purchasing">
+                      <SupplierCreatePage />
                     </ModuleRouteGate>
                   }
                 />

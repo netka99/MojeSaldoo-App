@@ -9,3 +9,4 @@ export * from './delivery.types';
 export * from './invoice.types';
 export * from './reporting.types';
 export * from './van-route.types';
+export * from './supplier.types';

@@ -1,10 +1,14 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 
 from apps.customers.models import Customer
 from apps.orders.models import Order
 from apps.products.models import Warehouse
+from apps.suppliers.models import Supplier
+from apps.van_routes.models import VanRoute
+from apps.van_routes.services import validate_wz_van_route_link
 
 from .models import DeliveryDocument, DeliveryItem
 
@@ -74,6 +78,7 @@ class DeliveryItemSerializer(serializers.ModelSerializer):
             "quantity_planned",
             "quantity_actual",
             "quantity_returned",
+            "unit_cost",
             "return_reason",
             "is_damaged",
             "notes",
@@ -203,8 +208,14 @@ class DeliveryDocumentListSerializer(serializers.ModelSerializer):
     from_warehouse_id = serializers.PrimaryKeyRelatedField(source="from_warehouse", read_only=True)
     to_warehouse_id = serializers.PrimaryKeyRelatedField(source="to_warehouse", read_only=True)
     linked_wz_id = serializers.PrimaryKeyRelatedField(source="linked_wz", read_only=True)
+    van_route_id = serializers.PrimaryKeyRelatedField(source="van_route", read_only=True)
+    from_supplier_id = serializers.PrimaryKeyRelatedField(source="from_supplier", read_only=True)
     order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
+    supplier_name = serializers.SerializerMethodField()
+    from_warehouse_name = serializers.SerializerMethodField()
+    to_warehouse_name = serializers.SerializerMethodField()
+    van_route_date = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -219,9 +230,15 @@ class DeliveryDocumentListSerializer(serializers.ModelSerializer):
             "document_number",
             "issue_date",
             "from_warehouse_id",
+            "from_warehouse_name",
             "to_warehouse_id",
+            "to_warehouse_name",
             "to_customer_id",
+            "from_supplier_id",
+            "supplier_name",
             "linked_wz_id",
+            "van_route_id",
+            "van_route_date",
             "status",
             "has_returns",
             "returns_notes",
@@ -234,6 +251,11 @@ class DeliveryDocumentListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    def get_supplier_name(self, obj):
+        if obj.from_supplier_id:
+            return obj.from_supplier.name
+        return None
+
     def get_order_number(self, obj):
         if obj.order_id:
             return obj.order.order_number
@@ -244,6 +266,21 @@ class DeliveryDocumentListSerializer(serializers.ModelSerializer):
             return obj.order.customer.name
         if obj.to_customer_id:
             return obj.to_customer.name
+        return None
+
+    def get_from_warehouse_name(self, obj):
+        if obj.from_warehouse_id:
+            return obj.from_warehouse.name
+        return None
+
+    def get_to_warehouse_name(self, obj):
+        if obj.to_warehouse_id:
+            return obj.to_warehouse.name
+        return None
+
+    def get_van_route_date(self, obj):
+        if obj.van_route_id:
+            return obj.van_route.date.isoformat()
         return None
 
 
@@ -272,17 +309,33 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    from_supplier_id = serializers.PrimaryKeyRelatedField(
+        queryset=Supplier.objects.all(),
+        source="from_supplier",
+        required=False,
+        allow_null=True,
+    )
     items = DeliveryItemSerializer(many=True, read_only=True)
     return_documents = LinkedZWSerializer(many=True, read_only=True)
     order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
+    supplier_name = serializers.SerializerMethodField()
+    from_warehouse_name = serializers.SerializerMethodField()
+    to_warehouse_name = serializers.SerializerMethodField()
     locked_for_edit = serializers.SerializerMethodField()
     linked_invoices = serializers.SerializerMethodField()
     linked_wz_id = serializers.PrimaryKeyRelatedField(
         source="linked_wz",
         read_only=True,
     )
+    van_route_id = serializers.PrimaryKeyRelatedField(
+        queryset=VanRoute.objects.all(),
+        source="van_route",
+        required=False,
+        allow_null=True,
+    )
     linked_wz_number = serializers.SerializerMethodField()
+    van_route_date = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -297,10 +350,16 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "document_number",
             "issue_date",
             "from_warehouse_id",
+            "from_warehouse_name",
             "to_warehouse_id",
+            "to_warehouse_name",
             "to_customer_id",
+            "from_supplier_id",
+            "supplier_name",
             "linked_wz_id",
             "linked_wz_number",
+            "van_route_id",
+            "van_route_date",
             "status",
             "has_returns",
             "returns_notes",
@@ -328,6 +387,9 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "return_documents",
             "order_number",
             "customer_name",
+            "supplier_name",
+            "from_warehouse_name",
+            "to_warehouse_name",
             "locked_for_edit",
             "linked_invoices",
         ]
@@ -351,10 +413,26 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             self.fields["to_customer_id"].queryset = Customer.objects.filter(
                 company_id=cc_id
             )
+            self.fields["from_supplier_id"].queryset = Supplier.objects.filter(
+                company_id=cc_id
+            )
+            self.fields["van_route_id"].queryset = VanRoute.objects.filter(
+                company_id=cc_id
+            )
+
+    def get_supplier_name(self, obj):
+        if obj.from_supplier_id:
+            return obj.from_supplier.name
+        return None
 
     def get_linked_wz_number(self, obj):
         if obj.linked_wz_id:
             return obj.linked_wz.document_number or None
+        return None
+
+    def get_van_route_date(self, obj):
+        if obj.van_route_id:
+            return obj.van_route.date.isoformat()
         return None
 
     def get_order_number(self, obj):
@@ -369,6 +447,16 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             return obj.to_customer.name
         return None
 
+    def get_from_warehouse_name(self, obj):
+        if obj.from_warehouse_id:
+            return obj.from_warehouse.name
+        return None
+
+    def get_to_warehouse_name(self, obj):
+        if obj.to_warehouse_id:
+            return obj.to_warehouse.name
+        return None
+
     def get_locked_for_edit(self, obj):
         return obj.is_locked_by_invoice()
 
@@ -380,16 +468,41 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         doc_type = data.get("document_type")
+        if self.instance and doc_type is None:
+            doc_type = self.instance.document_type
         order = data.get("order")
-        # MM and ZW documents are not tied to a sales order
+        if order is None and self.instance:
+            order = self.instance.order
+        # MM, ZW, and PZ documents are not tied to a sales order
         order_not_required = doc_type in (
             DeliveryDocument.DOC_TYPE_MM,
             DeliveryDocument.DOC_TYPE_ZW,
+            DeliveryDocument.DOC_TYPE_PZ,
         )
         if not self.instance and not order_not_required and not order:
             raise serializers.ValidationError(
                 {"order_id": "This field is required for this document type."}
             )
+
+        van_route = data.get("van_route")
+        if van_route is None and self.instance and "van_route" not in data:
+            van_route = self.instance.van_route
+        if van_route and doc_type == DeliveryDocument.DOC_TYPE_WZ:
+            issue_date = data.get("issue_date")
+            if issue_date is None and self.instance:
+                issue_date = self.instance.issue_date
+            from_warehouse = data.get("from_warehouse")
+            if from_warehouse is None and self.instance:
+                from_warehouse = self.instance.from_warehouse
+            try:
+                validate_wz_van_route_link(
+                    van_route,
+                    order=order,
+                    issue_date=issue_date,
+                    from_warehouse=from_warehouse,
+                )
+            except ValidationError as exc:
+                raise serializers.ValidationError(exc.detail) from exc
         return data
 
     def validate_order(self, order: Order):
@@ -422,6 +535,9 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
 
     def validate_to_customer(self, customer):
         return self._ensure_fk_company(customer, "Customer")
+
+    def validate_van_route(self, route):
+        return self._ensure_fk_company(route, "Van route")
 
     def update(self, instance, validated_data):
         if instance.is_locked_by_invoice():

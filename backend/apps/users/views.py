@@ -84,6 +84,7 @@ class CompanyCreateView(mixins.CreateModelMixin, generics.GenericAPIView):
             role="admin",
             is_active=True,
         )
+        _ensure_company_modules(company)
 
     def post(self, request, *args, **kwargs):
         return self.create(request, *args, **kwargs)

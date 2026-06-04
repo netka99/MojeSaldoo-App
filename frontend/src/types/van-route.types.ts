@@ -54,10 +54,26 @@ export interface VanRouteListItem {
   updated_at: string;
 }
 
+export interface ReconciliationSummaryItem {
+  action: 'returned' | 'kept' | 'written_off';
+  product_id: string;
+  product_name: string;
+  quantity: string;
+  unit: string;
+}
+
+export interface ReconciliationSummary {
+  reconciled_at: string;
+  mm_return_number: string | null;
+  rw_writeoff_number: string | null;
+  items: ReconciliationSummaryItem[];
+}
+
 /** Full detail — nested orders and MM doc. */
 export interface VanRoute extends Omit<VanRouteListItem, 'order_count'> {
   orders: RouteOrder[];
   mm_document: RouteMmDoc | null;
+  reconciliation_summary: ReconciliationSummary | null;
 }
 
 /** POST /api/van-routes/ body. */

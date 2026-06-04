@@ -8,6 +8,8 @@ import type {
   DeliveryUpdateLinesPayload,
   PaginatedDeliveryDocuments,
   PendingReturnItem,
+  PzCompleteItemRow,
+  PzCreatePayload,
   StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
@@ -28,6 +30,7 @@ export type DeliveryListParams = {
   status?: string;
   document_type?: string;
   from_warehouse_id?: string;
+  van_route?: string;
   issue_date_after?: string;
   issue_date_before?: string;
   /**
@@ -91,9 +94,12 @@ export const deliveryService = {
       })),
     }),
 
-  /** `GET` — creates WZ from confirmed order. `vanWarehouseId` pins the from_warehouse to a specific van. */
-  generateForOrder: (orderId: string, vanWarehouseId?: string) => {
-    const qs = vanWarehouseId ? `?van_warehouse_id=${vanWarehouseId}` : '';
+  /** `GET` — creates WZ from confirmed order. */
+  generateForOrder: (orderId: string, opts?: { vanWarehouseId?: string; vanRouteId?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.vanWarehouseId) params.set('van_warehouse_id', opts.vanWarehouseId);
+    if (opts?.vanRouteId) params.set('van_route_id', opts.vanRouteId);
+    const qs = params.toString() ? `?${params.toString()}` : '';
     return api.get<DeliveryDocument>(`${basePath}generate-for-order/${orderId}/${qs}`);
   },
 
@@ -102,6 +108,14 @@ export const deliveryService = {
     api.post<{ documents: DeliveryDocument[] }>(`${basePath}generate-for-orders/`, {
       order_ids: orderIds,
     }),
+
+  /** `POST /api/delivery/create-pz/` — create a draft PZ with items in one call. */
+  createPz: (data: PzCreatePayload) =>
+    api.post<DeliveryDocument>(`${basePath}create-pz/`, data),
+
+  /** `POST /api/delivery/:id/complete/` for PZ — optionally update quantity_actual per line. */
+  completePz: (id: string, items?: PzCompleteItemRow[]) =>
+    api.post<DeliveryDocument>(`${basePath}${id}/complete/`, { items: items ?? [] }),
 
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),

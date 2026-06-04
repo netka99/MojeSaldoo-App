@@ -1,5 +1,6 @@
 import { api } from './api';
 import type {
+  DashboardSummary,
   InventoryReportRow,
   KsefStatusReport,
   PaginatedReportingInvoices,
@@ -41,4 +42,7 @@ export const reportingService = {
 
   /** Stock levels by product and warehouse. */
   fetchInventoryReport: () => api.get<InventoryReportRow[]>(`${basePath}inventory/`),
+
+  /** Operational dashboard summary. */
+  fetchDashboardSummary: () => api.get<DashboardSummary>(`${basePath}dashboard/`),
 };

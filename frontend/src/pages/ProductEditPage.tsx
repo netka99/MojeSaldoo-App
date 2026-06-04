@@ -23,6 +23,15 @@ function ChevronLeftIcon({ className }: { className?: string }) {
   );
 }
 
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.75} />
+      <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function productBodyForPut(data: ProductWrite): ProductWrite {
   const { id: _id, ...rest } = data as ProductWrite & { id?: string };
   return rest;
@@ -64,6 +73,14 @@ export function ProductEditPage() {
             {product?.name ?? (isLoading ? 'Ładowanie…' : '')}
           </p>
         </div>
+        <Link
+          to={`/products/${id}/movements`}
+          className="shadow-soft flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-surface-card px-3 text-[13px] font-medium text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          aria-label="Historia ruchów"
+        >
+          <ClockIcon className="h-4 w-4 text-muted-foreground" />
+          <span className="hidden sm:inline">Historia ruchów</span>
+        </Link>
       </header>
 
       {isError && (
@@ -117,14 +134,24 @@ export function ProductEditPage() {
             <p className="mt-1 text-[13px] text-on-surface-variant">
               Korektę ilości w magazynie zapisujesz osobno — nie wpływa na dane katalogowe (cena, VAT, SKU).
             </p>
-            <Link
-              to={`/products/${id}/adjust-stock`}
-              className={cn(
-                'mt-3 inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
-              )}
-            >
-              Korekta stanów magazynowych
-            </Link>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link
+                to={`/products/${id}/adjust-stock`}
+                className={cn(
+                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
+                )}
+              >
+                Korekta stanów magazynowych
+              </Link>
+              <Link
+                to={`/products/${id}/movements`}
+                className={cn(
+                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
+                )}
+              >
+                Historia ruchów
+              </Link>
+            </div>
           </div>
         </>
       )}
