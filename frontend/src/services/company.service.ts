@@ -1,5 +1,5 @@
 import { api, type AuthUser } from './api';
-import type { Company, CompanyModule, CompanyWrite, ModuleName } from '../types';
+import type { Company, CompanyModule, CompanyWorkflowSettings, CompanyWrite, ModuleName } from '../types';
 
 type CompanyModuleApi = {
   id: string;
@@ -62,4 +62,10 @@ export const companyService = {
     });
     return mapCompanyModule(row);
   },
+
+  getWorkflowSettings: (companyId: string) =>
+    api.get<CompanyWorkflowSettings>(`/companies/${companyId}/workflow-settings/`),
+
+  updateWorkflowSettings: (companyId: string, data: Partial<CompanyWorkflowSettings>) =>
+    api.patch<CompanyWorkflowSettings>(`/companies/${companyId}/workflow-settings/`, data),
 };

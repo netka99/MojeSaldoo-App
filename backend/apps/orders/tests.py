@@ -1155,3 +1155,88 @@ class OrderModelTests(TestCase):
         line.refresh_from_db()
         self.assertEqual(line.quantity_delivered, Decimal("2.00"))
         self.assertEqual(line.quantity_returned, Decimal("0.50"))
+
+
+class DeliveryItemSignalTests(TestCase):
+    """on_delivery_item_save: only recomputes quantity_delivered when doc is delivered."""
+
+    def setUp(self):
+        from apps.delivery.models import DeliveryDocument, DeliveryItem
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="signal-guard-user",
+            email="signal-guard@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="Signal Guard Co")
+        CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
+        customer = Customer.objects.create(name="SC", company=self.co)
+        self.product = Product.objects.create(
+            name="SP", company=self.co,
+            price_net=Decimal("1.00"), price_gross=Decimal("1.23"),
+        )
+        self.order = Order.objects.create(
+            user=self.user, customer=customer, company=self.co,
+            order_date=date(2026, 6, 1), delivery_date=date(2026, 6, 4),
+            status=Order.STATUS_CONFIRMED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order, product=self.product,
+            quantity=Decimal("10.00"),
+            quantity_delivered=Decimal("5.00"),
+            unit_price_net=Decimal("1.00"), unit_price_gross=Decimal("1.23"),
+            vat_rate=Decimal("23.00"), discount_percent=Decimal("0.00"),
+        )
+
+    def _make_doc(self, doc_status):
+        from apps.delivery.models import DeliveryDocument
+        return DeliveryDocument.objects.create(
+            company=self.co, order=self.order, user=self.user,
+            document_type="WZ", issue_date=date(2026, 6, 4),
+            status=doc_status,
+        )
+
+    def test_signal_does_not_touch_quantity_delivered_when_doc_is_in_transit(self):
+        """Saving a DeliveryItem while its doc is in_transit must not zero quantity_delivered."""
+        from apps.delivery.models import DeliveryDocument, DeliveryItem
+        doc = self._make_doc(DeliveryDocument.STATUS_IN_TRANSIT)
+        item = DeliveryItem.objects.create(
+            delivery_document=doc, order_item=self.order_item,
+            product=self.product, quantity_planned=Decimal("3.00"),
+        )
+        self.order_item.refresh_from_db()
+        self.assertEqual(self.order_item.quantity_delivered, Decimal("5.00"))
+
+        # Also on a subsequent save (e.g. setting quantity_actual)
+        item.quantity_actual = Decimal("3.00")
+        item.save(update_fields=["quantity_actual"])
+        self.order_item.refresh_from_db()
+        self.assertEqual(self.order_item.quantity_delivered, Decimal("5.00"))
+
+    def test_signal_recomputes_quantity_delivered_when_doc_is_delivered(self):
+        """Creating a DeliveryItem on an already-delivered doc triggers DB recompute."""
+        from apps.delivery.models import DeliveryDocument, DeliveryItem
+        doc = self._make_doc(DeliveryDocument.STATUS_DELIVERED)
+        # Set an incorrect value that the signal should overwrite.
+        OrderItem.objects.filter(pk=self.order_item.pk).update(quantity_delivered=Decimal("0.00"))
+        DeliveryItem.objects.create(
+            delivery_document=doc, order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("4.00"), quantity_actual=Decimal("4.00"),
+        )
+        self.order_item.refresh_from_db()
+        self.assertEqual(self.order_item.quantity_delivered, Decimal("4.00"))
+
+    def test_signal_on_delete_recalculates_quantity_delivered(self):
+        """Deleting a DeliveryItem from a delivered doc decrements quantity_delivered."""
+        from apps.delivery.models import DeliveryDocument, DeliveryItem
+        doc = self._make_doc(DeliveryDocument.STATUS_DELIVERED)
+        item = DeliveryItem.objects.create(
+            delivery_document=doc, order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("3.00"), quantity_actual=Decimal("3.00"),
+        )
+        OrderItem.objects.filter(pk=self.order_item.pk).update(quantity_delivered=Decimal("3.00"))
+        item.delete()
+        self.order_item.refresh_from_db()
+        self.assertEqual(self.order_item.quantity_delivered, Decimal("0.00"))

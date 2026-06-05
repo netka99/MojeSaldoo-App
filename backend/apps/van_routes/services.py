@@ -163,10 +163,45 @@ def start_loading(route: VanRoute, user, items: list[dict]) -> VanRoute:
         van_route=route,
     )
 
+    # Snapshot carry-over: find the most recent closed route for the same van
+    # and record any items marked 'kept' in its reconciliation summary.
+    carry_over = None
+    prev_route = (
+        VanRoute.objects.filter(
+            company_id=route.company_id,
+            van_warehouse=route.van_warehouse,
+            status=VanRoute.STATUS_CLOSED,
+        )
+        .exclude(pk=route.pk)
+        .order_by("-date", "-created_at")
+        .first()
+    )
+    if prev_route and prev_route.reconciliation_summary:
+        kept = [
+            item for item in (prev_route.reconciliation_summary.get("items") or [])
+            if item.get("action") == "kept"
+        ]
+        if kept:
+            carry_over = [
+                {
+                    "product_id": item["product_id"],
+                    "product_name": item["product_name"],
+                    "quantity": item["quantity"],
+                    "unit": item["unit"],
+                    "from_route_number": prev_route.route_number or str(prev_route.pk)[:8],
+                    "from_route_id": str(prev_route.pk),
+                }
+                for item in kept
+            ]
+
     with transaction.atomic():
         route.mm_document = mm
         route.status = VanRoute.STATUS_LOADING
-        route.save(update_fields=["mm_document", "status", "updated_at"])
+        update_fields = ["mm_document", "status", "updated_at"]
+        if carry_over is not None:
+            route.carry_over_items = carry_over
+            update_fields.append("carry_over_items")
+        route.save(update_fields=update_fields)
 
     return route
 

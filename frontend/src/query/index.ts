@@ -46,6 +46,8 @@ export {
   useSwitchCompanyMutation,
   useToggleModuleMutation,
   useUpdateCompanyMutation,
+  useWorkflowSettingsQuery,
+  useUpdateWorkflowSettingsMutation,
 } from './use-companies';
 export {
   useOrderListQuery,

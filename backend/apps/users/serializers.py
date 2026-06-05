@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Company, CompanyMembership, CompanyModule, User
+from .models import Company, CompanyMembership, CompanyModule, CompanyWorkflowSettings, User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -119,3 +119,9 @@ class UserTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class SwitchCompanySerializer(serializers.Serializer):
     company = serializers.UUIDField()
+
+
+class CompanyWorkflowSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyWorkflowSettings
+        fields = ["orders_required", "wz_required_before_invoice"]

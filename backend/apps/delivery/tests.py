@@ -706,17 +706,17 @@ class DeliveryDocumentAPITests(TestCase):
 
         transit_doc = DeliveryDocument.objects.create(
             company=self.co,
-            order=self.order,
             user=self.user,
             from_warehouse=self.wh,
             document_type=DeliveryDocument.DOC_TYPE_WZ,
             issue_date=date(2026, 4, 6),
             status=DeliveryDocument.STATUS_IN_TRANSIT,
         )
+        order2 = self._confirmed_order_with_line()
         Invoice.objects.create(
             company=self.co,
             user=self.user,
-            order=self.order,
+            order=order2,
             customer=self.customer,
             delivery_document=transit_doc,
             issue_date=date(2026, 6, 2),
@@ -921,7 +921,7 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.get(self._url_generate(o.id))
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["document_type"], DeliveryDocument.DOC_TYPE_WZ)
-        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DRAFT)
+        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_SAVED)
         self.assertEqual(str(r.data["from_warehouse_id"]), str(self.wh.id))
         self.assertEqual(len(r.data["items"]), 1)
         self.assertEqual(r.data["items"][0]["quantity_planned"], "4.00")
@@ -1089,8 +1089,8 @@ class DeliveryDocumentAPITests(TestCase):
         o.refresh_from_db()
         self.assertEqual(
             o.status,
-            Order.STATUS_CONFIRMED,
-            "Partial delivery must not mark the order as delivered.",
+            Order.STATUS_PARTIALLY_DELIVERED,
+            "Partial delivery must set order status to partially_delivered.",
         )
         stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
         self.assertEqual(stock.quantity_reserved, Decimal("1.00"))
@@ -2381,6 +2381,13 @@ class VanReconciliationAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        self.wh_main = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG-R",
+            name="Main Rec",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
         self.wh_van = Warehouse.objects.create(
             user=self.user,
             company=self.co,
@@ -2437,11 +2444,15 @@ class VanReconciliationAPITests(TestCase):
         self.assertEqual(d0["quantity_actual"], "8.00")
         self.assertEqual(d0["quantity_delta"], "-2.00")
 
+        # After MM-P return + discrepancy zeroing, van stock is fully cleared.
         st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
-        self.assertEqual(st.quantity_available, Decimal("8.00"))
+        self.assertEqual(st.quantity_available, Decimal("0.00"))
 
-        mv = StockMovement.objects.get(product=self.p1, warehouse=self.wh_van)
-        self.assertEqual(mv.movement_type, StockMovement.MovementType.DAMAGE)
+        mv = StockMovement.objects.get(
+            product=self.p1,
+            warehouse=self.wh_van,
+            movement_type=StockMovement.MovementType.DAMAGE,
+        )
         self.assertEqual(mv.quantity, Decimal("-2.00"))
         self.assertEqual(mv.quantity_before, Decimal("10.00"))
         self.assertEqual(mv.quantity_after, Decimal("8.00"))
@@ -2471,10 +2482,14 @@ class VanReconciliationAPITests(TestCase):
         self.assertEqual(r.data["discrepancies"][0]["discrepancy_type"], "adjustment")
         self.assertEqual(r.data["discrepancies"][0]["quantity_delta"], "2.50")
 
+        # After MM-P return + discrepancy zeroing, van stock is fully cleared.
         st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
-        self.assertEqual(st.quantity_available, Decimal("7.50"))
-        mv = StockMovement.objects.get(product=self.p1, warehouse=self.wh_van)
-        self.assertEqual(mv.movement_type, StockMovement.MovementType.ADJUSTMENT)
+        self.assertEqual(st.quantity_available, Decimal("0.00"))
+        mv = StockMovement.objects.get(
+            product=self.p1,
+            warehouse=self.wh_van,
+            movement_type=StockMovement.MovementType.ADJUSTMENT,
+        )
         self.assertEqual(mv.quantity, Decimal("2.50"))
 
     def test_reconciliation_no_discrepancy_no_movement(self):
@@ -2500,7 +2515,16 @@ class VanReconciliationAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["discrepancies"], [])
-        self.assertEqual(StockMovement.objects.filter(product=self.p1).count(), 0)
+        # MM-P always returns remaining goods to main warehouse (2 TRANSFER movements: van out + main in).
+        transfer_mvs = StockMovement.objects.filter(
+            product=self.p1, movement_type=StockMovement.MovementType.TRANSFER
+        )
+        self.assertEqual(transfer_mvs.count(), 2)
+        self.assertFalse(
+            StockMovement.objects.filter(
+                product=self.p1, movement_type=StockMovement.MovementType.DAMAGE
+            ).exists()
+        )
 
     def test_reconciliation_rejects_non_mobile_warehouse(self):
         wh_main = Warehouse.objects.create(
@@ -2703,9 +2727,10 @@ class VanReconciliationAPITests(TestCase):
             Decimal("0"),
         )
         self.assertEqual(r.data["discrepancies"][0]["discrepancy_type"], "adjustment")
+        # After MM-P return + discrepancy zeroing, van stock is fully cleared.
         st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
-        self.assertEqual(st.quantity_available, Decimal("5.25"))
-        self.assertEqual(st.quantity_total, Decimal("5.25"))
+        self.assertEqual(st.quantity_available, Decimal("0.00"))
+        self.assertEqual(st.quantity_total, Decimal("0.00"))
 
     def test_reconciliation_expected_includes_reserved_shrinkage(self):
         ProductStock.objects.create(
@@ -2731,10 +2756,11 @@ class VanReconciliationAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["discrepancies"][0]["quantity_expected"], "10.00")
         self.assertEqual(r.data["discrepancies"][0]["quantity_delta"], "-2.00")
+        # After MM-P return + discrepancy zeroing, van stock is fully cleared.
         st = ProductStock.objects.get(product=self.p1, warehouse=self.wh_van)
-        self.assertEqual(st.quantity_reserved, Decimal("6.00"))
-        self.assertEqual(st.quantity_available, Decimal("2.00"))
-        self.assertEqual(st.quantity_total, Decimal("8.00"))
+        self.assertEqual(st.quantity_reserved, Decimal("0.00"))
+        self.assertEqual(st.quantity_available, Decimal("0.00"))
+        self.assertEqual(st.quantity_total, Decimal("0.00"))
 
     def test_reconciliation_batch_same_reference_id_all_movements(self):
         ProductStock.objects.create(
@@ -2952,3 +2978,220 @@ class PZFlowAPITests(TestCase):
             company=self.co, product=self.product, warehouse=self.wh
         )
         self.assertEqual(stock.quantity_available, Decimal("8.00"))
+
+
+# ── New tests for workflow guard fixes ────────────────────────────────────────
+
+
+class CreateZwFromPendingReturnsGuardTests(TestCase):
+    """create_zw_from_pending_returns: order_item FK propagation and Level 3 return guard."""
+
+    def setUp(self):
+        from apps.delivery.services import create_zw_from_pending_returns
+        self._service = create_zw_from_pending_returns
+
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="zw-guard-user",
+            email="zw-guard@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="ZW Guard Co")
+        CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
+        self.customer = Customer.objects.create(name="Cust ZW", company=self.co)
+        self.product = Product.objects.create(
+            name="Bread",
+            company=self.co,
+            price_net=Decimal("2.00"),
+            price_gross=Decimal("2.46"),
+        )
+        self.wh_van = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="VAN-ZW",
+            name="Van ZW",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 4),
+            status=Order.STATUS_CONFIRMED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            quantity=Decimal("10.00"),
+            unit_price_net=Decimal("2.00"),
+            unit_price_gross=Decimal("2.46"),
+            vat_rate=Decimal("23.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        self.wz = DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 4),
+            from_warehouse=self.wh_van,
+            to_customer=self.customer,
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        self.wz_item = DeliveryItem.objects.create(
+            delivery_document=self.wz,
+            order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("5.00"),
+            quantity_actual=Decimal("5.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh_van,
+            quantity_available=Decimal("20.00"),
+            quantity_reserved=Decimal("0.00"),
+        )
+
+    def _zw(self, qty):
+        return self._service(
+            wz_doc=self.wz,
+            return_items=[{"product_id": str(self.product.id), "quantity": str(qty)}],
+            user=self.user,
+        )
+
+    # ── order_item FK propagation ─────────────────────────────────────────────
+
+    def test_zw_item_inherits_order_item_fk_from_wz_item(self):
+        zw = self._zw("3.00")
+        self.assertEqual(zw.items.first().order_item_id, self.order_item.id)
+
+    def test_zw_item_order_item_is_none_when_wz_item_has_no_order_item(self):
+        self.wz_item.order_item = None
+        self.wz_item.save(update_fields=["order_item"])
+        zw = self._zw("2.00")
+        self.assertIsNone(zw.items.first().order_item_id)
+
+    # ── Level 3 guard ─────────────────────────────────────────────────────────
+
+    def test_guard_blocks_return_exceeding_quantity_actual(self):
+        from rest_framework.exceptions import ValidationError as DRFVal
+        with self.assertRaises(DRFVal):
+            self._zw("6.00")  # quantity_actual = 5
+
+    def test_guard_allows_return_equal_to_quantity_actual(self):
+        zw = self._zw("5.00")
+        self.assertEqual(Decimal(zw.items.first().quantity_actual), Decimal("5.00"))
+
+    def test_guard_blocks_second_zw_that_exceeds_remaining(self):
+        from rest_framework.exceptions import ValidationError as DRFVal
+        self._zw("3.00")  # first return OK (3 of 5)
+        with self.assertRaises(DRFVal):
+            self._zw("3.00")  # second: 3 more but only 2 remaining
+
+    def test_guard_allows_second_zw_within_remaining(self):
+        self._zw("3.00")
+        zw2 = self._zw("2.00")  # exactly the 2 remaining
+        self.assertEqual(Decimal(zw2.items.first().quantity_actual), Decimal("2.00"))
+
+    def test_guard_uses_quantity_planned_when_actual_not_set(self):
+        """Before WZ is completed, quantity_actual is None — guard falls back to quantity_planned."""
+        from rest_framework.exceptions import ValidationError as DRFVal
+        self.wz_item.quantity_actual = None
+        self.wz_item.save(update_fields=["quantity_actual"])
+        with self.assertRaises(DRFVal):
+            self._zw("6.00")  # quantity_planned = 5
+
+
+class GenerateForOrderVanRouteAutoTests(TestCase):
+    """generate-for-order auto-links van_route when order is on exactly one active route."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="gen-van-auto-user",
+            email="gen-van-auto@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="VanAuto Co")
+        CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.customer = Customer.objects.create(name="CA", company=self.co)
+        self.product = Product.objects.create(
+            name="PA",
+            company=self.co,
+            price_net=Decimal("1.00"),
+            price_gross=Decimal("1.00"),
+        )
+        self.wh_main = Warehouse.objects.create(
+            user=self.user, company=self.co, code="MG-A", name="Main A",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.wh_van = Warehouse.objects.create(
+            user=self.user, company=self.co, code="VAN-A", name="Van A",
+            warehouse_type=Warehouse.WarehouseType.MOBILE,
+        )
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 6, 1), delivery_date=date(2026, 6, 4),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=self.order, product=self.product, quantity=Decimal("5.00"),
+            unit_price_net=Decimal("1.00"), unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("0.00"), discount_percent=Decimal("0.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _make_route(self, route_status="planned"):
+        from apps.van_routes.models import VanRoute
+        return VanRoute.objects.create(
+            company=self.co,
+            date=date(2026, 6, 4),
+            van_warehouse=self.wh_van,
+            main_warehouse=self.wh_main,
+            status=route_status,
+        )
+
+    def _url(self):
+        return reverse(
+            "delivery-document-generate-for-order",
+            kwargs={"order_id": str(self.order.id)},
+        )
+
+    def test_auto_links_van_route_when_order_on_one_active_route(self):
+        route = self._make_route()
+        route.orders.add(self.order)
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        self.assertEqual(doc.van_route_id, route.id)
+        self.assertEqual(doc.from_warehouse_id, self.wh_van.id)
+
+    def test_no_van_route_when_order_not_on_any_route(self):
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        self.assertIsNone(doc.van_route_id)
+
+    def test_no_auto_link_when_order_on_two_active_routes(self):
+        route1 = self._make_route()
+        route2 = self._make_route()
+        route1.orders.add(self.order)
+        route2.orders.add(self.order)
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        self.assertIsNone(doc.van_route_id)
+
+    def test_no_auto_link_when_route_is_closed(self):
+        from apps.van_routes.models import VanRoute
+        route = self._make_route(route_status=VanRoute.STATUS_CLOSED)
+        route.orders.add(self.order)
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        self.assertIsNone(doc.van_route_id)

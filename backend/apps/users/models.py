@@ -54,6 +54,44 @@ class CompanyMembership(models.Model):
         unique_together = ("user", "company")
 
 
+class CompanyWorkflowSettings(models.Model):
+    """Per-company document flow configuration — enforced by the backend."""
+
+    company = models.OneToOneField(
+        Company,
+        on_delete=models.CASCADE,
+        related_name="workflow_settings",
+    )
+    orders_required = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, WZ documents must reference an Order. "
+            "Standalone WZ creation is blocked at the API level."
+        ),
+    )
+    wz_required_before_invoice = models.BooleanField(
+        default=True,
+        help_text=(
+            "If True, at least one delivered WZ must exist before an invoice "
+            "can be issued for an order. Disable for service companies that "
+            "invoice directly from the order without physical delivery."
+        ),
+    )
+
+    class Meta:
+        verbose_name = "Company workflow settings"
+        verbose_name_plural = "Company workflow settings"
+
+    def __str__(self):
+        return f"WorkflowSettings({self.company.name})"
+
+
+def get_workflow_settings(company) -> "CompanyWorkflowSettings":
+    """Return (or create with defaults) the workflow settings for a company."""
+    obj, _ = CompanyWorkflowSettings.objects.get_or_create(company=company)
+    return obj
+
+
 class CompanyModule(models.Model):
     MODULE_CHOICES = [
         # --- Rdzeń (zawsze włączony dla firm handlowych) ---

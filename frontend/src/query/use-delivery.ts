@@ -14,7 +14,7 @@ import type {
   VanLoadingPayload,
   VanReconciliationPayload,
 } from '@/types';
-import { deliveryKeys, orderKeys, vanRouteKeys, stockSnapshotKeys } from './keys';
+import { deliveryKeys, orderKeys, vanRouteKeys, stockSnapshotKeys, warehouseStockKeys } from './keys';
 
 /** Filters for `useDeliveryListQuery` (excludes `page` — pass page as the first argument). */
 export type DeliveryListFilters = Omit<DeliveryListParams, 'page'>;
@@ -299,11 +299,13 @@ export function useGenerateDeliveryForOrderMutation() {
       orderId,
       vanWarehouseId,
       vanRouteId,
+      issueDate,
     }: {
       orderId: string;
       vanWarehouseId?: string;
       vanRouteId?: string;
-    }) => deliveryService.generateForOrder(orderId, { vanWarehouseId, vanRouteId }),
+      issueDate?: string;
+    }) => deliveryService.generateForOrder(orderId, { vanWarehouseId, vanRouteId, issueDate }),
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
@@ -354,6 +356,28 @@ export function useVanRouteWZListQuery(routeId: string | undefined) {
     enabled: Boolean(routeId) && Boolean(companyId),
     select: (data) => data.results,
     refetchInterval: 30_000,
+  });
+}
+
+/** All documents (any type) tagged to a van route — for the route document trail. */
+export function useVanRouteAllDocsQuery(routeId: string | undefined) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({
+      page: 1,
+      companyId,
+      van_route: routeId,
+      page_size: 200,
+    }),
+    queryFn: () =>
+      deliveryService.fetchList({
+        page: 1,
+        van_route: routeId,
+        page_size: 200,
+      }),
+    enabled: Boolean(routeId) && Boolean(companyId),
+    select: (data) => data.results,
   });
 }
 
@@ -408,8 +432,9 @@ export function useCompletePzMutation() {
     onSuccess: (doc: DeliveryDocument) => {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
-      // Stock changed — refresh product stock cache
+      // Stock changed — refresh product stock and warehouse stock cache
       void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
     },
   });
 }

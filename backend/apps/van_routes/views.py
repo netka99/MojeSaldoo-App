@@ -145,6 +145,17 @@ class VanRouteViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         route.orders.add(*orders)
+
+        # Backfill van_route FK on any WZ already created for these orders
+        # so the route document trail is complete regardless of where the WZ was created.
+        from apps.delivery.models import DeliveryDocument
+        DeliveryDocument.objects.filter(
+            order__in=orders,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            van_route__isnull=True,
+            company_id=company_id,
+        ).update(van_route=route)
+
         route.refresh_from_db()
         return Response(VanRouteDetailSerializer(route).data)
 

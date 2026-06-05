@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { companyService } from '@/services/company.service';
-import type { CompanyWrite, ModuleName } from '@/types';
+import type { CompanyWorkflowSettings, CompanyWrite, ModuleName } from '@/types';
 import { companyKeys } from './keys';
 
 export function useMyCompaniesQuery() {
@@ -47,6 +47,25 @@ export function useToggleModuleMutation(companyId: string) {
       companyService.toggleModule(companyId, module, enabled),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: companyKeys.modules(companyId) });
+    },
+  });
+}
+
+export function useWorkflowSettingsQuery(companyId: string | undefined) {
+  return useQuery({
+    queryKey: companyId ? companyKeys.workflowSettings(companyId) : ([...companyKeys.all, 'workflow-settings', 'pending'] as const),
+    queryFn: () => companyService.getWorkflowSettings(companyId!),
+    enabled: Boolean(companyId),
+  });
+}
+
+export function useUpdateWorkflowSettingsMutation(companyId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Partial<CompanyWorkflowSettings>) =>
+      companyService.updateWorkflowSettings(companyId, data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.workflowSettings(companyId) });
     },
   });
 }

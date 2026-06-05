@@ -39,9 +39,16 @@ function RouteCard({ route, onClick }: { route: VanRouteListItem; onClick: () =>
 
       {/* Info */}
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-foreground">
-          {route.van_name || route.van_warehouse_code}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="truncate font-semibold text-foreground">
+            {route.van_name || route.van_warehouse_code}
+          </p>
+          {route.route_number && (
+            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+              {route.route_number}
+            </span>
+          )}
+        </div>
         <p className="mt-0.5 text-[12px] text-muted-foreground">
           {route.driver_name || '—'} · {route.order_count}{' '}
           {route.order_count === 1 ? 'przystanek' : route.order_count < 5 ? 'przystanki' : 'przystanków'}

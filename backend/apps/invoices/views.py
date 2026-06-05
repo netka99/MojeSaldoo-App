@@ -1,6 +1,7 @@
 from datetime import datetime
+from decimal import Decimal
 
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
@@ -112,26 +113,65 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="issue")
     def issue(self, request, pk=None):
+        from apps.users.models import get_workflow_settings
+
         invoice = self.get_object()
         if invoice.status != Invoice.STATUS_DRAFT:
             raise ValidationError({"detail": "Only draft invoices can be issued."})
+
         if invoice.order_id:
-            has_delivered_wz = invoice.order.delivery_documents.filter(
-                document_type="WZ",
-                status="delivered",
-            ).exists()
-            if not has_delivered_wz:
-                return Response(
-                    {
-                        "detail": (
-                            f"Nie można wystawić faktury dla zamówienia "
-                            f"{invoice.order.order_number}. "
-                            f"Brak zatwierdzonego dokumentu WZ (wydania towaru). "
-                            f"Zakończ dostawę przed wystawieniem faktury."
+            wf = get_workflow_settings(request.user.current_company)
+            if wf.wz_required_before_invoice:
+                has_delivered_wz = invoice.order.delivery_documents.filter(
+                    document_type="WZ",
+                    status="delivered",
+                ).exists()
+                if not has_delivered_wz:
+                    return Response(
+                        {
+                            "detail": (
+                                f"Nie można wystawić faktury dla zamówienia "
+                                f"{invoice.order.order_number}. "
+                                f"Brak zatwierdzonego dokumentu WZ (wydania towaru). "
+                                f"Zakończ dostawę przed wystawieniem faktury lub zmień "
+                                f"ustawienie 'wz_required_before_invoice' w konfiguracji "
+                                f"przepływu dokumentów."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Level 2 guard: per-line check — can't invoice more than was delivered
+                # minus what's already been invoiced on other active invoices.
+                from .models import InvoiceItem as _InvoiceItem
+                for inv_item in invoice.items.select_related("order_item").all():
+                    oi = inv_item.order_item
+                    if oi is None:
+                        continue
+                    qty_delivered = oi.quantity_delivered or Decimal("0")
+                    already_invoiced = (
+                        _InvoiceItem.objects.filter(
+                            order_item=oi,
+                            invoice__status__in=["issued", "sent", "paid"],
                         )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                        .exclude(invoice=invoice)
+                        .aggregate(total=Sum("quantity"))["total"]
+                        or Decimal("0")
+                    )
+                    invoiceable = qty_delivered - already_invoiced
+                    if inv_item.quantity > invoiceable + Decimal("0.001"):
+                        return Response(
+                            {
+                                "detail": (
+                                    f"Nie można wystawić faktury: ilość do zafakturowania "
+                                    f"({inv_item.quantity} szt.) dla produktu "
+                                    f"'{inv_item.product_name}' przekracza dostarczoną "
+                                    f"ilość pozostałą do fakturowania ({invoiceable} szt.)."
+                                )
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
         invoice.status = Invoice.STATUS_ISSUED
         invoice.user = request.user
         invoice.save(update_fields=["status", "user", "updated_at"])

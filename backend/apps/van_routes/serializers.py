@@ -59,6 +59,7 @@ class VanRouteListSerializer(serializers.ModelSerializer):
         model = VanRoute
         fields = [
             "id",
+            "route_number",
             "date",
             "driver_name",
             "van_name",
@@ -71,6 +72,8 @@ class VanRouteListSerializer(serializers.ModelSerializer):
             "order_count",
             "mm_document_id",
             "mm_document_number",
+            "reconciliation_summary",
+            "carry_over_items",
             "created_at",
             "updated_at",
         ]
@@ -97,6 +100,7 @@ class VanRouteDetailSerializer(serializers.ModelSerializer):
         model = VanRoute
         fields = [
             "id",
+            "route_number",
             "date",
             "driver_name",
             "van_name",
@@ -109,6 +113,7 @@ class VanRouteDetailSerializer(serializers.ModelSerializer):
             "orders",
             "mm_document",
             "reconciliation_summary",
+            "carry_over_items",
             "created_at",
             "updated_at",
         ]

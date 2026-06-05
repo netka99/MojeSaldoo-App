@@ -140,13 +140,27 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         Returns the created DeliveryDocument with items populated.
         """
         from apps.products.models import Product as ProductModel
-
+        from apps.users.models import get_workflow_settings
         from apps.van_routes.services import get_van_route_for_document, validate_wz_van_route_link
 
         company_id = request.user.current_company_id
+        wf = get_workflow_settings(request.user.current_company)
+        van_route_id = request.data.get("van_route_id")
+        # Van route WZ are exempt from orders_required — the route is the paper trail.
+        if wf.orders_required and not van_route_id:
+            return Response(
+                {
+                    "detail": (
+                        "Firma wymaga powiązania WZ z zamówieniem. "
+                        "Utwórz WZ z poziomu zamówienia lub wyłącz ustawienie "
+                        "'orders_required' w konfiguracji przepływu dokumentów."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         to_customer_id = request.data.get("to_customer_id")
         from_warehouse_id = request.data.get("from_warehouse_id")
-        van_route_id = request.data.get("van_route_id")
         issue_date_raw = request.data.get("issue_date")
         items_data = request.data.get("items", [])
 
@@ -1050,8 +1064,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         request,
         order: Order,
         lines: list[tuple[OrderItem, Decimal]],
+        van_route=None,
     ) -> DeliveryDocument:
         company_id = request.user.current_company_id
+        from_warehouse = default_from_warehouse_for_delivery(company_id)
+        if van_route is not None:
+            from_warehouse = van_route.van_warehouse
         doc = DeliveryDocument.objects.create(
             company=order.company,
             order=order,
@@ -1059,7 +1077,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             document_type=DeliveryDocument.DOC_TYPE_WZ,
             issue_date=timezone.localdate(),
             to_customer=order.customer,
-            from_warehouse=default_from_warehouse_for_delivery(company_id),
+            from_warehouse=from_warehouse,
+            van_route=van_route,
             status=DeliveryDocument.STATUS_SAVED,
         )
         for oi, qty in lines:
@@ -1091,9 +1110,9 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             Order.objects.filter(company_id=company_id),
             pk=order_id,
         )
-        if order.status != Order.STATUS_CONFIRMED:
+        if order.status not in (Order.STATUS_CONFIRMED, Order.STATUS_PARTIALLY_DELIVERED):
             return Response(
-                {"error": "Order must be confirmed to generate a delivery document."},
+                {"error": "Order must be confirmed or partially delivered to generate a delivery document."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1115,17 +1134,37 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             except Warehouse.DoesNotExist:
                 pass
 
+        # Resolve issue_date: caller > order delivery_date > today
+        issue_date = order.delivery_date or timezone.localdate()
+        issue_date_raw = request.query_params.get("issue_date")
+        if issue_date_raw:
+            from django.utils.dateparse import parse_date
+            parsed = parse_date(str(issue_date_raw))
+            if parsed:
+                issue_date = parsed
+
         van_route_id = request.query_params.get("van_route_id")
         van_route = get_van_route_for_document(company_id, van_route_id)
         if van_route:
-            if not from_warehouse_id:
+            if not van_warehouse_id:
                 from_warehouse = van_route.van_warehouse
             validate_wz_van_route_link(
                 van_route,
                 order=order,
-                issue_date=timezone.localdate(),
+                issue_date=issue_date,
                 from_warehouse=from_warehouse,
             )
+        elif not van_route_id:
+            # Auto-detect: if the order is on exactly one active route, link the WZ to it.
+            from apps.van_routes.models import VanRoute
+            active_routes = list(
+                order.van_routes.filter(status__in=VanRoute.ACTIVE_STATUSES)
+                .select_related("van_warehouse")
+            )
+            if len(active_routes) == 1:
+                van_route = active_routes[0]
+                if not van_warehouse_id:
+                    from_warehouse = van_route.van_warehouse
 
         with transaction.atomic():
             doc = DeliveryDocument.objects.create(
@@ -1133,7 +1172,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 order=order,
                 user=request.user,
                 document_type=DeliveryDocument.DOC_TYPE_WZ,
-                issue_date=timezone.localdate(),
+                issue_date=issue_date,
                 to_customer=order.customer,
                 from_warehouse=from_warehouse,
                 van_route=van_route,
@@ -1304,6 +1343,17 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Pre-fetch active van routes for all orders in one query.
+        from apps.van_routes.models import VanRoute
+        route_by_order: dict[str, object] = {}
+        for order in orders:
+            active = list(
+                order.van_routes.filter(status__in=VanRoute.ACTIVE_STATUSES)
+                .select_related("van_warehouse")
+            )
+            if len(active) == 1:
+                route_by_order[str(order.id)] = active[0]
+
         created: list[DeliveryDocument] = []
         with transaction.atomic():
             for oid in id_list:
@@ -1312,6 +1362,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     request,
                     order,
                     line_sets[oid],
+                    van_route=route_by_order.get(str(order.id)),
                 )
                 created.append(doc)
 

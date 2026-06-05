@@ -3,7 +3,7 @@
  */
 
 /** `DeliveryDocument.document_type`. */
-export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW';
+export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW' | 'RW';
 
 /** `DeliveryDocument.status`. */
 export type DeliveryDocumentStatus =
@@ -262,6 +262,7 @@ export interface VanReconciliationResult {
   items_processed: number;
   discrepancies: VanReconciliationDiscrepancy[];
   mm_return_number: string | null;
+  rw_writeoff_number: string | null;
 }
 
 /** `GET /api/delivery/:id/preview/` — print-oriented payload. */

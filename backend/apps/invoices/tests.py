@@ -79,8 +79,17 @@ class InvoiceModelTests(TestCase):
         )
 
     def test_new_invoice_receives_sequential_number_per_company(self):
+        # Create two invoices on separate orders to avoid the unique-active-per-order constraint.
         i1 = self._make_invoice()
-        i2 = self._make_invoice()
+        order2 = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 4, 2),
+            delivery_date=date(2026, 4, 11),
+            status=Order.STATUS_DELIVERED,
+        )
+        i2 = self._make_invoice(order=order2)
         self.assertEqual(i1.invoice_number, "FV/2026/0001")
         self.assertEqual(i2.invoice_number, "FV/2026/0002")
 
@@ -349,6 +358,15 @@ class InvoiceActionsAPITests(TestCase):
             unit_price_net=Decimal("100.00"),
             unit_price_gross=Decimal("123.00"),
             vat_rate=Decimal("23.00"),
+        )
+        # A delivered WZ is required by default (wz_required_before_invoice=True).
+        DeliveryDocument.objects.create(
+            company=self.co,
+            order=self.order,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 10),
+            status=DeliveryDocument.STATUS_DELIVERED,
         )
         self.client.force_authenticate(user=self.user)
 
@@ -1342,3 +1360,98 @@ class InvoiceItemModelTests(TestCase):
         self.assertEqual(line.line_net, Decimal("30.99"))
         self.assertEqual(line.line_vat, Decimal("7.13"))
         self.assertEqual(line.line_gross, Decimal("38.12"))
+
+
+class InvoiceIssueLevel2GuardTests(TestCase):
+    """Issue action: Level 2 guard — can't invoice more than delivered."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="inv-l2-guard-user",
+            email="inv-l2-guard@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="L2 Guard Co")
+        CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.customer = Customer.objects.create(name="B", company=self.co, payment_terms=14)
+        self.product = Product.objects.create(
+            name="Widget L2",
+            company=self.co,
+            unit="szt.",
+            price_net=Decimal("10.00"),
+            price_gross=Decimal("12.30"),
+            vat_rate=Decimal("23.00"),
+        )
+        # Order: 5 ordered, 3 delivered
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 6, 1), delivery_date=date(2026, 6, 4),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order, product=self.product,
+            quantity=Decimal("5.00"), quantity_delivered=Decimal("3.00"),
+            unit_price_net=Decimal("10.00"), unit_price_gross=Decimal("12.30"),
+            vat_rate=Decimal("23.00"), discount_percent=Decimal("0.00"),
+        )
+        # Delivered WZ required by the wz_required_before_invoice check
+        DeliveryDocument.objects.create(
+            company=self.co, order=self.order, user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 4),
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        # Ensure wz_required_before_invoice = True
+        from apps.users.models import CompanyWorkflowSettings
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co,
+            defaults={"wz_required_before_invoice": True, "orders_required": False},
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _gen_url(self):
+        return reverse("invoice-generate-from-order", kwargs={"order_id": str(self.order.id)})
+
+    def _issue_url(self, inv_id):
+        return reverse("invoice-issue", kwargs={"pk": str(inv_id)})
+
+    def _create_invoice_with_qty(self, qty):
+        """Generate a draft invoice, then override the item quantity to test the guard."""
+        r = self.client.post(self._gen_url(), data={}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        inv = Invoice.objects.get(id=r.data["id"])
+        item = inv.items.first()
+        item.quantity = qty
+        item.save(update_fields=["quantity"])
+        return inv
+
+    def test_issue_blocked_when_invoice_qty_exceeds_delivered(self):
+        inv = self._create_invoice_with_qty(Decimal("4.00"))  # delivered=3, trying 4
+        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
+        self.assertIn("przekracza", r.data["detail"])
+
+    def test_issue_allowed_when_invoice_qty_equals_delivered(self):
+        inv = self._create_invoice_with_qty(Decimal("3.00"))
+        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["status"], Invoice.STATUS_ISSUED)
+
+    def test_issue_allowed_when_invoice_qty_below_delivered(self):
+        inv = self._create_invoice_with_qty(Decimal("2.00"))
+        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+
+    def test_level2_guard_skipped_when_wz_not_required(self):
+        """When wz_required_before_invoice=False the quantity guard is also skipped."""
+        from apps.users.models import CompanyWorkflowSettings
+        CompanyWorkflowSettings.objects.filter(company=self.co).update(
+            wz_required_before_invoice=False
+        )
+        inv = self._create_invoice_with_qty(Decimal("10.00"))  # far exceeds delivered
+        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)

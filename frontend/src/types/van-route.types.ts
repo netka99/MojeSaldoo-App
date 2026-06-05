@@ -38,6 +38,7 @@ export interface RouteMmDoc {
 /** List item — no nested orders, just counts. */
 export interface VanRouteListItem {
   id: string;
+  route_number: string;
   date: string;
   driver_name: string;
   van_name: string;
@@ -50,6 +51,8 @@ export interface VanRouteListItem {
   order_count: number;
   mm_document_id: string | null;
   mm_document_number: string | null;
+  reconciliation_summary: ReconciliationSummary | null;
+  carry_over_items: CarryOverItem[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -69,11 +72,21 @@ export interface ReconciliationSummary {
   items: ReconciliationSummaryItem[];
 }
 
+export interface CarryOverItem {
+  product_id: string;
+  product_name: string;
+  quantity: string;
+  unit: string;
+  from_route_number: string;
+  from_route_id: string;
+}
+
 /** Full detail — nested orders and MM doc. */
 export interface VanRoute extends Omit<VanRouteListItem, 'order_count'> {
   orders: RouteOrder[];
   mm_document: RouteMmDoc | null;
   reconciliation_summary: ReconciliationSummary | null;
+  carry_over_items: CarryOverItem[] | null;
 }
 
 /** POST /api/van-routes/ body. */

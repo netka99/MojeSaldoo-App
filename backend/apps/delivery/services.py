@@ -4,6 +4,7 @@ import uuid
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -425,14 +426,6 @@ def apply_van_reconciliation(
             {"van_warehouse_id": "Warehouse must be a mobile (van) warehouse."}
         )
 
-    # Resolve main warehouse for MM-P
-    if main_warehouse is None:
-        main_warehouse = active_main_warehouse_for_company(company_id)
-    if main_warehouse is None:
-        raise ValidationError(
-            {"main_warehouse": "No active main warehouse found. Cannot create MM-P return document."}
-        )
-
     if not items:
         return {
             "van_warehouse_id": str(van_warehouse.id),
@@ -442,6 +435,14 @@ def apply_van_reconciliation(
             "discrepancies": [],
             "items_processed": 0,
         }
+
+    # Resolve main warehouse for MM-P (only needed when there are items to process)
+    if main_warehouse is None:
+        main_warehouse = active_main_warehouse_for_company(company_id)
+    if main_warehouse is None:
+        raise ValidationError(
+            {"main_warehouse": "No active main warehouse found. Cannot create MM-P return document."}
+        )
 
     product_ids = [row["product_id"] for row in items]
     if len(product_ids) != len(set(product_ids)):
@@ -653,9 +654,9 @@ def apply_van_reconciliation(
                         {
                             "product_id": str(product.id),
                             "product_name": product.name,
-                            "quantity_expected": str(T),
-                            "quantity_actual": str(T - over),
-                            "quantity_delta": str(-over),
+                            "quantity_expected": _fmt_decimal(T),
+                            "quantity_actual": _fmt_decimal(T - over),
+                            "quantity_delta": _fmt_decimal(-over),
                             "discrepancy_type": "damage",
                         }
                     )
@@ -687,9 +688,9 @@ def apply_van_reconciliation(
                         {
                             "product_id": str(product.id),
                             "product_name": product.name,
-                            "quantity_expected": str(T),
-                            "quantity_actual": str(P),
-                            "quantity_delta": str(delta),
+                            "quantity_expected": _fmt_decimal(T),
+                            "quantity_actual": _fmt_decimal(P),
+                            "quantity_delta": _fmt_decimal(delta),
                             "discrepancy_type": disc_type,
                         }
                     )
@@ -871,6 +872,42 @@ def create_zw_from_pending_returns(
                 {"return_items": f"Unknown product_id(s): {missing}."}
             )
 
+        # Build lookup of source WZ items so we can: (a) copy order_item FK onto each
+        # ZW line, (b) enforce Level 3 guard — can't return more than was deliverable.
+        wz_items_by_product = {
+            str(item.product_id): item
+            for item in wz_doc.items.select_related("order_item").all()
+        }
+
+        # Sum quantities already returned via existing ZW documents linked to this WZ.
+        existing_zw_by_product: dict[str, Decimal] = {}
+        for row in (
+            DeliveryItem.objects.filter(
+                delivery_document__linked_wz=wz_doc,
+                delivery_document__document_type=DeliveryDocument.DOC_TYPE_ZW,
+            )
+            .values("product_id")
+            .annotate(total=Sum("quantity_actual"))
+        ):
+            existing_zw_by_product[str(row["product_id"])] = row["total"] or Decimal("0")
+
+        # Level 3 guard: validate all quantities before creating anything.
+        for row in return_items:
+            pid = str(row["product_id"])
+            qty = Decimal(str(row["quantity"]))
+            wz_item = wz_items_by_product.get(pid)
+            if wz_item is not None:
+                max_deliverable = wz_item.quantity_actual or wz_item.quantity_planned
+                already_returned = existing_zw_by_product.get(pid, Decimal("0"))
+                returnable = max_deliverable - already_returned
+                if qty > returnable + Decimal("0.001"):
+                    raise ValidationError({
+                        "return_items": (
+                            f"Nie można zwrócić {qty} szt. produktu "
+                            f"'{products[pid].name}' — maksymalny zwrot wynosi {returnable} szt."
+                        )
+                    })
+
         zw_doc = DeliveryDocument.objects.create(
             company_id=company_id,
             order=None,
@@ -891,10 +928,11 @@ def create_zw_from_pending_returns(
             pid = str(row["product_id"])
             qty = Decimal(str(row["quantity"]))
             reason = (row.get("return_reason") or "").strip()
+            wz_item = wz_items_by_product.get(pid)
 
             DeliveryItem.objects.create(
                 delivery_document=zw_doc,
-                order_item=None,
+                order_item=wz_item.order_item if wz_item else None,
                 product=products[pid],
                 quantity_planned=qty,
                 quantity_actual=qty,

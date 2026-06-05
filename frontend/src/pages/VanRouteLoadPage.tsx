@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { authStorage } from '@/services/api';
-import { useVanRouteQuery, useStartLoadingMutation, useConfirmLoadingMutation, useAddOrdersToRouteMutation } from '@/query/use-van-routes';
+import { useVanRouteQuery, useVanRouteListQuery, useStartLoadingMutation, useConfirmLoadingMutation, useAddOrdersToRouteMutation } from '@/query/use-van-routes';
 import { useStockSnapshotQuery } from '@/query/use-products';
 import { useVanReconciliationMutation } from '@/query/use-delivery';
 import { orderService } from '@/services/order.service';
@@ -61,110 +61,144 @@ function parseNum(s: string): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
+function fmtQty(n: number, unit: string): string {
+  return `${Number.isInteger(n) ? n : n.toFixed(2)} ${unit}`;
+}
+
 function CarryOverSection({
   rows,
   onChange,
+  previousRouteNumber,
 }: {
   rows: CarryOverRow[];
   onChange: (productId: string, field: 'returnQty' | 'writeoffQty', value: string) => void;
+  previousRouteNumber?: string | null;
 }) {
+  // Track which products have the discrepancy form open
+  const [discrepancyOpen, setDiscrepancyOpen] = useState<Set<string>>(new Set());
+
+  function toggleDiscrepancy(productId: string) {
+    setDiscrepancyOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) {
+        // Closing — reset inputs for that product
+        onChange(productId, 'returnQty', '0');
+        onChange(productId, 'writeoffQty', '0');
+        next.delete(productId);
+      } else {
+        next.add(productId);
+      }
+      return next;
+    });
+  }
+
   return (
-    <div className="rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 overflow-hidden">
+    <div className="rounded-2xl border border-amber-200 bg-amber-50/80 dark:bg-amber-950/30 dark:border-amber-700 overflow-hidden">
       {/* Header */}
-      <div className="px-4 pt-3 pb-2">
-        <div className="flex items-center gap-2 mb-1">
-          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-amber-600" stroke="currentColor" strokeWidth={2}>
-            <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-400">
-            Towar z poprzedniej trasy — zdecyduj co zrobić
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-200/60 dark:border-amber-800/40">
+        <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0 text-amber-600" stroke="currentColor" strokeWidth={2}>
+          <path d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-amber-900 dark:text-amber-300">
+            Towar z poprzedniej trasy
           </p>
+          {previousRouteNumber && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-500">
+              Przeniesiony z {previousRouteNumber}
+            </p>
+          )}
         </div>
-        <p className="text-[11px] text-amber-700 dark:text-amber-500">
-          Podziel każdy produkt na: zostaje w vanie · zwrot do MG · odpisanie. Suma musi równać się stanowi z vana.
-        </p>
+        <span className="shrink-0 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-800 dark:text-amber-200">
+          {rows.length} poz.
+        </span>
       </div>
 
       {/* Product rows */}
-      <div className="flex flex-col gap-px bg-amber-200/40 dark:bg-amber-800/20">
+      <div className="flex flex-col divide-y divide-amber-200/50 dark:divide-amber-800/30">
         {rows.map((r) => {
+          const open = discrepancyOpen.has(r.productId);
           const ret = parseNum(r.returnQty);
           const wof = parseNum(r.writeoffQty);
           const keep = Math.max(0, r.qty - ret - wof);
           const over = ret + wof > r.qty + 0.001;
+          const hasAction = ret > 0 || wof > 0;
+
           return (
-            <div key={r.productId} className="bg-amber-50 dark:bg-amber-950/20 px-4 py-3">
-              {/* Product name + total */}
-              <div className="flex items-baseline gap-2 mb-3">
-                <span className="font-semibold text-sm text-amber-900 dark:text-amber-200">{r.productName}</span>
-                <span className="text-[12px] font-semibold tabular-nums text-amber-700 dark:text-amber-400">
-                  {Number.isInteger(r.qty) ? r.qty : r.qty.toFixed(2)} {r.unit} w vanie
-                </span>
+            <div key={r.productId} className="px-4 py-3">
+              {/* Confirmed summary row */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-amber-900 dark:text-amber-200">{r.productName}</p>
+                  {open && hasAction ? (
+                    <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+                      Zostaje: <span className="font-semibold">{fmtQty(keep, r.unit)}</span>
+                      {ret > 0 && <> · Zwrot: <span className="font-semibold text-primary">{fmtQty(ret, r.unit)}</span></>}
+                      {wof > 0 && <> · Odpisanie: <span className="font-semibold text-destructive">{fmtQty(wof, r.unit)}</span></>}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-500">
+                      Zostaje w vanie: <span className="font-semibold">{fmtQty(r.qty, r.unit)}</span>
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleDiscrepancy(r.productId)}
+                  className={cn(
+                    'shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                    open
+                      ? 'bg-amber-200 text-amber-800 dark:bg-amber-700 dark:text-amber-200'
+                      : 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-400',
+                  )}
+                >
+                  {open ? 'Anuluj' : 'Zgłoś różnicę'}
+                </button>
               </div>
 
-              {/* 3-column input grid */}
-              <div className="grid grid-cols-3 gap-2">
-                {/* Keep (read-only, computed) */}
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Zostaje</span>
-                  <div className={cn(
-                    'flex h-10 w-full items-center justify-center rounded-xl text-base font-bold tabular-nums',
-                    keep > 0
-                      ? 'bg-amber-200/70 text-amber-900 dark:bg-amber-800/40 dark:text-amber-200'
-                      : 'bg-amber-100/50 text-amber-400',
-                  )}>
-                    {Number.isInteger(keep) ? keep : keep.toFixed(2)}
+              {/* Discrepancy form — only shown when open */}
+              {open && (
+                <div className="mt-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Return to MG */}
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-primary">Zwrot do MG</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={r.returnQty}
+                        onChange={(e) => onChange(r.productId, 'returnQty', e.target.value)}
+                        className={cn(
+                          'h-10 w-full rounded-xl border bg-background px-2 text-center text-base font-bold tabular-nums focus:outline-none focus:ring-2',
+                          over ? 'border-destructive text-destructive focus:ring-destructive/30' : 'border-primary/40 text-primary focus:ring-primary/30',
+                        )}
+                        aria-label={`Zwrot do MG ${r.productName}`}
+                      />
+                      <span className="text-[10px] text-muted-foreground">{r.unit}</span>
+                    </div>
+                    {/* Write off */}
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive">Odpisz</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={r.writeoffQty}
+                        onChange={(e) => onChange(r.productId, 'writeoffQty', e.target.value)}
+                        className={cn(
+                          'h-10 w-full rounded-xl border bg-background px-2 text-center text-base font-bold tabular-nums focus:outline-none focus:ring-2',
+                          over ? 'border-destructive text-destructive focus:ring-destructive/30' : 'border-destructive/40 text-destructive focus:ring-destructive/30',
+                        )}
+                        aria-label={`Odpisz ${r.productName}`}
+                      />
+                      <span className="text-[10px] text-muted-foreground">{r.unit}</span>
+                    </div>
                   </div>
-                  <span className="text-[10px] text-amber-600">{r.unit}</span>
+                  {over && (
+                    <p className="mt-2 text-[11px] font-semibold text-destructive">
+                      Suma przekracza stan vana ({fmtQty(r.qty, r.unit)})
+                    </p>
+                  )}
                 </div>
-
-                {/* Return to MG */}
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-primary">Zwrot do MG</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={r.returnQty}
-                    onChange={(e) => onChange(r.productId, 'returnQty', e.target.value)}
-                    className={cn(
-                      'h-10 w-full rounded-xl border bg-background px-2 text-center text-base font-bold tabular-nums focus:outline-none focus:ring-2',
-                      over ? 'border-destructive text-destructive focus:ring-destructive/30' : 'border-primary/40 text-primary focus:ring-primary/30',
-                    )}
-                    aria-label={`Zwrot do MG ${r.productName}`}
-                  />
-                  <span className="text-[10px] text-muted-foreground">{r.unit}</span>
-                </div>
-
-                {/* Write off */}
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive">Odpisz</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={r.writeoffQty}
-                    onChange={(e) => onChange(r.productId, 'writeoffQty', e.target.value)}
-                    className={cn(
-                      'h-10 w-full rounded-xl border bg-background px-2 text-center text-base font-bold tabular-nums focus:outline-none focus:ring-2',
-                      over ? 'border-destructive text-destructive focus:ring-destructive/30' : 'border-destructive/40 text-destructive focus:ring-destructive/30',
-                    )}
-                    aria-label={`Odpisz ${r.productName}`}
-                  />
-                  <span className="text-[10px] text-muted-foreground">{r.unit}</span>
-                </div>
-              </div>
-
-              {over && (
-                <p className="mt-2 text-[11px] font-semibold text-destructive">
-                  Suma przekracza stan vana ({Number.isInteger(r.qty) ? r.qty : r.qty.toFixed(2)} {r.unit})
-                </p>
-              )}
-              {!over && (ret > 0 || wof > 0) && (
-                <p className="mt-2 text-[10px] text-muted-foreground">
-                  {ret > 0 && <span className="text-primary font-medium">{Number.isInteger(ret) ? ret : ret.toFixed(2)} {r.unit} → MM-P do MG</span>}
-                  {ret > 0 && wof > 0 && ' · '}
-                  {wof > 0 && <span className="text-destructive font-medium">{Number.isInteger(wof) ? wof : wof.toFixed(2)} {r.unit} → odpisanie</span>}
-                  {keep > 0 && ` · ${Number.isInteger(keep) ? keep : keep.toFixed(2)} ${r.unit} zostaje`}
-                </p>
               )}
             </div>
           );
@@ -456,8 +490,19 @@ export function VanRouteLoadPage() {
   const { routeId } = useParams<{ routeId: string }>();
 
   const { data: route, isLoading: routeLoading } = useVanRouteQuery(routeId);
+  const { data: allRoutes = [] } = useVanRouteListQuery();
   const { data: stockSnapshot } = useStockSnapshotQuery(route?.main_warehouse_id);
   const { data: vanStockSnapshot, isLoading: vanStockLoading } = useStockSnapshotQuery(route?.van_warehouse_id);
+
+  // Find the most recent closed route for the same van (to show in carry-over header)
+  const previousRouteNumber = useMemo(() => {
+    if (!route?.van_warehouse_id) return null;
+    const prev = allRoutes
+      .filter((r) => r.van_warehouse_id === route.van_warehouse_id && r.status === 'closed' && r.id !== routeId)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .at(0);
+    return prev?.route_number || null;
+  }, [allRoutes, route?.van_warehouse_id, routeId]);
 
   const startLoading = useStartLoadingMutation();
   const confirmLoading = useConfirmLoadingMutation();
@@ -836,6 +881,7 @@ export function VanRouteLoadPage() {
           <CarryOverSection
             rows={carryOverRows}
             onChange={updateCarryOver}
+            previousRouteNumber={previousRouteNumber}
           />
         )}
 

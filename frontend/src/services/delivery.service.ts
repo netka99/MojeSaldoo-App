@@ -95,10 +95,11 @@ export const deliveryService = {
     }),
 
   /** `GET` — creates WZ from confirmed order. */
-  generateForOrder: (orderId: string, opts?: { vanWarehouseId?: string; vanRouteId?: string }) => {
+  generateForOrder: (orderId: string, opts?: { vanWarehouseId?: string; vanRouteId?: string; issueDate?: string }) => {
     const params = new URLSearchParams();
     if (opts?.vanWarehouseId) params.set('van_warehouse_id', opts.vanWarehouseId);
     if (opts?.vanRouteId) params.set('van_route_id', opts.vanRouteId);
+    if (opts?.issueDate) params.set('issue_date', opts.issueDate);
     const qs = params.toString() ? `?${params.toString()}` : '';
     return api.get<DeliveryDocument>(`${basePath}generate-for-order/${orderId}/${qs}`);
   },

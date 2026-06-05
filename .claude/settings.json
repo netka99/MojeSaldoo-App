@@ -3,7 +3,8 @@
     "allow": [
       "Bash(ls -1d \"d:\\\\Work\\\\MojeSaldoo App/backend/apps\"/*/)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python manage.py check)"
     ]
   }
 }

@@ -5,10 +5,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import Company, CompanyMembership, CompanyModule, User
+from .models import Company, CompanyMembership, CompanyModule, CompanyWorkflowSettings, User, get_workflow_settings
 from .serializers import (
     CompanyModuleSerializer,
     CompanySerializer,
+    CompanyWorkflowSettingsSerializer,
     SwitchCompanySerializer,
     UserRegistrationSerializer,
     UserSerializer,
@@ -184,3 +185,46 @@ class SwitchCompanyView(APIView):
         User.objects.filter(pk=request.user.pk).update(current_company=company)
         request.user.refresh_from_db()
         return Response({"user": UserSerializer(request.user).data}, status=status.HTTP_200_OK)
+
+
+class CompanyWorkflowSettingsView(APIView):
+    """
+    GET  /api/companies/{id}/workflow-settings/ — retrieve settings.
+    PATCH /api/companies/{id}/workflow-settings/ — update one or more fields.
+
+    Only admins and managers may write; all members may read.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_company_or_403(self, request, company_id, *, require_write=False):
+        company = get_object_or_404(Company, pk=company_id)
+        role_filter = {"role__in": ["admin", "manager"]} if require_write else {}
+        if not CompanyMembership.objects.filter(
+            user=request.user,
+            company=company,
+            is_active=True,
+            **role_filter,
+        ).exists():
+            return None, Response(
+                {"detail": "Permission denied."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return company, None
+
+    def get(self, request, company_id):
+        company, err = self._get_company_or_403(request, company_id)
+        if err:
+            return err
+        settings = get_workflow_settings(company)
+        return Response(CompanyWorkflowSettingsSerializer(settings).data)
+
+    def patch(self, request, company_id):
+        company, err = self._get_company_or_403(request, company_id, require_write=True)
+        if err:
+            return err
+        settings = get_workflow_settings(company)
+        ser = CompanyWorkflowSettingsSerializer(settings, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)

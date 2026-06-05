@@ -60,6 +60,7 @@ const DOC_TYPE_LABELS_PL: Record<DeliveryDocumentType, string> = {
   MM: 'MM',
   PZ: 'PZ',
   ZW: 'ZW',
+  RW: 'RW',
 };
 
 /** Kept for backwards compatibility — filters are now applied client-side in the Lista tab. */
@@ -502,7 +503,7 @@ function DeliveryDocumentsPageContent() {
   const [dateTo, setDateTo] = useState(() => currentMonthRange().to);
 
   // --- View / print state ---
-  const [viewMode, setViewMode] = useState<ViewMode>('by-shop');
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [printMode, setPrintMode] = useState(false);
   const [printSelectedIds, setPrintSelectedIds] = useState<Set<string>>(() => new Set());
   const [isPrinting, setIsPrinting] = useState(false);
@@ -732,6 +733,7 @@ function DeliveryDocumentsPageContent() {
                     <option value="ZW">ZW — Zwrot zewnętrzny</option>
                     <option value="MM">MM — Przesunięcie międzymagazynowe</option>
                     <option value="PZ">PZ — Przyjęcie zewnętrzne</option>
+                    <option value="RW">RW — Rozchód wewnętrzny</option>
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -774,6 +776,7 @@ function DeliveryDocumentsPageContent() {
                             'rounded-full px-2 py-0.5 text-xs font-medium',
                             row.document_type === 'ZW' ? 'bg-amber-100 text-amber-800'
                             : row.document_type === 'MM' ? 'bg-purple-100 text-purple-800'
+                            : row.document_type === 'RW' ? 'bg-red-100 text-red-800'
                             : 'bg-blue-100 text-blue-800',
                           )}>
                             {row.document_type}
@@ -837,6 +840,7 @@ function DeliveryDocumentsPageContent() {
                             'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
                             row.document_type === 'ZW' ? 'bg-amber-100 text-amber-800'
                             : row.document_type === 'MM' ? 'bg-purple-100 text-purple-800'
+                            : row.document_type === 'RW' ? 'bg-red-100 text-red-800'
                             : 'bg-blue-100 text-blue-800',
                           )}>
                             {DOC_TYPE_LABELS_PL[row.document_type] ?? row.document_type}

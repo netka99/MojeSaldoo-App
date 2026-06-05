@@ -1,3 +1,122 @@
+04-06-2026
+MojeSaldoo App — Professional Analysis
+What the App Is
+A Polish sales & delivery management system for small businesses doing route-based (door-to-door) distribution. It covers the full order-to-invoice lifecycle with KSeF (national e-invoicing) integration. Think: a salesman in a van, stocked with products, visiting small shops — this app manages everything from that van's loading to the final e-invoice.
+
+Strengths
+1. Domain coverage is genuinely impressive.
+The lifecycle you've implemented — order → WZ delivery doc → reconciliation → invoice → KSeF — is complete and correct for the Polish market. Most competitors don't cover van-route logistics this deeply.
+
+2. Data model is solid and professional.
+
+UUID primary keys everywhere (correct for APIs)
+Decimal precision for all monetary values (critical — float errors in invoicing are a serious bug)
+Full audit trail: OrderChangeLog, StockMovement, created_at/updated_at on everything
+Soft deletes (is_active) — you won't accidentally destroy a customer record referenced by past invoices
+3. Multi-tenancy is properly designed.
+CompanyMembership roles + CompanyModule feature flags = you can sell this as SaaS with per-company pricing tiers. This is the right architecture from day one.
+
+4. KSeF awareness.
+Most small-business tools in Poland are just adding KSeF as an afterthought. You have it built into the data model from the start: ksef_reference_number, ksef_status, upo_received, certificate management. That's a real competitive advantage.
+
+5. Tech stack is modern and appropriate.
+React + TypeScript + React Query + Tailwind is the correct choice for a B2B web app in 2026. No over-engineering, no unnecessary complexity.
+
+Weak Points
+Critical (Fix Before Selling)
+1. KSeF page is a placeholder.
+The /ksef route renders <AppPlaceholderPage title="KSeF" />. This is your main legal compliance differentiator — it must work. A Polish small business owner will ask about this immediately. You need:
+
+Certificate status display (expiry date, fingerprint)
+Per-invoice KSeF status with retry for rejected ones
+Bulk send UI
+UPO (Urzędowe Poświadczenie Odbioru) download
+2. No invoice PDF generation visible.
+InvoicePreviewPayload type exists but the print-to-PDF flow is unclear. Every small business owner's first question is "can I print or email the invoice?" This must work out of the box and produce a legally compliant Polish invoice layout (all required fields: NIP, bank account, payment term, payment method, etc.).
+
+3. Stock edge cases are defined but not implemented.
+Fields like track_batches, fifo_enabled, shelf_life_days exist in your schema. If these show in the UI but do nothing, that's a trust problem. Either implement them or hide them completely until ready.
+
+4. No data export.
+Small businesses need CSV/Excel exports of orders, invoices, and stock. Their accountant will ask for this on day one. No export = a deal-breaker for many.
+
+Significant (Fix in v1.1)
+5. Reporting is likely too thin.
+The /reports page exists but for a small company owner the minimum viable report set is:
+
+Revenue by day/week/month (compared to prior period)
+Revenue by customer (who is your best client?)
+Revenue by product (what sells most?)
+Outstanding invoices / overdue amounts
+Stock value at cost
+If these aren't clearly readable and filterable by date range, the reporting module adds no value.
+
+6. No customer payment tracking.
+payment_terms (days) exists on the customer. But there's no visible logic for: invoice issued → due date = issue date + payment terms → mark as overdue. The overdue invoice status exists but who triggers it? Without automatic overdue detection, the payment lifecycle is incomplete.
+
+7. Van reconciliation UX is likely confusing.
+Reconciliation is a complex workflow that drivers will do in the field after a route. If the UX requires understanding warehouse documents (MM, WZ, RW) it will fail with non-technical users. This flow needs to be extremely simplified: "What's left in the van?" → enter quantities → done.
+
+8. Search has no debouncing (performance issue).
+Hitting the API on every keypress in search fields will be noticeable on mobile networks. Standard fix: 300ms debounce on all search inputs.
+
+9. No offline support despite Capacitor being installed.
+A driver in a rural area with no signal can't use the app. Even basic offline mode (view today's route, mark deliveries as done, sync when connected) would be a major practical advantage.
+
+Polish & Professionalism
+10. Form validation inconsistency.
+React Hook Form + Zod are installed but may not be uniformly applied. Any form that lets you submit blank required fields, or accepts negative prices, looks amateur. Audit every create/edit form.
+
+11. No error boundaries.
+If one component crashes (e.g., a React Query error on the order detail page), the entire app goes blank. A global <ErrorBoundary> with a "something went wrong, reload" fallback is a basic professionalism requirement.
+
+12. No empty states.
+What does the orders list look like for a brand-new company with zero orders? "No data" tables without helpful empty states ("You have no orders yet — create your first one") feel unfinished.
+
+13. Mobile layout audit needed.
+Capacitor is there but if the layouts aren't tested on a 390px iPhone screen, drivers will struggle. Table-heavy views (orders list, delivery docs) are particularly problematic on mobile.
+
+What Small Companies Will Actually Ask
+Question	Current state
+"Can I print/email the invoice?"	Unclear — needs verification
+"Does it connect to KSeF?"	Yes but the UI is a placeholder
+"Can I export to Excel for my accountant?"	Not implemented
+"What happens if the driver has no internet?"	Not supported
+"Can multiple salespeople use it?"	Yes (roles/memberships exist)
+"How do I know who owes me money?"	Partial — overdue status exists, no aging report
+"Can I see my sales vs last month?"	Likely partial
+"Does it work on a phone?"	Capacitor installed but needs testing
+Priority Action List
+Must-have before first paid customer:
+
+Make KSeF status dashboard functional (not placeholder)
+Verify invoice PDF works and is legally compliant
+Add CSV export to invoices and orders
+Remove or clearly mark as "coming soon" any non-functional fields (batch tracking, FIFO, etc.)
+Add error boundaries app-wide
+Important for v1.1:
+6. Automatic invoice overdue detection (cron/background task)
+7. Simplified van reconciliation flow for drivers
+8. Debounce all search inputs
+9. Empty states on all list pages
+10. Mobile layout audit on key driver flows
+
+Competitive differentiators to invest in:
+11. Basic offline mode for van route execution
+12. Revenue dashboard with period comparison
+13. Accounts receivable aging report (who owes what, for how long)
+
+Summary Verdict
+This is a well-architected, serious application — not a hobby project. The data model is correct, the multi-tenancy is properly designed, and the domain coverage is genuinely deep. Someone who understands Polish B2B distribution workflows built this.
+
+The main risk right now is incomplete features that are visible to users — the KSeF placeholder, possibly non-functional batch/FIFO fields, missing PDF output, no export. For small business owners, seeing something that looks finished but doesn't work is worse than it not existing at all. They lose trust fast.
+
+The fastest path to your first paying customer: audit every feature that's visible in the UI and either make it work end-to-end or hide it behind a "coming soon" flag.
+
+
+
+
+-----------------OLD------------------------------------------
 Project Status: What's Actually Done
 Faza 1 (Setup & Infrastructure) — COMPLETE
 All scaffolding, JWT auth, SQLite, React+Vite+Tailwind, React Router, React Query, Zod — done.
@@ -828,4 +947,5 @@ Each prompt is self-contained — copy it into a new agent or a new Claude conve
 1. Tell it the working directory: `d:\Work\MojeSaldoo App`
 2. Paste the prompt
 3. The agent will read the current code, implement, and report what changed
+
 **Start now with Phase 0** — it fixes the broken registrations in under 10 minutes and unblocks everything else.

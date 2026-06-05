@@ -480,6 +480,7 @@ export function OrderDetailPage() {
   const updateM = useUpdateOrderMutation();
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [wzDatePicker, setWzDatePicker] = useState<string | null>(null); // null = hidden, string = date value
 
   const isDraft = order?.status === 'draft';
   const canEdit =
@@ -612,10 +613,11 @@ export function OrderDetailPage() {
     catch (e) { setActionError(errMsg(e)); }
   };
 
-  const onCreateWz = async () => {
+  const onCreateWz = async (issueDate: string) => {
     setActionError(null);
     try {
-      const doc = await generateWzM.mutateAsync(id);
+      const doc = await generateWzM.mutateAsync({ orderId: id!, issueDate });
+      setWzDatePicker(null);
       navigate(`/delivery/${doc.id}`);
     } catch (e) { setActionError(errMsg(e)); }
   };
@@ -892,31 +894,59 @@ export function OrderDetailPage() {
                 </motion.button>
               )}
 
-              {/* Generuj WZ (1/3) + Wróć do zamówień (2/3) — side by side */}
+              {/* Generuj WZ — inline date picker then confirm */}
               {!isEditing && !isDraft && (
-                <div className="flex gap-2">
-                  {canGenerateWz && (
+                <div className="flex flex-col gap-2">
+                  {canGenerateWz && wzDatePicker !== null && (
+                    <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2">
+                      <label className="shrink-0 text-sm text-muted-foreground">Data WZ:</label>
+                      <input
+                        type="date"
+                        value={wzDatePicker}
+                        onChange={(e) => setWzDatePicker(e.target.value)}
+                        className="flex-1 rounded-lg border border-border bg-background px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void onCreateWz(wzDatePicker)}
+                        disabled={generateWzM.isPending || !wzDatePicker}
+                        className="shrink-0 rounded-lg bg-primary px-3 py-1 text-[13px] font-semibold text-primary-foreground disabled:opacity-60"
+                      >
+                        {generateWzM.isPending ? 'WZ…' : 'Potwierdź'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWzDatePicker(null)}
+                        className="shrink-0 text-sm text-muted-foreground hover:text-foreground"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    {canGenerateWz && (
+                      <motion.button
+                        whileTap={{ scale: 0.98 }}
+                        type="button"
+                        onClick={() => setWzDatePicker((prev) => prev !== null ? prev : (order?.delivery_date ?? new Date().toISOString().slice(0, 10)))}
+                        disabled={generateWzM.isPending}
+                        className="w-1/3 shrink-0 rounded-xl bg-primary py-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-60"
+                      >
+                        Generuj WZ
+                      </motion.button>
+                    )}
                     <motion.button
                       whileTap={{ scale: 0.98 }}
                       type="button"
-                      onClick={() => void onCreateWz()}
-                      disabled={generateWzM.isPending}
-                      className="w-1/3 shrink-0 rounded-xl bg-primary py-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-60"
+                      onClick={() => navigate(backUrl)}
+                      className={cn(
+                        'rounded-xl border border-border py-3 text-[14px] font-medium text-foreground',
+                        canGenerateWz ? 'flex-1' : 'w-full',
+                      )}
                     >
-                      {generateWzM.isPending ? 'WZ…' : 'Generuj WZ'}
+                      Wróć do zamówień
                     </motion.button>
-                  )}
-                  <motion.button
-                    whileTap={{ scale: 0.98 }}
-                    type="button"
-                    onClick={() => navigate(backUrl)}
-                    className={cn(
-                      'rounded-xl border border-border py-3 text-[14px] font-medium text-foreground',
-                      canGenerateWz ? 'flex-1' : 'w-full',
-                    )}
-                  >
-                    Wróć do zamówień
-                  </motion.button>
+                  </div>
                 </div>
               )}
 

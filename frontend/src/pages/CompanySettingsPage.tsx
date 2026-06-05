@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useResolvedCompanyId, type CompanyListRow } from '@/hooks/useResolvedCompanyId';
-import { useCompanyModulesQuery, useToggleModuleMutation } from '@/query/use-companies';
+import { useCompanyModulesQuery, useToggleModuleMutation, useWorkflowSettingsQuery, useUpdateWorkflowSettingsMutation } from '@/query/use-companies';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { CreateCompanyDialog } from '@/components/features/company/CreateCompanyDialog';
@@ -186,6 +186,103 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
   );
 }
 
+type WorkflowSettingsSectionProps = {
+  companyId: string;
+  canEdit: boolean;
+};
+
+function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSectionProps) {
+  const { data: settings, isPending, isError } = useWorkflowSettingsQuery(companyId);
+  const updateMutation = useUpdateWorkflowSettingsMutation(companyId);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const toggle = async (field: 'orders_required' | 'wz_required_before_invoice', next: boolean) => {
+    if (!canEdit) return;
+    setSaveError(null);
+    try {
+      await updateMutation.mutateAsync({ [field]: next });
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Nie udało się zapisać ustawień');
+    }
+  };
+
+  const rows: { field: 'orders_required' | 'wz_required_before_invoice'; title: string; description: string }[] = [
+    {
+      field: 'orders_required',
+      title: 'Wymagaj zamówienia przed WZ',
+      description:
+        'Gdy włączone, dokument WZ można wystawić tylko powiązany z zamówieniem. Przy wyłączonej opcji WZ możliwe jest jako samodzielny dokument (np. próbka, prezent).',
+    },
+    {
+      field: 'wz_required_before_invoice',
+      title: 'Wymagaj WZ przed fakturą',
+      description:
+        'Gdy włączone, faktura może być wystawiona dopiero po zatwierdzeniu dokumentu WZ (wydania towaru) dla danego zamówienia. Gdy wyłączone, fakturę można wystawić bezpośrednio z zamówienia.',
+    },
+  ];
+
+  return (
+    <section aria-labelledby="workflow-heading" className="space-y-3">
+      <div>
+        <h2 id="workflow-heading" className="text-lg font-semibold">
+          Przepływ dokumentów
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {canEdit
+            ? 'Konfiguracja wymagań dotyczących obiegu dokumentów w firmie.'
+            : 'Tylko administrator lub manager może zmieniać te ustawienia.'}
+        </p>
+      </div>
+
+      {saveError && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+          {saveError}
+        </p>
+      )}
+
+      {isError && (
+        <p className="text-sm text-destructive" role="alert">
+          Nie udało się wczytać ustawień przepływu dokumentów.
+        </p>
+      )}
+
+      {isPending ? (
+        <p className="text-sm text-muted-foreground">Ładowanie…</p>
+      ) : (
+        <ul className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
+          {rows.map((row) => {
+            const enabled = settings?.[row.field] ?? false;
+            const disabled = !canEdit || updateMutation.isPending;
+            return (
+              <li key={row.field}>
+                <Card className={cn('h-full transition-colors', !enabled && 'bg-muted/50 shadow-none')}>
+                  <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pb-2">
+                    <div className="min-w-0">
+                      <CardTitle className="text-base leading-snug">{row.title}</CardTitle>
+                      <CardDescription className={cn('mt-1.5 text-xs leading-relaxed sm:text-sm', !enabled && 'text-muted-foreground/90')}>
+                        {row.description}
+                      </CardDescription>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <span className="text-xs text-muted-foreground">{enabled ? 'Włączone' : 'Wyłączone'}</span>
+                      <ModuleSwitch
+                        id={`workflow-${row.field}`}
+                        enabled={enabled}
+                        disabled={disabled}
+                        onToggle={() => void toggle(row.field, !enabled)}
+                      />
+                    </div>
+                  </CardHeader>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function CompanySettingsPage() {
   const { user, refreshUser } = useAuth();
   const resolved = useResolvedCompanyId();
@@ -315,6 +412,11 @@ export function CompanySettingsPage() {
         canChangeModules={canChangeModules}
         onRefreshUser={refreshUser}
         userRole={user?.current_company_role}
+      />
+
+      <WorkflowSettingsSection
+        companyId={companyId}
+        canEdit={user?.current_company_role === 'admin' || user?.current_company_role === 'manager'}
       />
     </div>
   );

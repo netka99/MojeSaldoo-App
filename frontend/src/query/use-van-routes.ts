@@ -114,6 +114,20 @@ export function useAddOrdersToRouteMutation() {
   });
 }
 
+export function useRemoveOrdersFromRouteMutation() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useMutation({
+    mutationFn: ({ id, orderIds }: { id: string; orderIds: string[] }) =>
+      vanRouteService.removeOrders(id, orderIds),
+    onSuccess: (route: VanRoute) => {
+      queryClient.setQueryData(vanRouteKeys.detail(route.id), route);
+      void queryClient.invalidateQueries({ queryKey: vanRouteKeys.list(companyId) });
+    },
+  });
+}
+
 export function useCloseVanRouteMutation() {
   const queryClient = useQueryClient();
   const { user } = useAuth();

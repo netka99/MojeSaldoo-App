@@ -7,6 +7,7 @@ from .views import (
     CompanyMeListView,
     CompanyModuleEnableView,
     CompanyModulesListView,
+    CompanyWorkflowSettingsView,
     SwitchCompanyView,
 )
 
@@ -33,6 +34,11 @@ urlpatterns = [
         "<uuid:company_id>/modules/",
         CompanyModulesListView.as_view(),
         name="company-modules-list",
+    ),
+    path(
+        "<uuid:company_id>/workflow-settings/",
+        CompanyWorkflowSettingsView.as_view(),
+        name="company-workflow-settings",
     ),
     path("<uuid:pk>/", CompanyDetailView.as_view(), name="company-detail"),
 ]

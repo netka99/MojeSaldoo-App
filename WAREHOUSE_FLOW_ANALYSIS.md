@@ -3025,3 +3025,96 @@ FAZA 5 (dashboard — po stabilizacji faz 0-4):
 ---
 
 *Dokument do aktualizacji po każdej zrealizowanej iteracji. Przy ukończeniu zadania zaznacz [x] przy kryteriach weryfikacji.*
+
+---
+
+## 12. ARCHITEKTURA ELASTYCZNEGO PRZEPŁYWU DOKUMENTÓW
+
+> Decyzja architektoniczna 2026-06-04. Cel: system obsługujący różne modele przepływu dokumentów (Order→WZ→FV, Order→VanRoute→WZ→FV, standalone WZ→FV) bez twardego kodowania ścieżki — przy zachowaniu integralności ilościowej.
+
+### Problem
+
+Różne firmy mają różne przepływy:
+- `ZAM → WZ → FV` (hurtownia z magazynu)
+- `ZAM → Trasa Vana → WZ → FV` (dystrybutor z vanem)
+- `WZ bez ZAM → FV` (sprzedaż doraźna)
+- `ZAM → częściowe WZ → częściowe FV` (duże zamówienia dostarczane partiami)
+
+Obecny system nie blokuje nadmiarowych WZ do jednego ZAM, nie blokuje fakturowania więcej niż dostarczono, nie śledzi ile z danego ZAM zostało już zafakturowane.
+
+### Mechanizm: `quantity_open` per linia dokumentu
+
+Każda linia dokumentu wie ile z jej ilości zostało już „skonsumowane" przez dokumenty niżej w łańcuchu.
+
+```
+OrderItem
+  quantity           = 10   ← zamówiono
+  quantity_fulfilled =  7   ← pokryte przez WZ (zsumowane z DeliveryItem)
+  quantity_open      =  3   ← można jeszcze wystawić WZ
+
+DeliveryItem (WZ)
+  quantity_actual    =  7   ← dostarczone
+  quantity_invoiced  =  5   ← już na fakturze
+  quantity_returned  =  0   ← zwrócone przez ZW
+  quantity_open_inv  =  2   ← można jeszcze zafakturować
+```
+
+### Trzy poziomy ochrony
+
+| Poziom | Guard | Blokuje |
+|--------|-------|---------|
+| `OrderItem.quantity_open` | WZ qty ≤ open | Nadmierne WZ do jednego ZAM |
+| `DeliveryItem.quantity_open_inv` | FV qty ≤ open | Podwójne / nadmierne fakturowanie |
+| `DeliveryItem.quantity_open_ret` | ZW qty ≤ open | Zwrot więcej niż dostarczono |
+
+### Co wymaga zmian w bazie
+
+**`OrderItem`** — dodać:
+- `quantity_fulfilled` (Decimal, default 0) — aktualizowane sygnałem gdy `DeliveryItem` z `order_item` FK jest tworzony/usuwany
+
+**`DeliveryItem`** — dodać:
+- `order_item` FK (już nullable — upewnić się że jest ustawiane konsekwentnie)
+- `quantity_invoiced` (Decimal, default 0) — aktualizowane gdy linia faktury powstaje/jest usuwana
+- `quantity_returned` (Decimal, default 0) — aktualizowane gdy linia ZW powstaje/jest usuwana
+
+### Elastyczność przepływu — dwa ustawienia per firma
+
+**`orders_required` (czy ZAM jest obowiązkowy przed WZ)**
+
+Domyślnie: `false` — WZ może istnieć bez ZAM.
+
+Realistyczne przypadki WZ bez ZAM (małe firmy, target rynku):
+- Handlowiec z vanem — ładuje van rano, sprzedaje na miejscu u klientów bez wcześniejszych zamówień
+- Mała piekarnia — dostarcza chleb do 20 sklepów codziennie, sklepy nie składają formalnych zamówień
+- Sprzedaż doraźna B2B — klient dzwoni pilnie po towar, nie ma czasu na formalny ZAM
+
+Wniosek: moduł `orders` jest opcjonalny. Firma pracująca tylko na WZ→FV to realistyczny i częsty profil.
+
+**`wz_required_before_invoice` (czy WZ musi istnieć przed FV)**
+
+| Profil firmy | orders | wz_required |
+|---|---|---|
+| Dystrybutor z vanem / dostawca jedzenia | OFF | TRUE — FV z WZ |
+| Hurtownia B2B z zamówieniami | ON | TRUE — FV z WZ |
+| Firma usługowa | ON | FALSE — FV z ZAM bezpośrednio |
+
+To jedno ustawienie zastępuje "invoice_source". Jeśli `false`, system pozwala wystawić FV bezpośrednio z ZAM bez WZ.
+
+**Van route** — opcjonalna warstwa grupowania, nigdy obowiązkowy krok w łańcuchu ilościowym. WZ może powstać:
+- ze standalone (bez ZAM, bez trasy)
+- z ZAM bezpośrednio (bez trasy)
+- z ZAM przez trasę vana
+
+We wszystkich przypadkach te same guardy chronią ilości — trasa jest tylko organizacyjna.
+
+### Spójność `van_route` FK na WZ
+
+Obecnie FK jest ustawiany tylko przy tworzeniu WZ z dashboardu trasy. Naprawa:
+- Przy dodawaniu ZAM do trasy: backfill `van_route` na istniejących WZ tego zamówienia
+- Przy tworzeniu WZ z ZAM który jest już na trasie: auto-ustawiaj `van_route`
+
+### Co NIE jest planowane
+
+- Tabela `DocumentReference` (junction) — zbędna na tym etapie, FK chain wystarczy
+- Konfiguracja workflow per firma (kolejny etap po stabilizacji guardów)
+

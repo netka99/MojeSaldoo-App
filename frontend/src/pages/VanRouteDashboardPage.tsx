@@ -2,9 +2,10 @@ import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { authStorage } from '@/services/api';
-import { useVanRouteQuery, useConfirmLoadingMutation, useAddOrdersToRouteMutation } from '@/query/use-van-routes';
+import { useVanRouteQuery, useConfirmLoadingMutation, useAddOrdersToRouteMutation, useRemoveOrdersFromRouteMutation } from '@/query/use-van-routes';
 import {
   useVanRouteWZListQuery,
+  useVanRouteAllDocsQuery,
   useDeliveryByOrdersQuery,
   useCreateStandaloneWzMutation,
   useDeliveryQuery,
@@ -22,7 +23,7 @@ import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import { resolveCustomerIdFromSearch } from '@/lib/customer-picker-utils';
 import { countPendingWzDocs } from '@/lib/van-wz-utils';
-import type { DeliveryDocument, DeliveryItem, Order, RouteOrder, VanRouteStatus } from '@/types';
+import type { DeliveryDocument, DeliveryItem, Order, RouteOrder, VanRoute, VanRouteStatus } from '@/types';
 import type { Customer } from '@/types/customer.types';
 
 /* ─── Helpers ────────────────────────────────────────────────────── */
@@ -512,6 +513,7 @@ function StopCard({
   wz,
   locked,
   vanWarehouseId,
+  routeId,
   onCreateWz,
   isCreatingWz,
   onNavigate,
@@ -521,6 +523,7 @@ function StopCard({
   wz: DeliveryDocument | null;
   locked: boolean;
   vanWarehouseId: string | undefined;
+  routeId: string | undefined;
   onCreateWz: (orderId: string) => Promise<void>;
   isCreatingWz: boolean;
   onNavigate: () => void;
@@ -529,9 +532,21 @@ function StopCard({
   const [showReturn, setShowReturn] = useState(false);
   const [wzError, setWzError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   const startDelivery = useStartDeliveryMutation();
   const completeDelivery = useCompleteDeliveryMutation();
+  const removeOrders = useRemoveOrdersFromRouteMutation();
+
+  async function handleRemove() {
+    if (!routeId) return;
+    setRemoving(true);
+    try {
+      await removeOrders.mutateAsync({ id: routeId, orderIds: [order.id] });
+    } finally {
+      setRemoving(false);
+    }
+  }
 
   const { data: orderDetail, isLoading: orderLoading } = useOrderQuery(order.id, expanded);
   // Fetch full WZ detail when expanded so we have return_documents
@@ -566,23 +581,20 @@ function StopCard({
   }
 
   return (
+    <div className="flex items-center gap-2">
     <div className={cn(
-      'shadow-soft w-full overflow-hidden rounded-2xl bg-surface-card text-left transition-colors',
+      'shadow-soft min-w-0 flex-1 overflow-hidden rounded-2xl bg-surface-card text-left transition-colors',
       done && 'border-l-4 border-l-emerald-400',
       wzIssued && 'border-l-4 border-l-amber-400',
-      locked && 'opacity-40',
     )}>
       {/* Main clickable row — navigates on click */}
       <div
         role="button"
-        tabIndex={locked ? -1 : 0}
+        tabIndex={0}
         aria-label={`${order.customer_name}, ${done ? (wz!.document_number ?? 'WZ wystawiona') : order.order_number ?? 'brak WZ'}`}
-        onClick={() => { if (!locked) onNavigate(); }}
-        onKeyDown={(e) => { if (!locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onNavigate(); } }}
-        className={cn(
-          'flex w-full cursor-pointer gap-3 p-3.5 transition-colors hover:bg-surface-low/40 active:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
-          locked && 'cursor-not-allowed',
-        )}
+        onClick={() => { if (!locked) onNavigate(); else setExpanded((v) => !v); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!locked) onNavigate(); else setExpanded((v) => !v); } }}
+        className="flex w-full cursor-pointer gap-3 p-3.5 transition-colors hover:bg-surface-low/40 active:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
       >
         {/* Index / check */}
         <div
@@ -615,7 +627,10 @@ function StopCard({
             ) : wzIssued ? (
               <span className="font-medium text-amber-600">{wz!.document_number ?? 'WZ wystawiona'} · do potwierdzenia</span>
             ) : locked ? (
-              <span className="text-amber-600 font-medium">Załaduj van, aby wystawić WZ</span>
+              <span className="text-muted-foreground">
+                {order.order_number ?? '—'} · {order.item_count}{' '}
+                {order.item_count === 1 ? 'produkt' : order.item_count < 5 ? 'produkty' : 'produktów'}
+              </span>
             ) : (
               <span className="text-muted-foreground">
                 {order.order_number ?? '—'} · {order.item_count}{' '}
@@ -625,21 +640,19 @@ function StopCard({
           </div>
         </div>
 
-        {/* Expand chevron — stops propagation so it only expands, doesn't navigate */}
-        {!locked && (
-          <button
-            type="button"
-            aria-label={expanded ? 'Zwiń' : 'Rozwiń'}
-            aria-expanded={expanded}
-            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); setExpanded((v) => !v); } }}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            <ChevronDownIcon
-              className={cn('h-5 w-5 transition-transform duration-200', expanded && 'rotate-180')}
-            />
-          </button>
-        )}
+        {/* Expand chevron — always visible */}
+        <button
+          type="button"
+          aria-label={expanded ? 'Zwiń' : 'Rozwiń'}
+          aria-expanded={expanded}
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); setExpanded((v) => !v); } }}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <ChevronDownIcon
+            className={cn('h-5 w-5 transition-transform duration-200', expanded && 'rotate-180')}
+          />
+        </button>
       </div>
 
       {/* Expandable section — smooth max-h transition like OrdersPage */}
@@ -765,6 +778,25 @@ function StopCard({
           )}
         </div>
       </div>
+    </div>
+    {/* Trash button — outside card, only on planned routes */}
+    {locked && (
+      <button
+        type="button"
+        aria-label={`Usuń ${order.customer_name} z trasy`}
+        disabled={removing}
+        onClick={() => void handleRemove()}
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+      >
+        {removing ? (
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-destructive border-t-transparent" />
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2}>
+            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+    )}
     </div>
   );
 }
@@ -986,6 +1018,226 @@ function AdditionalWzSheet({
   );
 }
 
+/* ─── Route document trail ───────────────────────────────────────── */
+
+const DOC_TYPE_LABEL: Record<string, string> = {
+  MM: 'MM',
+  WZ: 'WZ',
+  ZW: 'ZW',
+  RW: 'RW',
+  PZ: 'PZ',
+};
+
+const DOC_TYPE_COLOR: Record<string, string> = {
+  MM: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
+  WZ: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+  ZW: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+  RW: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+  PZ: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
+};
+
+const DOC_STATUS_LABEL: Record<string, string> = {
+  draft: 'szkic',
+  saved: 'zapisano',
+  in_transit: 'w drodze',
+  delivered: 'dostarczono',
+  cancelled: 'anulowano',
+};
+
+function RouteDocumentTrail({
+  route,
+  allDocs,
+  extraWzDocs,
+  onDocClick,
+  onOrderClick,
+}: {
+  route: VanRoute;
+  allDocs: DeliveryDocument[];
+  extraWzDocs: DeliveryDocument[];
+  onDocClick: (id: string) => void;
+  onOrderClick: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Split docs by type; exclude the loading MM (shown separately in route header)
+  const loadingMmId = route.mm_document?.id;
+  const mmReturn = allDocs.filter((d) => d.document_type === 'MM' && d.id !== loadingMmId);
+  const rwDocs   = allDocs.filter((d) => d.document_type === 'RW');
+  const zwDocs   = allDocs.filter((d) => d.document_type === 'ZW');
+
+  // WZ: merge route-tagged + order-tagged, deduplicate by id
+  const wzDocMap = new Map<string, DeliveryDocument>();
+  for (const d of allDocs.filter((d) => d.document_type === 'WZ')) wzDocMap.set(d.id, d);
+  for (const d of extraWzDocs) wzDocMap.set(d.id, d);
+  const wzDocs = Array.from(wzDocMap.values()).sort((a, b) =>
+    (a.document_number ?? '').localeCompare(b.document_number ?? '', 'pl'),
+  );
+  const orders   = route.orders ?? [];
+
+  const carryOverItems = route.carry_over_items ?? [];
+
+  const totalCount =
+    (carryOverItems.length > 0 ? 1 : 0) +
+    (route.mm_document ? 1 : 0) +
+    orders.length +
+    wzDocs.length +
+    mmReturn.length +
+    rwDocs.length +
+    zwDocs.length;
+
+  if (totalCount === 0) return null;
+
+  function DocRow({ doc }: { doc: DeliveryDocument }) {
+    const colorCls = DOC_TYPE_COLOR[doc.document_type] ?? 'bg-muted text-muted-foreground';
+    return (
+      <button
+        type="button"
+        onClick={() => onDocClick(doc.id)}
+        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+      >
+        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', colorCls)}>
+          {DOC_TYPE_LABEL[doc.document_type] ?? doc.document_type}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {doc.document_number ?? doc.id.slice(0, 8)}
+          {doc.customer_name ? ` · ${doc.customer_name}` : ''}
+        </span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {DOC_STATUS_LABEL[doc.status] ?? doc.status}
+        </span>
+      </button>
+    );
+  }
+
+  function Section({ label, children }: { label: string; children: import('react').ReactNode }) {
+    return (
+      <div className="mb-1">
+        <p className="mb-0.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl bg-surface-card shadow-soft overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Dokumenty trasy
+        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+            {totalCount}
+          </span>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')}
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border/40 pb-2 pt-1">
+          {/* Carry-over from previous route */}
+          {carryOverItems.length > 0 && (
+            <Section label={`Stan otwarcia vana (z ${carryOverItems[0]!.from_route_number})`}>
+              <div className="mx-3 mb-1 rounded-xl bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+                {carryOverItems.map((item) => (
+                  <div key={item.product_id} className="flex items-baseline justify-between gap-2 py-0.5">
+                    <span className="truncate text-sm text-amber-900 dark:text-amber-200">{item.product_name}</span>
+                    <span className="shrink-0 text-sm font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                      {parseFloat(item.quantity) % 1 === 0 ? parseInt(item.quantity) : parseFloat(item.quantity).toFixed(2)} {item.unit}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* Orders */}
+          {orders.length > 0 && (
+            <Section label="Zamówienia">
+              {orders.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => onOrderClick(o.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+                >
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                    ZAM
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                    {o.order_number ?? o.id.slice(0, 8)}
+                    {o.customer_name ? ` · ${o.customer_name}` : ''}
+                  </span>
+                </button>
+              ))}
+            </Section>
+          )}
+
+          {/* Loading MM */}
+          {route.mm_document && (
+            <Section label="Załadunek">
+              <button
+                type="button"
+                onClick={() => onDocClick(route.mm_document!.id)}
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+              >
+                <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', DOC_TYPE_COLOR.MM)}>
+                  MM
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                  {route.mm_document.document_number ?? route.mm_document.id.slice(0, 8)}
+                </span>
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {DOC_STATUS_LABEL[route.mm_document.status] ?? route.mm_document.status}
+                </span>
+              </button>
+            </Section>
+          )}
+
+          {/* WZ deliveries */}
+          {wzDocs.length > 0 && (
+            <Section label={`Dostawy (${wzDocs.length})`}>
+              {wzDocs.map((d) => <DocRow key={d.id} doc={d} />)}
+            </Section>
+          )}
+
+          {/* ZW customer returns */}
+          {zwDocs.length > 0 && (
+            <Section label="Zwroty od klientów">
+              {zwDocs.map((d) => <DocRow key={d.id} doc={d} />)}
+            </Section>
+          )}
+
+          {/* MM-P return to warehouse */}
+          {mmReturn.length > 0 && (
+            <Section label="Zwrot do magazynu">
+              {mmReturn.map((d) => <DocRow key={d.id} doc={d} />)}
+            </Section>
+          )}
+
+          {/* RW writeoff */}
+          {rwDocs.length > 0 && (
+            <Section label="Odpisy">
+              {rwDocs.map((d) => <DocRow key={d.id} doc={d} />)}
+            </Section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main page ──────────────────────────────────────────────────── */
 
 export function VanRouteDashboardPage() {
@@ -1005,6 +1257,9 @@ export function VanRouteDashboardPage() {
 
   /* ── WZ docs linked to this van route ── */
   const { data: vanWZDocs, isLoading: wzLoading } = useVanRouteWZListQuery(routeId);
+
+  /* ── All documents linked to this van route (WZ + MM-P + RW) ── */
+  const { data: allRouteDocs } = useVanRouteAllDocsQuery(routeId);
 
   /* ── WZ docs linked to the route's orders (fallback for WZ not tagged with van_route) ── */
   const routeOrderIds = useMemo(() => (route?.orders ?? []).map((o) => o.id), [route?.orders]);
@@ -1091,6 +1346,7 @@ export function VanRouteDashboardPage() {
   const summaryReturned = reconciliationSummary?.items.filter((i) => i.action === 'returned') ?? [];
   const summaryKept = reconciliationSummary?.items.filter((i) => i.action === 'kept') ?? [];
   const summaryWrittenOff = reconciliationSummary?.items.filter((i) => i.action === 'written_off') ?? [];
+
 
   const handleCreateWz = useCallback(
     async (orderId: string) => {
@@ -1223,6 +1479,7 @@ export function VanRouteDashboardPage() {
             </div>
             {route && (
               <p className="text-[12px] text-muted-foreground">
+                {route.route_number && <span className="font-semibold text-foreground">{route.route_number} · </span>}
                 {formatDatePl(date)}
                 {route.driver_name ? ` · ${route.driver_name}` : ''}
                 {route.mm_document?.document_number ? ` · ${route.mm_document.document_number}` : ''}
@@ -1259,8 +1516,8 @@ export function VanRouteDashboardPage() {
           </button>
         )}
 
-        {/* Van stock */}
-        {vanWarehouseId && (
+        {/* Van stock — only shown on active routes; closed routes show reconciliation summary instead */}
+        {vanWarehouseId && !isClosed && (
           <div className="rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 px-4 py-3 shadow-soft">
             <div className="mb-2 flex items-center gap-2">
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-primary" stroke="currentColor" strokeWidth={2}>
@@ -1377,6 +1634,17 @@ export function VanRouteDashboardPage() {
           </div>
         )}
 
+        {/* Route document trail */}
+        {route && (
+          <RouteDocumentTrail
+            route={route}
+            allDocs={allRouteDocs ?? []}
+            extraWzDocs={[...(vanWZDocs ?? []), ...(orderWZDocs ?? [])]}
+            onDocClick={(id) => navigate(`/delivery/${id}`)}
+            onOrderClick={(id) => navigate(`/orders/${id}`)}
+          />
+        )}
+
         {/* Open WZ blocking route close */}
         {!isLoading && pendingWzDocs.length > 0 && (
           <div className="rounded-2xl border border-amber-300/50 bg-amber-50 px-4 py-3 dark:bg-amber-950/30">
@@ -1488,6 +1756,7 @@ export function VanRouteDashboardPage() {
                     wz={wz}
                     locked={stopsLocked}
                     vanWarehouseId={vanWarehouseId}
+                    routeId={routeId}
                     onCreateWz={handleCreateWz}
                     isCreatingWz={generateWz.isPending}
                     onNavigate={() => handleStopNavigate(order, wz)}

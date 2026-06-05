@@ -19,6 +19,7 @@ const DOC_TYPE_LABEL_PL: Record<DeliveryDocumentType, string> = {
   MM: 'MM — Przesunięcie międzymagazynowe',
   PZ: 'PZ — Przyjęcie zewnętrzne',
   ZW: 'ZW — Zwrot zewnętrzny',
+  RW: 'RW — Rozchód wewnętrzny',
 };
 
 function formatQty(value: string | null | undefined): string {

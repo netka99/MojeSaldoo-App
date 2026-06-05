@@ -36,6 +36,11 @@ export interface CompanyModule {
   enabledAt: string | null
 }
 
+export interface CompanyWorkflowSettings {
+  orders_required: boolean;
+  wz_required_before_invoice: boolean;
+}
+
 export interface CompanyWrite {
   name: string
   nip?: string
