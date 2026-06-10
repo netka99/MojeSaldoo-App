@@ -151,6 +151,7 @@ export interface PzCreateItem {
   product_id: string;
   quantity_planned: string;  // decimal string, e.g. "10.00"
   unit_cost?: string | null; // decimal string, e.g. "5.5000"
+  ksef_line_position?: number | null;
 }
 
 export interface PzCreatePayload {
@@ -158,6 +159,7 @@ export interface PzCreatePayload {
   from_supplier_id?: string | null;
   issue_date?: string;  // "YYYY-MM-DD", defaults to today
   notes?: string;
+  ksef_number?: string;
   items: PzCreateItem[];
 }
 

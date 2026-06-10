@@ -122,6 +122,14 @@ class DeliveryDocument(models.Model):
         related_name="delivery_documents",
         help_text="Van route (trip) this document belongs to.",
     )
+    ksef_invoice = models.ForeignKey(
+        "ksef.ReceivedKSeFInvoice",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pz_documents",
+        help_text="KSeF invoice this PZ was created from.",
+    )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
@@ -242,6 +250,11 @@ class DeliveryItem(models.Model):
         null=True,
         blank=True,
         help_text="Cena zakupu netto per jednostka — wypełniana przy PZ.",
+    )
+    ksef_invoice_line_position = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Position of the source line in the KSeF invoice (0-based).",
     )
     return_reason = models.CharField(max_length=255, blank=True, default="")
     is_damaged = models.BooleanField(default=False)

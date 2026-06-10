@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'apps.delivery',
     'apps.van_routes',
     'apps.invoices',
+    'apps.ksef',
     'apps.reporting',
 ]
 
@@ -169,6 +170,16 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB
 KSEF_SANDBOX_URL = 'https://ksef-test.mf.gov.pl/api/'
 KSEF_CERTIFICATE_PATH = BASE_DIR / 'media' / 'certificates'
 KSEF_KEY_PATH = BASE_DIR / 'media' / 'keys'
+
+# SSAPI — existing KSeF communication backend (handles auth, XML encryption, invoice submission)
+# Override via environment variable in production:
+#   export SSAPI_BASE_URL=https://your-ssapi-host.com/api
+SSAPI_BASE_URL = os.environ.get('SSAPI_BASE_URL', 'http://localhost:8001')
+
+# Email — prints to terminal in dev, swap backend + settings for production
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'MojeSaldoo <noreply@mojesaldoo.pl>')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # Logging configuration
 LOGGING = {

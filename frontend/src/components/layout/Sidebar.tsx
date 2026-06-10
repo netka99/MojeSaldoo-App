@@ -74,6 +74,9 @@ function NavSectionDokumenty() {
         <ModuleNavItem module="ksef" to="/ksef">
           KSeF
         </ModuleNavItem>
+        <ModuleNavItem module="ksef" to="/ksef/inbox">
+          Odebrane faktury
+        </ModuleNavItem>
       </div>
     </div>
   );

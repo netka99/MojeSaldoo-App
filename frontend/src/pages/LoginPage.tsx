@@ -138,6 +138,9 @@ export function LoginPage() {
                 Anuluj
               </Link>
             </div>
+            <Link to="/forgot-password" className="text-sm text-muted-foreground hover:text-primary hover:underline">
+              Nie pamiętasz hasła?
+            </Link>
           </form>
         </CardContent>
       </Card>

@@ -439,6 +439,22 @@ export function useCompletePzMutation() {
   });
 }
 
+/** Cancel a PZ and reverse its stock impact. Invalidates delivery + product stock. */
+export function useCancelPzMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deliveryService.cancelPz(id),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+      // Refresh KSeF inbox so PZ badges update
+      void queryClient.invalidateQueries({ queryKey: ['ksef'] });
+    },
+  });
+}
+
 export function useVanLoadingMutation() {
   const queryClient = useQueryClient();
   return useMutation({

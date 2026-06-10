@@ -9,6 +9,8 @@ import { AuthProvider } from '@/context/AuthContext';
 
 const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })));
 const LoginPage = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })));
 const CustomersPage = lazy(() =>
   import('./pages/CustomersPage').then((m) => ({ default: m.CustomersPage })),
 );
@@ -105,6 +107,12 @@ const InvoiceDetailPage = lazy(() =>
 const ReportsPage = lazy(() =>
   import('./pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 );
+const KSeFInboxPage = lazy(() =>
+  import('./pages/KSeFInboxPage').then((m) => ({ default: m.KSeFInboxPage })),
+);
+const KSeFInboxPZPage = lazy(() =>
+  import('./pages/KSeFInboxPZPage').then((m) => ({ default: m.KSeFInboxPZPage })),
+);
 
 function RouteFallback() {
   return (
@@ -131,6 +139,8 @@ function App() {
         <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password/:uid/:token" element={<ResetPasswordPage />} />
           <Route element={<RequireAuth />}>
             <Route path="/onboarding" element={<OnboardingPage />} />
             <Route element={<RequireCompanyForApp />}>
@@ -381,6 +391,22 @@ function App() {
                   element={
                     <ModuleRouteGate module="ksef">
                       <AppPlaceholderPage title="KSeF" />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/ksef/inbox"
+                  element={
+                    <ModuleRouteGate module="ksef">
+                      <KSeFInboxPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/ksef/inbox/:ksefNumber/pz"
+                  element={
+                    <ModuleRouteGate module="ksef">
+                      <KSeFInboxPZPage />
                     </ModuleRouteGate>
                   }
                 />

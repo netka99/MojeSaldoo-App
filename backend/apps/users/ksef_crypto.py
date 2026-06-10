@@ -84,20 +84,29 @@ def parse_certificate_and_key(
     except Exception as e:
         raise ValueError("Invalid or unreadable certificate PEM file.") from e
 
+    key_is_encrypted = False
     try:
         private_key = serialization.load_pem_private_key(key_bytes, password=None)
+    except TypeError:
+        # Key is passphrase-protected — store as-is, ssapi decrypts it at auth time
+        key_is_encrypted = True
+        private_key = None
     except Exception as e:
         raise ValueError("Invalid or unreadable private key PEM file.") from e
 
-    if not public_keys_match(cert, private_key):
+    if not key_is_encrypted and not public_keys_match(cert, private_key):
         raise ValueError("Private key does not match the certificate public key.")
 
     cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
-    key_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
+    if key_is_encrypted:
+        # Keep the original encrypted PEM — ssapi will decrypt it using the passphrase
+        key_pem = key_bytes.decode("utf-8")
+    else:
+        key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
 
     not_before = getattr(cert, "not_valid_before_utc", cert.not_valid_before)
     not_after = getattr(cert, "not_valid_after_utc", cert.not_valid_after)

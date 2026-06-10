@@ -35,6 +35,7 @@ from .services import (
     apply_pz_receipt,
     apply_van_reconciliation,
     build_delivery_document_preview_data,
+    cancel_pz,
     create_van_loading_mm,
     create_zw_from_pending_returns,
     default_from_warehouse_for_delivery,
@@ -377,14 +378,21 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             "from_supplier_id": "<uuid>",     # optional
             "issue_date": "2026-05-29",       # optional, defaults to today
             "notes": "...",                   # optional
+            "ksef_number": "...",             # optional — links PZ to source KSeF invoice
             "items": [
-              {"product_id": "<uuid>", "quantity_planned": "10.00", "unit_cost": "5.50"},
+              {
+                "product_id": "<uuid>",
+                "quantity_planned": "10.00",
+                "unit_cost": "5.50",
+                "ksef_line_position": 0        # optional — which invoice line this came from
+              },
               ...
             ]
           }
         """
         from apps.products.models import Product as ProductModel
         from apps.suppliers.models import Supplier
+        from apps.ksef.models import ReceivedKSeFInvoice
 
         company_id = request.user.current_company_id
 
@@ -392,6 +400,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         from_supplier_id = request.data.get("from_supplier_id")
         issue_date_raw = request.data.get("issue_date")
         notes = request.data.get("notes", "")
+        ksef_number = (request.data.get("ksef_number") or "").strip()
         items_data = request.data.get("items", [])
 
         if not to_warehouse_id:
@@ -417,6 +426,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             except Supplier.DoesNotExist:
                 return Response({"error": "Supplier not found."}, status=status.HTTP_400_BAD_REQUEST)
 
+        ksef_invoice = None
+        if ksef_number:
+            ksef_invoice = ReceivedKSeFInvoice.objects.filter(
+                company_id=company_id, ksef_number=ksef_number
+            ).first()
+
         issue_date = timezone.localdate()
         if issue_date_raw:
             from django.utils.dateparse import parse_date
@@ -440,6 +455,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 from_supplier=from_supplier,
                 notes=notes or "",
                 status=DeliveryDocument.STATUS_DRAFT,
+                ksef_invoice=ksef_invoice,
             )
             for row in items_data:
                 pid = str(row.get("product_id", ""))
@@ -458,11 +474,18 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         unit_cost = Decimal(str(row["unit_cost"]))
                     except Exception:
                         pass
+                ksef_line_pos = row.get("ksef_line_position")
+                if ksef_line_pos is not None:
+                    try:
+                        ksef_line_pos = int(ksef_line_pos)
+                    except (TypeError, ValueError):
+                        ksef_line_pos = None
                 DeliveryItem.objects.create(
                     delivery_document=doc,
                     product=product,
                     quantity_planned=qty,
                     unit_cost=unit_cost,
+                    ksef_invoice_line_position=ksef_line_pos,
                 )
 
         doc.refresh_from_db()
@@ -925,6 +948,42 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 ],
                 user=request.user,
             )
+
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data)
+
+    @action(detail=True, methods=["post"], url_path="cancel-pz")
+    def cancel_pz_action(self, request, pk=None):
+        """POST /{id}/cancel-pz/ — cancel a PZ document and reverse its stock impact.
+
+        Only PZ documents can be cancelled this way.
+        - If status is 'delivered': reverses quantity_remaining of each FIFO batch
+          (units already consumed by WZ/MM are not double-reversed), deletes batches,
+          records reversal StockMovement(ADJUSTMENT) per line.
+        - If status is 'draft' or 'saved': no stock was ever applied; just marks cancelled.
+        - Status 'cancelled': returns 400.
+
+        Returns the updated DeliveryDocument.
+        """
+        doc = self.get_object()
+
+        if doc.document_type != DeliveryDocument.DOC_TYPE_PZ:
+            return Response(
+                {"error": "Anulowanie dotyczy tylko dokumentów PZ."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if doc.status == DeliveryDocument.STATUS_CANCELLED:
+            return Response(
+                {"error": "Dokument jest już anulowany."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            cancel_pz(doc, request.user)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)

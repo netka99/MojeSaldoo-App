@@ -44,4 +44,30 @@ export const invoiceService = {
   markPaid: (id: string) => api.post<Invoice>(`${basePath}${id}/mark-paid/`, {}),
 
   fetchPreview: (id: string) => api.get<InvoicePreviewPayload>(`${basePath}${id}/preview/`),
+
+  /** Download FA-3 KSeF XML for an invoice. Returns raw XML string. */
+  downloadXml: async (id: string, filename: string): Promise<void> => {
+    const token = (await import('./api')).authStorage.getAccessToken();
+    const resp = await fetch(`/api/invoices/${id}/xml/`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  /** Submit an issued invoice to KSeF via SSAPI (requires active KSeF session). */
+  sendToKsef: (id: string) => api.post<Invoice>(`${basePath}${id}/send-to-ksef/`, {}),
+
+  /**
+   * Poll SSAPI for updated KSeF processing status.
+   * Returns 202 (Accepted) while KSeF is still processing — poll again.
+   * Returns 200 when complete (accepted or rejected).
+   */
+  fetchKsefStatus: (id: string) => api.get<Invoice>(`${basePath}${id}/ksef-status/`),
 };

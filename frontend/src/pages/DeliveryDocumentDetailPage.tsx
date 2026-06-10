@@ -8,6 +8,7 @@ import { DELIVERY_STATUS_LABELS_PL } from '@/constants/deliveryStatusPl';
 import { deliveryStatusBadgeClassName } from '@/pages/DeliveryDocumentsPage';
 import {
   useAddReturnsMutation,
+  useCancelPzMutation,
   useCompleteDeliveryMutation,
   useCompletePzMutation,
   useDeliveryQuery,
@@ -596,11 +597,13 @@ export function DeliveryDocumentDetailPage() {
   const startM = useStartDeliveryMutation();
   const completeM = useCompleteDeliveryMutation();
   const completePzM = useCompletePzMutation();
+  const cancelPzM = useCancelPzMutation();
   const patchM = usePatchDeliveryMutation();
   const updateLinesM = useUpdateDeliveryLinesMutation();
   const addReturnsM = useAddReturnsMutation();
 
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showCancelPzConfirm, setShowCancelPzConfirm] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
 
   /* ── Pending returns (collected before saving WZ) ───────────── */
@@ -751,7 +754,7 @@ export function DeliveryDocumentDetailPage() {
 
   const locked = Boolean(doc?.locked_for_edit);
   const isPZ = doc?.document_type === 'PZ';
-  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || completePzM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
+  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || completePzM.isPending || cancelPzM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
 
   /* ── Items to display (filter 0-qty in edit mode) ───────────── */
   const displayItems = doc
@@ -1116,6 +1119,19 @@ export function DeliveryDocumentDetailPage() {
                   </Button>
                 )}
 
+                {/* ── Cancel PZ ── */}
+                {isPZ && doc.status !== 'cancelled' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => { setShowCancelPzConfirm(true); setActionError(null); }}
+                    disabled={workflowBusy}
+                    className="border-destructive/40 text-destructive hover:bg-destructive/5"
+                  >
+                    Anuluj PZ
+                  </Button>
+                )}
+
                 {/* ── WZ/MM/ZW workflow ── */}
                 {!isPZ && doc.status === 'draft' && (
                   <Button type="button" onClick={() => void onSave()} disabled={workflowBusy || locked} id="delivery-action-save">
@@ -1138,6 +1154,68 @@ export function DeliveryDocumentDetailPage() {
                     {(startM.isPending || completeM.isPending) ? 'Zapisywanie…' : 'Zakończ dostawę'}
                   </Button>
                 )}
+              </div>
+            )}
+
+            {/* ── Cancel PZ confirmation panel ── */}
+            {isPZ && showCancelPzConfirm && doc && doc.status !== 'cancelled' && (
+              <div className="mt-4 rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
+                <p className="text-sm font-semibold text-destructive">Anulowanie dokumentu PZ</p>
+                <div className="text-sm text-foreground space-y-1">
+                  {doc.status === 'delivered' ? (
+                    <>
+                      <p>Dokument jest zaksięgowany. Anulowanie spowoduje:</p>
+                      <ul className="ml-4 list-disc text-sm text-muted-foreground space-y-0.5">
+                        <li>Cofnięcie stanu magazynowego o przyjęte ilości (tylko to, co nie zostało jeszcze rozchodowane).</li>
+                        <li>Usunięcie partii FIFO stworzonych przez ten PZ.</li>
+                        <li>Zapis ruchu korekcyjnego w historii magazynu.</li>
+                        <li>Dokument pozostanie w systemie ze statusem <strong>Anulowany</strong> — ślad księgowy zostaje.</li>
+                      </ul>
+                    </>
+                  ) : (
+                    <p>Dokument jest szkicem — anulowanie tylko zmieni jego status. Żaden stan magazynowy nie zostanie zmieniony.</p>
+                  )}
+                </div>
+                {doc.items && doc.items.length > 0 && doc.status === 'delivered' && (
+                  <div className="rounded-lg bg-background border border-border p-3">
+                    <p className="text-xs font-medium text-muted-foreground mb-1.5">Pozycje do cofnięcia:</p>
+                    <ul className="space-y-0.5">
+                      {doc.items.map((item) => (
+                        <li key={item.id} className="text-xs text-foreground flex justify-between gap-4">
+                          <span>{item.product_name ?? item.product_id}</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {item.quantity_actual ?? item.quantity_planned} {item.unit}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                    disabled={cancelPzM.isPending}
+                    onClick={async () => {
+                      setActionError(null);
+                      try {
+                        await cancelPzM.mutateAsync(id);
+                        setShowCancelPzConfirm(false);
+                      } catch (e) { setActionError(errMsg(e)); }
+                    }}
+                  >
+                    {cancelPzM.isPending ? 'Anulowanie…' : 'Tak, anuluj PZ'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={cancelPzM.isPending}
+                    onClick={() => setShowCancelPzConfirm(false)}
+                  >
+                    Wróć
+                  </Button>
+                </div>
               </div>
             )}
           </>

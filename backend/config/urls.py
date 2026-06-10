@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/delivery/', include('apps.delivery.urls')),
     path('api/van-routes/', include('apps.van_routes.urls')),
     path('api/invoices/', include('apps.invoices.urls')),
+    path('api/ksef/', include('apps.ksef.urls')),
     path('api/reports/', include('apps.reporting.urls')),
 ]
 

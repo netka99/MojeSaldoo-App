@@ -118,6 +118,10 @@ export const deliveryService = {
   completePz: (id: string, items?: PzCompleteItemRow[]) =>
     api.post<DeliveryDocument>(`${basePath}${id}/complete/`, { items: items ?? [] }),
 
+  /** `POST /api/delivery/:id/cancel-pz/` — cancel a PZ and reverse its stock impact. */
+  cancelPz: (id: string) =>
+    api.post<DeliveryDocument>(`${basePath}${id}/cancel-pz/`, {}),
+
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),
 

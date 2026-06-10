@@ -1489,10 +1489,28 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - [ ] Synchronizacja offline
 - [ ] Powiadomienia push (statusy KSeF)
 - [ ] Eksport raportów do PDF/Excel
+- [ ] Możliwośc zrobienia backup dokumentów na dysk
 - [ ] Integracja z drukarkami fiskalny
 - [ ] Multi-tenancy (wiele firm na jednym koncie)
 - [ ] OCR do skanowania dokumentów
 - [ ] API webhooks (powiadomienia o statusach)
+
+### KSeF Inbox — TODO
+- [x] **KSeF product mapping** (`KSeFProductMapping` model: seller_nip + invoice_line_name → internal Product).
+  Allows auto-matching invoice lines to warehouse products on repeated imports from the same supplier.
+  When a user manually picks a product for an invoice line, remember the mapping for next time.
+- [x] **PZ from KSeF invoice** — create a goods receipt directly from a received KSeF invoice:
+  - [x] Backend: `GET /api/ksef/inbox/{ksefNumber}/parse/` — downloads XML, parses `FaWiersz` lines,
+    auto-matches products by name, tries to match supplier by NIP.
+  - [x] Frontend: `KSeFInboxPZPage` (`/ksef/inbox/:ksefNumber/pz`) — shows invoice header, supplier info,
+    warehouse picker, per-line product selector with inline quick-create, editable qty/unit_cost,
+    split lines for multi-warehouse, partial acceptance tracking, submits to `POST /api/delivery/create-pz/`.
+  - [x] Auto-creates or patches supplier from invoice data on PZ creation.
+  - [x] "Utwórz PZ" button per row in KSeF Inbox list.
+- [x] **KSeF Inbox DB cache** — all downloaded invoices saved to `ReceivedKSeFInvoice`; never re-downloaded.
+  - [x] Inbox page loads instantly from DB; explicit "Synchronizuj z KSeF" button fetches new ones.
+  - [x] XML stored in `xml_content`; line items cached in `ReceivedKSeFInvoiceLine` — expand is instant after first load, no session needed.
+  - [x] Seller address fields (`seller_address_l1/l2`, `seller_country`) stored in DB from parsed XML.
 
 ---
 
@@ -1512,5 +1530,5 @@ GET    /api/reports/inventory/      # Raport magazynowy
 
 ---
 
-**Ostatnia aktualizacja**: 2026-03-26
+**Ostatnia aktualizacja**: 2026-06-10
 **Wersja dokumentu**: 1.0

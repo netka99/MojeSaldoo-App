@@ -8,6 +8,12 @@ import {
   useKsefCertificateStatusQuery,
   useKsefCertificateUploadMutation,
 } from '@/query/use-certificate';
+import {
+  useKsefSessionQuery,
+  useKsefAuthenticateMutation,
+  useKsefClearSessionMutation,
+} from '@/query/use-invoices';
+import { KsefPassphraseModal } from '@/components/features/invoicing/KsefPassphraseModal';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -45,11 +51,38 @@ export function CertificateUploadPage() {
 
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [ksefModalOpen, setKsefModalOpen] = useState(false);
+  const [ksefError, setKsefError] = useState<string | null>(null);
 
   const companyId = resolved.state === 'ready' ? resolved.companyId : undefined;
   const { data: status, isPending, isError, error, refetch } = useKsefCertificateStatusQuery(companyId);
   const uploadMut = useKsefCertificateUploadMutation();
   const deleteMut = useKsefCertificateDeleteMutation();
+
+  const { data: ksefSession, refetch: refetchSession } = useKsefSessionQuery(Boolean(companyId));
+  const ksefAuthM = useKsefAuthenticateMutation();
+  const ksefClearM = useKsefClearSessionMutation();
+
+  const companyName = resolved.state === 'ready' ? (resolved.company?.name ?? '') : '';
+
+  const onKsefAuthenticate = async (passphrase: string) => {
+    setKsefError(null);
+    try {
+      await ksefAuthM.mutateAsync(passphrase);
+      setKsefModalOpen(false);
+    } catch (err) {
+      setKsefError(err instanceof Error ? err.message : 'Uwierzytelnianie nie powiodło się.');
+    }
+  };
+
+  const onKsefClear = async () => {
+    try {
+      await ksefClearM.mutateAsync();
+      void refetchSession();
+    } catch {
+      // ignore
+    }
+  };
 
   const canManage =
     (user?.current_company_role === 'admin' || user?.current_company_role === 'manager') &&
@@ -206,6 +239,77 @@ export function CertificateUploadPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-lg">Sesja KSeF</CardTitle>
+          <CardDescription>
+            Po wgraniu certyfikatu uwierzytelnij się w KSeF podając hasło do klucza prywatnego.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2 text-sm">
+            <span
+              className={cn(
+                'inline-block h-2.5 w-2.5 rounded-full',
+                ksefSession?.active ? 'bg-emerald-500' : 'bg-slate-300',
+              )}
+              aria-hidden
+            />
+            {ksefSession?.active ? (
+              <span>
+                Sesja aktywna
+                {ksefSession.access_valid_until && (
+                  <span className="ml-1 text-muted-foreground">
+                    · ważna do{' '}
+                    {new Date(ksefSession.access_valid_until).toLocaleString('pl-PL', {
+                      dateStyle: 'short',
+                      timeStyle: 'short',
+                    })}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">Brak aktywnej sesji KSeF</span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={!status?.valid || ksefAuthM.isPending || ksefClearM.isPending}
+              onClick={() => {
+                setKsefError(null);
+                setKsefModalOpen(true);
+              }}
+            >
+              Uwierzytelnij KSeF
+            </Button>
+            {ksefSession?.active && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={ksefClearM.isPending}
+                loading={ksefClearM.isPending}
+                onClick={() => void onKsefClear()}
+              >
+                Wyczyść sesję
+              </Button>
+            )}
+          </div>
+          {!status?.valid && status?.uploaded && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Certyfikat wgrany, ale nieważny — uwierzytelnianie KSeF wyłączone.
+            </p>
+          )}
+          {!status?.uploaded && (
+            <p className="text-xs text-muted-foreground">
+              Najpierw wgraj certyfikat poniżej.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-lg">Wgraj certyfikat</CardTitle>
           <CardDescription>
             Oba pliki muszą należeć do tej samej pary (klucz musi odpowiadać certyfikatowi).
@@ -269,6 +373,23 @@ export function CertificateUploadPage() {
           </form>
         </CardContent>
       </Card>
+
+      {ksefModalOpen &&
+        createPortal(
+          <KsefPassphraseModal
+            companyName={companyName}
+            onConfirm={(passphrase) => void onKsefAuthenticate(passphrase)}
+            onCancel={() => {
+              if (!ksefAuthM.isPending) {
+                setKsefModalOpen(false);
+                setKsefError(null);
+              }
+            }}
+            loading={ksefAuthM.isPending}
+            error={ksefError}
+          />,
+          document.body,
+        )}
 
       {deleteOpen &&
         createPortal(

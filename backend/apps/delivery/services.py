@@ -713,6 +713,141 @@ def apply_van_reconciliation(
     }
 
 
+def cancel_pz(pz_document: "DeliveryDocument", user) -> dict:
+    """
+    Cancel a PZ document, leaving a full audit trail.
+
+    - If the PZ was already delivered (stock applied), reverses only the
+      ``quantity_remaining`` still in the batch — units already consumed by
+      subsequent WZ/MM documents are not double-counted.
+    - Deletes the FIFO batches created by this PZ.
+    - Records a reversal StockMovement(ADJUSTMENT) per line so the ledger
+      remains coherent.
+    - If the PZ was not yet delivered (draft/saved), no stock was ever
+      applied so only the status is changed.
+
+    Returns a summary dict with reversal details.
+    """
+    if pz_document.document_type != DeliveryDocument.DOC_TYPE_PZ:
+        raise ValueError(
+            f"cancel_pz() called on document type '{pz_document.document_type}'; "
+            "expected 'PZ'."
+        )
+    if pz_document.status == DeliveryDocument.STATUS_CANCELLED:
+        raise ValidationError({"detail": "Dokument jest już anulowany."})
+
+    reversed_lines = []
+
+    with transaction.atomic():
+        if pz_document.status == DeliveryDocument.STATUS_DELIVERED:
+            warehouse = pz_document.to_warehouse
+            if warehouse is None:
+                raise ValidationError({"detail": "Brak magazynu docelowego — nie można odwrócić stanu."})
+
+            company_id = pz_document.company_id
+            doc_label = pz_document.document_number or str(pz_document.id)
+            items = list(
+                pz_document.items.select_related("product").select_for_update()
+            )
+
+            for idx, item in enumerate(items, start=1):
+                batch_number = f"{doc_label}/{idx:02d}"
+                batches = list(
+                    StockBatch.objects.filter(
+                        company_id=company_id,
+                        product=item.product,
+                        warehouse=warehouse,
+                        batch_number=batch_number,
+                    ).select_for_update()
+                )
+
+                if not batches:
+                    # Batch was never created (product.track_batches=False) —
+                    # reverse the effective received quantity from stock directly.
+                    effective_qty = (
+                        item.quantity_actual
+                        if item.quantity_actual is not None
+                        else item.quantity_planned
+                    )
+                    if effective_qty > Decimal("0"):
+                        try:
+                            stock = ProductStock.objects.select_for_update().get(
+                                company_id=company_id,
+                                product=item.product,
+                                warehouse=warehouse,
+                            )
+                            qty_before = stock.quantity_available
+                            stock.quantity_available -= effective_qty
+                            stock.save(update_fields=["quantity_available"])
+                            StockMovement.objects.create(
+                                company_id=company_id,
+                                product=item.product,
+                                warehouse=warehouse,
+                                user=user,
+                                movement_type=StockMovement.MovementType.ADJUSTMENT,
+                                quantity=-effective_qty,
+                                quantity_before=qty_before,
+                                quantity_after=stock.quantity_available,
+                                reference_type="pz_cancellation",
+                                reference_id=pz_document.id,
+                                notes=f"Anulowanie PZ {doc_label}",
+                                created_by=user,
+                            )
+                            reversed_lines.append(
+                                {"product": item.product.name, "quantity_reversed": str(effective_qty), "note": "no_batch"}
+                            )
+                        except ProductStock.DoesNotExist:
+                            pass  # stock record gone — nothing to reverse
+                    continue
+
+                for batch in batches:
+                    qty_to_reverse = batch.quantity_remaining
+                    already_used = batch.quantity_initial - qty_to_reverse
+
+                    try:
+                        stock = ProductStock.objects.select_for_update().get(
+                            company_id=company_id,
+                            product=item.product,
+                            warehouse=warehouse,
+                        )
+                    except ProductStock.DoesNotExist:
+                        batch.delete()
+                        continue
+
+                    if qty_to_reverse > Decimal("0"):
+                        qty_before = stock.quantity_available
+                        stock.quantity_available -= qty_to_reverse
+                        stock.save(update_fields=["quantity_available"])
+                        StockMovement.objects.create(
+                            company_id=company_id,
+                            product=item.product,
+                            warehouse=warehouse,
+                            user=user,
+                            movement_type=StockMovement.MovementType.ADJUSTMENT,
+                            quantity=-qty_to_reverse,
+                            quantity_before=qty_before,
+                            quantity_after=stock.quantity_available,
+                            reference_type="pz_cancellation",
+                            reference_id=pz_document.id,
+                            notes=f"Anulowanie PZ {doc_label}"
+                            + (f" (partia {batch_number}, {already_used} szt. już zużyte)" if already_used > 0 else ""),
+                            created_by=user,
+                        )
+
+                    reversed_lines.append({
+                        "product": item.product.name,
+                        "quantity_reversed": str(qty_to_reverse),
+                        "quantity_already_used": str(already_used),
+                    })
+                    batch.delete()
+
+        pz_document.status = DeliveryDocument.STATUS_CANCELLED
+        pz_document.user = user
+        pz_document.save(update_fields=["status", "user", "updated_at"])
+
+    return {"reversed_lines": reversed_lines}
+
+
 def _fk_uuid(value) -> str | None:
     return str(value) if value is not None else None
 
