@@ -2,6 +2,14 @@ import type { DeliveryListParams } from '@/services/delivery.service';
 import type { InvoiceListParams } from '@/services/invoice.service';
 import type { OrderListParams } from '@/services/order.service';
 
+export const inventoryKeys = {
+  all: ['inventory'] as const,
+  lists: () => [...inventoryKeys.all, 'list'] as const,
+  list: (page: number) => [...inventoryKeys.lists(), page] as const,
+  details: () => [...inventoryKeys.all, 'detail'] as const,
+  detail: (id: string) => [...inventoryKeys.details(), id] as const,
+};
+
 export const customerKeys = {
   all: ['customers'] as const,
   lists: () => [...customerKeys.all, 'list'] as const,
@@ -116,6 +124,17 @@ export const reportKeys = {
     [...reportKeys.all, 'invoices', p] as const,
   inventory: (companyId: string) => [...reportKeys.all, 'inventory', companyId] as const,
   dashboard: (companyId: string) => [...reportKeys.all, 'dashboard', companyId] as const,
+  profitLoss: (p: ReportRangeKeyParams) => [...reportKeys.all, 'profit-loss', p] as const,
+  productMargin: (p: ReportRangeKeyParams & { limit: number }) =>
+    [...reportKeys.all, 'product-margin', p] as const,
+  paymentAging: (companyId: string) => [...reportKeys.all, 'payment-aging', companyId] as const,
+  supplierCosts: (p: ReportRangeKeyParams) => [...reportKeys.all, 'supplier-costs', p] as const,
+  supplierCostsDetail: (p: { companyId: string; supplierId: string | null; dateFrom: string; dateTo: string }) =>
+    [...reportKeys.all, 'supplier-costs-detail', p] as const,
+  expiryAlerts: (companyId: string, days: number) =>
+    [...reportKeys.all, 'expiry-alerts', companyId, days] as const,
+  customerMargin: (p: ReportRangeKeyParams & { limit: number }) =>
+    [...reportKeys.all, 'customer-margin', p] as const,
 };
 
 export const vanRouteKeys = {

@@ -9,6 +9,9 @@ export const MODULE_DISPLAY_ORDER: ModuleName[] = [
   'delivery',
   'invoicing',
   'ksef',
+  'purchasing',
+  'production',
+  'cost_allocation',
   'reporting',
 ];
 
@@ -55,6 +58,24 @@ export const MODULE_CARD_COPY: Record<
   ksef: {
     title: 'KSeF',
     description: 'Integracja z Krajowym Systemem e-Faktur.',
+    statusOn: 'Moduł aktywny',
+    statusOff: 'Moduł wyłączony',
+  },
+  purchasing: {
+    title: 'Zakupy i dostawcy',
+    description: 'Dostawcy, dokumenty PZ i przyjęcia towaru.',
+    statusOn: 'Moduł aktywny',
+    statusOff: 'Moduł wyłączony',
+  },
+  production: {
+    title: 'Produkcja',
+    description: 'Receptury, zlecenia produkcji, rozchody RW i przychody PW.',
+    statusOn: 'Moduł aktywny',
+    statusOff: 'Moduł wyłączony',
+  },
+  cost_allocation: {
+    title: 'Adnotacje kosztowe',
+    description: 'Przypisywanie projektów i opisów dla księgowości do pozycji faktur z KSeF. Eksport zestawienia do biura rachunkowego.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },

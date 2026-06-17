@@ -10,6 +10,8 @@ import type {
   PendingReturnItem,
   PzCompleteItemRow,
   PzCreatePayload,
+  PzKorPayload,
+  RwCreatePayload,
   StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
@@ -440,6 +442,67 @@ export function useCompletePzMutation() {
 }
 
 /** Cancel a PZ and reverse its stock impact. Invalidates delivery + product stock. */
+/** Create a manual RW write-off document (immediately posted, stock deducted). */
+export function useCreateRwMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RwCreatePayload) => deliveryService.createRw(body),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+}
+
+/** Fetch PZ documents not yet linked to any KSeF invoice, optionally filtered by supplier. */
+export function useUnmatchedPzQuery(supplierId?: string | null, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, document_type: 'PZ', ksef_unlinked: true, from_supplier: supplierId ?? undefined }),
+    queryFn: () =>
+      deliveryService.fetchList({
+        document_type: 'PZ',
+        ksef_unlinked: true,
+        from_supplier: supplierId ?? undefined,
+        page_size: 50,
+      }),
+    enabled: Boolean(companyId) && enabled,
+    select: (data) => data.results,
+  });
+}
+
+/** Link a KSeF invoice (by its UUID from ReceivedKSeFInvoice) to an existing PZ. */
+export function useLinkInvoiceToPzMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pzId, ksefInvoiceId }: { pzId: string; ksefInvoiceId: string }) =>
+      deliveryService.patchDocument(pzId, { ksef_invoice_id: ksefInvoiceId }),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: ['ksef'] });
+    },
+  });
+}
+
+export function useCreatePzKorMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: PzKorPayload }) =>
+      deliveryService.createPzKor(id, data),
+    onSuccess: (kor: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+      if (kor.corrects_pz_id) {
+        void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(kor.corrects_pz_id) });
+      }
+    },
+  });
+}
+
 export function useCancelPzMutation() {
   const queryClient = useQueryClient();
   return useMutation({

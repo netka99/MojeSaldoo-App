@@ -141,6 +141,7 @@ function makePreviewPayload(
     company: { name: 'Spółka', nip: '111', address: 'ul. 1' },
     customer: { name: 'Klient', nip: '222', address: 'ul. 2' },
     from_warehouse: { name: 'M', code: 'MG' },
+    to_warehouse: null,
     items: [],
     ...over,
   };

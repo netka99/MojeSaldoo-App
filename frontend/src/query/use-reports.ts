@@ -118,4 +118,128 @@ export function useDashboardSummaryQuery() {
   });
 }
 
+/** Monthly P&L report (`GET /reports/profit-loss/`). */
+export function useProfitLossQuery(dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.profitLoss({ companyId, dateFrom, dateTo }),
+    queryFn: () => reportingService.fetchProfitLoss({ date_from: dateFrom, date_to: dateTo }),
+    enabled: Boolean(companyId),
+  });
+}
+
+/** Drill-down for a single P&L month (`GET /reports/profit-loss/month-detail/`). */
+export function useProfitLossMonthDetailQuery(month: string | null) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: ['reports', 'profit-loss-month-detail', companyId, month],
+    queryFn: () => reportingService.fetchProfitLossMonthDetail(month!),
+    enabled: Boolean(companyId && month),
+  });
+}
+
+/** Per-product margin report (`GET /reports/product-margin/`). */
+export function useProductMarginQuery(dateFrom: string, dateTo: string, limit = 50) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.productMargin({ companyId, dateFrom, dateTo, limit }),
+    queryFn: () =>
+      reportingService.fetchProductMargin({ date_from: dateFrom, date_to: dateTo, limit }),
+    enabled: Boolean(companyId),
+  });
+}
+
+/** Drill-down for a single product's margin (`GET /reports/product-margin/product-detail/`). */
+export function useProductMarginDetailQuery(productId: string | null, dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: ['reports', 'product-margin-detail', companyId, productId, dateFrom, dateTo],
+    queryFn: () => reportingService.fetchProductMarginDetail({
+      product_id: productId!,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+    }),
+    enabled: Boolean(companyId && productId),
+  });
+}
+
+/** Accounts receivable aging (`GET /reports/payment-aging/`). */
+export function usePaymentAgingQuery() {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.paymentAging(companyId),
+    queryFn: () => reportingService.fetchPaymentAging(),
+    enabled: Boolean(companyId),
+  });
+}
+
+/** Supplier costs per month (`GET /reports/supplier-costs/`). */
+export function useSupplierCostsQuery(dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.supplierCosts({ companyId, dateFrom, dateTo }),
+    queryFn: () =>
+      reportingService.fetchSupplierCosts({ date_from: dateFrom, date_to: dateTo }),
+    enabled: Boolean(companyId),
+  });
+}
+
+/** PZ documents for a single supplier drill-down (`GET /reports/supplier-costs/detail/`). */
+export function useSupplierCostsDetailQuery(
+  supplierId: string | null,
+  dateFrom: string,
+  dateTo: string,
+) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.supplierCostsDetail({ companyId, supplierId, dateFrom, dateTo }),
+    queryFn: () =>
+      reportingService.fetchSupplierCostsDetail({
+        ...(supplierId ? { supplier_id: supplierId } : {}),
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+      }),
+    enabled: Boolean(companyId) && supplierId !== undefined,
+  });
+}
+
+/** Batches expiring within `days` days (`GET /reports/expiry-alerts/`). */
+export function useExpiryAlertsQuery(days = 90) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.expiryAlerts(companyId, days),
+    queryFn: () => reportingService.fetchExpiryAlerts({ days }),
+    enabled: Boolean(companyId),
+  });
+}
+
+/** Per-customer margin report (`GET /reports/customer-margin/`). */
+export function useCustomerMarginQuery(dateFrom: string, dateTo: string, limit = 50) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.customerMargin({ companyId, dateFrom, dateTo, limit }),
+    queryFn: () =>
+      reportingService.fetchCustomerMargin({ date_from: dateFrom, date_to: dateTo, limit }),
+    enabled: Boolean(companyId),
+  });
+}
+
 export { TOP_LIMIT };

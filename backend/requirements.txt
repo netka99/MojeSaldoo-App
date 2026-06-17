@@ -14,3 +14,6 @@ PyJWT==2.8.0
 psycopg2-binary==2.9.10
 gunicorn==21.2.0
 whitenoise==6.6.0
+openpyxl==3.1.5
+# OCR for paper invoice scanner (requires system Tesseract: apt install tesseract-ocr tesseract-ocr-pol)
+pytesseract>=0.3.10

@@ -77,6 +77,14 @@ class CompanyWorkflowSettings(models.Model):
             "invoice directly from the order without physical delivery."
         ),
     )
+    track_supplier_payments = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, show payment tracking fields (due_date, paid_at, is_paid) "
+            "on received supplier invoices (ReceivedKSeFInvoice). "
+            "Disable for companies that do not track when they pay suppliers."
+        ),
+    )
 
     class Meta:
         verbose_name = "Company workflow settings"
@@ -108,6 +116,7 @@ class CompanyModule(models.Model):
         # --- Integracje ---
         ("ksef",        "KSeF Integration"),             # e-fakturowanie KSeF
         ("reporting",   "Reporting & Analytics"),        # raporty, analityka
+        ("cost_allocation", "Cost Allocation & Accounting Notes"),  # adnotacje kosztowe dla księgowości
     ]
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="modules")
     module = models.CharField(max_length=50, choices=MODULE_CHOICES)

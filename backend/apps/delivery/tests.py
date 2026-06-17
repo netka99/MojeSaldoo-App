@@ -3195,3 +3195,457 @@ class GenerateForOrderVanRouteAutoTests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         doc = DeliveryDocument.objects.get(id=r.data["id"])
         self.assertIsNone(doc.van_route_id)
+
+
+
+class FifoStockBatchDeductionOnWZTests(TestCase):
+    """
+    WZ completion must decrement StockBatch.quantity_remaining (FIFO order)
+    so that expiry-alert reports only count stock physically still in the warehouse.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="fifo-wz-user",
+            email="fifo-wz@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="Fifo tenant")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.customer = Customer.objects.create(name="Shop A", company=self.co)
+        self.product = Product.objects.create(
+            name="Bread",
+            company=self.co,
+            price_net=Decimal("3.00"),
+            price_gross=Decimal("3.69"),
+            track_batches=True,
+        )
+
+    def _make_stock_batch(self, qty, unit_cost=Decimal("2.00"), received_date=None):
+        from apps.products.models import StockBatch
+        return StockBatch.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh,
+            received_date=received_date or date(2026, 1, 1),
+            quantity_initial=qty,
+            quantity_remaining=qty,
+            unit_cost=unit_cost,
+        )
+
+    def _make_stock(self, available, reserved=Decimal("0")):
+        return ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh,
+            quantity_available=available,
+            quantity_reserved=reserved,
+            quantity_total=available + reserved,
+        )
+
+    def _standalone_wz_in_transit(self, qty):
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 1),
+            from_warehouse=self.wh,
+            to_customer=self.customer,
+            status=DeliveryDocument.STATUS_IN_TRANSIT,
+        )
+        DeliveryItem.objects.create(
+            delivery_document=doc,
+            product=self.product,
+            quantity_planned=qty,
+        )
+        return doc
+
+    def _url_complete(self, doc_id):
+        return reverse("delivery-document-complete", kwargs={"pk": str(doc_id)})
+
+    def test_wz_complete_decrements_single_batch(self):
+        """Completing a WZ reduces StockBatch.quantity_remaining by the sold qty."""
+        from apps.products.models import StockBatch
+        batch = self._make_stock_batch(Decimal("10.00"))
+        self._make_stock(available=Decimal("10.00"))
+        doc = self._standalone_wz_in_transit(Decimal("4.00"))
+
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_complete(doc.id),
+            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "4.00"}]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        batch.refresh_from_db()
+        self.assertEqual(batch.quantity_remaining, Decimal("6.00"))
+
+    def test_wz_complete_consumes_oldest_batch_first(self):
+        """FIFO: oldest received_date batch is consumed before newer one."""
+        from apps.products.models import StockBatch
+        old_batch = self._make_stock_batch(Decimal("3.00"), received_date=date(2026, 1, 1))
+        new_batch = self._make_stock_batch(Decimal("10.00"), received_date=date(2026, 3, 1))
+        self._make_stock(available=Decimal("13.00"))
+        doc = self._standalone_wz_in_transit(Decimal("5.00"))
+
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_complete(doc.id),
+            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "5.00"}]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        old_batch.refresh_from_db()
+        new_batch.refresh_from_db()
+        self.assertEqual(old_batch.quantity_remaining, Decimal("0.00"))
+        self.assertEqual(new_batch.quantity_remaining, Decimal("8.00"))
+
+    def test_wz_complete_full_sale_zeroes_batch(self):
+        """Selling exactly all stock zeroes out the batch."""
+        from apps.products.models import StockBatch
+        batch = self._make_stock_batch(Decimal("5.00"))
+        self._make_stock(available=Decimal("5.00"))
+        doc = self._standalone_wz_in_transit(Decimal("5.00"))
+
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_complete(doc.id),
+            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "5.00"}]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        batch.refresh_from_db()
+        self.assertEqual(batch.quantity_remaining, Decimal("0.00"))
+
+    def test_wz_complete_no_batches_does_not_raise(self):
+        """Products with track_batches=False have no StockBatch rows — must not raise."""
+        product_no_batch = Product.objects.create(
+            name="Service product",
+            company=self.co,
+            price_net=Decimal("1.00"),
+            price_gross=Decimal("1.23"),
+            track_batches=False,
+        )
+        ProductStock.objects.create(
+            company=self.co,
+            product=product_no_batch,
+            warehouse=self.wh,
+            quantity_available=Decimal("10.00"),
+            quantity_reserved=Decimal("0"),
+            quantity_total=Decimal("10.00"),
+        )
+        doc = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 1),
+            from_warehouse=self.wh,
+            to_customer=self.customer,
+            status=DeliveryDocument.STATUS_IN_TRANSIT,
+        )
+        DeliveryItem.objects.create(
+            delivery_document=doc,
+            product=product_no_batch,
+            quantity_planned=Decimal("3.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_complete(doc.id),
+            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "3.00"}]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+
+
+class ExpiryDateOnPZTests(TestCase):
+    """
+    expiry_date set on a PZ line must propagate to the StockBatch
+    created when the PZ is completed.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="expiry-pz-user",
+            email="expiry-pz@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="Expiry tenant")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="Flour",
+            company=self.co,
+            price_net=Decimal("2.50"),
+            price_gross=Decimal("2.70"),
+            track_batches=True,
+        )
+
+    def _url_create_pz(self):
+        return reverse("delivery-document-create-pz")
+
+    def _url_complete(self, doc_id):
+        return reverse("delivery-document-complete", kwargs={"pk": str(doc_id)})
+
+    def test_expiry_date_stored_on_delivery_item(self):
+        """expiry_date sent in create-pz payload is persisted on DeliveryItem."""
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_create_pz(),
+            data={
+                "to_warehouse_id": str(self.wh.id),
+                "items": [
+                    {
+                        "product_id": str(self.product.id),
+                        "quantity_planned": "50.00",
+                        "unit_cost": "1.80",
+                        "expiry_date": "2026-12-31",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+        item = DeliveryItem.objects.get(delivery_document_id=r.data["id"])
+        self.assertEqual(str(item.expiry_date), "2026-12-31")
+
+    def test_expiry_date_propagates_to_stock_batch_on_complete(self):
+        """Completing the PZ creates a StockBatch with the same expiry_date."""
+        from apps.products.models import StockBatch
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_create_pz(),
+            data={
+                "to_warehouse_id": str(self.wh.id),
+                "items": [
+                    {
+                        "product_id": str(self.product.id),
+                        "quantity_planned": "50.00",
+                        "unit_cost": "1.80",
+                        "expiry_date": "2026-12-31",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+        doc_id = r.data["id"]
+
+        r2 = self.client.post(self._url_complete(doc_id))
+        self.assertEqual(r2.status_code, 200, r2.data)
+
+        batch = StockBatch.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(str(batch.expiry_date), "2026-12-31")
+
+    def test_no_expiry_date_creates_batch_without_expiry(self):
+        """When expiry_date is omitted, StockBatch.expiry_date is None."""
+        from apps.products.models import StockBatch
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_create_pz(),
+            data={
+                "to_warehouse_id": str(self.wh.id),
+                "items": [
+                    {
+                        "product_id": str(self.product.id),
+                        "quantity_planned": "10.00",
+                        "unit_cost": "2.00",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+        r2 = self.client.post(self._url_complete(r.data["id"]))
+        self.assertEqual(r2.status_code, 200, r2.data)
+
+        batch = StockBatch.objects.get(product=self.product, warehouse=self.wh)
+        self.assertIsNone(batch.expiry_date)
+
+    def test_expiry_date_visible_in_delivery_item_api_response(self):
+        """GET delivery document returns expiry_date on items."""
+        self.client.force_authenticate(user=self.user)
+        r = self.client.post(
+            self._url_create_pz(),
+            data={
+                "to_warehouse_id": str(self.wh.id),
+                "items": [
+                    {
+                        "product_id": str(self.product.id),
+                        "quantity_planned": "5.00",
+                        "expiry_date": "2027-06-30",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["items"][0]["expiry_date"], "2027-06-30")
+
+
+class CreateRWAPITests(TestCase):
+    """POST /api/delivery/create-rw/ — manual write-off (RW) document."""
+
+    URL = "/api/delivery/create-rw/"
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="rw-user", email="rw@test.com", password="test12345"
+        )
+        self.co = Company.objects.create(name="RW Tenant")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="warehouses", is_enabled=True)
+
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG-RW",
+            name="Main RW",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="RW Widget",
+            company=self.co,
+            price_net=Decimal("5.00"),
+            price_gross=Decimal("6.15"),
+        )
+        # Give the product some stock to write off
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh,
+            quantity_available=Decimal("20.000"),
+            quantity_reserved=Decimal("0.000"),
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _payload(self, **overrides):
+        base = {
+            "from_warehouse_id": str(self.wh.id),
+            "reason": "Strata",
+            "issue_date": "2026-06-16",
+            "items": [{"product_id": str(self.product.id), "quantity": "3.000"}],
+        }
+        base.update(overrides)
+        return base
+
+    # ── happy path ──────────────────────────────────────────────────
+
+    def test_returns_201_with_delivered_rw_document(self):
+        r = self.client.post(self.URL, self._payload(), format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(r.data["document_type"], "RW")
+        self.assertEqual(r.data["status"], "delivered")
+        self.assertTrue(r.data["document_number"].startswith("RW/2026/"))
+        self.assertEqual(len(r.data["items"]), 1)
+
+    def test_stock_is_decremented(self):
+        self.client.post(self.URL, self._payload(), format="json")
+        stock = ProductStock.objects.get(company=self.co, product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.quantity_available, Decimal("17.000"))
+
+    def test_stock_movement_created_with_damage_type(self):
+        self.client.post(self.URL, self._payload(), format="json")
+        mv = StockMovement.objects.filter(
+            company=self.co, product=self.product, warehouse=self.wh
+        ).first()
+        self.assertIsNotNone(mv)
+        self.assertEqual(mv.movement_type, StockMovement.MovementType.DAMAGE)
+        self.assertEqual(mv.quantity, Decimal("-3.000"))
+        self.assertEqual(mv.reference_type, "rw_manual")
+
+    def test_reason_embedded_in_notes(self):
+        r = self.client.post(self.URL, self._payload(reason="Próbka", notes="do degustacji"), format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        doc = DeliveryDocument.objects.get(pk=r.data["id"])
+        self.assertIn("Próbka", doc.notes)
+        self.assertIn("do degustacji", doc.notes)
+
+    def test_multiple_items_all_deducted(self):
+        product2 = Product.objects.create(
+            name="RW Widget 2", company=self.co,
+            price_net=Decimal("1.00"), price_gross=Decimal("1.23"),
+        )
+        ProductStock.objects.create(
+            company=self.co, product=product2, warehouse=self.wh,
+            quantity_available=Decimal("10.000"), quantity_reserved=Decimal("0.000"),
+        )
+        r = self.client.post(self.URL, {
+            "from_warehouse_id": str(self.wh.id),
+            "reason": "Uszkodzenie",
+            "items": [
+                {"product_id": str(self.product.id), "quantity": "2.000"},
+                {"product_id": str(product2.id), "quantity": "5.000"},
+            ],
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(len(r.data["items"]), 2)
+
+        s1 = ProductStock.objects.get(company=self.co, product=self.product, warehouse=self.wh)
+        s2 = ProductStock.objects.get(company=self.co, product=product2, warehouse=self.wh)
+        self.assertEqual(s1.quantity_available, Decimal("18.000"))
+        self.assertEqual(s2.quantity_available, Decimal("5.000"))
+
+    # ── validation ──────────────────────────────────────────────────
+
+    def test_requires_from_warehouse_id(self):
+        payload = self._payload()
+        del payload["from_warehouse_id"]
+        r = self.client.post(self.URL, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requires_reason(self):
+        r = self.client.post(self.URL, self._payload(reason=""), format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requires_at_least_one_item(self):
+        r = self.client.post(self.URL, self._payload(items=[]), format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_rejects_warehouse_from_other_company(self):
+        other_co = Company.objects.create(name="Other Co")
+        other_wh = Warehouse.objects.create(
+            user=self.user, company=other_co, code="MG-OTHER", name="Other WH",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        r = self.client.post(self.URL, self._payload(from_warehouse_id=str(other_wh.id)), format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+        r = self.client.post(self.URL, self._payload(), format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)

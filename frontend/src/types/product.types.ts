@@ -18,6 +18,13 @@ export interface Product {
   track_batches: boolean;
   min_stock_alert: string | number;
   shelf_life_days: number | null;
+  is_resalable: boolean;
+  markup_percent: string | number | null;
+  avg_cost: string | number | null;
+  /** How avg_cost was last set. null = never set. */
+  avg_cost_source: 'pz' | 'production' | 'recipe' | 'manual' | null;
+  avg_cost_updated_at: string | null;
+  last_cost: string | number | null;
   is_active: boolean;
   /** Sum of `quantity_available` across all company warehouses; from list/detail API. */
   stock_total?: string | number;

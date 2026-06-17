@@ -40,6 +40,7 @@ function makePreview(over: Partial<DeliveryDocumentPreviewPayload> = {}): Delive
       address: 'ul. Odbiorcza 2, 00-001 Warszawa',
     },
     from_warehouse: { name: 'Magazyn główny', code: 'MG' },
+    to_warehouse: null,
     items: [
       {
         product_name: 'Mleko 1L',

@@ -58,6 +58,12 @@ describe('productService', () => {
       track_batches: false,
       min_stock_alert: '0',
       shelf_life_days: null,
+      is_resalable: false,
+      markup_percent: null,
+      avg_cost: null,
+      avg_cost_source: null,
+      avg_cost_updated_at: null,
+      last_cost: null,
       is_active: true,
     };
     mocks.post.mockResolvedValue({ id: 'new', ...body });

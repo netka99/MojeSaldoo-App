@@ -2,15 +2,16 @@
 
 ## Spis Treści
 1. [Przegląd Projektu](#przegląd-projektu)
-2. [Stack Technologiczny](#stack-technologiczny)
-3. [Architektura Aplikacji](#architektura-aplikacji)
-4. [Moduły Aplikacji](#moduły-aplikacji)
-5. [Przepływy Biznesowe](#przepływy-biznesowe)
-6. [Struktura Projektu](#struktura-projektu)
-7. [Modele Danych](#modele-danych)
-8. [API Endpoints](#api-endpoints)
-9. [Integracje](#integracje)
-10. [Plan Implementacji](#plan-implementacji)
+2. [Docelowe Segmenty Rynku](#docelowe-segmenty-rynku)
+3. [Stack Technologiczny](#stack-technologiczny)
+4. [Architektura Aplikacji](#architektura-aplikacji)
+5. [Moduły Aplikacji](#moduły-aplikacji)
+6. [Przepływy Biznesowe](#przepływy-biznesowe)
+7. [Struktura Projektu](#struktura-projektu)
+8. [Modele Danych](#modele-danych)
+9. [API Endpoints](#api-endpoints)
+10. [Integracje](#integracje)
+11. [Plan Implementacji](#plan-implementacji)
 
 ---
 
@@ -24,6 +25,162 @@
 - Integracja z KSeF (wysyłanie i odbieranie faktur elektronicznych)
 - Analityka i raportowanie sprzedaży
 - Zarządzanie magazynem i stanami produktów
+
+---
+
+---
+
+## Docelowe Segmenty Rynku
+
+MojeSaldoo celuje w **małe firmy (1–10 pracowników)** z polskiego rynku MSP, które są niedoobsługiwane przez duże systemy ERP (za drogie, za skomplikowane) i przerośnięte przez proste aplikacje do fakturowania (za mało funkcji magazynowych i produkcyjnych).
+
+### Trzy główne segmenty
+
+---
+
+#### Segment A — Firmy z Van Selling (handlowiec jeździ trasą)
+
+**Kim są:** Przedstawiciel handlowy lub właściciel jeździ busem do klientów B2B (sklepy spożywcze, kawiarnie, restauracje, punkty usługowe). Towar: napoje, artykuły spożywcze, alkohole, chemia gospodarcza, artykuły biurowe. Opodatkowanie: KPiR lub ryczałt (PKD 46.x).
+
+**Typowy dzień pracy:**
+1. Rano ładuje bus z magazynu głównego (MM: MG → van)
+2. Odwiedza klientów po trasie — wystawia WZ na miejscu lub na telefonie
+3. Przyjmuje zwroty od klientów (ZW powiązane z WZ)
+4. Wieczorem rozlicza trasę — co wróciło, co sprzedane (MM-P: van → MG, RW odpisy)
+5. Raz w tygodniu lub miesiącu fakturuje klientów na podstawie WZ-ów
+
+**Jak używa aplikacji:**
+- **Produkty + Magazyny** — katalog towaru, stany w MG i w vanie osobno
+- **Zamówienia** — opcjonalnie zbiera zamówienia dzień wcześniej (telefon od klienta)
+- **Van Loading (MM)** — załadunek busa przed trasą, automatyczna zmiana stanu
+- **WZ** — wystawia dokument wydania u klienta; drukuje lub pokazuje na telefonie
+- **ZW** — rejestruje zwroty przyjęte od klientów podczas trasy
+- **Rozliczenie trasy** — wieczorne podsumowanie: sprzedane / zwrócone / odpisane
+- **Fakturowanie + KSeF** — faktury do WZ-ów, wysyłka elektroniczna
+- **Zakupy (PZ)** — przyjęcie towaru od dostawców z KSeF inbox
+- **Raporty** — sprzedaż per klient / produkt, efektywność tras, należności
+
+**Aktywne moduły:** Produkty, Magazyny, Klienci, Zamówienia, Dostawa/WZ, Fakturowanie, KSeF, Zakupy, Raporty
+
+**Dlaczego MojeSaldoo pasuje:** Van selling z rozliczeniem trasy, MM, ZW i WZ to core aplikacji. Aplikacja mobilna (Capacitor iOS/Android) pozwala handlowcowi pracować na telefonie bez laptopa.
+
+---
+
+#### Segment B — Małe Piekarnie i Cukiernie
+
+**Kim są:** Rodzinna piekarnia lub cukiernia, 3–10 osób. Produkcja codziennie z surowców (mąka, cukier, drożdże, jajka → pieczywo, ciasta). Część sprzedaży przez własny punkt, część dostarcza do sklepów lokalnych. Opodatkowanie: KPiR lub ryczałt (PKD 10.71).
+
+**Typowy dzień pracy:**
+1. Piekarnia: produkcja wg receptur — zużycie surowców (RW) + przyjęcie wyrobów (PW)
+2. Kierowca dostarcza towar do sklepów — WZ dla każdego odbiorcy
+3. Sklep oddaje wczorajszy towar — ZW (zwrot)
+4. Przyjęcie dostawy od dostawcy mąki/cukru — PZ z KSeF inbox
+5. Cotygodniowe fakturowanie sklepów
+
+**Jak używa aplikacji:**
+- **Produkty** — katalog surowców (mąka, cukier...) i wyrobów (chleb, bułka, drożdżówka...)
+- **Receptury + Produkcja** — receptura: "z 50 kg mąki → 80 bochenków", zlecenie produkcji, automatyczne RW surowców + PW wyrobów, koszt/szt. liczony z FIFO cen surowców
+- **Daty ważności** — PZ przyjmuje surowce z `expiry_date`; alerty gdy zbliża się termin
+- **WZ + Van** — dostawa wyrobów do sklepów, zwroty następnego dnia
+- **Zakupy (PZ + KSeF inbox)** — przyjęcie faktury od dostawcy mąki → automatyczne PZ do magazynu
+- **Fakturowanie + KSeF** — faktury dla sklepów, wysyłka do KSeF
+- **Raporty** — koszt wytworzenia w czasie (sezonowość mąki widoczna), marża na produkcie, rotacja surowców
+
+**Aktywne moduły:** Produkty, Magazyny, Klienci, Zamówienia, Dostawa/WZ, Produkcja, Fakturowanie, KSeF, Zakupy, Raporty
+
+**Dlaczego MojeSaldoo pasuje:** Moduł produkcji z FIFO kosztowaniem surowców pozwala piekarni zobaczyć realny koszt wypieku — coś czego nie ma iFirma ani inFakt. Receptury są proste (jednopokotowe BOM wystarczy dla piekarni).
+
+---
+
+#### Segment C — Małe Firmy Produkcyjne (przetwórstwo, rzemiosło)
+
+**Kim są:** Producent dżemów, przetworów, świec, kosmetyków naturalnych, wyrobów rzemieślniczych. 2–8 osób. Kupuje surowce, produkuje wyroby gotowe, sprzedaje B2B (sklepy, hurt) lub B2C (marketplace, targi). Opodatkowanie: KPiR, ryczałt lub pełna księgowość.
+
+**Typowy dzień pracy:**
+1. Zlecenie produkcji na podstawie zamówień od klientów
+2. Zużycie surowców wg receptury (RW) + przychód wyrobów gotowych (PW)
+3. Wydanie wyrobów do klientów (WZ) lub wysyłka kurierska
+4. Przyjęcie faktur od dostawców surowców (PZ z KSeF inbox)
+5. Adnotacje kosztowe na fakturach zakupowych → eksport do biura rachunkowego
+
+**Jak używa aplikacji:**
+- **Produkty** — dwa katalogi: surowce (słoiki, owoce, woski) i wyroby gotowe (dżem truskawkowy 250g)
+- **Receptury + Produkcja** — receptura z listą składników i wydajnością partii; tryb prosty (z receptury) lub wsadu (realne zużycie np. gdy owoce różnej jakości)
+- **Koszt wytworzenia** — po zamknięciu zlecenia: automatyczny koszt/szt. z FIFO cen surowców + aktualizacja `avg_cost` gotowego wyrobu → widoczna marża w raportach
+- **Zakupy (PZ)** — przyjęcie surowców od dostawców, FIFO partie z cenami
+- **KSeF inbox** — pobieranie faktur zakupowych, tworzenie PZ z faktury jednym kliknięciem
+- **Adnotacje kosztowe** — opisanie każdej faktury zakupowej dla biura rachunkowego
+- **Fakturowanie + KSeF** — faktury do klientów B2B, wysyłka elektroniczna
+- **Raporty** — marża na produkcie (avg_cost vs cena sprzedaży), koszty zakupów per dostawca, P&L miesięczny
+
+**Aktywne moduły:** Produkty, Magazyny, Klienci, Zamówienia, Dostawa/WZ, Produkcja, Fakturowanie, KSeF, Zakupy, Adnotacje kosztowe, Raporty
+
+**Dlaczego MojeSaldoo pasuje:** Mały producent nie potrzebuje pełnego ERP — potrzebuje prostych receptur, kosztowania produkcji i połączenia z KSeF. To dokładnie to co MojeSaldoo oferuje.
+
+---
+
+### Tabela dopasowania modułów
+
+| Moduł | Van Selling | Piekarnia | Producent |
+|-------|:-----------:|:---------:|:---------:|
+| Produkty i magazyn | ✅ | ✅ | ✅ |
+| Magazyny (multi) | ✅ MG + van | ✅ MG | ✅ MG |
+| Klienci | ✅ | ✅ | ✅ |
+| Zamówienia | ✅ | ✅ | ✅ |
+| Dostawa i WZ | ✅ core | ✅ | ✅ |
+| Fakturowanie | ✅ | ✅ | ✅ |
+| KSeF | ✅ | ✅ | ✅ |
+| Zakupy (PZ) | ✅ | ✅ | ✅ |
+| Produkcja (receptury) | ❌ | ✅ core | ✅ core |
+| Adnotacje kosztowe | opcjonalnie | opcjonalnie | ✅ |
+| Raporty | ✅ | ✅ | ✅ |
+
+---
+
+### Co jeszcze potrzebne — luki wg segmentu
+
+#### Krytyczne (blokują pełne użycie)
+
+| # | Luka | Segment | Stan |
+|---|------|---------|------|
+| 1 | **Daty ważności na PZ** — formularz `PZCreatePage` nie ma pola `expiry_date` per linia; backend ma komentarz `# expiry per line planned in future PZ extension` | Piekarnia, Producent | ❌ Brakuje w UI i serwisie PZ |
+| 2 | **FIFO `quantity_remaining` nie jest dekrementowane przy sprzedaży WZ** — `_apply_sale_return_deltas_to_stock()` koryguje `ProductStock`, ale nie chodzi po `StockBatch` i nie zmniejsza `batch.quantity_remaining`; alerty o terminach ważności mogą pokazywać sprzedany towar | Wszyscy | ⚠️ Bug |
+| 3 | **Koszt wytworzenia widoczny tylko po zakończeniu zlecenia** — brak podglądu "szacowany koszt" na recepturze przed uruchomieniem produkcji | Piekarnia, Producent | ❌ Brakuje |
+
+#### Ważne (znacznie zwiększają wartość)
+
+| # | Luka | Segment | Stan |
+|---|------|---------|------|
+| 4 | **Stan surowców widoczny przy tworzeniu zlecenia produkcji** — formularz nie pokazuje aktualnego stanu magazynowego składników | Piekarnia, Producent | ❌ Brakuje |
+| 5 | **Planowanie produkcji z zamówień** — zestawienie "co upiec jutro na podstawie otwartych zamówień" — ile szt. danego wyrobu potrzeba → jaka ilość surowców do przygotowania | Piekarnia | ❌ Brakuje |
+| 6 | **Szybkie zamówienia (szablony)** — stały klient zawsze bierze te same produkty; jedno kliknięcie zamiast wybierania od zera | Van Selling | ❌ Brakuje |
+| 7 | **Indywidualne cenniki per klient** — hurtownik ma inne ceny dla sieci A vs sklepu B | Van Selling | ❌ Brakuje |
+| 8 | **Powiadomienia o przeterminowanych należnościach** — klient zalega 30+ dni — alert dla właściciela | Wszyscy | ❌ Brakuje |
+
+#### Miło mieć (wyróżniki na rynku)
+
+| # | Luka | Segment |
+|---|------|---------|
+| 9 | Offline mode (Capacitor storage + sync) — handlowiec bez zasięgu | Van Selling |
+| 10 | Etykiety z kodem QR/EAN do druku na wyrobach | Producent |
+| 11 | Eksport raportu kosztów do PDF/Excel dla biura rachunkowego | Producent, KPiR |
+| 12 | Inwentaryzacja (spis z natury) — korekta stanów po liczeniu fizycznym | Wszyscy z magazynem |
+
+---
+
+### Stan FIFO — szczegółowa analiza
+
+FIFO jest zaimplementowane i działa dla:
+
+| Przepływ | Stan FIFO |
+|----------|-----------|
+| **PZ receipt** (`apply_pz_receipt`) | ✅ Tworzy `StockBatch` per linia z `received_date` i `unit_cost`; index na `expiry_date` |
+| **Produkcja** (`_consume_fifo`) | ✅ Chodzi po `StockBatch` sortując `received_date, id` (najstarsza partia pierwsza); zmniejsza `batch.quantity_remaining`; liczy koszt FIFO |
+| **Anulowanie PZ** (`cancel_pz`) | ✅ Odwraca po `batch_number`; uwzględnia już zużyte partie |
+| **WZ sprzedaż** (`_apply_sale_return_deltas_to_stock`) | ⚠️ Koryguje `ProductStock.quantity_reserved`, ale **nie dekrementuje `StockBatch.quantity_remaining`** — partie "żyją" w systemie nawet po sprzedaży |
+| **MM załadunek vana** (`create_van_loading_mm`) | ⚠️ Przenosi stan `ProductStock` MG → van, ale nie przenosi `StockBatch` między magazynami — partie pozostają przypisane do MG |
+
+**Konsekwencja buga WZ:** Raport `expiry-alerts` może zwracać partie których fizycznie nie ma już w magazynie (bo zostały sprzedane przez WZ). Naprawienie wymaga dodania dekrementacji `StockBatch` w momencie finalizacji WZ.
 
 ---
 
@@ -252,6 +409,65 @@ Retrieve Invoice Data →
 - UPO (Urzędowe Poświadczenie Odbioru)
 - QR kod dla faktury
 - Szczegółowe informacje
+
+---
+
+### 6. BUSINESS ANALYTICS (Moduł 8)
+**Cel**: Analiza biznesowa — ile zarabiasz, na czym, i gdzie tracisz pieniądze
+
+#### Dane bazowe wymagające implementacji:
+- `avg_cost` + `last_cost` na modelu `Product` — średni ważony koszt zakupu (aktualizowany przy każdym PZ), koszt z ostatniego zakupu
+- Oznaczenie płatności faktur klientowskich (`POST /api/invoices/{id}/mark-paid/`)
+- Opcjonalne śledzenie płatności faktur dostawcy (flaga `track_supplier_payments` w `CompanyWorkflowSettings`; pola `due_date`, `paid_at`, `is_paid` na `ReceivedKSeFInvoice`)
+
+#### Kategorie raportów (aktywowane wg włączonych modułów):
+
+**SPRZEDAŻ** — wymaga: `orders` + `invoicing`
+- Przychody w czasie (miesięcznie/tygodniowo) — trend wzrostu
+- Top klienci wg przychodu, liczby zamówień, średniej wartości
+- Top produkty wg przychodu i ilości
+- Aging należności: 0–30 / 30–60 / 60+ dni po terminie
+- Wykorzystanie limitów kredytowych klientów
+- Cykl zamówienie → faktura (jak szybko fakturujesz?)
+
+**MARŻE** — wymaga: `orders` + `purchasing`
+- Marża na produkcie = przychód ze sprzedaży - `avg_cost` × sprzedana ilość
+- Marża na kliencie (uwzględnia rabaty i zwroty)
+- Koszty zakupów w czasie (czy koszty wejściowe rosną?)
+- Top dostawcy wg wartości zakupów
+
+**DOSTAWA** — wymaga: `delivery` + opcjonalnie `van_routes`
+- Skuteczność dostaw: % na czas vs `delivery_date`
+- Wskaźnik zwrotów i uszkodzeń (per produkt / klient / kierowca)
+- Efektywność tras vana (carry-over, rozliczenia)
+
+**MAGAZYN** — wymaga: `warehouses`
+- Rotacja towaru (dni zapasów przy bieżącym tempie sprzedaży)
+- Historia ruchów (sprzedaż vs zwroty vs korekty)
+- Partie bliskie terminu ważności (`StockBatch.expiry_date`)
+
+**KOSZTY** — wymaga: `cost_allocation`
+- Koszty wg projektu/centrum kosztów
+- Faktury oczekujące na adnotację/eksport do księgowości
+- Analiza VAT z faktur zakupowych
+
+**WYNIK (P&L)** — wymaga: `invoicing` + `purchasing`
+- Miesięczny: przychody ze sprzedaży vs koszty zakupów = wynik brutto
+- Nie wymaga receptur — działa od razu dla handlowców i producentów
+
+#### Moduł produkcji (dla firm wytwarzających produkty):
+- `Recipe` + `RecipeItem` — receptury/BOM (co i ile wchodzi w skład produktu)
+- `ProductionOrder` — dwa tryby: **simple** (z receptury) i **batch** (realne zużycie)
+- Koszt = FIFO ceny ze StockBatch × faktycznie zużyte ilości
+- Raport: koszt/szt. w czasie (widoczna sezonowość), marża netto producenta
+
+#### Przepływ:
+```
+Moduł Raporty → Wybierz kategorię (Sprzedaż / Marże / Magazyn / ...) →
+  Filtry: zakres dat, klient, produkt, kierowca →
+  Wykres (trend) + Tabela szczegółowa →
+  Eksport CSV/Excel
+```
 
 ---
 
@@ -1454,6 +1670,39 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - [ ] Generowanie QR kodu
 - [ ] Raporty sprzedażowe
 
+### Faza 10: Business Analytics
+
+#### Krok 1: Dane bazowe (backend)
+- [x] Dodaj `avg_cost`, `last_cost`, `avg_cost_updated_at` do modelu `Product`
+- [x] Aktualizuj `avg_cost` w `apply_pz_receipt()` — ważona średnia po każdym przyjęciu
+- [x] Dodaj endpoint `POST /api/invoices/{id}/mark-paid/` — oznaczenie faktury jako zapłaconej
+- [x] Dodaj `track_supplier_payments` do `CompanyWorkflowSettings` (opcjonalne)
+- [x] Dodaj `due_date`, `paid_at`, `is_paid` do `ReceivedKSeFInvoice` (gdy flaga włączona)
+
+#### Krok 2: Raporty backend
+- [x] `GET /api/reports/profit-loss/` — P&L miesięczny (przychody vs koszty zakupów)
+- [x] `GET /api/reports/product-margin/` — marża per produkt (sprzedaż - avg_cost)
+- [x] `GET /api/reports/payment-aging/` — aging należności (0–30 / 30–60 / 60+ dni)
+- [x] `GET /api/reports/supplier-costs/` — koszty zakupów per dostawca / miesiąc
+
+#### Krok 3: Frontend
+- [x] Przycisk "Oznacz jako zapłacono" na szczegółach faktury klientowskiej
+- [x] Strona raportu P&L (wykres słupkowy miesięczny)
+- [x] Strona marży na produktach (tabela: produkt / avg_cost / cena sprzedaży / marża %)
+- [x] Strona aging należności
+- [x] Strona koszty zakupów per dostawca
+- [x] Eksport CSV (aging należności + koszty zakupów)
+
+#### Krok 4: Moduł produkcji (firmy wytwarzające)
+- [x] Model `Recipe` + `RecipeItem` — receptury/BOM (składniki na partię)
+- [x] Model `ProductionOrder` — zlecenie produkcyjne, dwa tryby:
+  - **Tryb prosty** (`mode=simple`): użytkownik podaje tylko ilość gotowego wyrobu → system oblicza zużycie z receptury × FIFO
+  - **Tryb wsadu** (`mode=batch`): użytkownik podaje realne zużycie surowców → system liczy koszt z faktycznego wsadu (wlicza odpady automatycznie)
+- [x] Model `ProductionOrderInput` — realne wejście surowców (tylko tryb wsadu)
+- [x] Przy zamknięciu zlecenia: automatyczne RW (zużycie składników) + PW (przyjęcie wyrobów) + aktualizacja `Product.avg_cost` gotowego wyrobu
+- [x] FIFO pricing: koszt liczy się po cenach z `StockBatch.unit_cost` (od najstarszej partii)
+- [x] Raport rentowności produkcji: koszt/szt. w czasie (sezonowość kosztów widoczna od razu)
+
 ### Faza 8: Mobile & Testing (Tydzień 9-10)
 - [ ] Testowanie na iOS
 - [ ] Testowanie na Android
@@ -1486,6 +1735,7 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - Optymalizacja obrazów (Capacitor Asset optimization)
 
 ### Możliwości rozwoju (przyszłość)
+- [ ] Korekty do faktur i PZ i Wz
 - [ ] Synchronizacja offline
 - [ ] Powiadomienia push (statusy KSeF)
 - [ ] Eksport raportów do PDF/Excel
@@ -1511,6 +1761,11 @@ GET    /api/reports/inventory/      # Raport magazynowy
   - [x] Inbox page loads instantly from DB; explicit "Synchronizuj z KSeF" button fetches new ones.
   - [x] XML stored in `xml_content`; line items cached in `ReceivedKSeFInvoiceLine` — expand is instant after first load, no session needed.
   - [x] Seller address fields (`seller_address_l1/l2`, `seller_country`) stored in DB from parsed XML.
+- [ ] **KSeF correction invoice (faktura korygująca) → PZ-KOR guided flow**
+  - Blocked on: receiving a real correction invoice via KSeF to verify data format (`TypFaktury`, `FakturaRef/NrKSeF`).
+  - Desired flow: correction invoice in inbox → "Utwórz PZ-KOR" button → auto-finds original PZ via referenced invoice → pre-fills PZ-KOR form → creates PZ-KOR linked to correction invoice.
+  - Backend needs: parse `TypFaktury` (KOR vs VAT) and `FakturaRef` (original invoice KSeF number) from XML.
+  - Frontend needs: detect correction invoices in inbox, extend `MatchPzPanel` to also show `PZ-KOR` documents, or add dedicated guided flow.
 
 ---
 

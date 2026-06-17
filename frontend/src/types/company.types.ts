@@ -8,6 +8,9 @@ export type ModuleName =
   | 'invoicing'
   | 'ksef'
   | 'reporting'
+  | 'cost_allocation'
+  | 'purchasing'
+  | 'production'
 
 export interface Company {
   id: string

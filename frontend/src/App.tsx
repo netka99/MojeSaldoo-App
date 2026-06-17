@@ -113,6 +113,43 @@ const KSeFInboxPage = lazy(() =>
 const KSeFInboxPZPage = lazy(() =>
   import('./pages/KSeFInboxPZPage').then((m) => ({ default: m.KSeFInboxPZPage })),
 );
+const PaperScannerPage = lazy(() =>
+  import('./pages/PaperScannerPage').then((m) => ({ default: m.PaperScannerPage })),
+);
+const CostProjectsPage = lazy(() =>
+  import('./pages/CostProjectsPage').then((m) => ({ default: m.CostProjectsPage })),
+);
+const ProfitLossPage = lazy(() =>
+  import('./pages/ProfitLossPage').then((m) => ({ default: m.ProfitLossPage })),
+);
+const ProductMarginPage = lazy(() =>
+  import('./pages/ProductMarginPage').then((m) => ({ default: m.ProductMarginPage })),
+);
+const PaymentAgingPage = lazy(() =>
+  import('./pages/PaymentAgingPage').then((m) => ({ default: m.PaymentAgingPage })),
+);
+const SupplierCostsPage = lazy(() =>
+  import('./pages/SupplierCostsPage').then((m) => ({ default: m.SupplierCostsPage })),
+);
+const InventoryReportPage = lazy(() =>
+  import('./pages/InventoryReportPage').then((m) => ({ default: m.InventoryReportPage })),
+);
+const CustomerMarginPage = lazy(() =>
+  import('./pages/CustomerMarginPage').then((m) => ({ default: m.CustomerMarginPage })),
+);
+const RecipesPage = lazy(() =>
+  import('./pages/RecipesPage').then((m) => ({ default: m.RecipesPage })),
+);
+const ProductionOrdersPage = lazy(() =>
+  import('./pages/ProductionOrdersPage').then((m) => ({ default: m.ProductionOrdersPage })),
+);
+const InventoryPage = lazy(() =>
+  import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage })),
+);
+
+const RWCreatePage = lazy(() =>
+  import('./pages/RWCreatePage').then((m) => ({ default: m.RWCreatePage })),
+);
 
 function RouteFallback() {
   return (
@@ -291,6 +328,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/delivery/new-rw"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <RWCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/delivery/van-reconciliation"
                   element={
                     <ModuleRouteGate module="delivery">
@@ -387,6 +432,78 @@ function App() {
                   }
                 />
                 <Route
+                  path="/reports/profit-loss"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <ProfitLossPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports/product-margin"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <ProductMarginPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports/payment-aging"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <PaymentAgingPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports/supplier-costs"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <SupplierCostsPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports/inventory"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <InventoryReportPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports/customer-margin"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <CustomerMarginPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/production/recipes"
+                  element={
+                    <ModuleRouteGate module="production">
+                      <RecipesPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/production/orders"
+                  element={
+                    <ModuleRouteGate module="production">
+                      <ProductionOrdersPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/inventory"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <InventoryPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/ksef"
                   element={
                     <ModuleRouteGate module="ksef">
@@ -407,6 +524,22 @@ function App() {
                   element={
                     <ModuleRouteGate module="ksef">
                       <KSeFInboxPZPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/ksef/scan-paper"
+                  element={
+                    <ModuleRouteGate module="ksef">
+                      <PaperScannerPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/cost-allocation"
+                  element={
+                    <ModuleRouteGate module="cost_allocation">
+                      <CostProjectsPage />
                     </ModuleRouteGate>
                   }
                 />

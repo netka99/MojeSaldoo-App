@@ -22,6 +22,17 @@ class OrderIdsFilter(django_filters.CharFilter):
         ).distinct()
 
 
+class KsefUnlinkedFilter(django_filters.BooleanFilter):
+    """?ksef_unlinked=true → PZ documents with no linked KSeF invoice."""
+
+    def filter(self, qs, value):
+        if value is True:
+            return qs.filter(ksef_invoice__isnull=True)
+        if value is False:
+            return qs.filter(ksef_invoice__isnull=False)
+        return qs
+
+
 class DeliveryDocumentFilter(django_filters.FilterSet):
     """List filters: order, status, document type, issue_date range."""
 
@@ -34,6 +45,8 @@ class DeliveryDocumentFilter(django_filters.FilterSet):
         lookup_expr="lte",
     )
     order_ids = OrderIdsFilter()
+    ksef_unlinked = KsefUnlinkedFilter()
+    from_supplier = django_filters.UUIDFilter(field_name="from_supplier__id")
 
     class Meta:
         model = DeliveryDocument

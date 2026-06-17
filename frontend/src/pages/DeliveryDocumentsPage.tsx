@@ -61,6 +61,7 @@ const DOC_TYPE_LABELS_PL: Record<DeliveryDocumentType, string> = {
   PZ: 'PZ',
   ZW: 'ZW',
   RW: 'RW',
+  'PZ-KOR': 'PZ-KOR',
 };
 
 /** Kept for backwards compatibility — filters are now applied client-side in the Lista tab. */

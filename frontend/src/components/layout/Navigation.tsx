@@ -1,4 +1,5 @@
 import type { ReactNode, ReactElement } from 'react';
+import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link, useLocation } from 'react-router-dom';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
@@ -145,20 +146,6 @@ function IconFileTextFilled({ className }: { className?: string }) {
   );
 }
 
-function IconSettingsOutline({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-      <path
-        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 function IconVanOutline({ className }: { className?: string }) {
   return (
@@ -182,13 +169,6 @@ function IconVanFilled({ className }: { className?: string }) {
   );
 }
 
-function IconSettingsFilled({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zm7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.66a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.09 7.09 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.6.24-1.17.55-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.66c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.52.43 1.09.74 1.69.98l.38 2.65a.5.5 0 0 0 .49.42h4a.5.5 0 0 0 .49-.42l.38-2.65c.6-.24 1.17-.55 1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.66z" />
-    </svg>
-  );
-}
 
 type BottomNavIcon = (props: { className?: string }) => ReactElement;
 
@@ -261,32 +241,203 @@ const bottomNavBarClass = cn(
   'md:hidden',
 );
 
+function IconMenuOutline({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function IconClose({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+/** Full-screen drawer shown when "Więcej" is tapped on mobile. */
+function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const location = useLocation();
+  // Close drawer on navigation
+  useEffect(() => { onClose(); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const deliveryEnabled = useModuleGuard('delivery');
+  const invoicingEnabled = useModuleGuard('invoicing');
+  const ksefEnabled = useModuleGuard('ksef');
+  const purchasingEnabled = useModuleGuard('purchasing');
+  const productsEnabled = useModuleGuard('products');
+  const warehousesEnabled = useModuleGuard('warehouses');
+  const customersEnabled = useModuleGuard('customers');
+  const ordersEnabled = useModuleGuard('orders');
+  const reportingEnabled = useModuleGuard('reporting');
+  const costAllocationEnabled = useModuleGuard('cost_allocation');
+  const productionEnabled = useModuleGuard('production');
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-40 bg-black/40 md:hidden"
+            onClick={onClose}
+          />
+          {/* Drawer panel */}
+          <motion.div
+            key="drawer"
+            initial={{ x: '-100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '-100%' }}
+            transition={{ type: 'spring', stiffness: 350, damping: 35 }}
+            className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-background shadow-xl md:hidden"
+          >
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <span className="text-base font-semibold">Menu</span>
+              <button onClick={onClose} className="rounded-md p-1 hover:bg-accent" aria-label="Zamknij menu">
+                <IconClose className="h-5 w-5" />
+              </button>
+            </div>
+
+            <nav className="flex flex-1 flex-col gap-4 overflow-y-auto p-3 pb-[env(safe-area-inset-bottom)]">
+              <div className="space-y-0.5">
+                <AppNavItemLink to="/" end>Pulpit</AppNavItemLink>
+              </div>
+
+              {(customersEnabled || ordersEnabled) && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Sprzedaż</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    {customersEnabled && <AppNavItemLink to="/customers">Klienci</AppNavItemLink>}
+                    {ordersEnabled && <AppNavItemLink to="/orders">Zamówienia</AppNavItemLink>}
+                  </div>
+                </div>
+              )}
+
+              {(productsEnabled || warehousesEnabled) && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Magazyn</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    {productsEnabled && <AppNavItemLink to="/products">Produkty</AppNavItemLink>}
+                    {warehousesEnabled && <AppNavItemLink to="/warehouses">Magazyny</AppNavItemLink>}
+                    {warehousesEnabled && <AppNavItemLink to="/inventory">Inwentaryzacja</AppNavItemLink>}
+                    {warehousesEnabled && <AppNavItemLink to="/delivery/new-rw">Odpisy (RW)</AppNavItemLink>}
+                  </div>
+                </div>
+              )}
+
+              {(deliveryEnabled || invoicingEnabled || ksefEnabled) && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Dokumenty</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    {deliveryEnabled && <AppNavItemLink to="/van-routes">Trasy Vana</AppNavItemLink>}
+                    {deliveryEnabled && <AppNavItemLink to="/delivery">Dostawa</AppNavItemLink>}
+                    {invoicingEnabled && <AppNavItemLink to="/invoices">Faktury</AppNavItemLink>}
+                    {ksefEnabled && <AppNavItemLink to="/ksef">KSeF</AppNavItemLink>}
+                    {ksefEnabled && <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>}
+                    {ksefEnabled && <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>}
+                  </div>
+                </div>
+              )}
+
+              {purchasingEnabled && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Zakupy</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    <AppNavItemLink to="/suppliers">Dostawcy</AppNavItemLink>
+                    <AppNavItemLink to="/delivery/new-pz">Nowe PZ</AppNavItemLink>
+                  </div>
+                </div>
+              )}
+
+              {productionEnabled && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Produkcja</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    <AppNavItemLink to="/production/orders">Zlecenia produkcji</AppNavItemLink>
+                    <AppNavItemLink to="/production/recipes">Receptury</AppNavItemLink>
+                  </div>
+                </div>
+              )}
+
+              {costAllocationEnabled && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Księgowość</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    <AppNavItemLink to="/cost-allocation">Adnotacje kosztowe</AppNavItemLink>
+                  </div>
+                </div>
+              )}
+
+              {reportingEnabled && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Administracja</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    <AppNavItemLink to="/reports" end>Raporty</AppNavItemLink>
+                    <AppNavItemLink to="/reports/profit-loss">Wynik (P&amp;L)</AppNavItemLink>
+                    <AppNavItemLink to="/reports/product-margin">Marże na produktach</AppNavItemLink>
+                    <AppNavItemLink to="/reports/payment-aging">Aging należności</AppNavItemLink>
+                    <AppNavItemLink to="/reports/supplier-costs">Koszty zakupów</AppNavItemLink>
+                    <AppNavItemLink to="/reports/inventory">Magazyn</AppNavItemLink>
+                    <AppNavItemLink to="/reports/customer-margin">Marże na klientach</AppNavItemLink>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1 border-t border-border pt-3">
+                <AppNavItemLink to="/settings/company" end>Ustawienia</AppNavItemLink>
+                {ksefEnabled && <AppNavItemLink to="/settings/certificate" end>Certyfikat KSeF</AppNavItemLink>}
+              </div>
+            </nav>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
 /** Mobile-first glass bottom nav; sidebar stays visible from `md` up. */
 export function BottomNav() {
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const ordersEnabled = useModuleGuard('orders');
   const deliveryEnabled = useModuleGuard('delivery');
   const invoicingEnabled = useModuleGuard('invoicing');
 
   return (
-    <nav className={bottomNavBarClass} aria-label="Menu dolne">
-      <BottomNavItem to="/" end label="Pulpit" IconOutline={IconHomeOutline} IconFilled={IconHomeFilled} />
-      {ordersEnabled ? (
-        <BottomNavItem to="/orders" label="Sprzedaż" IconOutline={IconCartOutline} IconFilled={IconCartFilled} />
-      ) : null}
-      {deliveryEnabled ? (
-        <BottomNavItem to="/van-routes" label="Trasy" IconOutline={IconVanOutline} IconFilled={IconVanFilled} />
-      ) : null}
-      {invoicingEnabled ? (
-        <BottomNavItem to="/invoices" label="Faktury" IconOutline={IconFileTextOutline} IconFilled={IconFileTextFilled} />
-      ) : null}
-      <BottomNavItem
-        to="/settings/company"
-        end
-        activePathPrefix="/settings"
-        label="Ustawienia"
-        IconOutline={IconSettingsOutline}
-        IconFilled={IconSettingsFilled}
-      />
-    </nav>
+    <>
+      <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <nav className={bottomNavBarClass} aria-label="Menu dolne">
+        <BottomNavItem to="/" end label="Pulpit" IconOutline={IconHomeOutline} IconFilled={IconHomeFilled} />
+        {ordersEnabled ? (
+          <BottomNavItem to="/orders" label="Sprzedaż" IconOutline={IconCartOutline} IconFilled={IconCartFilled} />
+        ) : null}
+        {deliveryEnabled ? (
+          <BottomNavItem to="/van-routes" label="Trasy" IconOutline={IconVanOutline} IconFilled={IconVanFilled} />
+        ) : null}
+        {invoicingEnabled ? (
+          <BottomNavItem to="/invoices" label="Faktury" IconOutline={IconFileTextOutline} IconFilled={IconFileTextFilled} />
+        ) : null}
+        {/* Więcej drawer trigger */}
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 py-2 text-center outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          aria-label="Więcej opcji"
+        >
+          <span className="flex min-h-[2.5rem] items-center justify-center px-4 py-1">
+            <IconMenuOutline className="h-6 w-6 shrink-0 text-on-surface-variant" />
+          </span>
+          <span className="truncate text-xs font-medium leading-none text-on-surface-variant">Więcej</span>
+        </button>
+      </nav>
+    </>
   );
 }

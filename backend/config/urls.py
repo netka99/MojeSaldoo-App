@@ -17,6 +17,9 @@ urlpatterns = [
     path('api/invoices/', include('apps.invoices.urls')),
     path('api/ksef/', include('apps.ksef.urls')),
     path('api/reports/', include('apps.reporting.urls')),
+    path('api/cost-allocation/', include('apps.cost_allocation.urls')),
+    path('api/production/', include('apps.production.urls')),
+    path('api/inventory/', include('apps.inventory.urls')),
 ]
 
 # Serve media files during development

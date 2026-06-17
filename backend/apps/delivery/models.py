@@ -25,6 +25,7 @@ class DeliveryDocument(models.Model):
     DOC_TYPE_PZ = "PZ"
     DOC_TYPE_ZW = "ZW"
     DOC_TYPE_RW = "RW"
+    DOC_TYPE_PZ_KOR = "PZ-KOR"
 
     DOC_TYPE_CHOICES = [
         (DOC_TYPE_WZ, "Wydanie Zewnętrzne"),
@@ -32,6 +33,7 @@ class DeliveryDocument(models.Model):
         (DOC_TYPE_PZ, "Przyjęcie Zewnętrzne"),
         (DOC_TYPE_ZW, "Zwrot Zewnętrzny"),
         (DOC_TYPE_RW, "Rozchód Wewnętrzny"),
+        (DOC_TYPE_PZ_KOR, "Korekta Przyjęcia Zewnętrznego"),
     ]
 
     STATUS_DRAFT = "draft"
@@ -69,7 +71,7 @@ class DeliveryDocument(models.Model):
         related_name="delivery_documents",
         help_text="User who created or last updated (audit).",
     )
-    document_type = models.CharField(max_length=2, choices=DOC_TYPE_CHOICES)
+    document_type = models.CharField(max_length=6, choices=DOC_TYPE_CHOICES)
     document_number = models.CharField(
         max_length=32,
         null=True,
@@ -130,6 +132,14 @@ class DeliveryDocument(models.Model):
         related_name="pz_documents",
         help_text="KSeF invoice this PZ was created from.",
     )
+    corrects_pz = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="corrections",
+        help_text="For PZ-KOR: the original PZ this document corrects.",
+    )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
@@ -141,6 +151,12 @@ class DeliveryDocument(models.Model):
     receiver_name = models.CharField(max_length=255, blank=True, default="")
     delivered_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
+    external_document_number = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Nr dokumentu dostawcy (WZ/list przewozowy) — wypełniany ręcznie przy PZ.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -250,6 +266,11 @@ class DeliveryItem(models.Model):
         null=True,
         blank=True,
         help_text="Cena zakupu netto per jednostka — wypełniana przy PZ.",
+    )
+    expiry_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Data ważności partii — przenoszona na StockBatch przy przyjęciu PZ.",
     )
     ksef_invoice_line_position = models.PositiveSmallIntegerField(
         null=True,

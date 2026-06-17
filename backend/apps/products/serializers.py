@@ -14,6 +14,9 @@ class ProductSerializer(serializers.ModelSerializer):
     price_gross = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
     vat_rate = serializers.DecimalField(max_digits=5, decimal_places=2, required=False)
     min_stock_alert = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    avg_cost = serializers.DecimalField(
+        max_digits=10, decimal_places=4, required=False, allow_null=True,
+    )
     stock_total = serializers.SerializerMethodField()
 
     class Meta:
@@ -34,12 +37,34 @@ class ProductSerializer(serializers.ModelSerializer):
             "track_batches",
             "min_stock_alert",
             "shelf_life_days",
+            "is_resalable",
+            "markup_percent",
+            "avg_cost",
+            "avg_cost_source",
+            "last_cost",
+            "avg_cost_updated_at",
             "is_active",
             "stock_total",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "company", "stock_total", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "company", "last_cost", "avg_cost_updated_at", "stock_total", "created_at", "updated_at"]
+
+    def validate_avg_cost(self, value):
+        if value is not None and value < Decimal("0"):
+            raise serializers.ValidationError("Koszt własny nie może być ujemny.")
+        return value
+
+    def update(self, instance, validated_data):
+        # If avg_cost is being manually set, force source = manual
+        # unless a higher-priority source is already set (pz or production)
+        if "avg_cost" in validated_data:
+            high_priority = {Product.COST_SOURCE_PZ, Product.COST_SOURCE_PRODUCTION}
+            if instance.avg_cost_source not in high_priority:
+                validated_data.setdefault("avg_cost_source", Product.COST_SOURCE_MANUAL)
+                from django.utils import timezone
+                validated_data["avg_cost_updated_at"] = timezone.now()
+        return super().update(instance, validated_data)
 
     def get_stock_total(self, obj: Product) -> Decimal:
         """Sum of ``quantity_available`` across all company warehouses; list views annotate ``_stock_total``."""

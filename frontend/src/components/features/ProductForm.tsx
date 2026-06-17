@@ -20,6 +20,18 @@ const minStockStr = z
   .transform((s) => (s.trim() === '' ? '0' : s))
   .refine((s) => /^\d+(\.\d{1,2})?$/.test(s), 'Maks. 2 miejsca po przecinku');
 
+const optionalDecimalStr = z
+  .string()
+  .refine((s) => s.trim() === '' || /^\d+(\.\d{1,2})?$/.test(s.trim()), {
+    message: 'Format: np. 30.00 (kropka jako separator)',
+  });
+
+const optionalCostStr = z
+  .string()
+  .refine((s) => s.trim() === '' || /^\d+(\.\d{1,4})?$/.test(s.trim()), {
+    message: 'Format: np. 2.5000 (kropka jako separator)',
+  });
+
 export const productFormSchema = z.object({
   name: z.string().min(1, 'Nazwa jest wymagana').max(255),
   description: z.string().max(5000),
@@ -37,6 +49,9 @@ export const productFormSchema = z.object({
     .refine((s) => s.trim() === '' || /^\d+$/.test(s.trim()), {
       message: 'Tylko liczba całkowita dni lub puste',
     }),
+  is_resalable: z.boolean(),
+  markup_percent: optionalDecimalStr,
+  avg_cost_manual: optionalCostStr,
   is_active: z.boolean(),
 });
 
@@ -55,6 +70,9 @@ const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
   track_batches: true,
   min_stock_alert: '0',
   shelf_life_days: '',
+  is_resalable: true,
+  markup_percent: '',
+  avg_cost_manual: '',
   is_active: true,
 };
 
@@ -78,12 +96,20 @@ function productToFormDefaults(product: Product): ProductFormValues {
     track_batches: product.track_batches,
     min_stock_alert: String(product.min_stock_alert),
     shelf_life_days: product.shelf_life_days != null ? String(product.shelf_life_days) : '',
+    is_resalable: product.is_resalable ?? true,
+    markup_percent: product.markup_percent != null ? String(product.markup_percent) : '',
+    // Only pre-fill avg_cost_manual when source is manual (or not set); auto-set sources are read-only
+    avg_cost_manual:
+      product.avg_cost_source === 'manual' || product.avg_cost_source == null
+        ? (product.avg_cost != null ? String(product.avg_cost) : '')
+        : '',
     is_active: product.is_active,
   };
 }
 
 function formValuesToProductWrite(values: ProductFormValues, id?: string): ProductWrite {
   const shelf = values.shelf_life_days.trim();
+  const markup = values.markup_percent.trim();
   return {
     ...(id ? { id } : {}),
     name: values.name,
@@ -98,6 +124,12 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
     track_batches: values.track_batches,
     min_stock_alert: values.min_stock_alert,
     shelf_life_days: shelf ? Number.parseInt(shelf, 10) : null,
+    is_resalable: values.is_resalable,
+    markup_percent: markup ? markup : null,
+    avg_cost: values.avg_cost_manual.trim() ? values.avg_cost_manual.trim() : null,
+    avg_cost_source: null,
+    avg_cost_updated_at: null,
+    last_cost: null,
     is_active: values.is_active,
   };
 }
@@ -224,7 +256,10 @@ export function ProductForm({
 
   const priceNet = useWatch({ control, name: 'price_net' });
   const vatRate = useWatch({ control, name: 'vat_rate' });
+  const isResalable = useWatch({ control, name: 'is_resalable' });
+  const markupPercent = useWatch({ control, name: 'markup_percent' });
 
+  // Auto-calculate price_gross when price_net or vat_rate changes
   useEffect(() => {
     const net = priceNet?.trim() ?? '';
     const vat = vatRate?.trim() ?? '';
@@ -233,6 +268,24 @@ export function ProductForm({
       setValue('price_gross', gross, { shouldValidate: true });
     }
   }, [priceNet, vatRate, setValue]);
+
+  const avgCostManual = useWatch({ control, name: 'avg_cost_manual' });
+
+  // Resolved avg_cost for price suggestion: manual input takes precedence over stored value
+  const resolvedAvgCost = (() => {
+    const manual = avgCostManual?.trim();
+    if (manual && /^\d+(\.\d{1,4})?$/.test(manual)) return Number(manual);
+    return product?.avg_cost != null ? Number(product.avg_cost) : null;
+  })();
+
+  // Suggested price_net from avg_cost × (1 + markup/100)
+  const avgCost = resolvedAvgCost;
+  const suggestedPriceNet = (() => {
+    if (avgCost == null || avgCost <= 0) return null;
+    const m = markupPercent?.trim() ?? '';
+    if (!/^\d+(\.\d{1,2})?$/.test(m)) return null;
+    return (avgCost * (1 + Number(m) / 100)).toFixed(2);
+  })();
 
   useEffect(() => {
     reset(product ? productToFormDefaults(product) : EMPTY_PRODUCT_DEFAULTS);
@@ -301,13 +354,24 @@ export function ProductForm({
 
         <FormSection title="Cennik i VAT" Icon={IconTag}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="Cena netto"
-              inputMode="decimal"
-              {...register('price_net')}
-              error={errors.price_net?.message}
-              className={inField('price_net')}
-            />
+            <div className="space-y-1">
+              <Input
+                label="Cena netto sprzedaży"
+                inputMode="decimal"
+                {...register('price_net')}
+                error={errors.price_net?.message}
+                className={inField('price_net')}
+              />
+              {suggestedPriceNet && suggestedPriceNet !== priceNet?.trim() && (
+                <button
+                  type="button"
+                  className="text-xs text-primary underline-offset-2 hover:underline"
+                  onClick={() => setValue('price_net', suggestedPriceNet, { shouldValidate: true })}
+                >
+                  Zastosuj sugerowaną: {suggestedPriceNet} zł
+                </button>
+              )}
+            </div>
             <Input
               label="Cena brutto"
               inputMode="decimal"
@@ -316,6 +380,69 @@ export function ProductForm({
               className={inField('price_gross')}
             />
           </div>
+          {(() => {
+            const source = product?.avg_cost_source;
+            const autoSources: Array<typeof source> = ['pz', 'production'];
+            const isAutoSet = autoSources.includes(source ?? null as never);
+            const sourceLabel =
+              source === 'pz' ? 'z PZ' :
+              source === 'production' ? 'z produkcji' :
+              source === 'recipe' ? 'szacunek z receptury' : null;
+
+            return (
+              <div className="space-y-1">
+                {isAutoSet ? (
+                  <div>
+                    <p className="mb-1 text-sm font-medium text-foreground">Koszt własny (avg_cost)</p>
+                    <div className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-sm">
+                      <span className="tabular-nums font-medium">
+                        {product?.avg_cost != null ? `${Number(product.avg_cost).toFixed(4)} zł/jm` : '—'}
+                      </span>
+                      {sourceLabel && (
+                        <span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+                          {sourceLabel}
+                        </span>
+                      )}
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        Ustawiany automatycznie — nie można edytować ręcznie
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <Input
+                    label="Koszt własny (avg_cost)"
+                    inputMode="decimal"
+                    placeholder="np. 2.5000"
+                    helperText={
+                      source === 'recipe'
+                        ? 'Szacunek z receptury — wpisz rzeczywisty koszt aby nadpisać'
+                        : 'Ręczny koszt — zostanie zastąpiony automatycznie po pierwszym PZ lub produkcji'
+                    }
+                    {...register('avg_cost_manual')}
+                    error={errors.avg_cost_manual?.message}
+                    className={inField('avg_cost_manual')}
+                  />
+                )}
+              </div>
+            );
+          })()}
+          {isResalable && (
+            <div className="space-y-1">
+              <Input
+                label="Narzut / marża (%)"
+                inputMode="decimal"
+                placeholder="np. 55"
+                helperText={
+                  avgCost != null && avgCost > 0
+                    ? `Aktualny koszt zakupu: ${avgCost.toFixed(4)} zł/jm`
+                    : 'Koszt zakupu pojawi się po pierwszym PZ, produkcji lub wpisz ręcznie powyżej'
+                }
+                {...register('markup_percent')}
+                error={errors.markup_percent?.message}
+                className={inField('markup_percent')}
+              />
+            </div>
+          )}
           <div className="space-y-2">
             {vatPresetActive ? (
               <>
@@ -392,6 +519,19 @@ export function ProductForm({
       </div>
 
       <div className="space-y-3">
+        <Controller
+          name="is_resalable"
+          control={control}
+          render={({ field }) => (
+            <IosToggle
+              checked={field.value}
+              onChange={field.onChange}
+              label="Produkt do sprzedaży"
+              description="Pojawia się na fakturach i zamówieniach klientów. Wyłącz dla surowców używanych tylko w produkcji."
+              disabled={isLoading}
+            />
+          )}
+        />
         <Controller
           name="track_batches"
           control={control}

@@ -238,7 +238,7 @@ export function OrderShopSheet({ customer, order, date, isOpen, onClose }: Order
                         type="button"
                         disabled={generateWzM.isPending}
                         onClick={() =>
-                          generateWzM.mutate(order.id, {
+                          generateWzM.mutate({ orderId: order.id }, {
                             onSuccess: () => {
                               onClose();
                               navigate('/delivery');

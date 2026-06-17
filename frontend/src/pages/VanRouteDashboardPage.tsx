@@ -512,7 +512,7 @@ function StopCard({
   order,
   wz,
   locked,
-  vanWarehouseId,
+  vanWarehouseId: _vanWarehouseId,
   routeId,
   onCreateWz,
   isCreatingWz,

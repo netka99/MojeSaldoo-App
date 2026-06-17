@@ -187,9 +187,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="mark-paid")
     def mark_paid(self, request, pk=None):
         invoice = self.get_object()
-        if invoice.status not in (Invoice.STATUS_ISSUED, Invoice.STATUS_SENT):
+        payable_statuses = (
+            Invoice.STATUS_ISSUED,
+            Invoice.STATUS_SENT,
+            Invoice.STATUS_OVERDUE,
+        )
+        if invoice.status not in payable_statuses:
             raise ValidationError(
-                {"detail": "Only issued or sent invoices can be marked as paid."}
+                {"detail": "Only issued, sent, or overdue invoices can be marked as paid."}
             )
         invoice.status = Invoice.STATUS_PAID
         invoice.paid_at = timezone.now()

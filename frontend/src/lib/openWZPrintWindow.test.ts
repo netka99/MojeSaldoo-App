@@ -40,6 +40,7 @@ function minimalPreview(): DeliveryDocumentPreviewPayload {
     company: { name: 'Co', nip: '', address: '' },
     customer: { name: '', nip: '', address: '' },
     from_warehouse: null,
+    to_warehouse: null,
     items: [],
   };
 }

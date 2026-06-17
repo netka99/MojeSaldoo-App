@@ -242,7 +242,6 @@ export function VanLoadingPage() {
   const isLoading = mainWHLoading || mobileWHLoading || productsLoading || (fromOrders && ordersLoading);
   const fromWH = mainWarehouses.find((w) => w.id === fromWarehouseId);
   const toWH = mobileWarehouses.find((w) => w.id === toWarehouseId);
-  const hasMultipleWarehouses = mainWarehouses.length > 1 || mobileWarehouses.length > 1;
 
   return (
     <div className="relative mx-auto flex w-full max-w-3xl flex-col">

@@ -245,7 +245,10 @@ export function InvoiceDetailPage() {
   }, [invoice?.ksef_status]);
 
   const showIssue = invoice?.status === 'draft';
-  const showMarkPaid = invoice?.status === 'issued' || invoice?.status === 'sent';
+  const showMarkPaid =
+    invoice?.status === 'issued' ||
+    invoice?.status === 'sent' ||
+    invoice?.status === 'overdue';
   const showSendToKsef = invoice?.status === 'issued' && invoice.ksef_status === 'not_sent';
   const showResendKsef = invoice?.ksef_status === 'rejected';
   const showKsefRefresh = invoice?.ksef_status === 'pending';

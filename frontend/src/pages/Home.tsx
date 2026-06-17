@@ -214,6 +214,9 @@ export const Home: React.FC = () => {
     invoicing: useModuleGuard('invoicing'),
     reporting: reportingEnabled,
     ksef: useModuleGuard('ksef'),
+    cost_allocation: useModuleGuard('cost_allocation'),
+    purchasing: useModuleGuard('purchasing'),
+    production: useModuleGuard('production'),
   };
 
   const dashQ = useDashboardSummaryQuery();

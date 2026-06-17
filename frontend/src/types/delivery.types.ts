@@ -3,7 +3,7 @@
  */
 
 /** `DeliveryDocument.document_type`. */
-export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW' | 'RW';
+export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW' | 'RW' | 'PZ-KOR';
 
 /** `DeliveryDocument.status`. */
 export type DeliveryDocumentStatus =
@@ -20,11 +20,15 @@ export interface DeliveryItem {
   product_id: string;
   /** From linked product (API); present for MM/PZ lines without order_item. */
   product_name?: string | null;
+  /** Unit of measure from linked product (e.g. "szt.", "kg"). */
+  product_unit?: string | null;
   quantity_planned: string | number;
   quantity_actual: string | number | null;
   quantity_returned: string | number;
   /** Purchase cost per unit — populated on PZ lines. */
   unit_cost?: string | number | null;
+  /** Expiry date for the received batch — PZ lines only. */
+  expiry_date?: string | null;
   return_reason: string;
   is_damaged: boolean;
   notes: string;
@@ -96,6 +100,12 @@ export interface DeliveryDocument {
   from_supplier_id?: string | null;
   /** Supplier name (read-only, from API). */
   supplier_name?: string | null;
+  /** Supplier NIP (read-only, from API). */
+  supplier_nip?: string | null;
+  /** KSeF invoice this PZ was created from (read-only, from API). */
+  ksef_invoice_ref?: { id: string; ksef_number: string; invoice_number: string } | null;
+  /** Writable: link/unlink a KSeF invoice to this PZ after the fact. */
+  ksef_invoice_id?: string | null;
   status: DeliveryDocumentStatus;
   has_returns: boolean;
   returns_notes: string;
@@ -105,6 +115,14 @@ export interface DeliveryDocument {
   notes: string;
   created_at: string;
   updated_at: string;
+  /** Supplier's own WZ / delivery note number — typed in manually on PZ. */
+  external_document_number?: string;
+  /** For PZ-KOR: UUID of the original PZ being corrected. */
+  corrects_pz_id?: string | null;
+  /** For PZ-KOR: document number of the original PZ (read-only). */
+  corrects_pz_number?: string | null;
+  /** For PZ: list of PZ-KOR correction documents (read-only). */
+  corrections?: Array<{ id: string; document_number: string | null; issue_date: string }>;
   /** True when an invoice references this delivery document (editing blocked server-side). */
   locked_for_edit?: boolean;
   linked_invoices?: LinkedInvoiceRef[];
@@ -175,7 +193,27 @@ export type DeliveryDocumentPatch = Partial<Omit<DeliveryDocumentCreate, 'order_
   order_id?: string;
   document_type?: DeliveryDocumentType;
   issue_date?: string;
+  notes?: string;
+  external_document_number?: string;
+  /** Link/unlink a KSeF invoice to an existing PZ. */
+  ksef_invoice_id?: string | null;
 };
+
+export type RwReason = 'Strata' | 'Próbka' | 'Uszkodzenie' | 'Inne';
+
+/** `POST /api/delivery/create-rw/` */
+export interface RwCreateItem {
+  product_id: string;
+  quantity: string; // decimal string e.g. "1.000"
+}
+
+export interface RwCreatePayload {
+  from_warehouse_id: string;
+  reason: RwReason | string;
+  issue_date?: string;
+  notes?: string;
+  items: RwCreateItem[];
+}
 
 /** `POST /api/delivery/:id/complete/` body. */
 export interface DeliveryCompleteItemRow {
@@ -204,7 +242,20 @@ export interface DeliveryUpdateLinesPayload {
     return_reason?: string;
     is_damaged?: boolean;
     notes?: string;
+    expiry_date?: string | null;
   }>;
+}
+
+/** POST `/api/delivery/:id/create-kor/` body. */
+export interface PzKorItemPayload {
+  delivery_item_id: string;
+  new_unit_cost?: string | null;      // decimal string, e.g. "9.5000"
+  new_quantity_actual?: string | null; // decimal string, e.g. "98.000"
+}
+
+export interface PzKorPayload {
+  items: PzKorItemPayload[];
+  notes?: string;
 }
 
 export interface PaginatedDeliveryDocuments {

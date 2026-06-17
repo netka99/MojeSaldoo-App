@@ -42,7 +42,20 @@ export interface PzDocumentRef {
   status: string;
 }
 
+export type OpexCategory = 'utilities' | 'rent' | 'services' | 'transport' | 'marketing' | 'other';
+
+export const OPEX_CATEGORY_LABELS: Record<OpexCategory, string> = {
+  utilities: 'Media',
+  rent: 'Czynsz / leasing',
+  services: 'Usługi zewnętrzne',
+  transport: 'Transport',
+  marketing: 'Marketing',
+  other: 'Inne',
+};
+
 export interface ReceivedInvoiceMeta {
+  /** UUID of the ReceivedKSeFInvoice DB record — use for PZ linking. */
+  id: string;
   ksefNumber: string;
   invoiceNumber: string;
   issueDate: string;
@@ -55,6 +68,8 @@ export interface ReceivedInvoiceMeta {
   currency: string;
   invoiceType: string;
   pzDocuments: PzDocumentRef[];
+  opex_category: OpexCategory | null;
+  opex_tagged_at: string | null;
 }
 
 export interface ReceivedInvoicesResult {
@@ -93,6 +108,23 @@ export interface ParsedInvoiceResult {
   lines: ParsedInvoiceLine[];
   /** All PZ documents linked to this invoice */
   pz_documents: PzDocumentRef[];
+}
+
+export interface PaperScanLine {
+  name: string;
+  quantity: string;
+  unit: string;
+  unit_price: string;
+}
+
+export interface PaperScanResult {
+  seller_name: string;
+  seller_nip: string;
+  invoice_number: string;
+  issue_date: string;
+  total_gross: string;
+  raw_text: string;
+  lines: PaperScanLine[];
 }
 
 const ksefPath = '/ksef/session/';
@@ -142,4 +174,26 @@ export const ksefService = {
    */
   saveProductMappings: (sellerNip: string, mappings: { invoice_line_name: string; product_id: string }[]) =>
     api.post<{ saved: number }>('/ksef/product-mappings/', { seller_nip: sellerNip, mappings }),
+
+  /**
+   * Tag (or clear) an OPEX category on a received invoice.
+   * PATCH /api/ksef/inbox/<ksefNumber>/opex/
+   * Body: { opex_category: OpexCategory | null }
+   */
+  tagOpexCategory: (ksefNumber: string, opex_category: OpexCategory | null) =>
+    api.patch<ReceivedInvoiceMeta>(
+      `/ksef/inbox/${encodeURIComponent(ksefNumber)}/opex/`,
+      { opex_category },
+    ),
+
+  /**
+   * Upload a paper invoice image for OCR extraction.
+   * POST /api/ksef/scan-paper/   (multipart/form-data, field: image)
+   * Returns best-effort extracted fields; any field may be empty if OCR fails.
+   */
+  scanPaperInvoice: (image: File) => {
+    const fd = new FormData();
+    fd.append('image', image);
+    return api.postForm<PaperScanResult>('/ksef/scan-paper/', fd);
+  },
 };

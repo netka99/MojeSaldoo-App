@@ -10,6 +10,8 @@ import type {
   PendingReturnItem,
   PzCompleteItemRow,
   PzCreatePayload,
+  PzKorPayload,
+  RwCreatePayload,
   StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
@@ -33,6 +35,10 @@ export type DeliveryListParams = {
   van_route?: string;
   issue_date_after?: string;
   issue_date_before?: string;
+  /** Filter by supplier UUID. */
+  from_supplier?: string;
+  /** When true, returns only PZ documents with no linked KSeF invoice. */
+  ksef_unlinked?: boolean;
   /**
    * When true, the list response includes nested `items`, `return_documents`, and `linked_invoices`.
    * Omit for the paginated "Lista" view; pass `true` for "Wg sklepu" and other views that
@@ -121,6 +127,14 @@ export const deliveryService = {
   /** `POST /api/delivery/:id/cancel-pz/` — cancel a PZ and reverse its stock impact. */
   cancelPz: (id: string) =>
     api.post<DeliveryDocument>(`${basePath}${id}/cancel-pz/`, {}),
+
+  /** `POST /api/delivery/:id/create-kor/` — create a PZ-KOR correction document. */
+  createPzKor: (id: string, data: PzKorPayload) =>
+    api.post<DeliveryDocument>(`${basePath}${id}/create-kor/`, data),
+
+  /** `POST /api/delivery/create-rw/` — create and immediately post a manual RW write-off. */
+  createRw: (data: RwCreatePayload) =>
+    api.post<DeliveryDocument>(`${basePath}create-rw/`, data),
 
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),

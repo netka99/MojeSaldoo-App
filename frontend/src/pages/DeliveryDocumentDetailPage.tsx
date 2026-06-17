@@ -11,6 +11,7 @@ import {
   useCancelPzMutation,
   useCompleteDeliveryMutation,
   useCompletePzMutation,
+  useCreatePzKorMutation,
   useDeliveryQuery,
   useDeliveryPreviewQuery,
   usePatchDeliveryMutation,
@@ -21,12 +22,13 @@ import {
 import { useOrderQuery } from '@/query/use-orders';
 import { productService } from '@/services/product.service';
 import { customerService } from '@/services/customer.service';
+import { warehouseService } from '@/services/warehouse.service';
 import { authStorage } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { resolveCustomerIdFromSearch } from '@/lib/customer-picker-utils';
 import { cn } from '@/lib/utils';
 import { openWZPrintWindow } from '@/lib/openWZPrintWindow';
-import type { DeliveryDocument, DeliveryItem, LinkedZWDocument, PendingReturnItem } from '@/types';
+import type { DeliveryDocument, DeliveryItem, LinkedZWDocument, PendingReturnItem, PzKorPayload } from '@/types';
 import type { Customer, Order, Product } from '@/types';
 
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
@@ -120,13 +122,15 @@ interface WZItemCardProps {
   label: string;
   isEditing: boolean;
   editQty: number;
+  editExpiry?: string;
   onQtyChange: (id: string, delta: number) => void;
+  onExpiryChange?: (id: string, value: string) => void;
   onRemove: (id: string) => void;
   index: number;
   isPZ?: boolean;
 }
 
-function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, index, isPZ }: WZItemCardProps) {
+function WZItemCard({ item, label, isEditing, editQty, editExpiry, onQtyChange, onExpiryChange, onRemove, index, isPZ }: WZItemCardProps) {
   const qtyActual =
     item.quantity_actual !== null && item.quantity_actual !== undefined && item.quantity_actual !== ''
       ? parseFloat(String(item.quantity_actual))
@@ -163,43 +167,57 @@ function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, in
       </div>
 
       {/* Bottom row */}
-      <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3">
+      <div className="mt-3 border-t border-border/50 pt-3">
         {isEditing ? (
-          /* Editable: trash + stepper */
-          <>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              type="button"
-              aria-label={`Usuń ${label}`}
-              onClick={() => onRemove(item.id)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive"
-            >
-              <TrashIcon />
-            </motion.button>
-            <div className="flex items-center gap-3">
+          /* Editable: trash + stepper + expiry (PZ only) */
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <motion.button
                 whileTap={{ scale: 0.9 }}
                 type="button"
-                aria-label="Zmniejsz ilość"
-                onClick={() => onQtyChange(item.id, -1)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground"
+                aria-label={`Usuń ${label}`}
+                onClick={() => onRemove(item.id)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive"
               >
-                <MinusIcon />
+                <TrashIcon />
               </motion.button>
-              <span className="min-w-[2.5rem] text-center text-[15px] font-semibold tabular-nums text-foreground">
-                {qtyDisplay}
-              </span>
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                type="button"
-                aria-label="Zwiększ ilość"
-                onClick={() => onQtyChange(item.id, 1)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground"
-              >
-                <PlusIcon />
-              </motion.button>
+              <div className="flex items-center gap-3">
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  type="button"
+                  aria-label="Zmniejsz ilość"
+                  onClick={() => onQtyChange(item.id, -1)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground"
+                >
+                  <MinusIcon />
+                </motion.button>
+                <span className="min-w-[2.5rem] text-center text-[15px] font-semibold tabular-nums text-foreground">
+                  {qtyDisplay}
+                </span>
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  type="button"
+                  aria-label="Zwiększ ilość"
+                  onClick={() => onQtyChange(item.id, 1)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                >
+                  <PlusIcon />
+                </motion.button>
+              </div>
             </div>
-          </>
+            {isPZ && onExpiryChange && (
+              <div className="flex items-center gap-2">
+                <label className="shrink-0 text-[12px] text-muted-foreground">Data ważności:</label>
+                <input
+                  type="date"
+                  value={editExpiry ?? ''}
+                  onChange={(e) => onExpiryChange(item.id, e.target.value)}
+                  aria-label={`Data ważności — ${label}`}
+                  className="h-8 flex-1 rounded-lg border border-border bg-background px-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+            )}
+          </div>
         ) : (
           /* Read-only: actual + returned + unit_cost if present */
           <div className="flex flex-wrap gap-x-4 gap-y-0.5">
@@ -231,6 +249,279 @@ function WZItemCard({ item, label, isEditing, editQty, onQtyChange, onRemove, in
         )}
       </div>
     </motion.div>
+  );
+}
+
+/* ── PZ items table (read-only) ─────────────────────────────────── */
+interface PZItemsTableProps {
+  items: DeliveryItem[];
+}
+
+function PZItemsTable({ items }: PZItemsTableProps) {
+  const totalValue = items.reduce((sum, item) => {
+    const cost = item.unit_cost != null ? parseFloat(String(item.unit_cost)) : null;
+    const qty = item.quantity_actual != null && item.quantity_actual !== ''
+      ? parseFloat(String(item.quantity_actual))
+      : parseFloat(String(item.quantity_planned)) || 0;
+    if (cost !== null && Number.isFinite(cost)) return sum + qty * cost;
+    return sum;
+  }, 0);
+
+  const hasActual = items.some(
+    (it) => it.quantity_actual != null && it.quantity_actual !== '',
+  );
+  const hasCost = items.some((it) => it.unit_cost != null && it.unit_cost !== '');
+  const hasExpiry = items.some((it) => it.expiry_date != null && it.expiry_date !== '');
+
+  return (
+    <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-border/50 bg-muted/30">
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground w-8">Lp.</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Produkt</th>
+              <th className="px-3 py-2.5 text-center font-medium text-muted-foreground w-14">J.m.</th>
+              <th className="px-3 py-2.5 text-right font-medium text-muted-foreground w-20">Ilość</th>
+              {hasActual && (
+                <th className="px-3 py-2.5 text-right font-medium text-muted-foreground w-24">Przyjęto</th>
+              )}
+              {hasCost && (
+                <>
+                  <th className="px-3 py-2.5 text-right font-medium text-muted-foreground w-28">Cena netto</th>
+                  <th className="px-4 py-2.5 text-right font-medium text-muted-foreground w-28">Wartość netto</th>
+                </>
+              )}
+              {hasExpiry && (
+                <th className="px-3 py-2.5 text-right font-medium text-muted-foreground w-28">Data ważności</th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => {
+              const cost = item.unit_cost != null ? parseFloat(String(item.unit_cost)) : null;
+              const qtyPlanned = parseFloat(String(item.quantity_planned)) || 0;
+              const qtyActual =
+                item.quantity_actual != null && item.quantity_actual !== ''
+                  ? parseFloat(String(item.quantity_actual))
+                  : null;
+              const qtyForValue = qtyActual ?? qtyPlanned;
+              const lineValue = cost !== null && Number.isFinite(cost) ? qtyForValue * cost : null;
+
+              const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, ''));
+
+              return (
+                <tr key={item.id} className="border-b border-border/30 last:border-b-0 hover:bg-muted/20">
+                  <td className="px-4 py-2.5 text-muted-foreground">{i + 1}</td>
+                  <td className="px-4 py-2.5 font-medium text-foreground">
+                    {item.product_name?.trim() || `Produkt ${item.product_id.slice(0, 8)}…`}
+                  </td>
+                  <td className="px-3 py-2.5 text-center text-muted-foreground">
+                    {item.product_unit ?? '—'}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-foreground">
+                    {fmtQty(qtyPlanned)}
+                  </td>
+                  {hasActual && (
+                    <td className="px-3 py-2.5 text-right tabular-nums text-foreground">
+                      {qtyActual !== null ? fmtQty(qtyActual) : '—'}
+                    </td>
+                  )}
+                  {hasCost && (
+                    <>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-foreground">
+                        {cost !== null && Number.isFinite(cost) ? `${cost.toFixed(2)} zł` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground">
+                        {lineValue !== null ? `${lineValue.toFixed(2)} zł` : '—'}
+                      </td>
+                    </>
+                  )}
+                  {hasExpiry && (
+                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                      {item.expiry_date ? item.expiry_date : '—'}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+          {hasCost && (
+            <tfoot>
+              <tr className="border-t border-border/50 bg-muted/30">
+                <td colSpan={(hasActual ? 6 : 5) + (hasExpiry ? 1 : 0)} className="px-4 py-2.5 text-right text-[13px] font-semibold text-foreground">
+                  Razem netto
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-[14px] font-bold text-foreground">
+                  {totalValue.toFixed(2)} zł
+                </td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
+/* ── PZ Correction form ─────────────────────────────────────────── */
+interface KorLineState {
+  id: string;
+  productName: string;
+  unit: string | null;
+  originalQty: string;
+  originalCost: string;
+  newQty: string;
+  newCost: string;
+}
+
+interface PZKorFormProps {
+  items: DeliveryItem[];
+  onSubmit: (payload: PzKorPayload) => Promise<void>;
+  onCancel: () => void;
+  submitting: boolean;
+}
+
+function PZKorForm({ items, onSubmit, onCancel, submitting }: PZKorFormProps) {
+  const [lines, setLines] = useState<KorLineState[]>(() =>
+    items.map((it) => ({
+      id: it.id,
+      productName: it.product_name?.trim() || it.product_id.slice(0, 8),
+      unit: it.product_unit ?? null,
+      originalQty: String(it.quantity_actual ?? it.quantity_planned),
+      originalCost: it.unit_cost != null ? String(it.unit_cost) : '',
+      newQty: String(it.quantity_actual ?? it.quantity_planned),
+      newCost: it.unit_cost != null ? String(it.unit_cost) : '',
+    })),
+  );
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const update = (idx: number, patch: Partial<KorLineState>) =>
+    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+
+  const changedCount = lines.filter((l) => {
+    const qtyChanged = Math.abs(parseFloat(l.newQty) - parseFloat(l.originalQty)) > 0.0001;
+    const costChanged = l.originalCost !== '' && Math.abs(parseFloat(l.newCost) - parseFloat(l.originalCost)) > 0.0001;
+    return qtyChanged || costChanged;
+  }).length;
+
+  const handleSubmit = async () => {
+    setFormError(null);
+    const korItems = lines
+      .filter((l) => {
+        const qtyChanged = Math.abs(parseFloat(l.newQty) - parseFloat(l.originalQty)) > 0.0001;
+        const costChanged = l.originalCost !== '' && Math.abs(parseFloat(l.newCost) - parseFloat(l.originalCost)) > 0.0001;
+        return qtyChanged || costChanged;
+      })
+      .map((l) => {
+        const qtyChanged = Math.abs(parseFloat(l.newQty) - parseFloat(l.originalQty)) > 0.0001;
+        const costChanged = l.originalCost !== '' && Math.abs(parseFloat(l.newCost) - parseFloat(l.originalCost)) > 0.0001;
+        return {
+          delivery_item_id: l.id,
+          new_quantity_actual: qtyChanged ? parseFloat(l.newQty).toFixed(3) : undefined,
+          new_unit_cost: costChanged ? parseFloat(l.newCost).toFixed(4) : undefined,
+        };
+      });
+
+    if (korItems.length === 0) {
+      setFormError('Nie zmieniono żadnej wartości.');
+      return;
+    }
+    await onSubmit({ items: korItems });
+  };
+
+  return (
+    <div className="rounded-2xl border border-amber-400/50 bg-amber-50/60 dark:bg-amber-950/20 shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
+      <div className="px-4 py-3 border-b border-amber-400/30">
+        <p className="text-[14px] font-semibold text-amber-900 dark:text-amber-200">Korekta PZ</p>
+        <p className="mt-0.5 text-[12px] text-amber-700 dark:text-amber-400">
+          Zmień ceny lub ilości. Tylko zmodyfikowane pozycje trafią do dokumentu PZ-KOR.
+        </p>
+      </div>
+      {formError && (
+        <p className="px-4 py-2 text-xs text-destructive bg-destructive/5">{formError}</p>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-amber-400/30 bg-amber-100/40 dark:bg-amber-900/20">
+              <th className="px-4 py-2 text-left font-medium text-amber-800 dark:text-amber-300">Produkt</th>
+              <th className="px-3 py-2 text-center font-medium text-amber-800 dark:text-amber-300 w-12">J.m.</th>
+              <th className="px-3 py-2 text-right font-medium text-amber-800 dark:text-amber-300 w-28">Ilość (była)</th>
+              <th className="px-3 py-2 text-right font-medium text-amber-800 dark:text-amber-300 w-28">Ilość (korekta)</th>
+              <th className="px-3 py-2 text-right font-medium text-amber-800 dark:text-amber-300 w-28">Cena (była)</th>
+              <th className="px-4 py-2 text-right font-medium text-amber-800 dark:text-amber-300 w-28">Cena (korekta)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((line, i) => {
+              const qtyChanged = Math.abs(parseFloat(line.newQty) - parseFloat(line.originalQty)) > 0.0001;
+              const costChanged = line.originalCost !== '' && Math.abs(parseFloat(line.newCost) - parseFloat(line.originalCost)) > 0.0001;
+              return (
+                <tr key={line.id} className={cn(
+                  'border-b border-amber-400/20 last:border-b-0',
+                  (qtyChanged || costChanged) && 'bg-amber-100/60 dark:bg-amber-900/30',
+                )}>
+                  <td className="px-4 py-2 font-medium text-foreground">{line.productName}</td>
+                  <td className="px-3 py-2 text-center text-muted-foreground">{line.unit ?? '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{line.originalQty}</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={line.newQty}
+                      onChange={(e) => update(i, { newQty: e.target.value })}
+                      className={cn(
+                        'w-full rounded-lg border px-2 py-1 text-right text-[13px] tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-400',
+                        qtyChanged ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40' : 'border-border bg-background',
+                      )}
+                    />
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {line.originalCost ? `${parseFloat(line.originalCost).toFixed(2)} zł` : '—'}
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={line.newCost}
+                      onChange={(e) => update(i, { newCost: e.target.value })}
+                      placeholder="—"
+                      className={cn(
+                        'w-full rounded-lg border px-2 py-1 text-right text-[13px] tabular-nums placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400',
+                        costChanged ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40' : 'border-border bg-background',
+                      )}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex gap-2 px-4 py-3 border-t border-amber-400/30">
+        <button
+          type="button"
+          disabled={submitting || changedCount === 0}
+          onClick={() => void handleSubmit()}
+          title={changedCount === 0 ? 'Zmień co najmniej jedną wartość' : undefined}
+          className="rounded-xl bg-amber-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {submitting ? 'Tworzenie korekty…' : changedCount === 0 ? 'Utwórz PZ-KOR (brak zmian)' : `Utwórz PZ-KOR (${changedCount} poz.)`}
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={onCancel}
+          className="rounded-xl border border-border px-4 py-2 text-[13px] text-muted-foreground hover:bg-muted/60 disabled:opacity-50"
+        >
+          Anuluj
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -355,7 +646,7 @@ function ReturnItemsSection({ items, onChange }: ReturnItemsSectionProps) {
                   <input
                     type="number"
                     min="0.01"
-                    step="0.01"
+                    step="1"
                     value={item.quantity}
                     onChange={(e) => setQty(item.product_id, e.target.value)}
                     className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-[14px] tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
@@ -435,7 +726,7 @@ function LinkedZWSection({ documents, isEditing, zwItemEdits, onZwItemChange }: 
                             <input
                               type="number"
                               min="0.01"
-                              step="0.01"
+                              step="1"
                               value={edit.quantity_planned}
                               onChange={(e) => onZwItemChange(zw.id, item.id, 'quantity_planned', e.target.value)}
                               className="w-full rounded-lg border border-amber-300 bg-white dark:bg-amber-950/40 px-2 py-1.5 text-[13px] tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -598,31 +889,43 @@ export function DeliveryDocumentDetailPage() {
   const completeM = useCompleteDeliveryMutation();
   const completePzM = useCompletePzMutation();
   const cancelPzM = useCancelPzMutation();
+  const createKorM = useCreatePzKorMutation();
   const patchM = usePatchDeliveryMutation();
   const updateLinesM = useUpdateDeliveryLinesMutation();
   const addReturnsM = useAddReturnsMutation();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [showCancelPzConfirm, setShowCancelPzConfirm] = useState(false);
+  const [showKorForm, setShowKorForm] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
 
   /* ── Pending returns (collected before saving WZ) ───────────── */
   const [pendingReturns, setPendingReturns] = useState<PendingReturnItem[]>([]);
-  const [headerDraft, setHeaderDraft] = useState({ driver_name: '', notes: '', issue_date: '' });
+  const [headerDraft, setHeaderDraft] = useState({ driver_name: '', notes: '', issue_date: '', external_document_number: '', from_warehouse_id: '' });
   const [headerOpen, setHeaderOpen] = useState(false);
+
+  const { data: warehousesData } = useQuery({
+    queryKey: ['warehouses', 'main-active'],
+    queryFn: () => warehouseService.fetchList({ warehouse_type: 'main', is_active: true, ordering: 'code' }),
+    enabled: doc?.document_type !== 'PZ',
+  });
 
   /* ── Planned-qty edit state ─────────────────────────────────── */
   const [isEditing, setIsEditing] = useState(false);
   const [editQtys, setEditQtys] = useState<Record<string, number>>({});
+  const [editExpiries, setEditExpiries] = useState<Record<string, string>>({});
   const [zwItemEdits, setZwItemEdits] = useState<ZWItemEditsMap>({});
 
   const enterEditMode = useCallback(() => {
     if (!doc) return;
     const initial: Record<string, number> = {};
+    const initialExpiries: Record<string, string> = {};
     for (const it of doc.items) {
       initial[it.id] = parseFloat(String(it.quantity_planned)) || 0;
+      initialExpiries[it.id] = it.expiry_date ?? '';
     }
     setEditQtys(initial);
+    setEditExpiries(initialExpiries);
     // Populate ZW item edits from linked ZW documents
     const zwEdits: ZWItemEditsMap = {};
     for (const zw of doc.return_documents ?? []) {
@@ -642,6 +945,7 @@ export function DeliveryDocumentDetailPage() {
   const cancelEdit = () => {
     setIsEditing(false);
     setEditQtys({});
+    setEditExpiries({});
     setZwItemEdits({});
   };
 
@@ -673,9 +977,20 @@ export function DeliveryDocumentDetailPage() {
           items: doc.items.map((it) => ({
             id: it.id,
             quantity_planned: String(editQtys[it.id] ?? it.quantity_planned),
+            ...(isPZ ? { expiry_date: editExpiries[it.id] || null } : {}),
           })),
         },
       });
+      // For PZ: also save notes + external doc number if changed
+      if (isPZ && (
+        headerDraft.notes !== (doc.notes ?? '') ||
+        headerDraft.external_document_number !== (doc.external_document_number ?? '')
+      )) {
+        await patchM.mutateAsync({ id, data: {
+          notes: headerDraft.notes.trim() || undefined,
+          external_document_number: headerDraft.external_document_number.trim() || undefined,
+        }});
+      }
       // Also save edits for each linked ZW document
       for (const [zwDocId, itemEdits] of Object.entries(zwItemEdits)) {
         const zwItems = Object.entries(itemEdits).map(([itemId, edit]) => ({
@@ -702,6 +1017,8 @@ export function DeliveryDocumentDetailPage() {
       driver_name: doc.driver_name ?? '',
       notes: doc.notes ?? '',
       issue_date: doc.issue_date ? doc.issue_date.slice(0, 10) : '',
+      external_document_number: doc.external_document_number ?? '',
+      from_warehouse_id: doc.from_warehouse_id ? String(doc.from_warehouse_id) : '',
     });
   }, [doc]);
 
@@ -731,6 +1048,8 @@ export function DeliveryDocumentDetailPage() {
           driver_name: headerDraft.driver_name.trim() || undefined,
           notes: headerDraft.notes.trim() || undefined,
           issue_date: headerDraft.issue_date || undefined,
+          external_document_number: headerDraft.external_document_number.trim() || undefined,
+          from_warehouse_id: headerDraft.from_warehouse_id || undefined,
         },
       });
     } catch (e) { setActionError(errMsg(e)); }
@@ -754,7 +1073,8 @@ export function DeliveryDocumentDetailPage() {
 
   const locked = Boolean(doc?.locked_for_edit);
   const isPZ = doc?.document_type === 'PZ';
-  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || completePzM.isPending || cancelPzM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
+  const isRW = doc?.document_type === 'RW';
+  const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || completePzM.isPending || cancelPzM.isPending || createKorM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
 
   /* ── Items to display (filter 0-qty in edit mode) ───────────── */
   const displayItems = doc
@@ -803,7 +1123,12 @@ export function DeliveryDocumentDetailPage() {
                     {DELIVERY_STATUS_LABELS_PL[doc.status]}
                   </span>
                   <span className="text-[13px] text-muted-foreground">
-                    {doc.customer_name || '—'} · {formatIssueDate(doc.issue_date)}
+                    {isPZ
+                      ? ((doc.supplier_name ?? doc.customer_name) || '—')
+                      : isRW
+                        ? (doc.from_warehouse_name || '—')
+                        : (doc.customer_name || '—')
+                    } · {formatIssueDate(doc.issue_date)}
                   </span>
                   {isFetching && (
                     <span className="text-[12px] text-muted-foreground">Aktualizowanie…</span>
@@ -814,7 +1139,7 @@ export function DeliveryDocumentDetailPage() {
 
             <div className="flex shrink-0 items-center gap-2">
               {/* Edit button (not locked, not already editing) */}
-              {doc && !locked && !isEditing && (
+              {doc && !locked && !isEditing && !isRW && (
                 <motion.button
                   whileTap={{ scale: 0.94 }}
                   type="button"
@@ -955,18 +1280,125 @@ export function DeliveryDocumentDetailPage() {
               </p>
             )}
 
-            {/* PZ: supplier + receiving warehouse info */}
+            {/* PZ-KOR: show which PZ this corrects */}
+            {doc.document_type === 'PZ-KOR' && doc.corrects_pz_id && (
+              <p className="px-1 text-[13px] text-muted-foreground">
+                Koryguje:{' '}
+                <Link to={`/delivery/${doc.corrects_pz_id}`} className="font-medium text-primary hover:underline">
+                  {doc.corrects_pz_number ?? doc.corrects_pz_id.slice(0, 8)}
+                </Link>
+              </p>
+            )}
+
+            {/* PZ: supplier + warehouse + KSeF reference */}
             {isPZ && (
-              <div className="rounded-2xl border border-blue-400/40 bg-blue-50/60 dark:bg-blue-950/20 px-4 py-3 text-[13px] text-muted-foreground">
-                <p className="font-medium text-foreground mb-1">Przyjęcie zewnętrzne (PZ)</p>
-                {doc.supplier_name && (
-                  <p>Dostawca: <span className="font-medium text-foreground">{doc.supplier_name}</span></p>
+              <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
+                <div className="px-4 py-3 border-b border-border/50 bg-muted/30">
+                  <p className="text-[13px] font-semibold text-foreground">Przyjęcie zewnętrzne (PZ)</p>
+                </div>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 py-3 text-[13px]">
+                  {(doc.supplier_name || doc.supplier_nip) && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Dostawca</dt>
+                      <dd className="text-foreground">
+                        <span className="font-medium">{doc.supplier_name ?? '—'}</span>
+                        {doc.supplier_nip && (
+                          <span className="ml-2 text-muted-foreground">NIP: {doc.supplier_nip}</span>
+                        )}
+                      </dd>
+                    </>
+                  )}
+                  {doc.to_warehouse_name && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Magazyn</dt>
+                      <dd className="font-medium text-foreground">{doc.to_warehouse_name}</dd>
+                    </>
+                  )}
+                  {doc.ksef_invoice_ref && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Faktura</dt>
+                      <dd>
+                        <Link
+                          to={`/ksef/inbox`}
+                          className="font-medium text-primary hover:underline"
+                          title={doc.ksef_invoice_ref.ksef_number}
+                        >
+                          {doc.ksef_invoice_ref.invoice_number || doc.ksef_invoice_ref.ksef_number}
+                        </Link>
+                      </dd>
+                    </>
+                  )}
+                  {doc.delivered_at && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Zaksięgowano</dt>
+                      <dd className="text-foreground">{formatIssueDate(doc.delivered_at)}</dd>
+                    </>
+                  )}
+                  {doc.external_document_number?.trim() && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Nr dok. dostawcy</dt>
+                      <dd className="font-medium text-foreground">{doc.external_document_number}</dd>
+                    </>
+                  )}
+                  {doc.notes?.trim() && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Uwagi</dt>
+                      <dd className="text-foreground">{doc.notes}</dd>
+                    </>
+                  )}
+                </dl>
+                {(doc.corrections ?? []).length > 0 && (
+                  <div className="border-t border-amber-400/30 px-4 py-2.5 bg-amber-50/40 dark:bg-amber-950/20">
+                    <p className="text-[12px] font-medium text-amber-800 dark:text-amber-300 mb-1">Korekty:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(doc.corrections ?? []).map((kor) => (
+                        <Link
+                          key={kor.id}
+                          to={`/delivery/${kor.id}`}
+                          className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 hover:underline"
+                        >
+                          {kor.document_number || kor.id.slice(0, 8)}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
                 )}
-                {doc.status !== 'delivered' && (
-                  <p className="mt-1 text-[12px] text-blue-700 dark:text-blue-300">
-                    Kliknij „Zaksięguj PZ" aby przyjąć towar na magazyn.
-                  </p>
+                {doc.status !== 'delivered' && doc.status !== 'cancelled' && (
+                  <div className="border-t border-border/50 px-4 py-2.5 bg-blue-50/60 dark:bg-blue-950/20">
+                    <p className="text-[12px] text-blue-700 dark:text-blue-300">
+                      Kliknij „Zaksięguj PZ" aby przyjąć towar na magazyn.
+                    </p>
+                  </div>
                 )}
+              </div>
+            )}
+
+            {/* RW: warehouse + reason + notes */}
+            {isRW && (
+              <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
+                <div className="px-4 py-3 border-b border-border/50 bg-muted/30">
+                  <p className="text-[13px] font-semibold text-foreground">Rozchód wewnętrzny (RW)</p>
+                </div>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 py-3 text-[13px]">
+                  {doc.from_warehouse_name && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Magazyn</dt>
+                      <dd className="font-medium text-foreground">{doc.from_warehouse_name}</dd>
+                    </>
+                  )}
+                  {doc.notes?.trim() && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Powód / uwagi</dt>
+                      <dd className="text-foreground">{doc.notes}</dd>
+                    </>
+                  )}
+                  {doc.delivered_at && (
+                    <>
+                      <dt className="text-muted-foreground whitespace-nowrap">Zaksięgowano</dt>
+                      <dd className="text-foreground">{formatIssueDate(doc.delivered_at)}</dd>
+                    </>
+                  )}
+                </dl>
               </div>
             )}
 
@@ -992,25 +1424,35 @@ export function DeliveryDocumentDetailPage() {
               )}
             </p>
 
-            {/* Item cards */}
-            {displayItems.map((it, i) => (
-              <WZItemCard
-                key={it.id}
-                item={it}
-                label={productLabelForDeliveryLine(order, it)}
-                isEditing={isEditing}
-                editQty={editQtys[it.id] ?? (parseFloat(String(it.quantity_planned)) || 0)}
-                onQtyChange={handleEditQtyChange}
-                onRemove={handleEditRemove}
-                index={i}
-                isPZ={isPZ}
-              />
-            ))}
+            {/* PZ: proper items table */}
+            {isPZ && !isEditing && (
+              <PZItemsTable items={displayItems} />
+            )}
 
-            {displayItems.length === 0 && (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                {isEditing ? 'Wszystkie pozycje zostały usunięte.' : 'Brak pozycji na tym dokumencie.'}
-              </p>
+            {/* WZ/MM/ZW: item cards (or editing mode for PZ) */}
+            {(!isPZ || isEditing) && (
+              <>
+                {displayItems.map((it, i) => (
+                  <WZItemCard
+                    key={it.id}
+                    item={it}
+                    label={productLabelForDeliveryLine(order, it)}
+                    isEditing={isEditing}
+                    editQty={editQtys[it.id] ?? (parseFloat(String(it.quantity_planned)) || 0)}
+                    editExpiry={editExpiries[it.id]}
+                    onQtyChange={handleEditQtyChange}
+                    onExpiryChange={(id, val) => setEditExpiries((prev) => ({ ...prev, [id]: val }))}
+                    onRemove={handleEditRemove}
+                    index={i}
+                    isPZ={isPZ}
+                  />
+                ))}
+                {displayItems.length === 0 && (
+                  <p className="py-10 text-center text-sm text-muted-foreground">
+                    {isEditing ? 'Wszystkie pozycje zostały usunięte.' : 'Brak pozycji na tym dokumencie.'}
+                  </p>
+                )}
+              </>
             )}
 
             {/* Linked ZW return documents */}
@@ -1023,8 +1465,38 @@ export function DeliveryDocumentDetailPage() {
               />
             )}
 
-            {/* Header metadata — collapsible */}
-            {!locked && (
+            {/* PZ: extra fields (shown when editing, read-only otherwise in the info card above) */}
+            {isPZ && isEditing && (
+              <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] px-4 py-3 space-y-3">
+                <div>
+                  <label className="mb-1 block text-[13px] font-medium text-foreground">
+                    Nr dokumentu dostawcy
+                  </label>
+                  <input
+                    type="text"
+                    value={headerDraft.external_document_number}
+                    onChange={(e) => setHeaderDraft((s) => ({ ...s, external_document_number: e.target.value }))}
+                    placeholder="Np. WZ/2026/0123, list przewozowy…"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-[13px] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[13px] font-medium text-foreground">
+                    Uwagi
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={headerDraft.notes}
+                    onChange={(e) => setHeaderDraft((s) => ({ ...s, notes: e.target.value }))}
+                    placeholder="Uwagi do dostawy…"
+                    className="w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-[13px] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Header metadata — collapsible (not shown for PZ or RW) */}
+            {!locked && !isPZ && !isRW && (
               <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
                 <button
                   type="button"
@@ -1049,12 +1521,32 @@ export function DeliveryDocumentDetailPage() {
                         onChange={(e) => setHeaderDraft((s) => ({ ...s, issue_date: e.target.value }))}
                         id="delivery-header-issue-date"
                       />
-                      <Input
-                        label="Kierowca"
-                        value={headerDraft.driver_name}
-                        onChange={(e) => setHeaderDraft((s) => ({ ...s, driver_name: e.target.value }))}
-                        id="delivery-header-driver"
-                      />
+                      {!isPZ && (
+                        <Input
+                          label="Kierowca"
+                          value={headerDraft.driver_name}
+                          onChange={(e) => setHeaderDraft((s) => ({ ...s, driver_name: e.target.value }))}
+                          id="delivery-header-driver"
+                        />
+                      )}
+                      {!isPZ && warehousesData?.results && warehousesData.results.length > 0 && (
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="text-sm font-medium leading-none text-foreground" htmlFor="delivery-header-warehouse">
+                            Magazyn źródłowy
+                          </label>
+                          <select
+                            id="delivery-header-warehouse"
+                            value={headerDraft.from_warehouse_id}
+                            onChange={(e) => setHeaderDraft((s) => ({ ...s, from_warehouse_id: e.target.value }))}
+                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <option value="">— brak —</option>
+                            {warehousesData.results.map((wh) => (
+                              <option key={wh.id} value={wh.id}>{wh.name} ({wh.code})</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <div className="sm:col-span-2">
                         <Input
                           label="Uwagi"
@@ -1119,6 +1611,19 @@ export function DeliveryDocumentDetailPage() {
                   </Button>
                 )}
 
+                {/* ── Correction PZ-KOR ── */}
+                {isPZ && doc.status === 'delivered' && !showKorForm && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => { setShowKorForm(true); setActionError(null); }}
+                    disabled={workflowBusy}
+                    className="border-amber-400/60 text-amber-700 hover:bg-amber-50 dark:text-amber-400"
+                  >
+                    Utwórz korektę PZ
+                  </Button>
+                )}
+
                 {/* ── Cancel PZ ── */}
                 {isPZ && doc.status !== 'cancelled' && (
                   <Button
@@ -1157,6 +1662,23 @@ export function DeliveryDocumentDetailPage() {
               </div>
             )}
 
+            {/* ── PZ-KOR correction form ── */}
+            {isPZ && showKorForm && doc.status === 'delivered' && doc.items.length > 0 && (
+              <PZKorForm
+                items={doc.items}
+                submitting={createKorM.isPending}
+                onCancel={() => setShowKorForm(false)}
+                onSubmit={async (payload) => {
+                  setActionError(null);
+                  try {
+                    const kor = await createKorM.mutateAsync({ id: id!, data: payload });
+                    setShowKorForm(false);
+                    navigate(`/delivery/${kor.id}`);
+                  } catch (e) { setActionError(errMsg(e)); }
+                }}
+              />
+            )}
+
             {/* ── Cancel PZ confirmation panel ── */}
             {isPZ && showCancelPzConfirm && doc && doc.status !== 'cancelled' && (
               <div className="mt-4 rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
@@ -1184,7 +1706,7 @@ export function DeliveryDocumentDetailPage() {
                         <li key={item.id} className="text-xs text-foreground flex justify-between gap-4">
                           <span>{item.product_name ?? item.product_id}</span>
                           <span className="tabular-nums text-muted-foreground">
-                            {item.quantity_actual ?? item.quantity_planned} {item.unit}
+                            {item.quantity_actual ?? item.quantity_planned} {item.product_unit}
                           </span>
                         </li>
                       ))}

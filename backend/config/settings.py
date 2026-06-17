@@ -38,6 +38,9 @@ INSTALLED_APPS = [
     'apps.invoices',
     'apps.ksef',
     'apps.reporting',
+    'apps.cost_allocation',
+    'apps.production',
+    'apps.inventory',
 ]
 
 MIDDLEWARE = [

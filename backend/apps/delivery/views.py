@@ -26,16 +26,19 @@ from .serializers import (
     DeliveryDocumentListSerializer,
     DeliveryDocumentSerializer,
     DeliveryUpdateLinesSerializer,
+    PzKorSerializer,
     SaveWithReturnsSerializer,
     VanLoadingSerializer,
     VanReconciliationSerializer,
 )
 from .services import (
+    _deduct_fifo_batches,
     apply_delivery_document_line_updates,
     apply_pz_receipt,
     apply_van_reconciliation,
     build_delivery_document_preview_data,
     cancel_pz,
+    create_pz_kor,
     create_van_loading_mm,
     create_zw_from_pending_returns,
     default_from_warehouse_for_delivery,
@@ -431,6 +434,23 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             ksef_invoice = ReceivedKSeFInvoice.objects.filter(
                 company_id=company_id, ksef_number=ksef_number
             ).first()
+            if ksef_invoice:
+                existing_pz = DeliveryDocument.objects.filter(
+                    company_id=company_id,
+                    ksef_invoice=ksef_invoice,
+                    document_type=DeliveryDocument.DOC_TYPE_PZ,
+                ).exclude(status=DeliveryDocument.STATUS_CANCELLED).first()
+                if existing_pz:
+                    return Response(
+                        {
+                            "error": (
+                                f"Dla tej faktury KSeF istnieje już dokument PZ "
+                                f"({existing_pz.document_number}). "
+                                "Anuluj poprzedni PZ przed utworzeniem nowego."
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
 
         issue_date = timezone.localdate()
         if issue_date_raw:
@@ -480,12 +500,141 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         ksef_line_pos = int(ksef_line_pos)
                     except (TypeError, ValueError):
                         ksef_line_pos = None
+                expiry_date = None
+                if row.get("expiry_date") is not None:
+                    from django.utils.dateparse import parse_date as _parse_date
+                    expiry_date = _parse_date(str(row["expiry_date"]))
                 DeliveryItem.objects.create(
                     delivery_document=doc,
                     product=product,
                     quantity_planned=qty,
                     unit_cost=unit_cost,
                     ksef_invoice_line_position=ksef_line_pos,
+                    expiry_date=expiry_date,
+                )
+
+        doc.refresh_from_db()
+        return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="create-rw")
+    def create_rw(self, request):
+        """POST /delivery/create-rw/ — create and immediately post a manual RW (write-off).
+
+        Body:
+          {
+            "from_warehouse_id": "<uuid>",   # required — source warehouse
+            "reason": "Strata",              # required — Strata|Próbka|Uszkodzenie|Inne
+            "issue_date": "2026-06-16",      # optional, defaults to today
+            "notes": "...",                  # optional
+            "items": [
+              {"product_id": "<uuid>", "quantity": "1.000"},
+              ...
+            ]
+          }
+        """
+        from apps.products.models import Product as ProductModel
+
+        company_id = request.user.current_company_id
+
+        from_warehouse_id = request.data.get("from_warehouse_id")
+        reason = (request.data.get("reason") or "").strip()
+        issue_date_raw = request.data.get("issue_date")
+        notes = request.data.get("notes", "")
+        items_data = request.data.get("items", [])
+
+        if not from_warehouse_id:
+            return Response(
+                {"error": "from_warehouse_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not reason:
+            return Response(
+                {"error": "reason is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not items_data:
+            return Response(
+                {"error": "At least one item is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from_warehouse = Warehouse.objects.get(pk=from_warehouse_id, company_id=company_id)
+        except Warehouse.DoesNotExist:
+            return Response({"error": "Warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        issue_date = timezone.localdate()
+        if issue_date_raw:
+            from django.utils.dateparse import parse_date
+            parsed = parse_date(str(issue_date_raw))
+            if parsed:
+                issue_date = parsed
+
+        product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
+        products_by_id = {
+            str(p.pk): p
+            for p in ProductModel.objects.filter(pk__in=product_ids, company_id=company_id)
+        }
+
+        with transaction.atomic():
+            doc = DeliveryDocument.objects.create(
+                company=request.user.current_company,
+                user=request.user,
+                document_type=DeliveryDocument.DOC_TYPE_RW,
+                issue_date=issue_date,
+                from_warehouse=from_warehouse,
+                notes=f"[{reason}]{' — ' + notes if notes else ''}",
+                status=DeliveryDocument.STATUS_DELIVERED,
+            )
+
+            for row in items_data:
+                pid = str(row.get("product_id", ""))
+                product = products_by_id.get(pid)
+                if not product:
+                    continue
+                try:
+                    qty = Decimal(str(row.get("quantity", "0")))
+                except Exception:
+                    qty = Decimal("0")
+                if qty <= 0:
+                    continue
+
+                DeliveryItem.objects.create(
+                    delivery_document=doc,
+                    product=product,
+                    quantity_planned=qty,
+                    quantity_actual=qty,
+                )
+
+                # Deduct from stock (allow going negative — operator's responsibility)
+                stock, _ = ProductStock.objects.select_for_update().get_or_create(
+                    company_id=company_id,
+                    product_id=product.id,
+                    warehouse_id=from_warehouse.id,
+                    defaults={
+                        "quantity_available": Decimal("0"),
+                        "quantity_reserved": Decimal("0"),
+                    },
+                )
+                qty_before = stock.quantity_available
+                stock.quantity_available -= qty
+                stock.save(update_fields=["quantity_available"])
+
+                _deduct_fifo_batches(company_id, product.id, from_warehouse.id, qty)
+
+                StockMovement.objects.create(
+                    company_id=company_id,
+                    product_id=product.id,
+                    warehouse_id=from_warehouse.id,
+                    user=request.user,
+                    movement_type=StockMovement.MovementType.DAMAGE,
+                    quantity=-qty,
+                    quantity_before=qty_before,
+                    quantity_after=stock.quantity_available,
+                    reference_type="rw_manual",
+                    reference_id=doc.id,
+                    notes=f"RW — {reason}",
+                    created_by=request.user,
                 )
 
         doc.refresh_from_db()
@@ -733,17 +882,22 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
                 # Mobile warehouses (vans) have no reservation — stock was moved
                 # in full by the MM loading document. Deduct quantity_available directly.
+                # Standalone WZ (no linked order) from a main warehouse also uses
+                # quantity_available — production PW and manual stock adjustments land
+                # there; reservation only exists when an order was confirmed first.
                 from_wh = doc.from_warehouse
                 is_mobile = (
                     from_wh is not None
                     and from_wh.warehouse_type == Warehouse.WarehouseType.MOBILE
                 )
+                is_standalone = doc.order_id is None
+                use_available = is_mobile or is_standalone
 
                 shortfalls = []
                 for pid, need in sorted(sale_by_product.items(), key=lambda x: str(x[0])):
                     st = stocks[pid]
-                    available = st.quantity_available if is_mobile else st.quantity_reserved
-                    field_label = "quantity_available" if is_mobile else "quantity_reserved"
+                    available = st.quantity_available if use_available else st.quantity_reserved
+                    field_label = "quantity_available" if use_available else "quantity_reserved"
                     if available < need:
                         line = next(i for i, _, _ in line_ops if i.product_id == pid)
                         shortfalls.append(
@@ -765,7 +919,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         continue
                     stock = stocks[item.product_id]
                     qty_before_avail = stock.quantity_available
-                    if is_mobile:
+                    if use_available:
                         stock.quantity_available -= actual
                         stock.save(update_fields=["quantity_available"])
                     else:
@@ -784,6 +938,17 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         reference_id=doc.id,
                         created_by=request.user,
                     )
+                    # Decrement FIFO batches on the source warehouse so that
+                    # expiry-alert reports don't count stock already shipped.
+                    # Skip for mobile (van) warehouses — batches live on MG,
+                    # not on the van; they were not moved during MM loading.
+                    if not is_mobile:
+                        _deduct_fifo_batches(
+                            company_id=doc.company_id,
+                            product_id=item.product_id,
+                            warehouse_id=doc.from_warehouse_id,
+                            quantity=actual,
+                        )
 
                 # ── Release orphaned main-warehouse reservation (mobile WZ only) ──
                 # When an order is confirmed, stock is reserved on the MAIN warehouse.
@@ -987,6 +1152,53 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
+
+    @action(detail=True, methods=["post"], url_path="create-kor")
+    def create_kor_action(self, request, pk=None):
+        """POST /{id}/create-kor/ — create a PZ-KOR correction for a delivered PZ.
+
+        Body: { items: [{ delivery_item_id, new_unit_cost?, new_quantity_actual? }], notes? }
+
+        - Updates StockBatch.unit_cost for price corrections.
+        - Adjusts ProductStock.quantity_available and StockBatch for quantity corrections.
+        - Creates a new PZ-KOR document (immediately delivered) with one item per changed line.
+
+        Returns the created PZ-KOR DeliveryDocument.
+        """
+        doc = self.get_object()
+
+        if doc.document_type != DeliveryDocument.DOC_TYPE_PZ:
+            return Response(
+                {"error": "Korekta dotyczy tylko dokumentów PZ."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if doc.status != DeliveryDocument.STATUS_DELIVERED:
+            return Response(
+                {"error": "Korektę można utworzyć tylko dla zaksięgowanego PZ."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ser = PzKorSerializer(data=request.data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        items = [
+            {
+                "delivery_item_id": str(it["delivery_item_id"]),
+                "new_unit_cost": it.get("new_unit_cost"),
+                "new_quantity_actual": it.get("new_quantity_actual"),
+            }
+            for it in ser.validated_data["items"]
+        ]
+
+        try:
+            kor_doc = create_pz_kor(doc, items, request.user)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(kor_doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="van-loading")
     def van_loading(self, request):

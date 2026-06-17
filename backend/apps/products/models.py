@@ -30,6 +30,51 @@ class Product(models.Model):
     track_batches = models.BooleanField(default=True)
     min_stock_alert = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     shelf_life_days = models.IntegerField(blank=True, null=True)
+    # Purchase cost tracking — updated automatically on each PZ receipt or production order
+    COST_SOURCE_PZ = "pz"
+    COST_SOURCE_PRODUCTION = "production"
+    COST_SOURCE_RECIPE = "recipe"
+    COST_SOURCE_MANUAL = "manual"
+    COST_SOURCE_CHOICES = [
+        (COST_SOURCE_PZ, "Z PZ (przyjęcie)"),
+        (COST_SOURCE_PRODUCTION, "Z produkcji"),
+        (COST_SOURCE_RECIPE, "Szacunek z receptury"),
+        (COST_SOURCE_MANUAL, "Ręcznie"),
+    ]
+
+    avg_cost = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Weighted average purchase cost per unit, updated on each PZ receipt.",
+    )
+    avg_cost_source = models.CharField(
+        max_length=20,
+        choices=COST_SOURCE_CHOICES,
+        null=True,
+        blank=True,
+        help_text="How avg_cost was last set: pz | production | recipe | manual.",
+    )
+    last_cost = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Unit cost from the most recent PZ receipt.",
+    )
+    avg_cost_updated_at = models.DateTimeField(null=True, blank=True)
+    is_resalable = models.BooleanField(
+        default=True,
+        help_text="If True, the product can be sold to customers (appears in invoice/order pickers).",
+    )
+    markup_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Target gross margin %. price_net is auto-suggested as avg_cost × (1 + markup/100).",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

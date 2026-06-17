@@ -214,8 +214,8 @@ describe('use-delivery', () => {
       wrapper: ({ children }) => <TestQueryProvider client={queryClient}>{children}</TestQueryProvider>,
     });
 
-    await result.current.mutateAsync('o1');
-    expect(deliveryServiceMock.generateForOrder).toHaveBeenCalledWith('o1');
+    await result.current.mutateAsync({ orderId: 'o1' });
+    expect(deliveryServiceMock.generateForOrder).toHaveBeenCalledWith('o1', { vanWarehouseId: undefined, vanRouteId: undefined, issueDate: undefined });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.all });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.detail('d-new') });
     expect(spy).toHaveBeenCalledWith({ queryKey: deliveryKeys.preview('d-new') });

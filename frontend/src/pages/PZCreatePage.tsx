@@ -41,6 +41,7 @@ interface PzLine {
   product: Product;
   quantity: string;
   unit_cost: string;
+  expiry_date: string;
 }
 
 /* ── icons ───────────────────────────────────────────────────────── */
@@ -161,7 +162,7 @@ export function PZCreatePage() {
   const addProduct = (product: Product) => {
     setLines((prev) => {
       if (prev.some((l) => l.product.id === product.id)) return prev;
-      return [...prev, { product, quantity: '1', unit_cost: '' }];
+      return [...prev, { product, quantity: '1', unit_cost: '', expiry_date: '' }];
     });
     setProductSearch('');
     setShowProductSearch(false);
@@ -171,7 +172,7 @@ export function PZCreatePage() {
     setLines((prev) => prev.filter((l) => l.product.id !== productId));
   };
 
-  const updateLine = (productId: string, field: 'quantity' | 'unit_cost', value: string) => {
+  const updateLine = (productId: string, field: 'quantity' | 'unit_cost' | 'expiry_date', value: string) => {
     setLines((prev) =>
       prev.map((l) => (l.product.id === productId ? { ...l, [field]: value } : l)),
     );
@@ -207,6 +208,7 @@ export function PZCreatePage() {
           product_id: l.product.id,
           quantity_planned: parseFloat(l.quantity).toFixed(2),
           unit_cost: l.unit_cost ? parseFloat(l.unit_cost).toFixed(4) : undefined,
+          expiry_date: l.expiry_date || undefined,
         })),
       });
       navigate(`/delivery/${doc.id}`);
@@ -411,56 +413,76 @@ export function PZCreatePage() {
             </p>
           ) : (
             <div className="space-y-3">
-              {/* column headers */}
-              <div className="grid grid-cols-[1fr_100px_100px_36px] gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                <span>Produkt</span>
-                <span className="text-right">Ilość</span>
-                <span className="text-right">Cena netto</span>
-                <span />
-              </div>
-
               {lines.map((line, i) => (
                 <motion.div
                   key={line.product.id}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.03 }}
-                  className="grid grid-cols-[1fr_100px_100px_36px] items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2.5"
+                  className="rounded-xl bg-secondary/50 px-3 py-3 space-y-2"
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-medium text-foreground">{line.product.name}</p>
-                    <p className="text-[12px] text-muted-foreground">{line.product.unit || 'szt.'}</p>
+                  {/* row 1: name + delete */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-medium text-foreground">{line.product.name}</p>
+                      <p className="text-[12px] text-muted-foreground">{line.product.unit || 'szt.'}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeLine(line.product.id)}
+                      aria-label={`Usuń ${line.product.name}`}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"
+                    >
+                      <TrashIcon />
+                    </button>
                   </div>
 
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={line.quantity}
-                    onChange={(e) => updateLine(line.product.id, 'quantity', e.target.value)}
-                    aria-label={`Ilość — ${line.product.name}`}
-                    className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
+                  {/* row 2: qty + price + expiry */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Ilość
+                      </label>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="1"
+                        value={line.quantity}
+                        onChange={(e) => updateLine(line.product.id, 'quantity', e.target.value)}
+                        aria-label={`Ilość — ${line.product.name}`}
+                        className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
 
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={line.unit_cost}
-                    onChange={(e) => updateLine(line.product.id, 'unit_cost', e.target.value)}
-                    placeholder="—"
-                    aria-label={`Cena netto — ${line.product.name}`}
-                    className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Cena netto
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.unit_cost}
+                        onChange={(e) => updateLine(line.product.id, 'unit_cost', e.target.value)}
+                        placeholder="—"
+                        aria-label={`Cena netto — ${line.product.name}`}
+                        className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
 
-                  <button
-                    type="button"
-                    onClick={() => removeLine(line.product.id)}
-                    aria-label={`Usuń ${line.product.name}`}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"
-                  >
-                    <TrashIcon />
-                  </button>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Data ważności
+                      </label>
+                      <input
+                        type="date"
+                        value={line.expiry_date}
+                        onChange={(e) => updateLine(line.product.id, 'expiry_date', e.target.value)}
+                        aria-label={`Data ważności — ${line.product.name}`}
+                        className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                  </div>
                 </motion.div>
               ))}
             </div>

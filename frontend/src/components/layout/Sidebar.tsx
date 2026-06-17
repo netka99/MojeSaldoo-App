@@ -45,6 +45,12 @@ function NavSectionMagazyn() {
         <ModuleNavItem module="warehouses" to="/warehouses">
           Magazyny
         </ModuleNavItem>
+        <ModuleNavItem module="warehouses" to="/inventory">
+          Inwentaryzacja
+        </ModuleNavItem>
+        <ModuleNavItem module="warehouses" to="/delivery/new-rw">
+          Odpisy (RW)
+        </ModuleNavItem>
       </div>
     </div>
   );
@@ -77,6 +83,9 @@ function NavSectionDokumenty() {
         <ModuleNavItem module="ksef" to="/ksef/inbox">
           Odebrane faktury
         </ModuleNavItem>
+        <ModuleNavItem module="ksef" to="/ksef/scan-paper">
+          Skanuj fakturę papierową
+        </ModuleNavItem>
       </div>
     </div>
   );
@@ -100,6 +109,39 @@ function NavSectionZakupy() {
   );
 }
 
+function NavSectionKsiegowos() {
+  const costAllocationEnabled = useModuleGuard('cost_allocation');
+  if (!costAllocationEnabled) return null;
+  return (
+    <div className="space-y-1">
+      <NavGroupTitle>Księgowość</NavGroupTitle>
+      <div className="space-y-0.5">
+        <ModuleNavItem module="cost_allocation" to="/cost-allocation">
+          Adnotacje kosztowe
+        </ModuleNavItem>
+      </div>
+    </div>
+  );
+}
+
+function NavSectionProdukcja() {
+  const enabled = useModuleGuard('production');
+  if (!enabled) return null;
+  return (
+    <div className="space-y-1">
+      <NavGroupTitle>Produkcja</NavGroupTitle>
+      <div className="space-y-0.5">
+        <ModuleNavItem module="production" to="/production/orders">
+          Zlecenia produkcji
+        </ModuleNavItem>
+        <ModuleNavItem module="production" to="/production/recipes">
+          Receptury
+        </ModuleNavItem>
+      </div>
+    </div>
+  );
+}
+
 function NavSectionAdministracja() {
   const anyEnabled = useModuleGuard('reporting');
   if (!anyEnabled) {
@@ -111,6 +153,24 @@ function NavSectionAdministracja() {
       <div className="space-y-0.5">
         <ModuleNavItem module="reporting" to="/reports" end>
           Raporty
+        </ModuleNavItem>
+        <ModuleNavItem module="reporting" to="/reports/profit-loss">
+          Wynik (P&amp;L)
+        </ModuleNavItem>
+        <ModuleNavItem module="reporting" to="/reports/product-margin">
+          Marże na produktach
+        </ModuleNavItem>
+        <ModuleNavItem module="reporting" to="/reports/payment-aging">
+          Aging należności
+        </ModuleNavItem>
+        <ModuleNavItem module="reporting" to="/reports/supplier-costs">
+          Koszty zakupów
+        </ModuleNavItem>
+        <ModuleNavItem module="reporting" to="/reports/inventory">
+          Magazyn
+        </ModuleNavItem>
+        <ModuleNavItem module="reporting" to="/reports/customer-margin">
+          Marże na klientach
         </ModuleNavItem>
       </div>
     </div>
@@ -142,6 +202,8 @@ export function Sidebar() {
         <NavSectionMagazyn />
         <NavSectionDokumenty />
         <NavSectionZakupy />
+        <NavSectionProdukcja />
+        <NavSectionKsiegowos />
         <NavSectionAdministracja />
       </nav>
 

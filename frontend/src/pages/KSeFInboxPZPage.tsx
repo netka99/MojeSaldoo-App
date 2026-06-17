@@ -122,6 +122,12 @@ function QuickCreateProduct({
         track_batches: false,
         min_stock_alert: 0,
         shelf_life_days: null,
+        is_resalable: false,
+        markup_percent: null,
+        avg_cost: null,
+        avg_cost_source: null,
+        avg_cost_updated_at: null,
+        last_cost: null,
         is_active: true,
       });
       onCreated(product);
@@ -824,7 +830,7 @@ export function KSeFInboxPZPage() {
                                   <input
                                     type="number"
                                     min="0.01"
-                                    step="0.01"
+                                    step="1"
                                     value={line.quantity}
                                     onChange={(e) => updateLine(lineIdx, { quantity: e.target.value })}
                                     className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -837,12 +843,26 @@ export function KSeFInboxPZPage() {
                                   <input
                                     type="number"
                                     min="0"
-                                    step="0.01"
+                                    step="1"
                                     value={line.unit_cost}
                                     onChange={(e) => updateLine(lineIdx, { unit_cost: e.target.value })}
                                     placeholder="—"
-                                    className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                    className={cn(
+                                      'h-9 w-full rounded-lg border bg-background px-2 text-right text-sm tabular-nums placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30',
+                                      line.unit_cost &&
+                                      line.ksefLine.unit_net_price &&
+                                      Math.abs(parseFloat(line.unit_cost) - line.ksefLine.unit_net_price) > 0.001
+                                        ? 'border-amber-400 bg-amber-50/60 dark:bg-amber-950/20'
+                                        : 'border-border',
+                                    )}
                                   />
+                                  {line.unit_cost &&
+                                    line.ksefLine.unit_net_price &&
+                                    Math.abs(parseFloat(line.unit_cost) - line.ksefLine.unit_net_price) > 0.001 && (
+                                      <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                                        Faktura: {plMoney.format(line.ksefLine.unit_net_price)} zł
+                                      </p>
+                                    )}
                                 </div>
                               </div>
                             )}

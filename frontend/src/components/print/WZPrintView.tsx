@@ -20,6 +20,7 @@ const DOC_TYPE_LABEL_PL: Record<DeliveryDocumentType, string> = {
   PZ: 'PZ — Przyjęcie zewnętrzne',
   ZW: 'ZW — Zwrot zewnętrzny',
   RW: 'RW — Rozchód wewnętrzny',
+  'PZ-KOR': 'PZ-KOR — Korekta przyjęcia zewnętrznego',
 };
 
 function formatQty(value: string | null | undefined): string {

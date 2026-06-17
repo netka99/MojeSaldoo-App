@@ -88,6 +88,39 @@ class ReceivedKSeFInvoice(models.Model):
     # Raw FA-3 XML stored on first download — allows parsing without KSeF session
     xml_content = models.TextField(blank=True)
 
+    # Optional payment tracking — only used when CompanyWorkflowSettings.track_supplier_payments is True
+    due_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Payment due date, parsed from XML TerminyPlatnosci or set manually.",
+    )
+    paid_at = models.DateTimeField(null=True, blank=True)
+    is_paid = models.BooleanField(default=False)
+
+    # OPEX tagging — mark service invoices as operating costs (not product purchases)
+    OPEX_UTILITIES = "utilities"
+    OPEX_RENT = "rent"
+    OPEX_SERVICES = "services"
+    OPEX_TRANSPORT = "transport"
+    OPEX_MARKETING = "marketing"
+    OPEX_OTHER = "other"
+    OPEX_CATEGORY_CHOICES = [
+        (OPEX_UTILITIES, "Media (prąd, gaz, woda)"),
+        (OPEX_RENT, "Czynsz / leasing"),
+        (OPEX_SERVICES, "Usługi zewnętrzne"),
+        (OPEX_TRANSPORT, "Transport / logistyka"),
+        (OPEX_MARKETING, "Marketing / reklama"),
+        (OPEX_OTHER, "Inne"),
+    ]
+    opex_category = models.CharField(
+        max_length=20,
+        choices=OPEX_CATEGORY_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Set to classify this invoice as an operating cost (OPEX) rather than a product purchase.",
+    )
+    opex_tagged_at = models.DateTimeField(null=True, blank=True)
+
     first_seen_at = models.DateTimeField(auto_now_add=True)
     last_synced_at = models.DateTimeField(auto_now=True)
 

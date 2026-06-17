@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { invoiceService, type InvoiceListParams } from '@/services/invoice.service';
-import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult } from '@/services/ksef.service';
+import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult, type OpexCategory, type PaperScanResult } from '@/services/ksef.service';
 import type {
   GenerateInvoiceFromOrderBody,
   Invoice,
@@ -204,6 +204,18 @@ export function useKsefInboxParseQuery(ksefNumber: string, enabled = true) {
   });
 }
 
+/** Tag or clear an OPEX category on a received KSeF invoice. */
+export function useKsefTagOpexMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ksefNumber, opex_category }: { ksefNumber: string; opex_category: OpexCategory | null }) =>
+      ksefService.tagOpexCategory(ksefNumber, opex_category),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['ksef', 'inbox'] });
+    },
+  });
+}
+
 /** Query received invoices from local DB (syncs new ones from KSeF on each call). */
 export function useKsefInboxQuery(
   dateFrom: string,
@@ -217,5 +229,12 @@ export function useKsefInboxQuery(
     queryKey: ['ksef', 'inbox', { companyId, dateFrom, dateTo, page }],
     queryFn: () => ksefService.queryReceivedInvoices(dateFrom, dateTo, page),
     enabled: enabled && Boolean(companyId),
+  });
+}
+
+/** Upload a paper invoice image for OCR extraction. */
+export function useKsefScanPaperMutation() {
+  return useMutation<PaperScanResult, Error, File>({
+    mutationFn: (image: File) => ksefService.scanPaperInvoice(image),
   });
 }

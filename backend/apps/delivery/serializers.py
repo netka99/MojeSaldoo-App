@@ -4,6 +4,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from apps.customers.models import Customer
+from apps.ksef.models import ReceivedKSeFInvoice
 from apps.orders.models import Order
 from apps.products.models import Warehouse
 from apps.suppliers.models import Supplier
@@ -67,6 +68,7 @@ class VanReconciliationSerializer(serializers.Serializer):
 
 class DeliveryItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
+    product_unit = serializers.CharField(source="product.unit", read_only=True)
 
     class Meta:
         model = DeliveryItem
@@ -75,10 +77,12 @@ class DeliveryItemSerializer(serializers.ModelSerializer):
             "order_item_id",
             "product_id",
             "product_name",
+            "product_unit",
             "quantity_planned",
             "quantity_actual",
             "quantity_returned",
             "unit_cost",
+            "expiry_date",
             "return_reason",
             "is_damaged",
             "notes",
@@ -148,10 +152,26 @@ class DeliveryLineMutationSerializer(serializers.Serializer):
     return_reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
     is_damaged = serializers.BooleanField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True)
+    expiry_date = serializers.DateField(required=False, allow_null=True)
 
 
 class DeliveryUpdateLinesSerializer(serializers.Serializer):
     items = DeliveryLineMutationSerializer(many=True, allow_empty=False)
+
+
+class PzKorItemSerializer(serializers.Serializer):
+    delivery_item_id = serializers.UUIDField()
+    new_unit_cost = serializers.DecimalField(
+        max_digits=12, decimal_places=4, required=False, allow_null=True, min_value=Decimal("0")
+    )
+    new_quantity_actual = serializers.DecimalField(
+        max_digits=10, decimal_places=3, required=False, allow_null=True, min_value=Decimal("0")
+    )
+
+
+class PzKorSerializer(serializers.Serializer):
+    items = PzKorItemSerializer(many=True, allow_empty=False)
+    notes = serializers.CharField(required=False, allow_blank=True)
 
 
 class LinkedZWItemSerializer(serializers.ModelSerializer):
@@ -246,6 +266,7 @@ class DeliveryDocumentListSerializer(serializers.ModelSerializer):
             "receiver_name",
             "delivered_at",
             "notes",
+            "external_document_number",
             "created_at",
             "updated_at",
         ]
@@ -336,6 +357,17 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     )
     linked_wz_number = serializers.SerializerMethodField()
     van_route_date = serializers.SerializerMethodField()
+    supplier_nip = serializers.SerializerMethodField()
+    ksef_invoice_ref = serializers.SerializerMethodField()
+    corrects_pz_id = serializers.PrimaryKeyRelatedField(source="corrects_pz", read_only=True)
+    corrects_pz_number = serializers.SerializerMethodField()
+    corrections = serializers.SerializerMethodField()
+    ksef_invoice_id = serializers.PrimaryKeyRelatedField(
+        queryset=ReceivedKSeFInvoice.objects.all(),
+        source="ksef_invoice",
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = DeliveryDocument
@@ -356,6 +388,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "to_customer_id",
             "from_supplier_id",
             "supplier_name",
+            "supplier_nip",
             "linked_wz_id",
             "linked_wz_number",
             "van_route_id",
@@ -367,10 +400,16 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "receiver_name",
             "delivered_at",
             "notes",
+            "external_document_number",
             "created_at",
             "updated_at",
             "locked_for_edit",
             "linked_invoices",
+            "ksef_invoice_id",
+            "ksef_invoice_ref",
+            "corrects_pz_id",
+            "corrects_pz_number",
+            "corrections",
             "items",
             "return_documents",
         ]
@@ -388,10 +427,15 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "order_number",
             "customer_name",
             "supplier_name",
+            "supplier_nip",
             "from_warehouse_name",
             "to_warehouse_name",
             "locked_for_edit",
             "linked_invoices",
+            "ksef_invoice_ref",
+            "corrects_pz_id",
+            "corrects_pz_number",
+            "corrections",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -417,6 +461,9 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
                 company_id=cc_id
             )
             self.fields["van_route_id"].queryset = VanRoute.objects.filter(
+                company_id=cc_id
+            )
+            self.fields["ksef_invoice_id"].queryset = ReceivedKSeFInvoice.objects.filter(
                 company_id=cc_id
             )
 
@@ -466,6 +513,33 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             for inv in obj.invoices.all().order_by("created_at")
         ]
 
+    def get_supplier_nip(self, obj):
+        if obj.from_supplier_id:
+            return obj.from_supplier.nip or None
+        return None
+
+    def get_corrects_pz_number(self, obj):
+        if obj.corrects_pz_id:
+            return obj.corrects_pz.document_number or None
+        return None
+
+    def get_corrections(self, obj):
+        """Minimal list of PZ-KOR documents that correct this PZ."""
+        return [
+            {"id": str(c.id), "document_number": c.document_number, "issue_date": str(c.issue_date)}
+            for c in obj.corrections.only("id", "document_number", "issue_date").order_by("created_at")
+        ]
+
+    def get_ksef_invoice_ref(self, obj):
+        if obj.ksef_invoice_id:
+            inv = obj.ksef_invoice
+            return {
+                "id": str(inv.id),
+                "ksef_number": inv.ksef_number,
+                "invoice_number": inv.invoice_number,
+            }
+        return None
+
     def validate(self, data):
         doc_type = data.get("document_type")
         if self.instance and doc_type is None:
@@ -478,6 +552,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             DeliveryDocument.DOC_TYPE_MM,
             DeliveryDocument.DOC_TYPE_ZW,
             DeliveryDocument.DOC_TYPE_PZ,
+            DeliveryDocument.DOC_TYPE_PZ_KOR,
         )
         if not self.instance and not order_not_required and not order:
             raise serializers.ValidationError(

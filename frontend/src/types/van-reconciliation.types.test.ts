@@ -31,6 +31,8 @@ describe('@/types barrel — van reconciliation + stock snapshot', () => {
       reconciled_at: new Date().toISOString(),
       discrepancies: [],
       items_processed: 0,
+      mm_return_number: null,
+      rw_writeoff_number: null,
     };
     expect(body.items[0].quantity_actual_remaining).toBe('1.00');
     expect(snap.items[0].product_id).toBe('p-1');

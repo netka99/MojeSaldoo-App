@@ -25,7 +25,7 @@ const generateWzMock = vi.hoisted(() => ({
   isPending: false,
 }));
 
-const useModuleGuardMock = vi.hoisted(() => vi.fn(() => false));
+const useModuleGuardMock = vi.hoisted(() => vi.fn((_m: string) => false));
 
 vi.mock('@/hooks/useModuleGuard', () => ({
   useModuleGuard: (m: string) => useModuleGuardMock(m),
@@ -265,7 +265,7 @@ describe('OrdersPage', () => {
   });
 
   it('shows error state and retry button', () => {
-    const refetch = vi.fn();
+
     customersQueryFixture.isError = true;
     customersQueryFixture.error = new Error('fail');
     customersQueryFixture.results = [];
@@ -320,7 +320,7 @@ describe('OrdersPage', () => {
   });
 
   it('renders Załaduj Van and navigates to van loading when delivery enabled', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     useOrdersByDateQueryMock.mockReturnValue(querySuccess([makeOrder()]));
     const user = userEvent.setup();
     const { router } = renderOrders('/orders');
@@ -353,7 +353,7 @@ describe('OrdersPage', () => {
   });
 
   it('initial render: wzMode off, no checkboxes visible', () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('a', 'Sklep A'), mockCustomer('b', 'Sklep B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
@@ -366,7 +366,7 @@ describe('OrdersPage', () => {
   });
 
   it('clicking "Generuj WZ" enters wzMode, pre-selects all confirmed orders', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [
       mockCustomer('c1', 'Confirmed 1'),
       mockCustomer('c2', 'Confirmed 2'),
@@ -402,7 +402,7 @@ describe('OrdersPage', () => {
   });
 
   it("only confirmed orders' checkboxes are enabled (draft orders' checkboxes are disabled)", async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('ok', 'OK Shop'), mockCustomer('dr', 'Draft Shop')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
@@ -419,7 +419,7 @@ describe('OrdersPage', () => {
   });
 
   it('deselecting all confirmed orders disables "Utwórz WZ" button', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('x', 'X'), mockCustomer('y', 'Y')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
@@ -438,7 +438,7 @@ describe('OrdersPage', () => {
   });
 
   it('"Anuluj" resets selection mode and clears selections', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('z', 'Zeta')];
     useOrdersByDateQueryMock.mockReturnValue(querySuccess([makeOrder({ id: 'z', customer_name: 'Zeta' })]));
     const user = userEvent.setup();
@@ -453,7 +453,7 @@ describe('OrdersPage', () => {
   });
 
   it('confirming selection calls generate WZ for each selected ID in order', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('ord-first', 'First'), mockCustomer('ord-second', 'Second')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
@@ -480,7 +480,7 @@ describe('OrdersPage', () => {
   });
 
   it('after all WZ generated, navigates to /delivery', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('oa', 'A'), mockCustomer('ob', 'B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
@@ -504,7 +504,7 @@ describe('OrdersPage', () => {
   });
 
   it('if one WZ fails after a success, shows partial error banner and stays on /orders', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('fail-a', 'Shop A'), mockCustomer('fail-b', 'Shop B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([
@@ -531,7 +531,7 @@ describe('OrdersPage', () => {
   });
 
   it('if all WZ generation fails, shows error without navigating', async () => {
-    useModuleGuardMock.mockImplementation((m) => m === 'delivery');
+    useModuleGuardMock.mockImplementation((m: string) => m === 'delivery');
     customersQueryFixture.results = [mockCustomer('fail-a', 'Shop A'), mockCustomer('fail-b', 'Shop B')];
     useOrdersByDateQueryMock.mockReturnValue(
       querySuccess([

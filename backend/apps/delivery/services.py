@@ -11,7 +11,75 @@ from rest_framework.exceptions import ValidationError
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
 
+
+def _recalculate_product_avg_cost(product: Product, new_unit_cost, new_qty: Decimal) -> None:
+    """
+    Update product.avg_cost using a running weighted average after a PZ receipt.
+
+    Formula: new_avg = (old_avg * old_total_stock + new_cost * new_qty) / (old_total_stock + new_qty)
+    Falls back to new_unit_cost when there is no prior cost data.
+    """
+    if new_unit_cost is None or new_qty <= Decimal("0"):
+        return
+
+    total_stock = (
+        ProductStock.objects.filter(company_id=product.company_id, product=product)
+        .aggregate(total=Sum("quantity_available"))["total"]
+        or Decimal("0")
+    )
+    # total_stock already includes the newly added qty (stock was updated before this call)
+    prior_stock = total_stock - new_qty
+
+    if prior_stock > Decimal("0") and product.avg_cost is not None:
+        new_avg = (
+            product.avg_cost * prior_stock + new_unit_cost * new_qty
+        ) / total_stock
+    else:
+        new_avg = new_unit_cost
+
+    product.avg_cost = new_avg.quantize(Decimal("0.0001"))
+    product.avg_cost_source = Product.COST_SOURCE_PZ
+    product.last_cost = new_unit_cost.quantize(Decimal("0.0001"))
+    product.avg_cost_updated_at = timezone.now()
+    product.save(update_fields=["avg_cost", "avg_cost_source", "last_cost", "avg_cost_updated_at"])
+
 from .models import DeliveryDocument, DeliveryItem
+
+
+def _deduct_fifo_batches(
+    company_id,
+    product_id,
+    warehouse_id,
+    quantity: Decimal,
+) -> None:
+    """
+    Walk StockBatch FIFO (oldest received_date first) and decrement
+    quantity_remaining to reflect a stock outflow from a WZ or MM document.
+
+    Called after ProductStock has already been updated and stock availability
+    has been validated — so we do not raise if batches don't fully cover the
+    quantity (e.g. products with track_batches=False have no batches at all).
+    """
+    if quantity <= Decimal("0"):
+        return
+    remaining = quantity
+    batches = list(
+        StockBatch.objects.select_for_update()
+        .filter(
+            company_id=company_id,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+            quantity_remaining__gt=0,
+        )
+        .order_by("received_date", "id")
+    )
+    for batch in batches:
+        if remaining <= Decimal("0"):
+            break
+        take = min(batch.quantity_remaining, remaining)
+        batch.quantity_remaining -= take
+        batch.save(update_fields=["quantity_remaining"])
+        remaining -= take
 
 
 def active_main_warehouse_for_company(company_id):
@@ -125,7 +193,7 @@ def apply_pz_receipt(pz_document: "DeliveryDocument", user) -> None:
                     warehouse=warehouse,
                     batch_number=batch_number,
                     received_date=issue_date,
-                    expiry_date=None,  # expiry per line planned in future PZ extension
+                    expiry_date=item.expiry_date,
                     quantity_initial=received_qty,
                     quantity_remaining=received_qty,
                     unit_cost=(
@@ -154,6 +222,9 @@ def apply_pz_receipt(pz_document: "DeliveryDocument", user) -> None:
                 created_by=user,
             )
 
+            # ── 4. Update Product.avg_cost / last_cost ────────────────────────
+            _recalculate_product_avg_cost(product, item.unit_cost, received_qty)
+
 
 def default_from_warehouse_for_delivery(company_id):
     """Prefer active van/mobile warehouse so WZ completion deducts from the van after loading; else main MG."""
@@ -175,6 +246,10 @@ def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
         raise ValueError("Order must be confirmed to generate a delivery document.")
 
     with transaction.atomic():
+        # For order-based WZ, default to the main warehouse — stock was reserved there
+        # when the order was confirmed. Van users load via MM first and the WZ
+        # from_warehouse gets updated at that point.
+        from_wh = active_main_warehouse_for_company(order.company_id)
         doc = DeliveryDocument.objects.create(
             company=order.company,
             order=order,
@@ -182,7 +257,7 @@ def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
             document_type=DeliveryDocument.DOC_TYPE_WZ,
             issue_date=timezone.localdate(),
             to_customer=order.customer,
-            from_warehouse=default_from_warehouse_for_delivery(order.company_id),
+            from_warehouse=from_wh,
             status=DeliveryDocument.STATUS_DRAFT,
         )
         for oi in order.items.select_related("product"):
@@ -848,6 +923,206 @@ def cancel_pz(pz_document: "DeliveryDocument", user) -> dict:
     return {"reversed_lines": reversed_lines}
 
 
+def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user) -> "DeliveryDocument":
+    """
+    Create a PZ-KOR (Korekta Przyjęcia Zewnętrznego) for a delivered PZ.
+
+    correction_items: list of dicts:
+        {
+            'delivery_item_id': str UUID,
+            'new_unit_cost': Decimal | None,      # None = no price change
+            'new_quantity_actual': Decimal | None, # None = no quantity change
+        }
+
+    For each item where a value actually changed:
+    - Price correction: updates StockBatch.unit_cost, records ADJUSTMENT movement.
+    - Quantity correction: adjusts ProductStock.quantity_available and StockBatch by delta.
+
+    The PZ-KOR document is created immediately as STATUS_DELIVERED (corrections are applied instantly).
+    Returns the created PZ-KOR document.
+    """
+    if original_pz.document_type != DeliveryDocument.DOC_TYPE_PZ:
+        raise ValidationError({"detail": "Korektę można utworzyć tylko dla dokumentu PZ."})
+    if original_pz.status != DeliveryDocument.STATUS_DELIVERED:
+        raise ValidationError({"detail": "Korektę można utworzyć tylko dla zaksięgowanego PZ."})
+    if not correction_items:
+        raise ValidationError({"detail": "Brak pozycji do korekty."})
+
+    warehouse = original_pz.to_warehouse
+    if warehouse is None:
+        raise ValidationError({"detail": "PZ nie ma przypisanego magazynu docelowego."})
+
+    company_id = original_pz.company_id
+    doc_label = original_pz.document_number or str(original_pz.id)
+
+    with transaction.atomic():
+        # Pre-fetch original items ordered as they were created (idx matches batch_number)
+        orig_items = list(
+            original_pz.items.select_related("product").order_by("created_at")
+        )
+        orig_item_map = {str(it.id): (idx + 1, it) for idx, it in enumerate(orig_items)}
+
+        # Build list of actual changes before creating any DB records
+        changes = []
+        for corr in correction_items:
+            item_id = str(corr.get("delivery_item_id", ""))
+            if item_id not in orig_item_map:
+                continue
+            idx, item = orig_item_map[item_id]
+
+            original_qty = item.quantity_actual if item.quantity_actual is not None else item.quantity_planned
+            original_cost = item.unit_cost
+
+            new_qty = corr.get("new_quantity_actual")
+            new_cost = corr.get("new_unit_cost")
+
+            qty_changed = new_qty is not None and abs(new_qty - original_qty) > Decimal("0.0001")
+            cost_changed = (
+                new_cost is not None
+                and (original_cost is None or abs(new_cost - original_cost) > Decimal("0.0001"))
+            )
+
+            if not qty_changed and not cost_changed:
+                continue
+
+            changes.append({
+                "idx": idx,
+                "item": item,
+                "original_qty": original_qty,
+                "original_cost": original_cost,
+                "new_qty": new_qty if qty_changed else None,
+                "new_cost": new_cost if cost_changed else None,
+                "qty_changed": qty_changed,
+                "cost_changed": cost_changed,
+            })
+
+        if not changes:
+            raise ValidationError({"detail": "Żadna wartość nie uległa zmianie — korekta nie jest potrzebna."})
+
+        # Create the PZ-KOR document (document_number auto-assigned by model.save())
+        kor_doc = DeliveryDocument.objects.create(
+            company_id=company_id,
+            document_type=DeliveryDocument.DOC_TYPE_PZ_KOR,
+            corrects_pz=original_pz,
+            from_supplier=original_pz.from_supplier,
+            to_warehouse=warehouse,
+            ksef_invoice=original_pz.ksef_invoice,
+            issue_date=timezone.localdate(),
+            status=DeliveryDocument.STATUS_DELIVERED,
+            delivered_at=timezone.now(),
+            user=user,
+            notes=f"Korekta {doc_label}",
+        )
+        kor_label = kor_doc.document_number or str(kor_doc.id)
+
+        for ch in changes:
+            item = ch["item"]
+            idx = ch["idx"]
+            batch_number = f"{doc_label}/{idx:02d}"
+
+            effective_qty = ch["new_qty"] if ch["qty_changed"] else ch["original_qty"]
+            effective_cost = ch["new_cost"] if ch["cost_changed"] else ch["original_cost"]
+
+            # Create correction line on PZ-KOR document
+            DeliveryItem.objects.create(
+                delivery_document=kor_doc,
+                product=item.product,
+                quantity_planned=effective_qty,
+                quantity_actual=ch["new_qty"] if ch["qty_changed"] else item.quantity_actual,
+                unit_cost=effective_cost,
+                notes=(
+                    f"Korekta ceny: {ch['original_cost']} → {effective_cost}"
+                    if ch["cost_changed"] and not ch["qty_changed"]
+                    else f"Korekta ilości: {ch['original_qty']} → {ch['new_qty']}"
+                    if ch["qty_changed"] and not ch["cost_changed"]
+                    else f"Korekta ilości: {ch['original_qty']} → {ch['new_qty']}, ceny: {ch['original_cost']} → {effective_cost}"
+                ),
+            )
+
+            # ── Price correction ────────────────────────────────────────────
+            if ch["cost_changed"] and item.product.track_batches:
+                try:
+                    batch = StockBatch.objects.select_for_update().get(
+                        company_id=company_id,
+                        product=item.product,
+                        warehouse=warehouse,
+                        batch_number=batch_number,
+                    )
+                    batch.unit_cost = ch["new_cost"]
+                    batch.save(update_fields=["unit_cost"])
+                except StockBatch.DoesNotExist:
+                    pass  # batch already consumed/deleted — cost correction is informational only
+
+            # Always record the cost correction as a movement (informational, qty=0)
+            if ch["cost_changed"]:
+                try:
+                    stock = ProductStock.objects.get(
+                        company_id=company_id, product=item.product, warehouse=warehouse
+                    )
+                    StockMovement.objects.create(
+                        company_id=company_id,
+                        product=item.product,
+                        warehouse=warehouse,
+                        user=user,
+                        movement_type=StockMovement.MovementType.ADJUSTMENT,
+                        quantity=Decimal("0"),
+                        quantity_before=stock.quantity_available,
+                        quantity_after=stock.quantity_available,
+                        reference_type="pz_correction",
+                        reference_id=kor_doc.id,
+                        notes=f"Korekta ceny {doc_label}: {ch['original_cost']} → {ch['new_cost']} zł/jm ({item.product.name})",
+                        created_by=user,
+                    )
+                except ProductStock.DoesNotExist:
+                    pass
+
+            # ── Quantity correction ─────────────────────────────────────────
+            if ch["qty_changed"]:
+                qty_delta = ch["new_qty"] - ch["original_qty"]
+
+                try:
+                    stock = ProductStock.objects.select_for_update().get(
+                        company_id=company_id, product=item.product, warehouse=warehouse
+                    )
+                    qty_before = stock.quantity_available
+                    stock.quantity_available += qty_delta
+                    stock.save(update_fields=["quantity_available"])
+
+                    StockMovement.objects.create(
+                        company_id=company_id,
+                        product=item.product,
+                        warehouse=warehouse,
+                        user=user,
+                        movement_type=StockMovement.MovementType.ADJUSTMENT,
+                        quantity=qty_delta,
+                        quantity_before=qty_before,
+                        quantity_after=stock.quantity_available,
+                        reference_type="pz_correction",
+                        reference_id=kor_doc.id,
+                        notes=f"Korekta ilości {doc_label}: {ch['original_qty']} → {ch['new_qty']} ({item.product.name})",
+                        created_by=user,
+                    )
+                except ProductStock.DoesNotExist:
+                    pass
+
+                if item.product.track_batches:
+                    try:
+                        batch = StockBatch.objects.select_for_update().get(
+                            company_id=company_id,
+                            product=item.product,
+                            warehouse=warehouse,
+                            batch_number=batch_number,
+                        )
+                        batch.quantity_remaining = max(Decimal("0"), batch.quantity_remaining + qty_delta)
+                        batch.quantity_initial += qty_delta
+                        batch.save(update_fields=["quantity_remaining", "quantity_initial"])
+                    except StockBatch.DoesNotExist:
+                        pass
+
+    kor_doc.refresh_from_db()
+    return kor_doc
+
+
 def _fk_uuid(value) -> str | None:
     return str(value) if value is not None else None
 
@@ -1268,6 +1543,8 @@ def apply_delivery_document_line_updates(
             item.is_damaged = bool(row["is_damaged"])
         if "notes" in row:
             item.notes = (row.get("notes") or "").strip()
+        if "expiry_date" in row:
+            item.expiry_date = row["expiry_date"]  # None clears it
 
         new_act_eff = _delivery_effective_actual(item)
         new_ret = item.quantity_returned or Decimal("0")

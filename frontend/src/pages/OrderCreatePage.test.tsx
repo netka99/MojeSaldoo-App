@@ -56,6 +56,12 @@ const productFixtures: Product[] = [
     track_batches: false,
     min_stock_alert: '0',
     shelf_life_days: null,
+    is_resalable: false,
+    markup_percent: null,
+    avg_cost: null,
+    avg_cost_source: null,
+    avg_cost_updated_at: null,
+    last_cost: null,
     is_active: true,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
@@ -75,6 +81,12 @@ const productFixtures: Product[] = [
     track_batches: false,
     min_stock_alert: '0',
     shelf_life_days: null,
+    is_resalable: false,
+    markup_percent: null,
+    avg_cost: null,
+    avg_cost_source: null,
+    avg_cost_updated_at: null,
+    last_cost: null,
     is_active: true,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
@@ -261,7 +273,7 @@ describe('OrderCreatePage', () => {
     const sticky = screen.getByRole('button', { name: 'Zapisz zamówienie' }).closest('.fixed');
     expect(sticky).toBeTruthy();
     expect(sticky).toHaveTextContent(/Netto:/);
-    expect(within(sticky!).getByText(/Brutto:/)).toBeInTheDocument();
+    expect(within(sticky! as HTMLElement).getByText(/Brutto:/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: '5' }));
