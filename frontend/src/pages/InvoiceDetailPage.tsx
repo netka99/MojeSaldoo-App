@@ -98,6 +98,7 @@ export function InvoiceDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const [xmlDownloading, setXmlDownloading] = useState(false);
+  const [upoDownloading, setUpoDownloading] = useState(false);
 
   // Passphrase modal state
   const [showPassphraseModal, setShowPassphraseModal] = useState(false);
@@ -158,6 +159,20 @@ export function InvoiceDetailPage() {
       setActionError(errMsg(e));
     } finally {
       setXmlDownloading(false);
+    }
+  };
+
+  const onDownloadUpo = async () => {
+    if (!id || !invoice) return;
+    setUpoDownloading(true);
+    try {
+      const ref = invoice.ksef_number || invoice.ksef_reference_number || id;
+      const filename = `UPO-${ref.replace(/\//g, '-')}.xml`;
+      await invoiceService.downloadUpo(id, filename);
+    } catch (e) {
+      setActionError(errMsg(e));
+    } finally {
+      setUpoDownloading(false);
     }
   };
 
@@ -365,6 +380,18 @@ export function InvoiceDetailPage() {
               >
                 Pobierz XML (KSeF)
               </Button>
+
+              {invoice?.upo_received && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void onDownloadUpo()}
+                  disabled={upoDownloading}
+                  loading={upoDownloading}
+                >
+                  {upoDownloading ? 'Pobieranie…' : 'Pobierz UPO'}
+                </Button>
+              )}
 
               {(showSendToKsef || showResendKsef) && (
                 <Button

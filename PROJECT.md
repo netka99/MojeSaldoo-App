@@ -143,17 +143,17 @@ MojeSaldoo celuje w **małe firmy (1–10 pracowników)** z polskiego rynku MSP,
 
 | # | Luka | Segment | Stan |
 |---|------|---------|------|
-| 1 | **Daty ważności na PZ** — formularz `PZCreatePage` nie ma pola `expiry_date` per linia; backend ma komentarz `# expiry per line planned in future PZ extension` | Piekarnia, Producent | ❌ Brakuje w UI i serwisie PZ |
-| 2 | **FIFO `quantity_remaining` nie jest dekrementowane przy sprzedaży WZ** — `_apply_sale_return_deltas_to_stock()` koryguje `ProductStock`, ale nie chodzi po `StockBatch` i nie zmniejsza `batch.quantity_remaining`; alerty o terminach ważności mogą pokazywać sprzedany towar | Wszyscy | ⚠️ Bug |
-| 3 | **Koszt wytworzenia widoczny tylko po zakończeniu zlecenia** — brak podglądu "szacowany koszt" na recepturze przed uruchomieniem produkcji | Piekarnia, Producent | ❌ Brakuje |
+| 1 | **Daty ważności na PZ** — formularz `PZCreatePage` nie ma pola `expiry_date` per linia; backend ma komentarz `# expiry per line planned in future PZ extension` | Piekarnia, Producent | ✅ Naprawione |
+| 2 | **FIFO `quantity_remaining` nie jest dekrementowane przy sprzedaży WZ** — `_apply_sale_return_deltas_to_stock()` koryguje `ProductStock`, ale nie chodzi po `StockBatch` i nie zmniejsza `batch.quantity_remaining`; alerty o terminach ważności mogą pokazywać sprzedany towar | Wszyscy | ✅ Naprawione |
+| 3 | **Koszt wytworzenia widoczny tylko po zakończeniu zlecenia** — brak podglądu "szacowany koszt" na recepturze przed uruchomieniem produkcji | Piekarnia, Producent | ✅ Naprawione — `RecipeItemSerializer` zwraca `ingredient_avg_cost` + `ingredient_stock_total`; lista receptur pokazuje koszt/szt. i stan surowców bez osobnego zapytania o produkty |
 
 #### Ważne (znacznie zwiększają wartość)
 
 | # | Luka | Segment | Stan |
 |---|------|---------|------|
-| 4 | **Stan surowców widoczny przy tworzeniu zlecenia produkcji** — formularz nie pokazuje aktualnego stanu magazynowego składników | Piekarnia, Producent | ❌ Brakuje |
-| 5 | **Planowanie produkcji z zamówień** — zestawienie "co upiec jutro na podstawie otwartych zamówień" — ile szt. danego wyrobu potrzeba → jaka ilość surowców do przygotowania | Piekarnia | ❌ Brakuje |
-| 6 | **Szybkie zamówienia (szablony)** — stały klient zawsze bierze te same produkty; jedno kliknięcie zamiast wybierania od zera | Van Selling | ❌ Brakuje |
+| 4 | **Stan surowców widoczny przy tworzeniu zlecenia produkcji** — formularz nie pokazuje aktualnego stanu magazynowego składników | Piekarnia, Producent | ✅ Naprawione — `RecipeItemSerializer` zawiera `ingredient_stock_total`; formularz zlecenia czyta stock bezpośrednio z receptury (tryb prosty i wsadu), wyróżnia czerwonym gdy za mało |
+| 5 | **Planowanie produkcji z zamówień** — zestawienie "co upiec jutro na podstawie otwartych zamówień" — ile szt. danego wyrobu potrzeba → jaka ilość surowców do przygotowania | Piekarnia | ✅ Naprawione — `GET /api/production/orders/planning/` zintegrowane na jednej stronie `/production/orders`: planowanie + inline formularz zlecenia + lista zleceń. Widoczne numery zamówień na każdym wierszu, badge "w produkcji" gdy zlecenie już istnieje, wiersz znika gdy niedobór pokryty |
+| 6 | **Szybkie zamówienia (szablony)** — stały klient zawsze bierze te same produkty; jedno kliknięcie zamiast wybierania od zera | Van Selling | ✅ Naprawione — baner "Poprzednie zamówienie" z rozwijaną listą produktów i ilości; "Użyj" wypełnia koszyk z ostatniego zamówienia klienta; stan koszyka persystowany w `sessionStorage` (przeżywa nawigację) |
 | 7 | **Indywidualne cenniki per klient** — hurtownik ma inne ceny dla sieci A vs sklepu B | Van Selling | ❌ Brakuje |
 | 8 | **Powiadomienia o przeterminowanych należnościach** — klient zalega 30+ dni — alert dla właściciela | Wszyscy | ❌ Brakuje |
 
@@ -164,7 +164,7 @@ MojeSaldoo celuje w **małe firmy (1–10 pracowników)** z polskiego rynku MSP,
 | 9 | Offline mode (Capacitor storage + sync) — handlowiec bez zasięgu | Van Selling |
 | 10 | Etykiety z kodem QR/EAN do druku na wyrobach | Producent |
 | 11 | Eksport raportu kosztów do PDF/Excel dla biura rachunkowego | Producent, KPiR |
-| 12 | Inwentaryzacja (spis z natury) — korekta stanów po liczeniu fizycznym | Wszyscy z magazynem |
+| 12 | Inwentaryzacja (spis z natury) — korekta stanów po liczeniu fizycznym | Wszyscy z magazynem | ✅ Zaimplementowane |
 
 ---
 
@@ -177,10 +177,10 @@ FIFO jest zaimplementowane i działa dla:
 | **PZ receipt** (`apply_pz_receipt`) | ✅ Tworzy `StockBatch` per linia z `received_date` i `unit_cost`; index na `expiry_date` |
 | **Produkcja** (`_consume_fifo`) | ✅ Chodzi po `StockBatch` sortując `received_date, id` (najstarsza partia pierwsza); zmniejsza `batch.quantity_remaining`; liczy koszt FIFO |
 | **Anulowanie PZ** (`cancel_pz`) | ✅ Odwraca po `batch_number`; uwzględnia już zużyte partie |
-| **WZ sprzedaż** (`_apply_sale_return_deltas_to_stock`) | ⚠️ Koryguje `ProductStock.quantity_reserved`, ale **nie dekrementuje `StockBatch.quantity_remaining`** — partie "żyją" w systemie nawet po sprzedaży |
-| **MM załadunek vana** (`create_van_loading_mm`) | ⚠️ Przenosi stan `ProductStock` MG → van, ale nie przenosi `StockBatch` między magazynami — partie pozostają przypisane do MG |
-
-**Konsekwencja buga WZ:** Raport `expiry-alerts` może zwracać partie których fizycznie nie ma już w magazynie (bo zostały sprzedane przez WZ). Naprawienie wymaga dodania dekrementacji `StockBatch` w momencie finalizacji WZ.
+| **WZ sprzedaż — finalizacja** (`complete` action, `views.py`) | ✅ Wywołuje `_deduct_fifo_batches` per linia przy finalizacji WZ (naprawione) |
+| **WZ sprzedaż — korekta po dostawie** (`_apply_sale_return_deltas_to_stock`) | ✅ Wywołuje `_deduct_fifo_batches` dla dodatniego `delta_sale` (naprawione) |
+| **ZW zwrot towaru** (`create_zw_from_pending_returns`) | ✅ Odtwarza `StockBatch` przy zwrocie — `unit_cost` i `expiry_date` z oryginalnej linii WZ (naprawione) |
+| **MM załadunek vana** (`create_van_loading_mm`) | ⚠️ Przenosi stan `ProductStock` MG → van, ale nie przenosi `StockBatch` między magazynami — partie pozostają przypisane do MG (znane ograniczenie, nie wpływa na expiry alerts dla MG) |
 
 ---
 
@@ -618,12 +618,12 @@ backend/
 │   │   ├── serializers.py
 │   │   └── urls.py
 │   ├── ksef/                # KSeF integration
-│   │   ├── models.py
+│   │   ├── models.py        # KSeFSession, KSeFSentInvoice, KSeFCertificate, ReceivedKSeFInvoice
 │   │   ├── views.py
 │   │   ├── serializers.py
-│   │   ├── ksef_client.py   # KSeF API client
-│   │   ├── xml_generator.py # Invoice XML generation
-│   │   ├── crypto.py        # Encryption/Decryption
+│   │   ├── crypto.py        # Full KSeF crypto layer (XAdES, AES-256-CBC, RSA-OAEP, API calls)
+│   │   ├── ssapi_client.py  # Public facade: loads cert from DB, calls crypto.py
+│   │   ├── xml_generator.py # FA-3 KSeF XML generation
 │   │   └── urls.py
 │   └── reporting/           # Analytics & Reports
 │       ├── models.py
@@ -642,147 +642,34 @@ backend/
 
 ## Backend Architecture
 
-### **⚠️ IMPORTANT: Two-Backend Architecture**
+### **Single Django Backend**
 
-**MojeSaldoo uses TWO separate backends:**
-
-1. **Django Backend (MojeSaldoo)** - NEW, MVP for testing
-   - Manages: Users, Products, Customers, Orders, Delivery, Invoices (business data)
-   - Database: SQLite (dev) → PostgreSQL (prod)
-   - Purpose: MVP to test application, backend developer will optimize later
-
-2. **SSAPI Backend** - EXISTING, production-ready
-   - Manages: ONLY KSeF communication (send invoices, check status)
-   - Database: Own SQLite (only KSeF invoices tracking)
-   - Purpose: Battle-tested KSeF integration
+MojeSaldoo runs on a **single Django backend**. The previously separate `ssapi-multi` Bottle server has been consolidated — all KSeF crypto, session management, and invoice tracking now live directly in Django.
 
 ### **Data Flow:**
 ```
 Frontend (React)
     ↓
-Django Backend API  →  SSAPI Backend (only for KSeF)
-    ↓                       ↓
-MojeSaldoo Database    KSeF API (gov.pl)
-(products, orders)
+Django Backend API
+    ↓               ↓
+MojeSaldoo DB    KSeF API (gov.pl)
 ```
 
-### **⚠️ IMPORTANT: KSeF Token Management**
+### **KSeF Integration — How It Works**
 
-**KSeF authentication and token management is handled ENTIRELY by SSAPI backend.**
+All KSeF communication is handled inside `apps/ksef/`:
 
-- ✅ **SSAPI Backend handles**: KSeF tokens, certificates, encryption, XML signing, API calls
-- ✅ **Django Backend handles**: Business logic, products, orders, customers, invoices (data only)
-- ✅ **Frontend handles**: ONLY JWT authentication for user login
-- ❌ **Frontend NEVER**: Stores/manages KSeF tokens or certificates
+| Component | Purpose |
+|-----------|---------|
+| `crypto.py` | Full KSeF crypto layer: XAdES signing, AES-256-CBC encryption, RSA-OAEP key wrap, challenge/auth/session/UPO flows |
+| `ssapi_client.py` | Public API used by views — loads cert from DB, delegates to `crypto.py`, persists state to Django models |
+| `xml_generator.py` | Generates FA-3 KSeF XML from `Invoice` model data |
+| `models.KSeFSession` | Stores KSeF access/refresh tokens per company (replaces SSAPI's `TokenManager`) |
+| `models.KSeFSentInvoice` | Tracks every submitted invoice + UPO XML (replaces SSAPI's SQLite `invoices` table) |
+| `models.KSeFCertificate` | Stores Fernet-encrypted private key + certificate PEM per company |
 
-### **SSAPI Backend Structure** (`C:\Users\AJDuk\src\ssapi`)
-
-SSAPI is a lightweight CRUD API built with **Bottle framework** that runs on shared hosting (mod_python).
-
-#### **Key Files:**
-- `web.py` - REST API endpoints (Bottle routes)
-- `kseflib.py` - KSeF API client (authentication, encryption, XML signing)
-- `db.py` - SQLite database layer (sales, returns, invoices, user sessions)
-- `auth.py` - User session management
-- `tokens.py` - Token manager for API authentication
-
-#### **Database Schema (SQLite):**
-```sql
--- Sales transactions
-CREATE TABLE sales (
-    id INTEGER PRIMARY KEY,
-    product CHAR,
-    shop CHAR,
-    quantity INT,
-    date DATE DEFAULT CURRENT_TIMESTAMP,
-    is_discounted BOOLEAN
-);
-
--- Returns
-CREATE TABLE returns (
-    id INTEGER PRIMARY KEY,
-    product CHAR,
-    shop CHAR,
-    quantity INT,
-    date DATE DEFAULT CURRENT_TIMESTAMP
-);
-
--- User sessions (JWT/auth tokens)
-CREATE TABLE user_sessions (
-    id INTEGER PRIMARY KEY,
-    secret CHAR,
-    datetime DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- KSeF invoices
-CREATE TABLE invoices (
-    reference_number TEXT PRIMARY KEY,     -- KSeF reference number
-    session_reference_number TEXT,
-    ksef_number TEXT,                     -- KSeF invoice number
-    invoice_number TEXT,                  -- Our invoice number
-    status_code INTEGER,
-    status_description TEXT,
-    nip TEXT,
-    invoice_hash TEXT,
-    issue_date TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    shop TEXT,
-    total_gross_cents INTEGER
-);
-
--- Settings
-CREATE TABLE settings (
-    owner CHAR PRIMARY KEY,
-    data CHAR
-);
-```
-
-#### **API Endpoints (SSAPI):**
-```
-GET  /                  - API version & available routes
-GET  /shops             - List of shops
-GET  /sales             - Sales transactions (filters: start, end, shop, isDiscounted)
-GET  /returns           - Return transactions
-POST /sales             - Create sales
-POST /returns           - Create returns
-POST /invoices/send     - Send invoice to KSeF
-GET  /invoices/status   - Check KSeF invoice status
-```
-
-#### **KSeF Integration Flow (Backend Only):**
-1. User uploads certificate (.pem) and key (.key) via frontend
-2. **Backend stores** encrypted certificate in filesystem
-3. User creates invoice in frontend
-4. **Backend receives** invoice data via API
-5. **Backend (kseflib.py)**:
-   - Generates challenge from KSeF
-   - Signs AuthTokenRequest with certificate
-   - Gets auth token
-   - Creates session with KSeF
-   - Generates & encrypts invoice XML
-   - Sends to KSeF API
-   - Returns reference number & status
-6. **Frontend displays** results (reference number, status, QR code)
-
-#### **Frontend ↔ SSAPI Communication:**
-```typescript
-// Frontend only sends/receives invoice data
-POST /api/invoices/send
-{
-  "invoiceNumber": "FV/2026/001",
-  "shop": "Sklep ABC",
-  "items": [...],
-  "totalGross": 150.00
-}
-
-// Backend handles all KSeF complexity and returns:
-{
-  "referenceNumber": "202603313-KZ-ABCI2Y",
-  "ksefNumber": "FV/2026/MM+",
-  "status": "accepted",
-  "invoiceHash": "abc123..."
-}
-```
+- **Frontend handles**: ONLY JWT authentication for user login
+- **Frontend NEVER**: Stores/manages KSeF tokens or certificates directly
 
 ---
 
@@ -1477,11 +1364,31 @@ class Invoice(models.Model):
 ### 9. KSeFSession
 ```python
 class KSeFSession(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    session_token = models.CharField(max_length=500)
-    symmetric_key = models.CharField(max_length=500)
-    challenge = models.CharField(max_length=500, blank=True)
-    expires_at = models.DateTimeField()
+    company = models.OneToOneField(Company, on_delete=models.CASCADE)
+    access_token_body = models.TextField(blank=True)      # KSeF access token
+    refresh_token_body = models.TextField(blank=True)     # KSeF refresh token
+    access_valid_until = models.DateTimeField(null=True, blank=True)
+    refresh_valid_until = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+```
+
+### 10. KSeFSentInvoice
+```python
+class KSeFSentInvoice(models.Model):
+    """Tracks every invoice submitted to KSeF — replaces the old SSAPI SQLite table."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    reference_number = models.CharField(max_length=255, unique=True)   # KSeF ref from send
+    session_reference_number = models.CharField(max_length=255)        # needed for status poll
+    invoice_hash = models.CharField(max_length=255, blank=True)
+    issue_date = models.CharField(max_length=20, blank=True)           # P_1 from FA-3 XML
+    shop = models.CharField(max_length=255, blank=True)                # buyer name
+    total_gross_cents = models.IntegerField(default=0)
+    ksef_number = models.CharField(max_length=255, blank=True)         # official KSeF number
+    invoice_number = models.CharField(max_length=255, blank=True)
+    status_code = models.IntegerField(null=True, blank=True)
+    status_description = models.TextField(blank=True)
+    upo_xml = models.TextField(blank=True)                             # UPO XML stored after acceptance
+    upo_hash = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 ```
 
@@ -1537,24 +1444,30 @@ POST   /api/delivery/documents/{id}/save/ # Zapisz WZ (zmiana statusu)
 
 ### Invoicing
 ```
-GET    /api/invoices/               # Lista faktur
-POST   /api/invoices/               # Utwórz fakturę
-GET    /api/invoices/{id}/          # Szczegóły faktury
-POST   /api/invoices/{id}/preview/  # Podgląd HTML
-POST   /api/invoices/{id}/generate-xml/ # Generuj XML
-POST   /api/invoices/{id}/send-ksef/ # Wyślij do KSeF
-GET    /api/invoices/{id}/status/   # Pobierz status z KSeF
+GET    /api/invoices/                          # Lista faktur
+POST   /api/invoices/                          # Utwórz fakturę
+GET    /api/invoices/{id}/                     # Szczegóły faktury
+PATCH  /api/invoices/{id}/                     # Edycja faktury (draft)
+DELETE /api/invoices/{id}/                     # Usuń fakturę (tylko draft)
+POST   /api/invoices/{id}/issue/               # Wystaw fakturę (draft → issued)
+POST   /api/invoices/{id}/mark-paid/           # Oznacz jako zapłaconą
+GET    /api/invoices/{id}/preview/             # Podgląd danych faktury (JSON)
+GET    /api/invoices/{id}/xml/                 # Pobierz FA-3 KSeF XML
+POST   /api/invoices/{id}/send-to-ksef/        # Wyślij do KSeF (wymaga aktywnej sesji)
+GET    /api/invoices/{id}/ksef-status/         # Odśwież status z KSeF (poll)
+GET    /api/invoices/{id}/upo/                 # Pobierz UPO XML (po akceptacji)
+POST   /api/invoices/generate-from-order/{id}/ # Generuj fakturę z zamówienia
 ```
 
 ### KSeF Integration
 ```
-POST   /api/ksef/challenge/         # Pobierz challenge
-POST   /api/ksef/auth-token/        # Pobierz auth token
-POST   /api/ksef/session/           # Utwórz sesję
-POST   /api/ksef/encrypt-invoice/   # Zaszyfruj fakturę
-POST   /api/ksef/send-invoice/      # Wyślij zaszyfrowaną fakturę
-GET    /api/ksef/invoice-status/{ref}/ # Sprawdź status faktury
-GET    /api/ksef/upo/{ref}/         # Pobierz UPO
+GET    /api/ksef/session/                   # Sprawdź status sesji KSeF
+POST   /api/ksef/session/                   # Zaloguj się do KSeF (challenge → auth → tokeny)
+GET    /api/ksef/inbox/                     # Lista odebranych faktur (z cache DB)
+POST   /api/ksef/inbox/sync/                # Synchronizuj nowe faktury z KSeF
+GET    /api/ksef/inbox/{ksefNumber}/        # Szczegóły odebranej faktury
+GET    /api/ksef/inbox/{ksefNumber}/parse/  # Parsuj XML → linie do PZ
+GET    /api/ksef/inbox/{ksefNumber}/download/ # Pobierz XML faktury
 ```
 
 ### Reporting
@@ -1702,6 +1615,15 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - [x] Przy zamknięciu zlecenia: automatyczne RW (zużycie składników) + PW (przyjęcie wyrobów) + aktualizacja `Product.avg_cost` gotowego wyrobu
 - [x] FIFO pricing: koszt liczy się po cenach z `StockBatch.unit_cost` (od najstarszej partii)
 - [x] Raport rentowności produkcji: koszt/szt. w czasie (sezonowość kosztów widoczna od razu)
+- [x] **Szacowany koszt na recepturze** — `RecipeItemSerializer` zwraca `ingredient_avg_cost` + `ingredient_stock_total`; lista receptur pokazuje koszt/szt. i stan surowca bez osobnego zapytania
+- [x] **Stan surowców przy tworzeniu zlecenia** — formularz zlecenia czyta `ingredient_stock_total` z receptury (zarówno tryb prosty jak i wsad); oznacza czerwonym gdy niewystarczający
+- [x] **Planowanie produkcji z zamówień** — `GET /api/production/orders/planning/`; zintegrowane na stronie `/production/orders` (jedna strona: planowanie + inline formularz + lista zleceń):
+  - numery zamówień ZAM/... widoczne bezpośrednio na wierszu planowania
+  - badge "w produkcji: X szt" gdy istnieje szkic zlecenia dla danej receptury (niebieski = pokrywa niedobór, pomarańczowy = częściowe)
+  - wiersz planowania znika gdy niedobór w pełni pokryty przez istniejące zlecenia
+  - formularz zlecenia z planu: receptura zablokowana, ilość prefillowana z niedoboru, notatki auto-uzupełniane numerami zamówień
+  - zmiana surowców w trybie wsadu: dropdown na każdym wierszu, dodawanie/usuwanie składników, stan magazynowy widoczny dla wszystkich (z receptury lub z `product.stock_total`)
+- [x] **Szybkie zamówienia z poprzedniego zamówienia** — baner na stronie nowego zamówienia po wyborze klienta; rozwijana lista produktów/ilości; "Użyj" kopiuje pozycje do koszyka; stan koszyka + klient + data persystowane w `sessionStorage`
 
 ### Faza 8: Mobile & Testing (Tydzień 9-10)
 - [ ] Testowanie na iOS
@@ -1785,5 +1707,5 @@ GET    /api/reports/inventory/      # Raport magazynowy
 
 ---
 
-**Ostatnia aktualizacja**: 2026-06-10
+**Ostatnia aktualizacja**: 2026-06-20
 **Wersja dokumentu**: 1.0

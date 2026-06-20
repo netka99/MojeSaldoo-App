@@ -158,22 +158,8 @@ class KSeFCertificateUploadView(APIView):
                 },
             )
 
-        # Push cert to ssapi-multi so it's available on disk for KSeF auth.
-        # Non-fatal: if ssapi-multi is offline at upload time the user can re-upload.
-        if company.nip:
-            try:
-                from apps.ksef import ssapi_client
-                ssapi_client.push_certificate(
-                    nip=company.nip,
-                    cert_pem=parsed.certificate_pem,
-                    key_pem=parsed.private_key_pem,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Certificate uploaded to DB but failed to push to ssapi-multi (NIP %s): %s",
-                    company.nip,
-                    exc,
-                )
+        # push_certificate is a no-op after ssapi-multi consolidation;
+        # the certificate is read directly from DB at authentication time.
 
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(_public_metadata_row(row), status=status_code)

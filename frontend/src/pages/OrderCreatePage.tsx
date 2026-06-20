@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { NumPad } from '@/components/ui/NumPad';
 import { useAuth } from '@/context/AuthContext';
@@ -14,12 +15,13 @@ import {
 } from '@/lib/order-form-math';
 import { formatDeliveryDate } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
-import { useCreateOrderMutation, useConfirmOrderMutation } from '@/query/use-orders';
+import { useCreateOrderMutation, useConfirmOrderMutation, useOrdersByCustomerQuery } from '@/query/use-orders';
 import { useCustomerQuery, useCustomerListQuery } from '@/query/use-customers';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
 import type { Product } from '@/types';
 import type { OrderCreate, OrderItemWrite } from '@/types';
+import type { Order, OrderItem } from '@/types/order.types';
 
 const DEBOUNCE_MS = 300;
 const PAGE_SIZE = 30;
@@ -265,44 +267,51 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
         )}
       </section>
 
-      {/* Fixed bottom summary */}
-      <motion.div
-        initial={{ y: 80, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className={cn(
-          'fixed left-0 right-0 z-40 px-5',
-          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
-        )}
-      >
-        <div className="mx-auto max-w-3xl rounded-2xl bg-card p-5 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
-          <div className="mb-4 space-y-2">
-            <div className="flex justify-between text-[14px]">
-              <span className="text-muted-foreground">Suma pozycji</span>
-              <span className="tabular-nums text-foreground">{formatGrossPln(subtotal)}</span>
-            </div>
-            {totalDiscount > 0.001 && (
-              <div className="flex justify-between text-[14px]">
-                <span className="text-primary">Rabaty</span>
-                <span className="tabular-nums text-primary">−{formatGrossPln(totalDiscount)}</span>
-              </div>
-            )}
-            <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
-              <span className="text-[17px] font-semibold text-foreground">Do zapłaty</span>
-              <span className="text-[22px] font-bold tabular-nums text-foreground">{formatGrossPln(total)}</span>
-            </div>
-          </div>
+      {typeof document !== 'undefined'
+        ? createPortal(
+            <motion.div
+              initial={{ y: 80, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className={cn(
+                'fixed z-40 left-0 right-0 pointer-events-none',
+                'bottom-[calc(83px+0.75rem+env(safe-area-inset-bottom))]',
+                'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:left-64',
+              )}
+            >
+              <div className="mx-auto w-full max-w-3xl px-4 pointer-events-auto">
+                <div className="rounded-2xl bg-card p-5 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
+                  <div className="mb-4 space-y-2">
+                    <div className="flex justify-between text-[14px]">
+                      <span className="text-muted-foreground">Suma pozycji</span>
+                      <span className="tabular-nums text-foreground">{formatGrossPln(subtotal)}</span>
+                    </div>
+                    {totalDiscount > 0.001 && (
+                      <div className="flex justify-between text-[14px]">
+                        <span className="text-primary">Rabaty</span>
+                        <span className="tabular-nums text-primary">−{formatGrossPln(totalDiscount)}</span>
+                      </div>
+                    )}
+                    <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
+                      <span className="text-[17px] font-semibold text-foreground">Do zapłaty</span>
+                      <span className="text-[22px] font-bold tabular-nums text-foreground">{formatGrossPln(total)}</span>
+                    </div>
+                  </div>
 
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            type="button"
-            onClick={() => void onSubmit()}
-            disabled={isPending || lines.length === 0}
-            className="w-full rounded-xl bg-primary py-4 text-[17px] font-semibold text-primary-foreground disabled:opacity-60"
-          >
-            {isPending ? 'Tworzenie…' : 'Utwórz zamówienie'}
-          </motion.button>
-        </div>
-      </motion.div>
+                  <motion.button
+                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    onClick={() => void onSubmit()}
+                    disabled={isPending || lines.length === 0}
+                    className="w-full rounded-xl bg-primary py-4 text-[17px] font-semibold text-primary-foreground disabled:opacity-60"
+                  >
+                    {isPending ? 'Tworzenie…' : 'Utwórz zamówienie'}
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -336,6 +345,14 @@ function MinusIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
       <path d="M5 12h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -475,7 +492,107 @@ function CustomerDropdown({ value, onChange, onSelect, customers, loading, open,
   );
 }
 
+/* ── Previous order banner ───────────────────────────────────────── */
+
+function PrevOrderBanner({ order, onUse, onDismiss }: { order: Order; onUse: () => void; onDismiss: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mb-4 rounded-2xl border border-primary/20 bg-primary/5">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-foreground">Poprzednie zamówienie</p>
+            <p className="text-[12px] text-muted-foreground">
+              {order.order_number} · {order.items.length} {order.items.length === 1 ? 'produkt' : 'produktów'}
+            </p>
+          </div>
+          <svg
+            className={cn('ml-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')}
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <div className="flex shrink-0 gap-2">
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            type="button"
+            onClick={onUse}
+            className="rounded-xl bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground"
+          >
+            Użyj
+          </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            type="button"
+            onClick={onDismiss}
+            className="rounded-xl bg-secondary px-3 py-1.5 text-[13px] text-muted-foreground"
+          >
+            Pomiń
+          </motion.button>
+        </div>
+      </div>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <ul className="border-t border-primary/10 px-4 pb-3 pt-2 space-y-1.5">
+              {order.items.map((item) => (
+                <li key={item.id} className="flex items-center justify-between text-[13px]">
+                  <span className="text-foreground">{item.product_name}</span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {Number(item.quantity) % 1 === 0 ? Number(item.quantity) : Number(item.quantity).toFixed(2)} {item.product_unit}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ── Main page ───────────────────────────────────────────────────── */
+
+const DRAFT_KEY = 'order_create_draft';
+
+type OrderDraft = {
+  deliveryDate: string;
+  selectedCustomer: SelectedCustomer | null;
+  lines: OrderDraftLine[];
+  prevOrderDismissed: boolean;
+};
+
+function loadDraft(): Partial<OrderDraft> {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as OrderDraft) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDraft(draft: OrderDraft) {
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // ignore
+  }
+}
+
+function clearDraft() {
+  sessionStorage.removeItem(DRAFT_KEY);
+}
 
 export function OrderCreatePage() {
   const location = useLocation();
@@ -488,9 +605,11 @@ export function OrderCreatePage() {
   const create = useCreateOrderMutation();
   const confirm = useConfirmOrderMutation();
 
-  const [deliveryDate, setDeliveryDate] = useState(urlDate);
-  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
-  const [customerInput, setCustomerInput] = useState('');
+  const draft = loadDraft();
+
+  const [deliveryDate, setDeliveryDate] = useState(draft.deliveryDate ?? urlDate);
+  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(draft.selectedCustomer ?? null);
+  const [customerInput, setCustomerInput] = useState(draft.selectedCustomer?.name ?? '');
   const [customerOpen, setCustomerOpen] = useState(false);
   const [showCustomerChange, setShowCustomerChange] = useState(false);
   const customerRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
@@ -539,8 +658,21 @@ export function OrderCreatePage() {
     return m;
   }, [products]);
 
-  const [lines, setLines] = useState<OrderDraftLine[]>([]);
+  const [lines, setLines] = useState<OrderDraftLine[]>(draft.lines ?? []);
+  const [prevOrderDismissed, setPrevOrderDismissed] = useState(draft.prevOrderDismissed ?? false);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
+
+  const { data: prevOrdersData } = useOrdersByCustomerQuery(
+    selectedCustomer?.id,
+    Boolean(selectedCustomer) && lines.length === 0 && !prevOrderDismissed,
+  );
+  const prevOrder = prevOrdersData?.[0] ?? null;
+
+  // Persist draft to sessionStorage on every relevant change
+  useEffect(() => {
+    saveDraft({ deliveryDate, selectedCustomer, lines, prevOrderDismissed });
+  }, [deliveryDate, selectedCustomer, lines, prevOrderDismissed]);
+
   const [numPadValue, setNumPadValue] = useState('0');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [view, setView] = useState<'products' | 'checkout'>('products');
@@ -563,20 +695,25 @@ export function OrderCreatePage() {
     return () => obs.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, products.length]);
 
-  // Close dropdowns on outside click
+  // Close customer dropdown on outside click
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (customerRef.current && !customerRef.current.contains(e.target as Node)) {
         setCustomerOpen(false);
       }
-      const t = e.target as HTMLElement | null;
-      if (!activeProductId || !t) return;
-      if (t.closest?.('[data-numpad]') || t.closest?.('[data-product-row]')) return;
-      setActiveProductId(null);
-      setNumPadValue('0');
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  // Lock page scroll while numpad sheet is open (sheet is portaled to body)
+  useEffect(() => {
+    if (!activeProductId) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, [activeProductId]);
 
   if (!authStorage.getAccessToken()) {
@@ -596,6 +733,45 @@ export function OrderCreatePage() {
   };
   const { gross: orderGross } = sumLines(lines, (l) => lineNetGross(l).net, (l) => lineNetGross(l).g);
   const cartCount = lines.reduce((sum, l) => sum + (parseDecimalInput(l.quantity) ?? 0), 0);
+
+  /* Copy previous order lines */
+  const applyPrevOrder = () => {
+    if (!prevOrder) return;
+    const newLines: OrderDraftLine[] = prevOrder.items.map((item: OrderItem) => ({
+      key: item.product_id,
+      product: {
+        id: item.product_id,
+        name: item.product_name,
+        unit: item.product_unit,
+        price_net: item.unit_price_net,
+        price_gross: item.unit_price_gross,
+        vat_rate: item.vat_rate,
+        description: null,
+        sku: null,
+        barcode: null,
+        pkwiu: '',
+        track_batches: false,
+        min_stock_alert: 0,
+        shelf_life_days: null,
+        is_resalable: true,
+        markup_percent: null,
+        avg_cost: null,
+        avg_cost_source: null,
+        avg_cost_updated_at: null,
+        last_cost: null,
+        is_active: true,
+        stock_total: undefined,
+        user: null,
+        created_at: '',
+        updated_at: '',
+      },
+      quantity: String(item.quantity),
+      unitPriceNet: String(item.unit_price_net),
+      discountPercent: String(item.discount_percent),
+    }));
+    setLines(newLines);
+    setPrevOrderDismissed(true);
+  };
 
   /* Quick +1 */
   const quickAdd = (product: Product) => {
@@ -629,6 +805,11 @@ export function OrderCreatePage() {
     setActiveProductId(product.id);
     const existing = lineByProductId.get(product.id);
     setNumPadValue(existing ? existing.quantity : '0');
+  };
+
+  const closeNumpad = () => {
+    setActiveProductId(null);
+    setNumPadValue('0');
   };
 
   /* Confirm numpad */
@@ -678,6 +859,7 @@ export function OrderCreatePage() {
       const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items };
       const order = await create.mutateAsync(body);
       await confirm.mutateAsync(order.id);
+      clearDraft();
       const d = deliveryDate.trim();
       navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
     } catch (e) {
@@ -686,6 +868,7 @@ export function OrderCreatePage() {
   };
 
   const backToOrders = () => {
+    clearDraft();
     const d = deliveryDate.trim();
     navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
   };
@@ -709,13 +892,7 @@ export function OrderCreatePage() {
   }
 
   return (
-    <div
-      className={cn(
-        'flex min-h-screen flex-col bg-background',
-        'pb-[calc(83px+env(safe-area-inset-bottom))]',
-        numpadOpen && 'pb-[calc(83px+22rem+env(safe-area-inset-bottom))]',
-      )}
-    >
+    <div className="flex min-h-screen flex-col bg-background pb-[calc(83px+env(safe-area-inset-bottom))]">
       {/* ── Sticky header ─────────────────────────────────────────── */}
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/95 backdrop-blur-xl">
         <div className="mx-auto max-w-3xl px-4 pb-3 pt-10">
@@ -770,7 +947,7 @@ export function OrderCreatePage() {
               <CustomerDropdown
                 value={customerInput}
                 onChange={(v) => { setCustomerInput(v); setSelectedCustomer(null); }}
-                onSelect={(c) => { setSelectedCustomer(c); setCustomerInput(c.name); setCustomerOpen(false); setShowCustomerChange(false); }}
+                onSelect={(c) => { setSelectedCustomer(c); setCustomerInput(c.name); setCustomerOpen(false); setShowCustomerChange(false); setLines([]); setPrevOrderDismissed(false); }}
                 customers={customers}
                 loading={customersLoading}
                 open={customerOpen}
@@ -807,6 +984,15 @@ export function OrderCreatePage() {
           <p className="mb-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
             {submitError}
           </p>
+        )}
+
+        {/* Previous order banner */}
+        {prevOrder && lines.length === 0 && !prevOrderDismissed && (
+          <PrevOrderBanner
+            order={prevOrder}
+            onUse={applyPrevOrder}
+            onDismiss={() => setPrevOrderDismissed(true)}
+          />
         )}
 
         {/* Section heading */}
@@ -862,68 +1048,143 @@ export function OrderCreatePage() {
         )}
       </main>
 
-      {/* ── Fixed bottom: numpad + cart bar ──────────────────────── */}
-      <div
-        className={cn(
-          'fixed left-0 right-0 z-40',
-          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:pb-[max(0px,env(safe-area-inset-bottom))]',
-        )}
-      >
-        {/* Numpad panel */}
-        <div
-          data-numpad
-          className={cn(
-            'overflow-hidden border-border/40 bg-surface-card shadow-[0_-8px_32px_rgba(0,0,0,0.10)] transition-[max-height,opacity] duration-200 ease-out',
-            numpadOpen
-              ? 'max-h-[min(420px,72vh)] border-t opacity-100'
-              : 'pointer-events-none max-h-0 opacity-0',
-          )}
-        >
-          {numpadOpen && activeProduct && (
-            <div className="mx-auto max-w-3xl px-4 pb-2 pt-3">
-              <NumPad
-                label={activeProduct.name}
-                value={numPadValue}
-                onChange={setNumPadValue}
-                onConfirm={confirmNumpad}
-              />
-            </div>
-          )}
-        </div>
+      {typeof document !== 'undefined'
+        ? createPortal(
+            <>
+              {cartCount > 0 ? (
+                <motion.div
+                  initial={{ y: 60, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  className={cn(
+                    'fixed z-40 left-0 right-0 pointer-events-none',
+                    'bottom-[calc(83px+0.75rem+env(safe-area-inset-bottom))]',
+                    'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:left-64',
+                  )}
+                >
+                  <div className="mx-auto w-full max-w-3xl px-4 pointer-events-auto">
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      type="button"
+                      onClick={() => setView('checkout')}
+                      className="flex w-full items-center justify-between rounded-2xl bg-primary px-4 py-3.5 text-primary-foreground shadow-[0_4px_16px_rgba(79,70,229,0.3)]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground/20 text-sm font-bold">
+                          {Math.round(cartCount)}
+                        </span>
+                        <span className="font-medium">Do zamówienia</span>
+                      </div>
+                      <span className="text-lg font-bold tabular-nums">{formatGrossPln(orderGross)}</span>
+                    </motion.button>
+                  </div>
+                </motion.div>
+              ) : null}
 
-        {/* Cart summary bar */}
-        {cartCount > 0 ? (
-          <motion.div
-            initial={{ y: 60, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="border-t border-border/40 bg-surface-card/95 backdrop-blur-xl"
-          >
-            <div className="mx-auto max-w-3xl px-4 py-3">
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                type="button"
-                onClick={() => setView('checkout')}
-                className="flex w-full items-center justify-between rounded-2xl bg-primary px-4 py-3.5 text-primary-foreground shadow-[0_4px_16px_rgba(79,70,229,0.3)]"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground/20 text-sm font-bold">
-                    {Math.round(cartCount)}
-                  </span>
-                  <span className="font-medium">Do zamówienia</span>
-                </div>
-                <span className="text-lg font-bold tabular-nums">{formatGrossPln(orderGross)}</span>
-              </motion.button>
-            </div>
-          </motion.div>
-        ) : (
-          /* Empty cart — compact bottom bar */
-          <div className="border-t border-border/40 bg-surface-card/95 px-4 py-3 backdrop-blur-xl">
-            <div className="mx-auto max-w-3xl">
-              <p className="text-center text-sm text-muted-foreground">Dodaj produkty do zamówienia</p>
-            </div>
-          </div>
-        )}
-      </div>
+              <AnimatePresence>
+              {numpadOpen && activeProduct ? (
+                <>
+                  <motion.div
+                    key="numpad-backdrop"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="fixed inset-0 z-[100] bg-foreground/10 backdrop-blur-sm"
+                    onClick={closeNumpad}
+                    aria-hidden
+                  />
+                  <motion.div
+                    key="numpad-sheet"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={`Ilość: ${activeProduct.name}`}
+                    data-numpad
+                    initial={{ y: '100%' }}
+                    animate={{ y: 0 }}
+                    exit={{ y: '100%' }}
+                    transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                    className="fixed bottom-0 left-0 right-0 z-[110] overflow-hidden rounded-t-3xl bg-card shadow-[0_-8px_32px_rgba(0,0,0,0.12)]"
+                  >
+                    <div className="flex justify-center pt-3 pb-1" aria-hidden>
+                      <div className="h-1 w-9 rounded-full bg-border" />
+                    </div>
+
+                    <div className="border-b border-border/60 px-5 pb-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-[17px] font-semibold text-foreground">{activeProduct.name}</h3>
+                          <p className="mt-0.5 text-[13px] text-muted-foreground">
+                            {formatGrossPln(grossPerUnit(activeProduct))} / {activeProduct.unit || 'szt.'}
+                          </p>
+                        </div>
+                        <motion.button
+                          whileTap={{ scale: 0.9 }}
+                          type="button"
+                          aria-label="Zamknij"
+                          onClick={closeNumpad}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary"
+                        >
+                          <XIcon />
+                        </motion.button>
+                      </div>
+                    </div>
+
+                    {/* Quantity stepper */}
+                    <div className="flex items-center justify-center gap-6 px-5 py-4">
+                      <motion.button
+                        whileTap={{ scale: 0.88 }}
+                        type="button"
+                        aria-label="Zmniejsz ilość"
+                        onClick={() => {
+                          const cur = parseDecimalInput(numPadValue) ?? 0;
+                          const next = Math.max(0, cur - 1);
+                          setNumPadValue(String(next));
+                        }}
+                        className="flex h-14 w-14 items-center justify-center rounded-full bg-secondary text-secondary-foreground shadow-sm"
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+                          <path d="M5 12h14" strokeLinecap="round" />
+                        </svg>
+                      </motion.button>
+
+                      <div className="flex flex-col items-center">
+                        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Ilość</span>
+                        <span className="text-[40px] font-semibold tabular-nums leading-tight text-foreground">
+                          {numPadValue === '' ? '0' : numPadValue}
+                        </span>
+                      </div>
+
+                      <motion.button
+                        whileTap={{ scale: 0.88 }}
+                        type="button"
+                        aria-label="Zwiększ ilość"
+                        onClick={() => {
+                          const cur = parseDecimalInput(numPadValue) ?? 0;
+                          setNumPadValue(String(cur + 1));
+                        }}
+                        className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+                          <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+                        </svg>
+                      </motion.button>
+                    </div>
+
+                    <div className="mx-auto max-w-3xl px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+                      <NumPad
+                        value={numPadValue}
+                        onChange={setNumPadValue}
+                        onConfirm={confirmNumpad}
+                      />
+                    </div>
+                  </motion.div>
+                </>
+              ) : null}
+            </AnimatePresence>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

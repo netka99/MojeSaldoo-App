@@ -3,6 +3,7 @@ import type {
   PaginatedProductionOrders,
   ProductionOrder,
   ProductionOrderCreate,
+  ProductionPlanningItem,
   Recipe,
   RecipeCreate,
 } from '../types/production.types';
@@ -36,4 +37,11 @@ export const productionService = {
   /** Finalize a draft order: consume FIFO stock, create RW+PW, update avg_cost. */
   completeOrder: (id: string) =>
     api.post<ProductionOrder>(`${ordersPath}${id}/complete/`, {}),
+
+  /**
+   * Production planning: open-order demand aggregated by product, cross-referenced
+   * with active recipes. Shows shortfall, estimated cost, ingredient requirements.
+   */
+  fetchPlanning: (params?: { date_from?: string; date_to?: string }) =>
+    api.get<ProductionPlanningItem[]>(`${ordersPath}planning/`, { params }),
 };

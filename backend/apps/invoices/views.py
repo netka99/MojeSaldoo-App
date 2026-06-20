@@ -294,7 +294,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 nip=company.nip,
                 shop=shop_name,
                 total_gross_cents=total_gross_cents,
-                cookies=ksef_sess.get_cookies(),
+                company_id=str(company.id),
             )
         except Exception as exc:
             logger.error("SSAPI send_invoice failed for invoice %s: %s", invoice.pk, exc)
@@ -350,7 +350,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         try:
             http_code, data = ssapi_client.get_invoice_status(
                 invoice.ksef_reference_number,
-                ksef_sess.get_cookies(),
+                str(company.id),
             )
         except Exception as exc:
             logger.error("SSAPI get_invoice_status failed for invoice %s: %s", invoice.pk, exc)
@@ -385,3 +385,49 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.save(update_fields=["ksef_status", "ksef_error_message", "updated_at"])
 
         return Response({**self.get_serializer(invoice).data, "_ssapi_raw": data})
+
+    @action(detail=True, methods=["get"], url_path="upo")
+    def upo(self, request, pk=None):
+        """
+        GET /api/invoices/{id}/upo/
+        Download the UPO (Urzędowe Potwierdzenie Odbioru) XML for an accepted invoice.
+        The UPO is stored on the first successful ksef-status poll and served from DB —
+        no active KSeF session required.
+        """
+        from apps.ksef.models import KSeFSentInvoice
+
+        invoice = self.get_object()
+
+        if not invoice.upo_received:
+            return Response(
+                {"detail": "UPO nie jest jeszcze dostępne dla tej faktury."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not invoice.ksef_reference_number:
+            return Response(
+                {"detail": "Brak numeru referencyjnego KSeF."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        company = request.user.current_company
+        sent_inv = KSeFSentInvoice.objects.filter(
+            company=company,
+            reference_number=invoice.ksef_reference_number,
+        ).first()
+
+        if not sent_inv or not sent_inv.upo_xml:
+            return Response(
+                {
+                    "detail": (
+                        "UPO nie zostało jeszcze pobrane. "
+                        "Kliknij 'Odśwież status KSeF' aby pobrać UPO."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        filename = f"UPO-{invoice.ksef_number or invoice.ksef_reference_number}.xml"
+        response = HttpResponse(sent_inv.upo_xml, content_type="application/xml; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response

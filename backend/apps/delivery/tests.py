@@ -3649,3 +3649,110 @@ class CreateRWAPITests(TestCase):
         self.client.force_authenticate(user=None)
         r = self.client.post(self.URL, self._payload(), format="json")
         self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class ZWReturnBatchTests(TestCase):
+    """ZW return flow recreates StockBatch so FIFO tracking stays accurate."""
+
+    def setUp(self):
+        from apps.delivery.services import create_zw_from_pending_returns
+
+        self.create_zw = create_zw_from_pending_returns
+
+        User = get_user_model()
+        self.user = User.objects.create_user(username="zw-user", email="zw@test.com", password="x")
+        self.co = Company.objects.create(name="ZW Co")
+        CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+        self.wh = Warehouse.objects.create(
+            user=self.user, company=self.co, code="MG", name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="Bread", company=self.co,
+            price_net=Decimal("2.00"), price_gross=Decimal("2.16"),
+            track_batches=True,
+        )
+        # Simulate a delivered WZ with one item (unit_cost + expiry_date preserved)
+        self.wz = DeliveryDocument.objects.create(
+            company=self.co, user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 1),
+            from_warehouse=self.wh,
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        self.wz_item = DeliveryItem.objects.create(
+            delivery_document=self.wz,
+            product=self.product,
+            quantity_planned=Decimal("10.000"),
+            quantity_actual=Decimal("10.000"),
+            unit_cost=Decimal("1.8000"),
+            expiry_date=date(2026, 7, 1),
+        )
+        # Warehouse stock (after original WZ deduction, 0 remaining on hand)
+        self.stock = ProductStock.objects.create(
+            company=self.co, product=self.product, warehouse=self.wh,
+            quantity_available=Decimal("0.000"), quantity_reserved=Decimal("0.000"),
+        )
+
+    def _do_return(self, qty="3.000"):
+        return self.create_zw(
+            wz_doc=self.wz,
+            return_items=[{
+                "product_id": str(self.product.id),
+                "quantity": qty,
+                "return_reason": "Zwrot z poprzedniego dnia",
+            }],
+            user=self.user,
+        )
+
+    def test_zw_document_created_with_correct_type_and_link(self):
+        zw = self._do_return()
+        self.assertEqual(zw.document_type, DeliveryDocument.DOC_TYPE_ZW)
+        self.assertEqual(zw.linked_wz_id, self.wz.id)
+
+    def test_stock_is_incremented_on_return(self):
+        self._do_return("3.000")
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.quantity_available, Decimal("3.000"))
+
+    def test_stock_batch_created_for_tracked_product(self):
+        from apps.products.models import StockBatch
+        self._do_return("3.000")
+        batch = StockBatch.objects.filter(
+            company=self.co, product=self.product, warehouse=self.wh
+        ).first()
+        self.assertIsNotNone(batch)
+        self.assertEqual(batch.quantity_initial, Decimal("3.000"))
+        self.assertEqual(batch.quantity_remaining, Decimal("3.000"))
+
+    def test_batch_carries_unit_cost_from_original_wz_line(self):
+        from apps.products.models import StockBatch
+        self._do_return("3.000")
+        batch = StockBatch.objects.get(company=self.co, product=self.product, warehouse=self.wh)
+        self.assertEqual(batch.unit_cost, Decimal("1.80"))
+
+    def test_batch_carries_expiry_date_from_original_wz_line(self):
+        from apps.products.models import StockBatch
+        self._do_return("3.000")
+        batch = StockBatch.objects.get(company=self.co, product=self.product, warehouse=self.wh)
+        self.assertEqual(batch.expiry_date, date(2026, 7, 1))
+
+    def test_no_batch_created_when_product_does_not_track_batches(self):
+        from apps.products.models import StockBatch
+        self.product.track_batches = False
+        self.product.save(update_fields=["track_batches"])
+        self._do_return("2.000")
+        self.assertEqual(
+            StockBatch.objects.filter(company=self.co, product=self.product).count(), 0
+        )
+
+    def test_stock_movement_recorded_as_return(self):
+        self._do_return("3.000")
+        mv = StockMovement.objects.get(
+            company=self.co, product=self.product, warehouse=self.wh
+        )
+        self.assertEqual(mv.movement_type, StockMovement.MovementType.RETURN)
+        self.assertEqual(mv.quantity, Decimal("3.000"))

@@ -307,3 +307,174 @@ def complete_production_order(order: ProductionOrder, user) -> ProductionOrder:
         )
 
     return order
+
+
+# ── Production planning ───────────────────────────────────────────────────────
+
+def get_production_planning(company, date_from=None, date_to=None):
+    """
+    Aggregate open-order demand by finished product and cross-reference with
+    active recipes.
+
+    Returns a list of dicts (sorted by product name), one per product that:
+      - appears in at least one open (non-cancelled, non-invoiced) order, AND
+      - has an active Recipe for this company.
+
+    Each dict contains:
+      product_id, product_name, product_unit,
+      recipe_id, recipe_name, recipe_yield_quantity,
+      total_ordered, stock_available, shortfall, suggested_production_qty,
+      estimated_unit_cost, estimated_total_cost,
+      ingredients (list), orders (list)
+    """
+    from apps.orders.models import Order, OrderItem
+    from .models import Recipe
+
+    OPEN_STATUSES = [
+        Order.STATUS_CONFIRMED,
+        Order.STATUS_IN_PREPARATION,
+        Order.STATUS_LOADED,
+        Order.STATUS_DELIVERED,
+        Order.STATUS_PARTIALLY_DELIVERED,
+    ]
+
+    orders_qs = Order.objects.filter(
+        company=company,
+        status__in=OPEN_STATUSES,
+    ).prefetch_related(
+        "items",
+        "items__product",
+        "customer",
+    )
+    if date_from:
+        orders_qs = orders_qs.filter(delivery_date__gte=date_from)
+    if date_to:
+        orders_qs = orders_qs.filter(delivery_date__lte=date_to)
+
+    # Aggregate remaining demand per product
+    product_demand: dict = {}
+    for order in orders_qs:
+        for item in order.items.all():
+            pid = str(item.product_id)
+            remaining = item.quantity - (item.quantity_delivered or Decimal("0"))
+            if remaining <= 0:
+                continue
+            if pid not in product_demand:
+                product_demand[pid] = {
+                    "product_id": pid,
+                    "product_name": item.product_name,
+                    "total_ordered": Decimal("0"),
+                    "orders": [],
+                }
+            product_demand[pid]["total_ordered"] += remaining
+            product_demand[pid]["orders"].append(
+                {
+                    "order_id": str(order.id),
+                    "order_number": order.order_number,
+                    "customer_name": order.customer.name if order.customer_id else "",
+                    "quantity": remaining,
+                    "delivery_date": (
+                        order.delivery_date.isoformat() if order.delivery_date else None
+                    ),
+                }
+            )
+
+    if not product_demand:
+        return []
+
+    # Load active recipes for the demanded products only
+    recipes = (
+        Recipe.objects.filter(
+            company=company,
+            product_id__in=product_demand.keys(),
+            is_active=True,
+        )
+        .select_related("product")
+        .prefetch_related(
+            "items",
+            "items__ingredient",
+            "items__ingredient__stocks",
+            "product__stocks",
+        )
+    )
+
+    result = []
+    for recipe in recipes:
+        pid = str(recipe.product_id)
+        if pid not in product_demand:
+            continue
+
+        demand = product_demand[pid]
+        total_ordered = demand["total_ordered"]
+
+        # Current stock of the finished product
+        stock_available = Decimal(
+            sum(s.quantity_available or 0 for s in recipe.product.stocks.all())
+        )
+        shortfall = max(Decimal("0"), total_ordered - stock_available)
+
+        # Batches of recipe needed to cover the shortfall
+        yield_qty = Decimal(str(recipe.yield_quantity)) if recipe.yield_quantity else Decimal("1")
+        batches_needed = shortfall / yield_qty if shortfall > 0 else Decimal("0")
+
+        # Per-ingredient requirements and cost
+        ingredients = []
+        all_have_cost = True
+        total_ingredient_cost_per_batch = Decimal("0")
+
+        for item in recipe.items.all():
+            ing = item.ingredient
+            ing_stock = Decimal(
+                sum(s.quantity_available or 0 for s in ing.stocks.all())
+            )
+            qty_per_batch = Decimal(str(item.quantity))
+            qty_needed = qty_per_batch * batches_needed
+
+            if ing.avg_cost is not None:
+                line_cost_per_batch = qty_per_batch * Decimal(str(ing.avg_cost))
+                total_ingredient_cost_per_batch += line_cost_per_batch
+            else:
+                all_have_cost = False
+                line_cost_per_batch = None
+
+            ingredients.append(
+                {
+                    "ingredient_id": str(ing.id),
+                    "ingredient_name": ing.name,
+                    "ingredient_unit": ing.unit,
+                    "quantity_per_batch": qty_per_batch,
+                    "quantity_needed": qty_needed,
+                    "stock_available": ing_stock,
+                    "avg_cost": ing.avg_cost,
+                    "line_cost_per_batch": line_cost_per_batch,
+                    "has_enough_stock": ing_stock >= qty_needed,
+                }
+            )
+
+        if all_have_cost and recipe.items.exists():
+            estimated_unit_cost = total_ingredient_cost_per_batch / yield_qty
+            estimated_total_cost = estimated_unit_cost * shortfall if shortfall > 0 else Decimal("0")
+        else:
+            estimated_unit_cost = None
+            estimated_total_cost = None
+
+        result.append(
+            {
+                "product_id": pid,
+                "product_name": demand["product_name"],
+                "product_unit": recipe.product.unit,
+                "recipe_id": str(recipe.id),
+                "recipe_name": recipe.name or recipe.product.name,
+                "recipe_yield_quantity": yield_qty,
+                "total_ordered": total_ordered,
+                "stock_available": stock_available,
+                "shortfall": shortfall,
+                "suggested_production_qty": shortfall,
+                "estimated_unit_cost": estimated_unit_cost,
+                "estimated_total_cost": estimated_total_cost,
+                "ingredients": ingredients,
+                "orders": demand["orders"],
+            }
+        )
+
+    return sorted(result, key=lambda x: x["product_name"])

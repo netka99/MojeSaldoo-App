@@ -1,3 +1,4 @@
+import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
 export interface NumPadProps {
@@ -35,18 +36,24 @@ function applyBackspace(current: string): string {
   return next === '' ? '0' : next;
 }
 
-const digitKey = cn(
-  'flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl bg-surface-card text-lg font-semibold text-foreground',
-  'shadow-sm ring-1 ring-black/[0.06] transition-colors hover:bg-muted/50 active:scale-[0.98]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
+const KEY_ROWS = [
+  ['1', '2', '3'],
+  ['4', '5', '6'],
+  ['7', '8', '9'],
+  ['.', '0', 'delete'],
+] as const;
 
-const okKey = cn(
-  'col-start-4 row-start-3 row-span-2 flex min-h-[calc(44px*2+0.5rem)] min-w-[44px] items-center justify-center rounded-xl',
-  'bg-primary text-base font-bold text-primary-foreground shadow-sm transition-colors',
-  'hover:bg-primary/90 active:scale-[0.98]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
+function DeleteIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path
+        d="M21 4H8l-7 8 7 8h13a2 2 0 002-2V6a2 2 0 00-2-2zM18 9l-6 6M12 9l6 6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export function NumPad({ value, onChange, onConfirm, maxDecimals = 3, label }: NumPadProps) {
   const onDigit = (d: string) => {
@@ -63,70 +70,50 @@ export function NumPad({ value, onChange, onConfirm, maxDecimals = 3, label }: N
     onChange(applyBackspace(value));
   };
 
+  const handleKeyPress = (key: string) => {
+    if (key === 'delete') {
+      onBackspace();
+    } else if (key === '.') {
+      onDot();
+    } else {
+      onDigit(key);
+    }
+  };
+
   return (
-    <div className="flex w-full max-w-md flex-col gap-3">
+    <div className="flex w-full flex-col gap-3">
       {label ? <p className="text-sm font-medium text-muted-foreground">{label}</p> : null}
       <div
         role="status"
-        className="rounded-2xl border border-border/60 bg-surface-low/50 px-3 py-3 text-right font-mono text-3xl font-semibold tabular-nums tracking-tight text-foreground"
+        className="sr-only"
         aria-live="polite"
       >
-        {value === '' ? '\u00a0' : value}
+        {value === '' ? '0' : value}
       </div>
 
-      <div className="grid grid-cols-4 grid-rows-4 gap-2">
-        <button type="button" className={cn(digitKey, 'col-start-1 row-start-1')} onClick={() => onDigit('7')}>
-          7
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-2 row-start-1')} onClick={() => onDigit('8')}>
-          8
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-3 row-start-1')} onClick={() => onDigit('9')}>
-          9
-        </button>
-        <button
-          type="button"
-          className={cn(
-            digitKey,
-            'col-start-4 row-start-1 row-span-2 min-h-[calc(44px*2+0.5rem)] text-xl',
-          )}
-          aria-label="Cofnij"
-          onClick={onBackspace}
-        >
-          ←
-        </button>
-
-        <button type="button" className={cn(digitKey, 'col-start-1 row-start-2')} onClick={() => onDigit('4')}>
-          4
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-2 row-start-2')} onClick={() => onDigit('5')}>
-          5
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-3 row-start-2')} onClick={() => onDigit('6')}>
-          6
-        </button>
-
-        <button type="button" className={cn(digitKey, 'col-start-1 row-start-3')} onClick={() => onDigit('1')}>
-          1
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-2 row-start-3')} onClick={() => onDigit('2')}>
-          2
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-3 row-start-3')} onClick={() => onDigit('3')}>
-          3
-        </button>
-        <button type="button" className={okKey} onClick={onConfirm}>
-          OK
-        </button>
-
-        <button type="button" className={cn(digitKey, 'col-start-1 row-start-4')} onClick={onDot}>
-          .
-        </button>
-        <button type="button" className={cn(digitKey, 'col-start-2 row-start-4')} onClick={() => onDigit('0')}>
-          0
-        </button>
-        <div className="col-start-3 row-start-4 min-h-[44px] min-w-[44px] rounded-xl bg-transparent" aria-hidden />
+      <div className="grid grid-cols-3 gap-2">
+        {KEY_ROWS.flat().map((key) => (
+          <motion.button
+            key={key}
+            type="button"
+            whileTap={{ scale: 0.95 }}
+            onClick={() => handleKeyPress(key)}
+            className="numpad-btn h-14"
+            aria-label={key === 'delete' ? 'Cofnij' : key}
+          >
+            {key === 'delete' ? <DeleteIcon /> : key}
+          </motion.button>
+        ))}
       </div>
+
+      <motion.button
+        type="button"
+        whileTap={{ scale: 0.95 }}
+        onClick={onConfirm}
+        className={cn('numpad-btn-action col-span-3 mt-0.5 h-14 w-full')}
+      >
+        OK
+      </motion.button>
     </div>
   );
 }

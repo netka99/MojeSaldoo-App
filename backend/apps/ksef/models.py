@@ -18,10 +18,13 @@ class KSeFSession(models.Model):
         on_delete=models.CASCADE,
         related_name="ksef_session",
     )
-    # JSON-encoded dict of cookies returned by SSAPI (e.g. {"session": "abc123"})
+    # Legacy: SSAPI session cookies — kept for backward compat, no longer used.
     session_cookies_json = models.TextField(default="{}")
-    # Parsed from SSAPI /ksef-authentications response
+    # KSeF API tokens — stored after successful authentication
+    access_token_body = models.TextField(blank=True)
+    refresh_token_body = models.TextField(blank=True)
     access_valid_until = models.DateTimeField(null=True, blank=True)
+    refresh_valid_until = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def get_cookies(self) -> dict:
@@ -45,6 +48,48 @@ class KSeFSession(models.Model):
     class Meta:
         verbose_name = "KSeF session"
         verbose_name_plural = "KSeF sessions"
+
+
+class KSeFSentInvoice(models.Model):
+    """
+    Tracks invoices sent to KSeF via the consolidated crypto client.
+    Replaces SSAPI's SQLite invoice table.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        "users.Company",
+        on_delete=models.CASCADE,
+        related_name="ksef_sent_invoices",
+    )
+    # KSeF submission reference (returned by sessions/online/{ref}/invoices)
+    reference_number = models.CharField(max_length=255, unique=True)
+    # The session in which this invoice was sent
+    session_reference_number = models.CharField(max_length=255)
+    # Hash of the unencrypted invoice XML (for QR/verification URL)
+    invoice_hash = models.CharField(max_length=255, blank=True)
+    # P_1 field from the FA-3 XML (issue date)
+    issue_date = models.CharField(max_length=20, blank=True)
+    # Human-readable identifier for the buyer (shop name)
+    shop = models.CharField(max_length=255, blank=True)
+    total_gross_cents = models.IntegerField(null=True, blank=True)
+    # Populated after KSeF processes the invoice
+    ksef_number = models.CharField(max_length=255, blank=True)
+    invoice_number = models.CharField(max_length=255, blank=True)
+    status_code = models.IntegerField(null=True, blank=True)
+    status_description = models.CharField(max_length=512, blank=True)
+    # UPO XML — stored on first successful status poll; served without requiring a live session
+    upo_xml = models.TextField(blank=True)
+    upo_hash = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "KSeF sent invoice"
+        verbose_name_plural = "KSeF sent invoices"
+
+    def __str__(self):
+        return f"{self.reference_number} ({self.shop})"
 
 
 class ReceivedKSeFInvoice(models.Model):

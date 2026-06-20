@@ -6,6 +6,14 @@ from .models import ProductionOrder, ProductionOrderInput, Recipe, RecipeItem
 class RecipeItemSerializer(serializers.ModelSerializer):
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
     ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True)
+    ingredient_avg_cost = serializers.DecimalField(
+        source="ingredient.avg_cost",
+        max_digits=10,
+        decimal_places=4,
+        read_only=True,
+        allow_null=True,
+    )
+    ingredient_stock_total = serializers.SerializerMethodField()
 
     class Meta:
         model = RecipeItem
@@ -14,10 +22,18 @@ class RecipeItemSerializer(serializers.ModelSerializer):
             "ingredient",
             "ingredient_name",
             "ingredient_unit",
+            "ingredient_avg_cost",
+            "ingredient_stock_total",
             "quantity",
             "unit",
             "notes",
         ]
+
+    def get_ingredient_stock_total(self, obj):
+        # Uses prefetched ingredient.stocks — no extra DB hit.
+        return sum(
+            (s.quantity_available or 0) for s in obj.ingredient.stocks.all()
+        )
 
 
 class RecipeSerializer(serializers.ModelSerializer):

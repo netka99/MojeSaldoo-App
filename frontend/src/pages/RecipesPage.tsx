@@ -9,23 +9,14 @@ import {
   useDeleteRecipeMutation,
 } from '@/query/use-production';
 import { authStorage } from '@/services/api';
-import { productService } from '@/services/product.service';
-import { useQuery } from '@tanstack/react-query';
+import { useAllProductsQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
-import type { Recipe, RecipeCreate } from '@/types/production.types';
+import type { Recipe, RecipeCreate, RecipeItem } from '@/types/production.types';
 
 const inputClass = cn(
   'flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
   'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
 );
-
-// Fetch all products for ingredient picker (small lists only)
-function useAllProductsQuery() {
-  return useQuery({
-    queryKey: ['products', 'all-for-recipe'],
-    queryFn: () => productService.fetchList({ page_size: 200, ordering: 'name' }),
-  });
-}
 
 type IngredientRow = { ingredient: string; quantity: string; unit: string; notes: string };
 
@@ -201,33 +192,23 @@ function RecipeForm({
   );
 }
 
+/** Cost per unit of finished product derived from ingredient avg_costs in serializer data. */
+function calcEstimatedCost(items: RecipeItem[], yieldQty: number): number | null {
+  if (items.length === 0) return null;
+  let total = 0;
+  for (const item of items) {
+    if (item.ingredient_avg_cost === null || item.ingredient_avg_cost === undefined) return null;
+    total += Number(item.quantity) * Number(item.ingredient_avg_cost);
+  }
+  return yieldQty > 0 ? total / yieldQty : null;
+}
+
 export function RecipesPage() {
   if (!authStorage.getAccessToken()) return <Navigate to="/login" replace />;
 
   const { data: recipes = [], isLoading } = useRecipesQuery();
-  const { data: productsData } = useAllProductsQuery();
   const createM = useCreateRecipeMutation();
   const deleteM = useDeleteRecipeMutation();
-
-  // Map productId → avg_cost (as number) for cost estimate
-  const avgCostMap = new Map<string, number>();
-  for (const p of productsData?.results ?? []) {
-    if (p.avg_cost !== null && p.avg_cost !== undefined) {
-      avgCostMap.set(p.id, Number(p.avg_cost));
-    }
-  }
-
-  function calcEstimatedCost(recipe: (typeof recipes)[0]): number | null {
-    if (recipe.items.length === 0) return null;
-    let total = 0;
-    for (const item of recipe.items) {
-      const cost = avgCostMap.get(item.ingredient);
-      if (cost === undefined) return null; // missing avg_cost → can't estimate
-      total += Number(item.quantity) * cost;
-    }
-    const yieldQty = Number(recipe.yield_quantity);
-    return yieldQty > 0 ? total / yieldQty : null;
-  }
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -313,15 +294,25 @@ export function RecipesPage() {
                     </p>
                     {recipe.items.length > 0 && (
                       <ul className="mt-1 space-y-0.5">
-                        {recipe.items.map((item) => (
-                          <li key={item.id} className="text-xs text-muted-foreground">
-                            {item.ingredient_name}: {item.quantity} {item.unit || item.ingredient_unit}
-                          </li>
-                        ))}
+                        {recipe.items.map((item) => {
+                          const stock = item.ingredient_stock_total !== null && item.ingredient_stock_total !== undefined
+                            ? Number(item.ingredient_stock_total)
+                            : null;
+                          return (
+                            <li key={item.id} className="text-xs text-muted-foreground">
+                              {item.ingredient_name}: {item.quantity} {item.unit || item.ingredient_unit}
+                              {stock !== null && (
+                                <span className={cn('ml-1', stock <= 0 ? 'text-destructive font-medium' : '')}>
+                                  (stan: {stock})
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                     {recipe.items.length > 0 && (() => {
-                      const cost = calcEstimatedCost(recipe);
+                      const cost = calcEstimatedCost(recipe.items, Number(recipe.yield_quantity));
                       return (
                         <p className="mt-1.5 text-xs">
                           <span className="font-medium text-foreground">

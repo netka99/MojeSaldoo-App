@@ -64,6 +64,25 @@ export const invoiceService = {
   /** Submit an issued invoice to KSeF via SSAPI (requires active KSeF session). */
   sendToKsef: (id: string) => api.post<Invoice>(`${basePath}${id}/send-to-ksef/`, {}),
 
+  /** Download UPO (Urzędowe Potwierdzenie Odbioru) XML for an accepted invoice. */
+  downloadUpo: async (id: string, filename: string): Promise<void> => {
+    const token = (await import('./api')).authStorage.getAccessToken();
+    const resp = await fetch(`/api/invoices/${id}/upo/`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error((body as { detail?: string }).detail ?? `HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
   /**
    * Poll SSAPI for updated KSeF processing status.
    * Returns 202 (Accepted) while KSeF is still processing — poll again.

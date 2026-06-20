@@ -6,7 +6,6 @@ These proxy authentication to the SSAPI backend.
 import logging
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone as dt_timezone
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -17,8 +16,6 @@ from apps.users.permissions import IsCompanyMember
 
 from django.http import HttpResponse
 
-from apps.users.ksef_crypto import decrypt_private_key_pem
-from apps.users.models import KSeFCertificate
 from apps.products.models import Product
 from apps.suppliers.models import Supplier
 from .models import KSeFSession, KSeFProductMapping, ReceivedKSeFInvoice, ReceivedKSeFInvoiceLine
@@ -70,23 +67,6 @@ def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
 logger = logging.getLogger(__name__)
 
 
-def _parse_valid_until(tokens: list) -> datetime | None:
-    """Extract access token's valid_until from SSAPI token list."""
-    for token in tokens:
-        if token.get("token_type") == "access":
-            raw = token.get("valid_until")
-            if raw:
-                try:
-                    # SSAPI returns ISO string; ensure it's timezone-aware
-                    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=dt_timezone.utc)
-                    return dt
-                except ValueError:
-                    pass
-    return None
-
-
 class KSeFSessionView(APIView):
     """
     GET  /api/ksef/session/       — check active session for current company
@@ -109,18 +89,9 @@ class KSeFSessionView(APIView):
         if not ksef_sess.is_active():
             return Response({"active": False, "tokens": []})
 
-        # Optionally verify with SSAPI
-        nip = (company.nip or "").strip()
-        try:
-            tokens = ssapi_client.check_session(ksef_sess.get_cookies(), nip=nip)
-            has_active = len(tokens) > 0
-        except Exception as exc:
-            logger.warning("SSAPI session check failed: %s", exc)
-            has_active = ksef_sess.is_active()
-            tokens = []
-
+        tokens = ssapi_client.check_session(str(company.id))
         return Response({
-            "active": has_active,
+            "active": len(tokens) > 0,
             "tokens": tokens,
             "access_valid_until": (
                 ksef_sess.access_valid_until.isoformat() if ksef_sess.access_valid_until else None
@@ -148,27 +119,8 @@ class KSeFSessionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Ensure the certificate is available on ssapi-multi's filesystem.
-        # Push it every time so ssapi-multi restarts don't break authentication.
-        cert_row = KSeFCertificate.objects.filter(company=company, is_active=True).first()
-        if not cert_row:
-            return Response(
-                {"detail": "Brak aktywnego certyfikatu KSeF. Prześlij certyfikat w ustawieniach."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         try:
-            key_pem = decrypt_private_key_pem(cert_row.encrypted_key)
-            ssapi_client.push_certificate(nip=nip, cert_pem=cert_row.certificate_pem, key_pem=key_pem)
-        except Exception as exc:
-            logger.warning("Failed to sync cert to ssapi-multi before auth (NIP %s): %s", nip, exc)
-
-        try:
-            _result, cookies = ssapi_client.authenticate(nip, passphrase)
-            # Fetch actual token list (authenticate only returns an outcome string)
-            try:
-                tokens = ssapi_client.check_session(cookies, nip=nip)
-            except Exception:
-                tokens = []
+            tokens, _cookies = ssapi_client.authenticate(nip, passphrase, str(company.id))
         except ValueError as exc:
             if "ksef_auth_in_progress" in str(exc):
                 return Response(
@@ -177,23 +129,19 @@ class KSeFSessionView(APIView):
                 )
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
-            logger.error("SSAPI authenticate error: %s", exc)
+            logger.error("KSeF authenticate error: %s", exc)
             return Response(
-                {"detail": f"Błąd połączenia z SSAPI: {exc}"},
+                {"detail": f"Błąd uwierzytelnienia KSeF: {exc}"},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        access_valid_until = _parse_valid_until(tokens)
-
-        ksef_sess, _ = KSeFSession.objects.get_or_create(company=company)
-        ksef_sess.set_cookies(cookies)
-        ksef_sess.access_valid_until = access_valid_until
-        ksef_sess.save()
-
+        ksef_sess = KSeFSession.objects.get(company=company)
         return Response({
             "active": True,
             "tokens": tokens,
-            "access_valid_until": access_valid_until.isoformat() if access_valid_until else None,
+            "access_valid_until": (
+                ksef_sess.access_valid_until.isoformat() if ksef_sess.access_valid_until else None
+            ),
         })
 
     def delete(self, request):
@@ -272,10 +220,11 @@ class ReceivedInvoicesView(APIView):
         })
 
     @staticmethod
-    def _sync_from_ksef(company, nip, ksef_sess, date_from, date_to) -> int:
+    def _sync_from_ksef(company, nip, date_from, date_to) -> int:
         """Pull all pages from KSeF for the given date range and upsert into DB.
         Downloads XML for newly seen invoices so they're available without a session.
         Returns new count."""
+        company_id = str(company.id)
         page_offset = 0
         page_size = 100
         total_new = 0
@@ -284,7 +233,7 @@ class ReceivedInvoicesView(APIView):
                 nip=nip,
                 date_from=date_from,
                 date_to=date_to,
-                cookies=ksef_sess.get_cookies(),
+                company_id=company_id,
                 page_offset=page_offset,
                 page_size=page_size,
             )
@@ -300,7 +249,7 @@ class ReceivedInvoicesView(APIView):
                     xml_bytes = ssapi_client.download_received_invoice(
                         nip=nip,
                         ksef_reference_number=obj.ksef_number,
-                        cookies=ksef_sess.get_cookies(),
+                        company_id=company_id,
                     )
                     _store_invoice_xml(obj, xml_bytes, company)
                 except Exception as exc:
@@ -345,7 +294,7 @@ class ReceivedInvoicesSyncView(APIView):
             return Response({"detail": "Sesja KSeF wygasła."}, status=status.HTTP_401_UNAUTHORIZED)
 
         try:
-            new_count = ReceivedInvoicesView._sync_from_ksef(company, nip, ksef_sess, date_from, date_to)
+            new_count = ReceivedInvoicesView._sync_from_ksef(company, nip, date_from, date_to)
         except Exception as exc:
             logger.error("KSeF sync failed: %s", exc)
             return Response({"detail": f"Błąd synchronizacji: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
@@ -381,7 +330,7 @@ class ReceivedInvoiceDownloadView(APIView):
             xml_bytes = ssapi_client.download_received_invoice(
                 nip=nip,
                 ksef_reference_number=ksef_reference_number,
-                cookies=ksef_sess.get_cookies(),
+                company_id=str(company.id),
             )
         except Exception as exc:
             logger.error("KSeF download received invoice failed (ref: %s): %s", ksef_reference_number, exc)
@@ -443,7 +392,7 @@ class ReceivedInvoiceParseView(APIView):
             xml_bytes = ssapi_client.download_received_invoice(
                 nip=nip,
                 ksef_reference_number=ksef_reference_number,
-                cookies=ksef_sess.get_cookies(),
+                company_id=str(company.id),
             )
         except Exception as exc:
             logger.error("KSeF parse: download failed (ref: %s): %s", ksef_reference_number, exc)

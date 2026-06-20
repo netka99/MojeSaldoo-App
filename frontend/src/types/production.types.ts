@@ -5,9 +5,50 @@ export type RecipeItem = {
   ingredient: string;        // product UUID
   ingredient_name: string;
   ingredient_unit: string;
+  ingredient_avg_cost: string | number | null;
+  ingredient_stock_total: string | number | null;
   quantity: string | number;
   unit: string;
   notes: string;
+};
+
+// ── Production Planning ────────────────────────────────────────────────────────
+
+export type PlanningIngredient = {
+  ingredient_id: string;
+  ingredient_name: string;
+  ingredient_unit: string;
+  quantity_per_batch: string | number;
+  quantity_needed: string | number;
+  stock_available: string | number;
+  avg_cost: string | number | null;
+  line_cost_per_batch: string | number | null;
+  has_enough_stock: boolean;
+};
+
+export type PlanningOrder = {
+  order_id: string;
+  order_number: string;
+  customer_name: string;
+  quantity: string | number;
+  delivery_date: string | null;
+};
+
+export type ProductionPlanningItem = {
+  product_id: string;
+  product_name: string;
+  product_unit: string;
+  recipe_id: string;
+  recipe_name: string;
+  recipe_yield_quantity: string | number;
+  total_ordered: string | number;
+  stock_available: string | number;
+  shortfall: string | number;
+  suggested_production_qty: string | number;
+  estimated_unit_cost: string | number | null;
+  estimated_total_cost: string | number | null;
+  ingredients: PlanningIngredient[];
+  orders: PlanningOrder[];
 };
 
 export type Recipe = {

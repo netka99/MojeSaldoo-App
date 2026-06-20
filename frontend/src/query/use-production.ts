@@ -5,6 +5,12 @@ import type { ProductionOrderCreate, RecipeCreate } from '@/types/production.typ
 
 // ── Cache keys ────────────────────────────────────────────────────────────────
 
+const planningKeys = {
+  all: ['production', 'planning'] as const,
+  list: (companyId: string, params: object) =>
+    [...planningKeys.all, companyId, params] as const,
+};
+
 const recipeKeys = {
   all: ['production', 'recipes'] as const,
   lists: () => [...recipeKeys.all, 'list'] as const,
@@ -108,6 +114,7 @@ export function useCreateProductionOrderMutation() {
     mutationFn: (data: ProductionOrderCreate) => productionService.createOrder(data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all });
     },
   });
 }
@@ -119,6 +126,7 @@ export function useCompleteProductionOrderMutation() {
     mutationFn: (id: string) => productionService.completeOrder(id),
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all });
       void queryClient.invalidateQueries({ queryKey: orderKeys.detail(data.id) });
       // Invalidate product list so avg_cost refreshes
       void queryClient.invalidateQueries({ queryKey: ['products'] });
@@ -134,5 +142,18 @@ export function useDeleteProductionOrderMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
     },
+  });
+}
+
+// ── Production Planning ───────────────────────────────────────────────────────
+
+export function useProductionPlanningQuery(params: { date_from?: string; date_to?: string }) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: planningKeys.list(companyId, params),
+    queryFn: () => productionService.fetchPlanning(params),
+    enabled: Boolean(companyId),
   });
 }

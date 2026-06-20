@@ -1380,6 +1380,27 @@ def create_zw_from_pending_returns(
                     created_by=user,
                 )
 
+                # Recreate a StockBatch so FIFO tracking stays accurate.
+                # unit_cost is carried from the original WZ line (purchase price context).
+                product_obj = products[pid]
+                if product_obj.track_batches:
+                    wz_item = wz_items_by_product.get(pid)
+                    StockBatch.objects.create(
+                        company_id=company_id,
+                        product=product_obj,
+                        warehouse=van_warehouse,
+                        batch_number=f"ZW/{zw_doc.document_number or str(zw_doc.id)[:8]}",
+                        received_date=timezone.localdate(),
+                        expiry_date=wz_item.expiry_date if wz_item else None,
+                        quantity_initial=qty,
+                        quantity_remaining=qty,
+                        unit_cost=(
+                            wz_item.unit_cost.quantize(Decimal("0.01"))
+                            if wz_item and wz_item.unit_cost is not None
+                            else None
+                        ),
+                    )
+
     zw_doc.refresh_from_db()
     return zw_doc
 
@@ -1459,6 +1480,13 @@ def _apply_sale_return_deltas_to_stock(
             reference_id=doc_id,
             created_by=created_by,
         )
+        # Deduct FIFO batches for the incremental quantity shipped.
+        # Only applies when delta_sale > 0 (shipping more than originally recorded).
+        # For negative delta (correction down) there's no reverse-FIFO — batches
+        # are consumed; a return would be handled by a ZW document instead.
+        # Mobile warehouses have no batches (they track on MG), so this is a no-op there.
+        if delta_sale > Decimal("0"):
+            _deduct_fifo_batches(company_id, product_id, warehouse_id, delta_sale)
 
     if delta_return != Decimal("0"):
         qty_before_avail_ret = st.quantity_available

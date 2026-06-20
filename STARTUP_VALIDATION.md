@@ -96,19 +96,31 @@ A van seller who can't work offline on the road **cannot use this app in the fie
 
 ---
 
-### Against: You Have a Data Integrity Bug Affecting All Three Segments
+### ~~Against: You Have a Data Integrity Bug Affecting All Three Segments~~ ✅ Fixed (2026-06-17)
 
-From PROJECT.md:
+~~From PROJECT.md:~~
 
-> **Bug #2:** `_apply_sale_return_deltas_to_stock()` corrects `ProductStock` but does **not decrement `StockBatch.quantity_remaining`** — batches "live" in the system even after being sold via WZ.
+> ~~**Bug #2:** `_apply_sale_return_deltas_to_stock()` corrects `ProductStock` but does **not decrement `StockBatch.quantity_remaining`** — batches "live" in the system even after being sold via WZ.~~
 
-**Consequence:** The expiry alerts report can return batches that are already sold. A baker who trusts your expiry alerts could act on phantom stock. This must be fixed before any real user touches production data — a single wrong alert on day 1 destroys trust.
+**Fixed.** Three related gaps were closed:
+1. `complete` action on WZ now calls `_deduct_fifo_batches` per line at the moment of delivery finalisation.
+2. `_apply_sale_return_deltas_to_stock` now calls `_deduct_fifo_batches` for any upward correction on an already-delivered WZ (`delta_sale > 0`).
+3. `create_zw_from_pending_returns` now recreates a `StockBatch` on customer return — carrying `unit_cost` and `expiry_date` from the original WZ line so FIFO tracking stays accurate after returns.
+
+The expiry-alerts report will no longer return phantom batches for stock that was already sold or returned.
 
 ---
 
-### Against: The Dual-Backend Is a Single Point of Failure
+### ~~Against: The Dual-Backend Is a Single Point of Failure~~ ✅ Fixed (2026-06-17)
 
-The SSAPI backend handles all KSeF communication. If it goes down, invoicing breaks entirely. For a business where sending invoices is **legally required**, this is a real operational risk that enterprise buyers (or even cautious SMB owners) will flag.
+~~The SSAPI backend handles all KSeF communication. If it goes down, invoicing breaks entirely. For a business where sending invoices is **legally required**, this is a real operational risk that enterprise buyers (or even cautious SMB owners) will flag.~~
+
+**Fixed.** The separate `ssapi-multi` Bottle server has been eliminated. All KSeF crypto, session management, and invoice tracking now run directly inside Django:
+- `apps/ksef/crypto.py` — full KSeF crypto layer (XAdES signing, AES-256-CBC invoice encryption, RSA-OAEP key wrap, challenge/auth/UPO flows)
+- `apps/ksef/ssapi_client.py` — public facade that loads certificates from `KSeFCertificate` (DB), delegates to `crypto.py`, persists state to `KSeFSession` and `KSeFSentInvoice` Django models
+- UPO XML is now stored in `KSeFSentInvoice.upo_xml` and downloadable via `GET /api/invoices/{id}/upo/` — no active KSeF session required to retrieve it after first poll
+
+The `SSAPI_BASE_URL` Django setting has been removed. No separate process needs to be started.
 
 ---
 
@@ -137,7 +149,7 @@ Each segment addition (piekarnie → receptury, producenci → adnotacje kosztow
 - The KSeF → WZ → Invoice connection is clearest and most testable in a single day
 - The user (handlowiec/właściciel) carries a phone all day — mobile-first matters most here
 
-Fix the two blockers first (pricing per customer + FIFO bug), then hand the app to one real van seller for one delivery day.
+Fix the remaining blocker first (pricing per customer — FIFO bug is already resolved), then hand the app to one real van seller for one delivery day.
 
 ---
 
@@ -159,13 +171,15 @@ After 5 conversations: run the synthesis. If the workflow you built matches what
 
 ---
 
-### Exercise 3 — Fix the One Bug That Blocks Trust
+### ~~Exercise 3 — Fix the One Bug That Blocks Trust~~ ✅ Done (2026-06-17)
 
-Before any real user sees production data:
+~~Before any real user sees production data:~~
 
-**Fix:** `_apply_sale_return_deltas_to_stock()` in `backend/apps/delivery/services.py` must decrement `StockBatch.quantity_remaining` when a WZ is finalized — the same FIFO walk that production uses (`_consume_fifo`).
+~~**Fix:** `_apply_sale_return_deltas_to_stock()` in `backend/apps/delivery/services.py` must decrement `StockBatch.quantity_remaining` when a WZ is finalized — the same FIFO walk that production uses (`_consume_fifo`).~~
 
-A user who sees wrong expiry alerts on day 1 won't come back on day 2.
+~~A user who sees wrong expiry alerts on day 1 won't come back on day 2.~~
+
+**Done.** FIFO batch deduction is now wired into WZ finalisation, post-delivery corrections, and ZW returns. Expiry alerts are now reliable.
 
 ---
 
@@ -200,10 +214,10 @@ Ask every potential user: *"If this solved the problem you described, what would
 
 | | Assessment |
 |---|---|
-| **Strongest signal** | KSeF is mandatory — every SMB must solve this. You have working KSeF integration (SSAPI) already in production. That's a real technical moat. |
+| **Strongest signal** | KSeF is mandatory — every SMB must solve this. You have working KSeF integration consolidated directly in Django (no separate SSAPI process). That's a real technical moat. |
 | **Strongest segment** | Van Selling (Segment A) — most complete workflow, clearest daily use case, best fit for mobile-first |
 | **Biggest risk** | Building for 3 segments simultaneously without PMF evidence for any of them. Each segment addition feels justified but compounds the surface area before you have your first reference customer. |
-| **Critical blocker** | FIFO `quantity_remaining` bug must be fixed before real users touch the app |
+| ~~**Critical blocker**~~ **Fixed** | ~~FIFO `quantity_remaining` bug must be fixed before real users touch the app~~ Fixed 2026-06-17 — WZ finalisation, post-delivery corrections, and ZW returns all now correctly deduct/recreate `StockBatch` |
 | **Missing entirely** | Pricing model, willingness-to-pay validation, real user conversations |
 
 ---

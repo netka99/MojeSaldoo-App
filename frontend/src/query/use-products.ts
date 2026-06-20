@@ -86,6 +86,13 @@ export function useStockSnapshotQuery(warehouseId: string | undefined) {
   });
 }
 
+export function useAllProductsQuery() {
+  return useQuery({
+    queryKey: [...productKeys.lists(), 'all'],
+    queryFn: () => productService.fetchList({ page_size: 200, ordering: 'name' }),
+  });
+}
+
 export function useStockMovementsQuery(params: StockMovementParams) {
   return useQuery({
     queryKey: stockMovementKeys.list(params),
