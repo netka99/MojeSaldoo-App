@@ -1,13 +1,26 @@
+import { useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import { useCustomerQuery } from '@/query/use-customers';
+import {
+  useCustomerPricesQuery,
+  useCreateCustomerPriceMutation,
+  useUpdateCustomerPriceMutation,
+  useDeleteCustomerPriceMutation,
+  useCustomerQuery,
+  useUpdateCustomerMutation,
+} from '@/query/use-customers';
 import { useOrdersByDateQuery } from '@/query/use-orders';
 import { useDeliveryByCustomerQuery } from '@/query/use-delivery';
+import { useAllProductsQuery } from '@/query/use-products';
+import { CustomerForm } from '@/components/features/CustomerForm';
 import { authStorage } from '@/services/api';
+import { customerKeys } from '@/query/keys';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { orderStatusBadgeClassName } from '@/lib/order-utils';
-import type { Order, DeliveryDocument } from '@/types';
+import type { Order, DeliveryDocument, CustomerWrite } from '@/types';
+import type { PriceType } from '@/types/customer.types';
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 const plnFmt = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
@@ -187,6 +200,314 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+/* ── Custom prices section ──────────────────────────────────────── */
+
+function PriceTypeToggle({ value, onChange }: { value: PriceType; onChange: (v: PriceType) => void }) {
+  return (
+    <div className="flex rounded-lg border border-border overflow-hidden text-[12px] font-medium">
+      <button
+        type="button"
+        onClick={() => onChange('net')}
+        className={cn('flex-1 py-1.5 px-3 transition-colors', value === 'net' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-surface-low')}
+      >
+        Netto
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('gross')}
+        className={cn('flex-1 py-1.5 px-3 transition-colors', value === 'gross' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-surface-low')}
+      >
+        Brutto
+      </button>
+    </div>
+  );
+}
+
+function CustomerPricesSection({ customerId }: { customerId: string }) {
+  const { data: prices = [], isLoading } = useCustomerPricesQuery(customerId);
+  const { data: productsResp } = useAllProductsQuery();
+  const products = productsResp?.results ?? [];
+
+  const createMutation = useCreateCustomerPriceMutation(customerId);
+  const updateMutation = useUpdateCustomerPriceMutation(customerId);
+  const deleteMutation = useDeleteCustomerPriceMutation(customerId);
+
+  const [showForm, setShowForm] = useState(false);
+  const [newProductId, setNewProductId] = useState('');
+  const [newPriceNet, setNewPriceNet] = useState('');
+  const [newPriceType, setNewPriceType] = useState<PriceType>('net');
+  const [newNote, setNewNote] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editPriceNet, setEditPriceNet] = useState('');
+  const [editPriceType, setEditPriceType] = useState<PriceType>('net');
+  const [editNote, setEditNote] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+
+  function startEdit(cp: { id: string; price_net: string; price_type: PriceType; note: string }) {
+    setEditingId(cp.id);
+    setEditPriceNet(cp.price_net);
+    setEditPriceType(cp.price_type);
+    setEditNote(cp.note);
+    setEditError(null);
+  }
+
+  async function handleSaveEdit() {
+    const parsed = parseFloat(editPriceNet.replace(',', '.'));
+    if (!isFinite(parsed) || parsed < 0) { setEditError('Nieprawidłowa cena.'); return; }
+    try {
+      await updateMutation.mutateAsync({ id: editingId!, price_net: parsed.toFixed(2), price_type: editPriceType, note: editNote });
+      setEditingId(null);
+    } catch {
+      setEditError('Nie udało się zapisać.');
+    }
+  }
+
+  const existingProductIds = new Set(prices.map((p) => p.product));
+  const availableProducts = products.filter((p) => !existingProductIds.has(p.id));
+
+  const plnFmtLocal = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+
+  async function handleAddPrice() {
+    if (!newProductId || !newPriceNet) {
+      setFormError('Wybierz produkt i podaj cenę.');
+      return;
+    }
+    const parsed = parseFloat(newPriceNet.replace(',', '.'));
+    if (!isFinite(parsed) || parsed < 0) {
+      setFormError('Nieprawidłowa cena.');
+      return;
+    }
+    try {
+      await createMutation.mutateAsync({
+        customer: customerId,
+        product: newProductId,
+        price_net: parsed.toFixed(2),
+        price_type: newPriceType,
+        note: newNote,
+      });
+      setShowForm(false);
+      setNewProductId('');
+      setNewPriceNet('');
+      setNewPriceType('net');
+      setNewNote('');
+      setFormError(null);
+    } catch {
+      setFormError('Nie udało się zapisać ceny.');
+    }
+  }
+
+  return (
+    <section aria-label="Cenniki indywidualne">
+      <div className="mb-2 flex items-center justify-between px-1">
+        <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Cenniki indywidualne
+        </h2>
+        {!showForm && (
+          <button
+            type="button"
+            onClick={() => setShowForm(true)}
+            className="text-[12px] font-medium text-primary"
+          >
+            + Dodaj cenę
+          </button>
+        )}
+      </div>
+
+      {isLoading && (
+        <div className="rounded-2xl bg-surface-card px-4 py-3 text-[13px] text-muted-foreground">
+          Ładowanie…
+        </div>
+      )}
+
+      {!isLoading && prices.length === 0 && !showForm && (
+        <p className="rounded-2xl bg-surface-card px-4 py-4 text-[13px] text-muted-foreground">
+          Brak indywidualnych cen — kliknij Dodaj, aby ustawić.
+        </p>
+      )}
+
+      {prices.length > 0 && (
+        <div className="overflow-hidden rounded-2xl bg-surface-card shadow-soft">
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-border/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-4 py-2.5">Produkt</th>
+                <th className="px-3 py-2.5 text-right">Std. brutto</th>
+                <th className="px-3 py-2.5 text-right">Cena indyw. brutto</th>
+                <th className="px-3 py-2.5">Uwaga</th>
+                <th className="px-3 py-2.5 text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {prices.map((cp) =>
+                editingId === cp.id ? (
+                  <tr key={cp.id} className="border-b border-border/20 last:border-0 bg-surface-low/40">
+                    <td className="px-4 py-2">
+                      <span className="text-[13px] font-medium text-foreground">{cp.product_name}</span>
+                      {editError && <p className="text-[11px] text-destructive mt-0.5">{editError}</p>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <PriceTypeToggle value={editPriceType} onChange={setEditPriceType} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={editPriceNet}
+                        onChange={(e) => setEditPriceNet(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-background px-2 py-1 text-[13px] text-right focus:outline-none focus:ring-2 focus:ring-primary"
+                        autoFocus
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="text"
+                        value={editNote}
+                        onChange={(e) => setEditNote(e.target.value)}
+                        placeholder="uwaga"
+                        className="w-full rounded-lg border border-border bg-background px-2 py-1 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={handleSaveEdit}
+                        disabled={updateMutation.isPending}
+                        className="text-[11px] font-semibold text-primary hover:underline disabled:opacity-50 mr-2"
+                      >
+                        {updateMutation.isPending ? '…' : 'Zapisz'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(null)}
+                        className="text-[11px] text-muted-foreground hover:underline"
+                      >
+                        Anuluj
+                      </button>
+                    </td>
+                  </tr>
+                ) : (
+                <tr key={cp.id} className="border-b border-border/20 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <span className="font-medium text-foreground">{cp.product_name}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                    {plnFmtLocal.format(parseFloat(cp.product_price_net) * (1 + parseFloat(cp.product_vat_rate) / 100))}
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <span className="tabular-nums font-semibold text-primary">
+                      {(() => {
+                        const val = parseFloat(cp.price_net);
+                        const vat = parseFloat(cp.product_vat_rate) / 100;
+                        const gross = cp.price_type === 'gross' ? val : val * (1 + vat);
+                        return plnFmtLocal.format(gross);
+                      })()}
+                    </span>
+                    <span className={cn('ml-1 rounded px-1 py-0.5 text-[10px] font-medium', cp.price_type === 'gross' ? 'bg-amber-100 text-amber-800' : 'bg-surface-low text-muted-foreground')}>
+                      {cp.price_type === 'gross' ? 'wpr. brutto' : 'wpr. netto'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-[12px] text-muted-foreground">
+                    {cp.note || '—'}
+                  </td>
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => startEdit(cp)}
+                      className="text-[11px] text-primary hover:underline mr-2"
+                    >
+                      Edytuj
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteMutation.mutate(cp.id)}
+                      disabled={deleteMutation.isPending}
+                      className="text-[11px] text-destructive hover:underline disabled:opacity-50"
+                    >
+                      Usuń
+                    </button>
+                  </td>
+                </tr>
+                )
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft space-y-3">
+          {formError && (
+            <p className="text-[12px] text-destructive">{formError}</p>
+          )}
+          <div>
+            <label className="mb-1 block text-[12px] text-muted-foreground">Produkt</label>
+            <select
+              value={newProductId}
+              onChange={(e) => setNewProductId(e.target.value)}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">— wybierz produkt —</option>
+              {availableProducts.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.unit})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[12px] text-muted-foreground">Typ ceny</label>
+            <PriceTypeToggle value={newPriceType} onChange={setNewPriceType} />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="mb-1 block text-[12px] text-muted-foreground">
+                Cena {newPriceType === 'gross' ? 'brutto' : 'netto'} (zł)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={newPriceNet}
+                onChange={(e) => setNewPriceNet(e.target.value)}
+                placeholder="np. 2.80"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="mb-1 block text-[12px] text-muted-foreground">Uwaga (opcjonalnie)</label>
+              <input
+                type="text"
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="np. stały klient"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleAddPrice}
+              disabled={createMutation.isPending}
+              className="flex-1 rounded-xl bg-primary py-2.5 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {createMutation.isPending ? 'Zapisywanie…' : 'Zapisz'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowForm(false); setFormError(null); }}
+              className="flex-1 rounded-xl border border-border bg-background py-2.5 text-[13px] font-semibold"
+            >
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ── Page ──────────────────────────────────────────────────────── */
 export function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -204,6 +525,10 @@ export function CustomerDetailPage() {
 
 function CustomerDetailContent({ customerId, date }: { customerId: string; date: string }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [showEditForm, setShowEditForm] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const updateMutation = useUpdateCustomerMutation();
 
   const {
     data: customer,
@@ -263,9 +588,13 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               <motion.button
                 whileTap={{ scale: 0.94 }}
                 type="button"
-                onClick={() => navigate(`/customers/${customerId}/edit`)}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-card shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
-                aria-label="Edytuj klienta"
+                onClick={() => { setShowEditForm((v) => !v); setEditError(null); }}
+                className={cn(
+                  "flex h-10 w-10 items-center justify-center rounded-full shadow-[0_2px_8px_rgba(0,0,0,0.08)]",
+                  showEditForm ? "bg-primary text-primary-foreground" : "bg-card text-foreground",
+                )}
+                aria-label={showEditForm ? "Zamknij edycję" : "Edytuj klienta"}
+                aria-expanded={showEditForm}
               >
                 <PencilIcon />
               </motion.button>
@@ -303,6 +632,94 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               />
             </div>
 
+            {/* Customer info card */}
+            {!showEditForm && (
+              <div className="rounded-2xl bg-surface-card shadow-soft px-4 py-3 space-y-2 text-[13px]">
+                {customer.company_name && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Firma</span>
+                    <span className="font-medium text-foreground text-right">{customer.company_name}</span>
+                  </div>
+                )}
+                {customer.nip && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">NIP</span>
+                    <span className="font-medium text-foreground tabular-nums">{customer.nip}</span>
+                  </div>
+                )}
+                {customer.phone && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Telefon</span>
+                    <a href={`tel:${customer.phone}`} className="font-medium text-primary">{customer.phone}</a>
+                  </div>
+                )}
+                {customer.email && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Email</span>
+                    <a href={`mailto:${customer.email}`} className="font-medium text-primary truncate max-w-[60%]">{customer.email}</a>
+                  </div>
+                )}
+                {(customer.street || customer.city) && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Adres</span>
+                    <span className="font-medium text-foreground text-right">
+                      {[customer.street, customer.postal_code && customer.city ? `${customer.postal_code} ${customer.city}` : customer.city].filter(Boolean).join(', ')}
+                    </span>
+                  </div>
+                )}
+                {customer.delivery_days && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Dni dostawy</span>
+                    <span className="font-medium text-foreground">{customer.delivery_days}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Termin płatności</span>
+                  <span className="font-medium text-foreground">{customer.payment_terms} dni</span>
+                </div>
+                {parseFloat(String(customer.credit_limit)) > 0 && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Limit kredytowy</span>
+                    <span className="font-medium text-foreground tabular-nums">{money(customer.credit_limit)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Inline edit form */}
+            {showEditForm && (
+              <div className="rounded-2xl bg-surface-card shadow-soft overflow-hidden">
+                <div className="px-4 pt-4 pb-0">
+                  <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                    Dane kontrahenta
+                  </h2>
+                  {editError && (
+                    <p className="mb-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+                      {editError}
+                    </p>
+                  )}
+                </div>
+                <div className="px-2">
+                  <CustomerForm
+                    customer={customer}
+                    isLoading={updateMutation.isPending}
+                    submitLabel="Zapisz zmiany"
+                    onSubmit={async (data: CustomerWrite) => {
+                      setEditError(null);
+                      try {
+                        await updateMutation.mutateAsync({ id: customerId, body: data });
+                        await queryClient.invalidateQueries({ queryKey: customerKeys.all });
+                        setShowEditForm(false);
+                      } catch (e) {
+                        setEditError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');
+                      }
+                    }}
+                    onCancel={() => { setShowEditForm(false); setEditError(null); }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Action buttons */}
             <div className="flex gap-3">
               <button
@@ -320,6 +737,9 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
                 Utwórz fakturę
               </button>
             </div>
+
+            {/* Custom prices */}
+            <CustomerPricesSection customerId={customerId} />
 
             {/* Orders list for this date */}
             <section aria-label="Zamówienia klienta">

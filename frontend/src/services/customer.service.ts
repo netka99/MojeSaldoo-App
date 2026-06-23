@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Customer, CustomerWrite } from '../types';
+import type { Customer, CustomerProductPrice, CustomerProductPriceUpdate, CustomerProductPriceWrite, CustomerWrite } from '../types';
 
 interface PaginatedResponse<T> {
   count: number;
@@ -36,4 +36,18 @@ export const customerService = {
 
   partialUpdateItem: (id: string, body: Partial<CustomerWrite>) =>
     api.patch<Customer>(`/customers/${id}/`, body),
+};
+
+export const customerPriceService = {
+  fetchByCustomer: (customerId: string) =>
+    api.get<CustomerProductPrice[]>('/customer-product-prices/', { params: { customer: customerId } }),
+
+  create: (body: CustomerProductPriceWrite) =>
+    api.post<CustomerProductPrice>('/customer-product-prices/', body),
+
+  update: (id: string, body: CustomerProductPriceUpdate) =>
+    api.patch<CustomerProductPrice>(`/customer-product-prices/${id}/`, body),
+
+  delete: (id: string) =>
+    api.delete<Record<string, never>>(`/customer-product-prices/${id}/`),
 };

@@ -4,7 +4,7 @@ from django.apps import apps
 from django.db.models import Sum
 from rest_framework import serializers
 
-from .models import Product, ProductStock, StockMovement, Warehouse
+from .models import CustomerProductPrice, Product, ProductStock, StockMovement, Warehouse
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -326,3 +326,50 @@ class StockUpdateSerializer(serializers.Serializer):
             )
 
         return data
+
+
+class CustomerProductPriceSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_unit = serializers.CharField(source="product.unit", read_only=True)
+    product_price_net = serializers.DecimalField(
+        source="product.price_net", max_digits=10, decimal_places=2, read_only=True
+    )
+    product_vat_rate = serializers.DecimalField(
+        source="product.vat_rate", max_digits=5, decimal_places=2, read_only=True
+    )
+    price_net = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        model = CustomerProductPrice
+        fields = [
+            "id",
+            "customer",
+            "product",
+            "product_name",
+            "product_unit",
+            "product_price_net",
+            "product_vat_rate",
+            "price_net",
+            "price_type",
+            "note",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        company = getattr(getattr(request, "user", None), "current_company", None)
+        if company and "customer" in attrs and "product" in attrs:
+            qs = CustomerProductPrice.objects.filter(
+                company=company,
+                customer=attrs["customer"],
+                product=attrs["product"],
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    "Cena indywidualna dla tego klienta i produktu już istnieje."
+                )
+        return attrs

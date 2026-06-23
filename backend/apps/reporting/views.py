@@ -1,5 +1,8 @@
+import csv
 from datetime import datetime, timedelta
 from decimal import Decimal
+
+from django.http import HttpResponse
 
 from django.db.models import (
     Avg,
@@ -90,6 +93,22 @@ def _limit_from_request(request, default: int = 10, max_limit: int = 100) -> int
     if n < 1:
         raise ValidationError({"limit": "Must be >= 1."})
     return min(n, max_limit)
+
+
+def _csv_response(headers: list, rows: list[list], filename: str) -> HttpResponse:
+    """Build a UTF-8 CSV response suitable for Polish Excel (semicolon delimiter, BOM)."""
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response.write("\ufeff")        # UTF-8 BOM — Excel auto-detects encoding
+    response.write("sep=;\r\n")     # Tells Excel/LibreOffice to use semicolons
+    writer = csv.writer(response, delimiter=";", quoting=csv.QUOTE_ALL)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow([
+            str(v).replace(".", ",") if isinstance(v, Decimal) else (v if v is not None else "")
+            for v in row
+        ])
+    return response
 
 
 class SalesSummaryView(APIView):
@@ -331,6 +350,23 @@ class InventoryReportView(APIView):
             }
             for r in rows
         ]
+        if request.query_params.get("export") == "csv":
+            csv_rows = [
+                [
+                    item["productName"],
+                    item["warehouseCode"],
+                    item["quantityAvailable"],
+                    item["minStockAlert"],
+                    "Tak" if item["belowMinimum"] else "Nie",
+                    item["daysOfStock"] if item["daysOfStock"] is not None else "",
+                ]
+                for item in out
+            ]
+            return _csv_response(
+                ["Produkt", "Magazyn", "Dostępne", "Min. alert", "Poniżej minimum", "Dni zapasu"],
+                csv_rows,
+                "raport-magazyn.csv",
+            )
         return Response(out)
 
 
@@ -617,6 +653,23 @@ class ProfitLossView(APIView):
         totals_gross = totals_rev - totals_cost
         totals_opex = sum(r["opex"] for r in rows) or Decimal("0")
         totals_operating = totals_gross - totals_opex
+        if request.query_params.get("export") == "csv":
+            csv_rows = [
+                [
+                    r["month"],
+                    r["revenue"],
+                    r["purchaseCosts"],
+                    r["grossProfit"],
+                    r["opex"],
+                    r["operatingProfit"],
+                ]
+                for r in rows
+            ]
+            return _csv_response(
+                ["Miesiąc", "Przychód", "Koszt własny", "Wynik brutto", "OPEX", "Zysk netto"],
+                csv_rows,
+                "wynik-finansowy.csv",
+            )
         return Response(
             {
                 "rows": rows,
@@ -992,6 +1045,22 @@ class ProductMarginView(APIView):
                     "estimatedMarginPercent": est_margin_pct,
                 }
             )
+        if request.query_params.get("export") == "csv":
+            csv_rows = [
+                [
+                    item["productName"],
+                    item["totalQty"],
+                    item["totalRevenue"],
+                    item["cogs"] if item["cogs"] is not None else "",
+                    f"{item['marginPercent']}" if item["marginPercent"] is not None else "",
+                ]
+                for item in out
+            ]
+            return _csv_response(
+                ["Produkt", "Sprzedana ilość", "Przychód", "Koszt własny", "Marża %"],
+                csv_rows,
+                "marze-produktow.csv",
+            )
         return Response(out)
 
 
@@ -1067,6 +1136,23 @@ class PaymentAgingView(APIView):
             )
 
         total = sum(buckets.values())
+        if request.query_params.get("export") == "csv":
+            csv_rows = [
+                [
+                    r["invoice_number"],
+                    r["customer_name"],
+                    r["issue_date"] or "",
+                    r["due_date"] or "",
+                    r["days_overdue"],
+                    r["total_gross"],
+                ]
+                for r in rows
+            ]
+            return _csv_response(
+                ["Faktura", "Klient", "Data wystawienia", "Termin płatności", "Dni po terminie", "Kwota"],
+                csv_rows,
+                "raport-naleznosci.csv",
+            )
         return Response(
             {
                 "rows": rows,
@@ -1135,6 +1221,20 @@ class SupplierCostsView(APIView):
         suppliers_out = sorted(supplier_map.values(), key=lambda x: x["total"], reverse=True)[:limit]
         months_set = sorted({m for s in suppliers_out for m in s["monthly"]})
 
+        if request.query_params.get("export") == "csv":
+            csv_rows = [
+                [
+                    s["supplier_name"],
+                    sum(1 for _ in s["monthly"]),  # approximate PZ count by month count
+                    s["total"],
+                ]
+                for s in suppliers_out
+            ]
+            return _csv_response(
+                ["Dostawca", "Liczba miesięcy", "Łączny koszt"],
+                csv_rows,
+                "koszty-dostawcow.csv",
+            )
         return Response({"months": months_set, "suppliers": suppliers_out})
 
 

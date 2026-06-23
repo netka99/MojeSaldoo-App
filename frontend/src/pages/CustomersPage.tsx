@@ -96,7 +96,7 @@ export function CustomersPage() {
         isError={isError}
         error={error}
         onRetry={() => void refetch()}
-        onRowClick={(c) => navigate(`/customers/${c.id}/edit`)}
+        onRowClick={(c) => navigate(`/customers/${c.id}?date=${new Date().toISOString().slice(0, 10)}`)}
       />
     </div>
   );

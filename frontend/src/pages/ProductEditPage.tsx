@@ -5,6 +5,7 @@ import { ProductForm } from '@/components/features/ProductForm';
 import { Button } from '@/components/ui/Button';
 import { productKeys } from '@/query/keys';
 import { useProductQuery, useUpdateProductMutation } from '@/query/use-products';
+import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import type { ProductWrite } from '@/types';
@@ -151,6 +152,24 @@ export function ProductEditPage() {
               >
                 Historia ruchów
               </Link>
+              <button
+                type="button"
+                onClick={() =>
+                  openLabelPrintWindow({
+                    id: product.id,
+                    name: product.name,
+                    sku: product.sku ?? null,
+                    barcode: product.barcode ?? null,
+                    unit: product.unit,
+                    price_gross: product.price_gross,
+                  })
+                }
+                className={cn(
+                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
+                )}
+              >
+                Drukuj etykietę
+              </button>
             </div>
           </div>
         </>

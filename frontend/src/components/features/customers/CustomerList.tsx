@@ -268,7 +268,7 @@ export function CustomerList({
                         tabIndex={onRowClick ? 0 : undefined}
                         aria-label={
                           onRowClick
-                            ? `Otwórz edycję kontrahenta: ${c.name}`
+                            ? `Otwórz szczegóły kontrahenta: ${c.name}`
                             : undefined
                         }
                         className={cn(

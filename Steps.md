@@ -949,3 +949,115 @@ Each prompt is self-contained — copy it into a new agent or a new Claude conve
 3. The agent will read the current code, implement, and report what changed
 
 **Start now with Phase 0** — it fixes the broken registrations in under 10 minutes and unblocks everything else.
+
+=================================================
+Plan implementacji — 3 funkcje
+#11 Eksport raportów PDF/Excel
+Priorytet: PIERWSZY — najszybszy zysk, backend już gotowy (JSON endpoints), wzorzec pobierania blob istnieje.
+
+Etap 11.1 — Backend CSV endpoints (2 raporty)
+
+GET /api/reports/payment-aging/?format=csv — aging należności (kolumny: klient, nr faktury, termin, dni po terminie, kwota)
+GET /api/reports/product-margin/?format=csv — marże per produkt (kolumny: produkt, sprzedana ilość, przychód, avg_cost, marża %)
+Wzorzec: if request.query_params.get('format') == 'csv': return StreamingHttpResponse(csv_generator, content_type='text/csv')
+Etap 11.2 — Backend CSV dla pozostałych raportów
+
+GET /api/reports/profit-loss/?format=csv
+GET /api/reports/supplier-costs/?format=csv
+GET /api/reports/inventory/?format=csv
+Etap 11.3 — Frontend przyciski "Pobierz CSV"
+
+Utility hook useDownloadReport(url, filename) — fetch blob → <a download> (już gotowy pattern z CostProjectsPage)
+Dodać przycisk na każdej stronie raportu: PaymentAgingPage, ProductMarginPage, ProfitLossPage, InventoryReportPage, SupplierCostsPage
+Etap 11.4 — Testy
+
+Backend: test że CSV ma poprawne nagłówki i wiersze
+Frontend: test że klik przycisku wywołuje fetch z ?format=csv
+#7 Indywidualne cenniki per klient
+Priorytet: DRUGI — wymaga nowego modelu w backendzie, ale logika jest dobrze zdefiniowana.
+
+Etap 7.1 — Backend model + migracja
+
+
+class CustomerProductPrice(models.Model):
+    company = FK(Company)
+    customer = FK(Customer, on_delete=CASCADE)
+    product = FK(Product, on_delete=CASCADE)
+    price_net = DecimalField(10,2)
+    price_gross = DecimalField(10,2)  # wyliczane
+    notes = CharField(blank=True)
+    created_at / updated_at
+    unique_together = [('company','customer','product')]
+Etap 7.2 — Backend API
+
+GET/POST /api/customers/{id}/prices/ — lista i tworzenie cen dla klienta
+PATCH/DELETE /api/customers/{id}/prices/{product_id}/ — edycja/usuwanie
+GET /api/orders/customer-prices/?customer_id=X — endpoint pomocniczy do pobierania cen przy tworzeniu zamówienia (zwraca słownik {product_id: price_net})
+Etap 7.3 — Frontend: zarządzanie cennikiem klienta
+
+Nowa zakładka/sekcja na stronie szczegółów klienta (CustomerDetailPage)
+Tabela: Produkt | Cena standardowa | Cena indywidualna | Akcje
+Dodaj/edytuj/usuń cenę — modal lub inline edit
+Etap 7.4 — Frontend: OrderCreatePage integracja
+
+Po wyborze klienta → fetch customer-prices/ dla tego klienta
+unitPriceNet linii = cena indywidualna jeśli istnieje, fallback na product.price_net
+Wizualnie: badge "cena indyw." przy produkcie który ma niestandardową cenę
+Etap 7.5 — Testy
+
+Backend: CRUD cen, że customer-prices/ zwraca właściwy słownik
+Frontend: że po wyborze klienta ceny się podmienią
+#10 Etykiety QR/EAN
+Priorytet: TRZECI — nice-to-have, dobrze zdefiniowane, buduje na istniejącym print pattern.
+
+Etap 10.1 — Biblioteka i drukowanie
+
+Dodać npm install qrcode.react (QR) + npm install jsbarcode lub react-barcode (EAN/Code128)
+Nowy komponent LabelPrintView.tsx w components/print/ — wzorowany na WZPrintView
+Etap 10.2 — Projekt etykiety
+
+Rozmiar: 58mm×40mm (standardowa etykieta termiczna) + A4 (siatka 4×10)
+Zawartość: nazwa produktu, SKU/kod, barcode (EAN-13 jeśli barcode na produkcie, fallback Code128), cena, jednostka
+CSS @media print dla obu formatów
+Etap 10.3 — Trigger drukowania
+
+Przycisk "Drukuj etykiety" na ProductListPage — checkbox selection + ilość etykiet per produkt
+Przycisk "Drukuj etykietę" na ProductEditPage — jednoproduktowy
+openLabelPrintWindow(products, quantities) — analogicznie do openWZPrintWindow
+Etap 10.4 — Testy
+
+Test że LabelPrintView renderuje poprawną nazwę i jednostkę
+Test że barcode generuje się z pola product.barcode
+Kolejność pracy
+
+#11 Eksport CSV    [11.1] → [11.2] → [11.3] → [11.4]
+#7  Cenniki        [7.1]  → [7.2]  → [7.3]  → [7.4]  → [7.5]
+#10 Etykiety       [10.1] → [10.2] → [10.3] → [10.4]
+
+
+#7 — Customer Prices
+Set up a custom price:
+
+Go to Klienci → open any customer
+Scroll down — you should see the new "Cenniki indywidualne" section
+Click + Dodaj cenę → select a product, enter a price, click Zapisz
+The price appears in the table with the default price next to it for comparison
+Verify it affects orders:
+
+Go to Zamówienia → Nowe zamówienie
+Select the same customer
+Scroll the product list — the product with a custom price should show the custom price with a blue "cena indyw." badge instead of the standard price
+#10 — Label Printing
+Go to Produkty → click any product to open its edit page
+Scroll to the bottom — new "Drukuj etykietę" button next to the existing links
+Click it → browser print dialog opens with a thermal label (57×35mm with QR code, barcode if set, price in PLN)
+#11 — CSV Export
+Frontend-generated CSV (already worked before):
+
+Go to Raporty → Należności → "Eksport CSV" button was already there
+New backend CSV endpoints — test with "Pobierz CSV" buttons:
+
+Magazyn (/reports/inventory) — "Pobierz CSV" button in the top-right corner
+Wynik finansowy P&L (/reports/profit-loss) — "Pobierz CSV" top-right
+Marże na produktach (/reports/product-margin) — "Pobierz CSV" top-right
+The buttons only appear when there's data. Downloaded files open correctly in Excel (semicolons, UTF-8 BOM, Polish decimal commas).

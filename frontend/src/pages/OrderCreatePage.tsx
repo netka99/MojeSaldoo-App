@@ -16,7 +16,7 @@ import {
 import { formatDeliveryDate } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import { useCreateOrderMutation, useConfirmOrderMutation, useOrdersByCustomerQuery } from '@/query/use-orders';
-import { useCustomerQuery, useCustomerListQuery } from '@/query/use-customers';
+import { useCustomerQuery, useCustomerListQuery, useCustomerPricesQuery } from '@/query/use-customers';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
 import type { Product } from '@/types';
@@ -362,12 +362,13 @@ function XIcon() {
 interface ProductCardProps {
   product: Product;
   quantity: number;
+  customPriceNet?: string;
   onTap: () => void;
   onAdd: () => void;
   onRemove: () => void;
 }
 
-function ProductCard({ product, quantity, onTap, onAdd, onRemove }: ProductCardProps) {
+function ProductCard({ product, quantity, customPriceNet, onTap, onAdd, onRemove }: ProductCardProps) {
   const initial = product.name.trim().charAt(0).toUpperCase();
   const stock = stockDisplay(product);
   const unit = product.unit || 'szt.';
@@ -391,7 +392,10 @@ function ProductCard({ product, quantity, onTap, onAdd, onRemove }: ProductCardP
       <div className="min-w-0 flex-1">
         <h4 className="truncate text-[15px] font-medium text-foreground">{product.name}</h4>
         <p className="text-[13px] text-muted-foreground">
-          {formatGrossPln(grossPerUnit(product))} / {unit}
+          {customPriceNet
+            ? <>{formatGrossPln(unitGrossFromNet(parseDecimalInput(customPriceNet) ?? 0, parseDecimalInput(String(product.vat_rate)) ?? 0))} <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-semibold text-primary">cena indyw.</span></>
+            : <>{formatGrossPln(grossPerUnit(product))}</>
+          } / {unit}
         </p>
         {stock && (
           <p className="mt-0.5 text-[11px] text-muted-foreground">{stock}</p>
@@ -573,25 +577,29 @@ type OrderDraft = {
   prevOrderDismissed: boolean;
 };
 
-function loadDraft(): Partial<OrderDraft> {
+function draftKey(customerId?: string) {
+  return customerId ? `${DRAFT_KEY}_${customerId}` : DRAFT_KEY;
+}
+
+function loadDraft(customerId?: string): Partial<OrderDraft> {
   try {
-    const raw = sessionStorage.getItem(DRAFT_KEY);
+    const raw = sessionStorage.getItem(draftKey(customerId));
     return raw ? (JSON.parse(raw) as OrderDraft) : {};
   } catch {
     return {};
   }
 }
 
-function saveDraft(draft: OrderDraft) {
+function saveDraft(draft: OrderDraft, customerId?: string) {
   try {
-    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    sessionStorage.setItem(draftKey(customerId), JSON.stringify(draft));
   } catch {
     // ignore
   }
 }
 
-function clearDraft() {
-  sessionStorage.removeItem(DRAFT_KEY);
+function clearDraft(customerId?: string) {
+  sessionStorage.removeItem(draftKey(customerId));
 }
 
 export function OrderCreatePage() {
@@ -605,11 +613,15 @@ export function OrderCreatePage() {
   const create = useCreateOrderMutation();
   const confirm = useConfirmOrderMutation();
 
-  const draft = loadDraft();
+  const draft = loadDraft(urlCustomerId || undefined);
 
   const [deliveryDate, setDeliveryDate] = useState(draft.deliveryDate ?? urlDate);
-  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(draft.selectedCustomer ?? null);
-  const [customerInput, setCustomerInput] = useState(draft.selectedCustomer?.name ?? '');
+  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(
+    urlCustomerId ? null : (draft.selectedCustomer ?? null),
+  );
+  const [customerInput, setCustomerInput] = useState(
+    urlCustomerId ? '' : (draft.selectedCustomer?.name ?? ''),
+  );
   const [customerOpen, setCustomerOpen] = useState(false);
   const [showCustomerChange, setShowCustomerChange] = useState(false);
   const customerRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
@@ -617,6 +629,17 @@ export function OrderCreatePage() {
   const customerDebounce = useDebouncedValue(customerInput, DEBOUNCE_MS);
   const { data: customerData, isFetching: customersLoading } = useCustomerListQuery(1, customerDebounce);
   const customers = customerData?.results ?? [];
+
+  // Custom prices for selected customer — used to override default product prices
+  const { data: customerPricesData } = useCustomerPricesQuery(selectedCustomer?.id);
+  // Store effective net price per product (converting gross→net when price_type='gross')
+  const customerPrices: Record<string, string> = {};
+  (customerPricesData ?? []).forEach((cp) => {
+    const val = parseDecimalInput(cp.price_net) ?? 0;
+    const vat = parseDecimalInput(String(cp.product_vat_rate)) ?? 0;
+    const netVal = cp.price_type === 'gross' ? val / (1 + vat / 100) : val;
+    customerPrices[cp.product] = netVal.toFixed(4);
+  });
 
   // Auto-load customer from URL param
   const { data: preloadedCustomer } = useCustomerQuery(urlCustomerId || undefined, Boolean(urlCustomerId));
@@ -670,7 +693,7 @@ export function OrderCreatePage() {
 
   // Persist draft to sessionStorage on every relevant change
   useEffect(() => {
-    saveDraft({ deliveryDate, selectedCustomer, lines, prevOrderDismissed });
+    saveDraft({ deliveryDate, selectedCustomer, lines, prevOrderDismissed }, selectedCustomer?.id || urlCustomerId || undefined);
   }, [deliveryDate, selectedCustomer, lines, prevOrderDismissed]);
 
   const [numPadValue, setNumPadValue] = useState('0');
@@ -783,7 +806,8 @@ export function OrderCreatePage() {
         next[idx] = { ...next[idx]!, quantity: String(cur + 1) };
         return next;
       }
-      return [...prev, { key: product.id, product, quantity: '1', unitPriceNet: String(product.price_net), discountPercent: '0' }];
+      const customPrice = customerPrices[product.id];
+      return [...prev, { key: product.id, product, quantity: '1', unitPriceNet: customPrice ?? String(product.price_net), discountPercent: '0' }];
     });
   };
 
@@ -859,7 +883,7 @@ export function OrderCreatePage() {
       const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items };
       const order = await create.mutateAsync(body);
       await confirm.mutateAsync(order.id);
-      clearDraft();
+      clearDraft(selectedCustomer.id);
       const d = deliveryDate.trim();
       navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
     } catch (e) {
@@ -868,7 +892,7 @@ export function OrderCreatePage() {
   };
 
   const backToOrders = () => {
-    clearDraft();
+    clearDraft(selectedCustomer?.id || urlCustomerId || undefined);
     const d = deliveryDate.trim();
     navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
   };
@@ -1033,6 +1057,7 @@ export function OrderCreatePage() {
                 <ProductCard
                   product={product}
                   quantity={qty}
+                  customPriceNet={customerPrices[product.id]}
                   onTap={() => openNumpad(product)}
                   onAdd={() => quickAdd(product)}
                   onRemove={() => quickRemove(product)}

@@ -882,3 +882,111 @@ class ProductUpdateStockAPITests(TestCase):
         self.assertEqual(response.data["movement_type"], "purchase")
         stock = ProductStock.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(stock.quantity_available, Decimal("2.00"))
+
+
+class CustomerProductPriceAPITests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="cpp-test-user", email="cpp@test.com", password="test12345"
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save()
+
+        from apps.customers.models import Customer
+        self.customer = Customer.objects.create(
+            company=self.company,
+            name="Test Sklep",
+        )
+        from apps.products.models import CustomerProductPrice
+        self.product = Product.objects.create(
+            company=self.company,
+            name="Chleb Zwykly",
+            unit="szt.",
+            price_net=Decimal("3.50"),
+            price_gross=Decimal("3.78"),
+            vat_rate=Decimal("8.00"),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.base_url = "/api/customer-product-prices/"
+
+    def test_list_prices_for_customer(self):
+        from apps.products.models import CustomerProductPrice
+        CustomerProductPrice.objects.create(
+            company=self.company,
+            customer=self.customer,
+            product=self.product,
+            price_net=Decimal("2.80"),
+        )
+        response = self.client.get(self.base_url, {"customer": str(self.customer.id)})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data.get("results", response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["price_net"], "2.80")
+        self.assertEqual(results[0]["product_name"], "Chleb Zwykly")
+
+    def test_create_price(self):
+        response = self.client.post(
+            self.base_url,
+            {
+                "customer": str(self.customer.id),
+                "product": str(self.product.id),
+                "price_net": "2.00",
+                "note": "staly klient",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["price_net"], "2.00")
+        self.assertEqual(response.data["note"], "staly klient")
+        from apps.products.models import CustomerProductPrice
+        self.assertEqual(
+            CustomerProductPrice.objects.filter(
+                company=self.company, customer=self.customer, product=self.product
+            ).count(),
+            1,
+        )
+
+    def test_update_price(self):
+        from apps.products.models import CustomerProductPrice
+        cpp = CustomerProductPrice.objects.create(
+            company=self.company,
+            customer=self.customer,
+            product=self.product,
+            price_net=Decimal("2.80"),
+        )
+        response = self.client.patch(
+            f"{self.base_url}{cpp.id}/",
+            {"price_net": "1.99"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        cpp.refresh_from_db()
+        self.assertEqual(cpp.price_net, Decimal("1.99"))
+
+    def test_delete_price(self):
+        from apps.products.models import CustomerProductPrice
+        cpp = CustomerProductPrice.objects.create(
+            company=self.company,
+            customer=self.customer,
+            product=self.product,
+            price_net=Decimal("2.80"),
+        )
+        response = self.client.delete(f"{self.base_url}{cpp.id}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(CustomerProductPrice.objects.filter(id=cpp.id).exists())
+
+    def test_unique_constraint(self):
+        self.client.post(
+            self.base_url,
+            {"customer": str(self.customer.id), "product": str(self.product.id), "price_net": "2.80"},
+            format="json",
+        )
+        response = self.client.post(
+            self.base_url,
+            {"customer": str(self.customer.id), "product": str(self.product.id), "price_net": "1.50"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

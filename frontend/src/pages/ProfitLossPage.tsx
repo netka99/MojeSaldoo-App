@@ -3,6 +3,7 @@ import { format, subMonths, startOfMonth, startOfYear, endOfYear, subYears } fro
 import { Link, Navigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useProfitLossQuery, useProfitLossMonthDetailQuery } from '@/query/use-reports';
+import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
@@ -220,7 +221,18 @@ export function ProfitLossPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="text-xl font-semibold">Wynik finansowy (P&L)</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Wynik finansowy (P&L)</h1>
+        {data && data.rows.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void downloadCsv('/reports/profit-loss/', { date_from: dateFrom, date_to: dateTo }, 'wynik-finansowy.csv')}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          >
+            Pobierz CSV
+          </button>
+        )}
+      </div>
 
       {/* Filters */}
       <Card>

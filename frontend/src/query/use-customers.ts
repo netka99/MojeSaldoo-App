@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
-import { customerService } from '@/services/customer.service';
-import type { CustomerWrite } from '@/types';
-import { customerKeys } from './keys';
+import { customerPriceService, customerService } from '@/services/customer.service';
+import type { CustomerProductPriceUpdate, CustomerProductPriceWrite, CustomerWrite } from '@/types';
+import { customerKeys, customerPriceKeys } from './keys';
 
 export function useCustomerListQuery(page: number, search: string) {
   const { user } = useAuth();
@@ -83,6 +83,45 @@ export function useDeleteCustomerMutation() {
     mutationFn: (id: string) => customerService.deleteItem(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: customerKeys.all });
+    },
+  });
+}
+
+export function useCustomerPricesQuery(customerId: string | undefined) {
+  return useQuery({
+    queryKey: customerId ? customerPriceKeys.byCustomer(customerId) : [...customerPriceKeys.all, 'pending'],
+    queryFn: () => customerPriceService.fetchByCustomer(customerId!),
+    enabled: Boolean(customerId),
+  });
+}
+
+export function useCreateCustomerPriceMutation(customerId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CustomerProductPriceWrite) => customerPriceService.create(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: customerPriceKeys.byCustomer(customerId) });
+    },
+  });
+}
+
+export function useUpdateCustomerPriceMutation(customerId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & CustomerProductPriceUpdate) =>
+      customerPriceService.update(id, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: customerPriceKeys.byCustomer(customerId) });
+    },
+  });
+}
+
+export function useDeleteCustomerPriceMutation(customerId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => customerPriceService.delete(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: customerPriceKeys.byCustomer(customerId) });
     },
   });
 }

@@ -12,8 +12,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .filters import ProductFilter
-from .models import Product, ProductStock, StockMovement, Warehouse
+from .models import CustomerProductPrice, Product, ProductStock, StockMovement, Warehouse
 from .serializers import (
+    CustomerProductPriceSerializer,
     ProductSerializer,
     StockMovementListSerializer,
     StockMovementSerializer,
@@ -348,3 +349,26 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(created_at__date__lte=date_to)
 
         return qs
+
+
+class CustomerProductPriceViewSet(viewsets.ModelViewSet):
+    serializer_class = CustomerProductPriceSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self) -> QuerySet:
+        qs = CustomerProductPrice.objects.select_related("product", "customer").order_by(
+            "product__name"
+        )
+        qs = filter_queryset_for_current_company(qs, self.request.user)
+        customer_id = self.request.query_params.get("customer")
+        if customer_id:
+            qs = qs.filter(customer_id=customer_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.current_company)
+
+    def perform_update(self, serializer):
+        serializer.save(company=self.request.user.current_company)

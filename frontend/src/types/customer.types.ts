@@ -24,3 +24,34 @@ export interface Customer {
 
 export type CustomerWrite = Omit<Customer, 'id' | 'created_at' | 'updated_at' | 'user'> &
   Partial<Pick<Customer, 'id'>>;
+
+export type PriceType = 'net' | 'gross';
+
+export interface CustomerProductPrice {
+  id: string;
+  customer: string;
+  product: string;
+  product_name: string;
+  product_unit: string;
+  product_price_net: string;
+  product_vat_rate: string;
+  price_net: string;
+  price_type: PriceType;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CustomerProductPriceWrite = {
+  customer: string;
+  product: string;
+  price_net: string;
+  price_type?: PriceType;
+  note?: string;
+};
+
+export type CustomerProductPriceUpdate = {
+  price_net: string;
+  price_type?: PriceType;
+  note?: string;
+};

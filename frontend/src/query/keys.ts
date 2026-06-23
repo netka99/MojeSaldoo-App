@@ -10,6 +10,11 @@ export const inventoryKeys = {
   detail: (id: string) => [...inventoryKeys.details(), id] as const,
 };
 
+export const customerPriceKeys = {
+  all: ['customer-product-prices'] as const,
+  byCustomer: (customerId: string) => [...customerPriceKeys.all, 'by-customer', customerId] as const,
+};
+
 export const customerKeys = {
   all: ['customers'] as const,
   lists: () => [...customerKeys.all, 'list'] as const,

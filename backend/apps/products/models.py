@@ -318,3 +318,51 @@ class StockMovement(models.Model):
 
     def __str__(self):
         return f"{self.movement_type} {self.quantity} @ {self.warehouse_id}"
+
+
+class CustomerProductPrice(models.Model):
+    """Custom price for a specific customer–product pair within a company."""
+
+    PRICE_TYPE_NET = "net"
+    PRICE_TYPE_GROSS = "gross"
+    PRICE_TYPE_CHOICES = [
+        (PRICE_TYPE_NET, "Netto"),
+        (PRICE_TYPE_GROSS, "Brutto"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
+    customer = models.ForeignKey(
+        "customers.Customer",
+        on_delete=models.CASCADE,
+        related_name="custom_prices",
+    )
+    product = models.ForeignKey(
+        "products.Product",
+        on_delete=models.CASCADE,
+        related_name="customer_prices",
+    )
+    price_net = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Custom price value (interpretation depends on price_type).",
+    )
+    price_type = models.CharField(
+        max_length=5,
+        choices=PRICE_TYPE_CHOICES,
+        default=PRICE_TYPE_NET,
+        help_text="Whether price_net stores a net or gross value.",
+    )
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("company", "customer", "product")]
+        indexes = [
+            models.Index(fields=["company", "customer"], name="idx_cpp_company_customer"),
+            models.Index(fields=["company", "product"], name="idx_cpp_company_product"),
+        ]
+
+    def __str__(self):
+        return f"{self.customer_id} / {self.product_id} → {self.price_net}"

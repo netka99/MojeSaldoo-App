@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useInventoryReportQuery, useExpiryAlertsQuery } from '@/query/use-reports';
+import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import type { ExpiryAlertRow, InventoryReportRow } from '@/types/reporting.types';
@@ -186,11 +187,22 @@ function InventoryReportPageContent() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Magazyn</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Stan zapasów, rotacja towaru i partie bliskie terminu ważności.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Magazyn</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Stan zapasów, rotacja towaru i partie bliskie terminu ważności.
+          </p>
+        </div>
+        {inventory.data && inventory.data.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void downloadCsv('/reports/inventory/', {}, 'raport-magazyn.csv')}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          >
+            Pobierz CSV
+          </button>
+        )}
       </div>
 
       {/* Summary badges */}
