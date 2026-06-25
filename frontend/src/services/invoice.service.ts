@@ -1,5 +1,6 @@
 import { api } from './api';
 import type {
+  CreateCorrectionBody,
   GenerateInvoiceFromOrderBody,
   Invoice,
   InvoiceCreate,
@@ -16,6 +17,8 @@ export type InvoiceListParams = {
   customer?: string;
   issue_date_after?: string;
   issue_date_before?: string;
+  /** Filter by correction flag. true = only FV-KOR, false = only regular invoices */
+  is_correction?: boolean;
 };
 
 const basePath = '/invoices/';
@@ -89,4 +92,8 @@ export const invoiceService = {
    * Returns 200 when complete (accepted or rejected).
    */
   fetchKsefStatus: (id: string) => api.get<Invoice>(`${basePath}${id}/ksef-status/`),
+
+  /** Create a draft FV-KOR correction for an issued or paid invoice. */
+  createCorrection: (id: string, body: CreateCorrectionBody) =>
+    api.post<Invoice>(`${basePath}${id}/create-correction/`, body),
 };

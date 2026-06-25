@@ -15,16 +15,17 @@ from rest_framework.response import Response
 
 from apps.delivery.models import DeliveryDocument
 from apps.ksef import ssapi_client
+from apps.users.web_push_service import send_ksef_status_push
 from apps.ksef.models import KSeFSession
 from apps.ksef.xml_generator import generate_fa3_xml, generate_fa3_xml_base64
 from apps.orders.models import Order
-from apps.users.permissions import IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .filters import InvoiceFilter
 from .models import Invoice
 from .serializers import InvoiceSerializer
-from .services import build_invoice_preview_data, generate_invoice_from_order
+from .services import build_invoice_preview_data, create_invoice_correction, generate_invoice_from_order
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ def _optional_iso_date(data, key: str):
 
 class InvoiceViewSet(viewsets.ModelViewSet):
     serializer_class = InvoiceSerializer
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_manage_invoices'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = InvoiceFilter
 
@@ -321,6 +323,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             "ksef_reference_number", "ksef_status", "ksef_sent_at",
             "ksef_error_message", "status", "updated_at",
         ])
+        send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="sent")
 
         return Response(self.get_serializer(invoice).data)
 
@@ -379,12 +382,47 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.save(update_fields=[
                 "ksef_number", "ksef_status", "upo_received", "invoice_hash", "updated_at",
             ])
+            send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="accepted")
         elif http_code == 200 and status_code and status_code >= 400:
             invoice.ksef_status = "rejected"
             invoice.ksef_error_message = status_block.get("description", "KSeF rejected the invoice.")
             invoice.save(update_fields=["ksef_status", "ksef_error_message", "updated_at"])
+            send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="rejected")
 
         return Response({**self.get_serializer(invoice).data, "_ssapi_raw": data})
+
+    @action(detail=True, methods=["post"], url_path="create-correction")
+    def create_correction(self, request, pk=None):
+        """
+        POST /api/invoices/{id}/create-correction/
+        Create a draft FV-KOR correction invoice for an issued or paid invoice.
+
+        Body:
+          {
+            "correction_reason": "Błędna ilość",
+            "issue_date": "2026-06-23",      // optional
+            "items": [                        // optional — omit to copy original
+              {"item_id": "<uuid>", "quantity": "5.00", "unit_price_net": "10.00"}
+            ]
+          }
+        """
+        invoice = self.get_object()
+        correction_reason = request.data.get("correction_reason", "")
+        items_data = request.data.get("items", [])
+        issue_date = _optional_iso_date(request.data, "issue_date")
+
+        correction = create_invoice_correction(
+            original_invoice=invoice,
+            company=request.user.current_company,
+            user=request.user,
+            correction_reason=correction_reason,
+            items_data=items_data,
+            issue_date=issue_date,
+        )
+        return Response(
+            self.get_serializer(correction).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["get"], url_path="upo")
     def upo(self, request, pk=None):

@@ -6,6 +6,7 @@ import { OrderDayDateNav } from '@/components/features/orders/OrderDayDateNav';
 import { OrdersDaySummary } from '@/components/features/orders/OrdersDaySummary';
 import { Button } from '@/components/ui/Button';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
+import { usePermission } from '@/hooks/usePermission';
 import { formatOrderLineQuantityWithUnit } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import { useGenerateDeliveryForOrderMutation, useDeliveryByOrdersQuery } from '@/query/use-delivery';
@@ -69,6 +70,7 @@ export function OrdersPage() {
 
 function OrdersPageContent() {
   const navigate = useNavigate();
+  const canOrders = usePermission('can_manage_orders');
   const [searchParams, setSearchParams] = useSearchParams();
   const date = searchParams.get('date') ?? todayIso();
 
@@ -296,7 +298,7 @@ function OrdersPageContent() {
         navigate(`/orders/${customerOrders[0]!.id}`);
       } else if (customerOrders.length > 1) {
         navigate(`/customers/${customer.id}?date=${encodeURIComponent(date)}`);
-      } else {
+      } else if (canOrders) {
         navigate(`/orders/new?date=${encodeURIComponent(date)}&customer_id=${customer.id}`);
       }
     },
@@ -370,14 +372,16 @@ function OrdersPageContent() {
               </Button>
             </>
           ) : null}
-          <Button
-            type="button"
-            size="sm"
-            className="shrink-0 rounded-full"
-            onClick={() => navigate(`/orders/new?date=${encodeURIComponent(date)}`)}
-          >
-            + Nowe zamówienie
-          </Button>
+          {canOrders && (
+            <Button
+              type="button"
+              size="sm"
+              className="shrink-0 rounded-full"
+              onClick={() => navigate(`/orders/new?date=${encodeURIComponent(date)}`)}
+            >
+              + Nowe zamówienie
+            </Button>
+          )}
         </div>
       </div>
 

@@ -58,6 +58,10 @@ vi.mock('@/query/use-customers', () => ({
     useCustomerListQueryMock(page, search),
 }));
 
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: () => true,
+}));
+
 function makeOrder(over: Partial<Order> = {}): Order {
   return {
     id: 'ord-1',
@@ -115,6 +119,10 @@ function makeInvoice(over: Partial<Invoice> = {}): Invoice {
     notes: '',
     created_at: '2026-05-15T10:00:00Z',
     updated_at: '2026-05-15T10:00:00Z',
+    is_correction: false,
+    corrects_invoice_id: null,
+    corrects_invoice_number: null,
+    correction_reason: '',
     items: [],
     ...over,
   };
@@ -146,6 +154,12 @@ describe('buildInvoiceListFilters + badge helpers', () => {
       issue_date_after: '2026-04-01',
       issue_date_before: '2026-04-30',
     });
+  });
+
+  it('includes is_correction when provided', () => {
+    expect(buildInvoiceListFilters('', '', '', '', '', true)).toMatchObject({ is_correction: true });
+    expect(buildInvoiceListFilters('', '', '', '', '', false)).toMatchObject({ is_correction: false });
+    expect(buildInvoiceListFilters('', '', '', '', '', undefined)).not.toHaveProperty('is_correction');
   });
 
   it('invoice status badge classes', () => {
@@ -287,5 +301,65 @@ describe('InvoicesPage', () => {
     await user.selectOptions(custSelect, 'cust-x');
     const last = useInvoiceListQueryMock.mock.calls.at(-1);
     expect(last?.[1]).toMatchObject({ customer: 'cust-x' });
+  });
+
+  it('shows KOR badge and "Koryguje" link for correction invoices', () => {
+    const kor = makeInvoice({
+      id: 'kor-1',
+      invoice_number: 'FV-KOR/2026/0001',
+      is_correction: true,
+      corrects_invoice_id: 'inv-orig',
+      corrects_invoice_number: 'FV/2026/0001',
+    });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [kor] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    // Badge appears in both desktop table and mobile list
+    expect(screen.getAllByText('KOR').length).toBeGreaterThan(0);
+    const koryguje = screen.getAllByRole('link', { name: /Koryguje: FV\/2026\/0001/ })[0];
+    expect(koryguje).toHaveAttribute('href', '/invoices/inv-orig');
+  });
+
+  it('does not show KOR badge for regular invoices', () => {
+    const inv = makeInvoice({ is_correction: false });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [inv] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    expect(screen.queryByText('KOR')).not.toBeInTheDocument();
+  });
+
+  it('correction filter button "Korekty FV-KOR" sends is_correction=true in query', async () => {
+    const user = userEvent.setup();
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Korekty FV-KOR' }));
+    const last = useInvoiceListQueryMock.mock.calls.at(-1);
+    expect(last?.[1]).toMatchObject({ is_correction: true });
+  });
+
+  it('correction filter button "Tylko zwykłe" sends is_correction=false in query', async () => {
+    const user = userEvent.setup();
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Tylko zwykłe' }));
+    const last = useInvoiceListQueryMock.mock.calls.at(-1);
+    expect(last?.[1]).toMatchObject({ is_correction: false });
+  });
+
+  it('correction filter "Wszystkie" clears is_correction from query', async () => {
+    const user = userEvent.setup();
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Korekty FV-KOR' }));
+    await user.click(screen.getByRole('button', { name: 'Wszystkie' }));
+    const last = useInvoiceListQueryMock.mock.calls.at(-1);
+    expect(last?.[1]).not.toHaveProperty('is_correction');
   });
 });

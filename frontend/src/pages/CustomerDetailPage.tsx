@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { usePermission } from '@/hooks/usePermission';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
@@ -227,6 +228,7 @@ function CustomerPricesSection({ customerId }: { customerId: string }) {
   const { data: prices = [], isLoading } = useCustomerPricesQuery(customerId);
   const { data: productsResp } = useAllProductsQuery();
   const products = productsResp?.results ?? [];
+  const canManageCustomers = usePermission('can_manage_customers');
 
   const createMutation = useCreateCustomerPriceMutation(customerId);
   const updateMutation = useUpdateCustomerPriceMutation(customerId);
@@ -304,7 +306,7 @@ function CustomerPricesSection({ customerId }: { customerId: string }) {
         <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
           Cenniki indywidualne
         </h2>
-        {!showForm && (
+        {!showForm && canManageCustomers && (
           <button
             type="button"
             onClick={() => setShowForm(true)}
@@ -412,21 +414,25 @@ function CustomerPricesSection({ customerId }: { customerId: string }) {
                     {cp.note || '—'}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    <button
-                      type="button"
-                      onClick={() => startEdit(cp)}
-                      className="text-[11px] text-primary hover:underline mr-2"
-                    >
-                      Edytuj
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteMutation.mutate(cp.id)}
-                      disabled={deleteMutation.isPending}
-                      className="text-[11px] text-destructive hover:underline disabled:opacity-50"
-                    >
-                      Usuń
-                    </button>
+                    {canManageCustomers && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(cp)}
+                          className="text-[11px] text-primary hover:underline mr-2"
+                        >
+                          Edytuj
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteMutation.mutate(cp.id)}
+                          disabled={deleteMutation.isPending}
+                          className="text-[11px] text-destructive hover:underline disabled:opacity-50"
+                        >
+                          Usuń
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
                 )
@@ -526,6 +532,7 @@ export function CustomerDetailPage() {
 function CustomerDetailContent({ customerId, date }: { customerId: string; date: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const canManageCustomers = usePermission('can_manage_customers');
   const [showEditForm, setShowEditForm] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const updateMutation = useUpdateCustomerMutation();
@@ -584,7 +591,7 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               </h1>
               <p className="text-[13px] text-muted-foreground">{dateLabel}</p>
             </div>
-            {customer && (
+            {customer && canManageCustomers && (
               <motion.button
                 whileTap={{ scale: 0.94 }}
                 type="button"

@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { RequireCompanyForApp } from '@/components/auth/RequireCompanyForApp';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -11,6 +12,7 @@ const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })
 const LoginPage = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })));
+const RegisterPage = lazy(() => import('./pages/RegisterPage').then((m) => ({ default: m.RegisterPage })));
 const CustomersPage = lazy(() =>
   import('./pages/CustomersPage').then((m) => ({ default: m.CustomersPage })),
 );
@@ -104,6 +106,12 @@ const InvoiceCreatePage = lazy(() =>
 const InvoiceDetailPage = lazy(() =>
   import('./pages/InvoiceDetailPage').then((m) => ({ default: m.InvoiceDetailPage })),
 );
+const CorrectionInvoiceCreatePage = lazy(() =>
+  import('./pages/CorrectionInvoiceCreatePage').then((m) => ({ default: m.CorrectionInvoiceCreatePage })),
+);
+const WzCorrectionCreatePage = lazy(() =>
+  import('./pages/WzCorrectionCreatePage').then((m) => ({ default: m.WzCorrectionCreatePage })),
+);
 const ReportsPage = lazy(() =>
   import('./pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 );
@@ -112,6 +120,9 @@ const KSeFInboxPage = lazy(() =>
 );
 const KSeFInboxPZPage = lazy(() =>
   import('./pages/KSeFInboxPZPage').then((m) => ({ default: m.KSeFInboxPZPage })),
+);
+const KSeFInboxKorPage = lazy(() =>
+  import('./pages/KSeFInboxKorPage').then((m) => ({ default: m.KSeFInboxKorPage })),
 );
 const PaperScannerPage = lazy(() =>
   import('./pages/PaperScannerPage').then((m) => ({ default: m.PaperScannerPage })),
@@ -150,6 +161,9 @@ const InventoryPage = lazy(() =>
 const RWCreatePage = lazy(() =>
   import('./pages/RWCreatePage').then((m) => ({ default: m.RWCreatePage })),
 );
+const TeamPage = lazy(() =>
+  import('./pages/TeamPage').then((m) => ({ default: m.TeamPage })),
+);
 
 function RouteFallback() {
   return (
@@ -168,14 +182,18 @@ function AppPlaceholderPage({ title }: { title: string }) {
   );
 }
 
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+
 function App() {
   return (
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID ?? ''}>
     <BrowserRouter>
       <AuthProvider>
         <EnsureCurrentCompany />
         <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/:uid/:token" element={<ResetPasswordPage />} />
           <Route element={<RequireAuth />}>
@@ -376,6 +394,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/delivery/:id/wz-correction/new"
+                  element={
+                    <ModuleRouteGate module="delivery">
+                      <WzCorrectionCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/delivery/:id"
                   element={
                     <ModuleRouteGate module="delivery">
@@ -412,6 +438,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="invoicing">
                       <InvoiceCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/:id/correction/new"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <CorrectionInvoiceCreatePage />
                     </ModuleRouteGate>
                   }
                 />
@@ -528,6 +562,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/ksef/inbox/:ksefNumber/pz-kor"
+                  element={
+                    <ModuleRouteGate module="ksef">
+                      <KSeFInboxKorPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/ksef/scan-paper"
                   element={
                     <ModuleRouteGate module="ksef">
@@ -545,6 +587,7 @@ function App() {
                 />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />
+                <Route path="/settings/team" element={<TeamPage />} />
                 <Route
                   path="/settings/certificate"
                   element={
@@ -560,6 +603,7 @@ function App() {
         </Suspense>
       </AuthProvider>
     </BrowserRouter>
+    </GoogleOAuthProvider>
   );
 }
 

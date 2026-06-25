@@ -6,6 +6,7 @@ import { KsefPassphraseModal } from '@/components/features/invoicing/KsefPassphr
 import { INVOICE_KSEF_STATUS_LABELS_PL } from '@/constants/invoiceKsefStatusPl';
 import { INVOICE_STATUS_LABELS_PL } from '@/constants/invoiceStatusPl';
 import {
+  useCreateCorrectionMutation,
   useFetchKsefStatusMutation,
   useInvoicePreviewQuery,
   useInvoiceQuery,
@@ -17,6 +18,7 @@ import {
 } from '@/query/use-invoices';
 import { useMyCompaniesQuery } from '@/query/use-companies';
 import { useAuth } from '@/context/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { openInvoicePrintWindow } from '@/lib/openInvoicePrintWindow';
@@ -62,6 +64,7 @@ export function InvoiceDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const canInvoices = usePermission('can_manage_invoices');
   const { data: myCompanies } = useMyCompaniesQuery();
   const currentCompanyName =
     myCompanies?.find((c) => c.id === user?.current_company)?.name ?? 'firma';
@@ -90,6 +93,7 @@ export function InvoiceDetailPage() {
   const sendToKsefM = useSendToKsefMutation();
   const ksefAuthM = useKsefAuthenticateMutation();
   const fetchKsefStatusM = useFetchKsefStatusMutation();
+  const createCorrectionM = useCreateCorrectionMutation();
 
   // Lazy session check — only fetch when invoice is issued and ksef not yet sent
   const needsKsefCheck = invoice?.status === 'issued' && invoice.ksef_status === 'not_sent';
@@ -267,6 +271,9 @@ export function InvoiceDetailPage() {
   const showSendToKsef = invoice?.status === 'issued' && invoice.ksef_status === 'not_sent';
   const showResendKsef = invoice?.ksef_status === 'rejected';
   const showKsefRefresh = invoice?.ksef_status === 'pending';
+  const showCreateCorrection =
+    !invoice?.is_correction &&
+    (invoice?.status === 'issued' || invoice?.status === 'paid');
 
   const numberLabel = invoice?.invoice_number ?? preview?.invoice.invoice_number ?? id.slice(0, 8);
 
@@ -316,7 +323,25 @@ export function InvoiceDetailPage() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Faktura {numberLabel}</h1>
+            <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">
+              {invoice?.is_correction ? 'Korekta ' : 'Faktura '}{numberLabel}
+            </h1>
+            {invoice?.is_correction && invoice.corrects_invoice_id && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Koryguje:{' '}
+                <Link
+                  to={`/invoices/${invoice.corrects_invoice_id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {invoice.corrects_invoice_number ?? invoice.corrects_invoice_id.slice(0, 8)}
+                </Link>
+              </p>
+            )}
+            {invoice?.is_correction && invoice.correction_reason && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Powód: <span className="text-foreground">{invoice.correction_reason}</span>
+              </p>
+            )}
             {invoice && preview?.invoice.order_number ? (
               <p className="mt-1 text-sm text-muted-foreground">
                 Zamówienie:{' '}
@@ -344,7 +369,7 @@ export function InvoiceDetailPage() {
 
           <div className="flex flex-col gap-2 sm:items-end">
             <div className="flex flex-wrap gap-2">
-              {showIssue && (
+              {canInvoices && showIssue && (
                 <Button
                   type="button"
                   onClick={() => void onIssue()}
@@ -353,7 +378,7 @@ export function InvoiceDetailPage() {
                   {issueM.isPending ? 'Wystawianie…' : 'Wystaw'}
                 </Button>
               )}
-              {showMarkPaid && (
+              {canInvoices && showMarkPaid && (
                 <Button
                   type="button"
                   variant="secondary"
@@ -371,17 +396,19 @@ export function InvoiceDetailPage() {
               >
                 Drukuj fakturę
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void onDownloadXml()}
-                disabled={!invoice || xmlDownloading}
-                loading={xmlDownloading}
-              >
-                Pobierz XML (KSeF)
-              </Button>
+              {canInvoices && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void onDownloadXml()}
+                  disabled={!invoice || xmlDownloading}
+                  loading={xmlDownloading}
+                >
+                  Pobierz XML (KSeF)
+                </Button>
+              )}
 
-              {invoice?.upo_received && (
+              {canInvoices && invoice?.upo_received && (
                 <Button
                   type="button"
                   variant="outline"
@@ -393,7 +420,7 @@ export function InvoiceDetailPage() {
                 </Button>
               )}
 
-              {(showSendToKsef || showResendKsef) && (
+              {canInvoices && (showSendToKsef || showResendKsef) && (
                 <Button
                   type="button"
                   onClick={() => void onSendToKsef()}
@@ -408,7 +435,7 @@ export function InvoiceDetailPage() {
                 </Button>
               )}
 
-              {showKsefRefresh && (
+              {canInvoices && showKsefRefresh && (
                 <Button
                   type="button"
                   variant="outline"
@@ -417,6 +444,16 @@ export function InvoiceDetailPage() {
                   loading={isPolling || fetchKsefStatusM.isPending}
                 >
                   {isPolling ? 'Sprawdzanie…' : 'Odśwież status KSeF'}
+                </Button>
+              )}
+              {canInvoices && showCreateCorrection && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate(`/invoices/${id}/correction/new`)}
+                  disabled={createCorrectionM.isPending}
+                >
+                  Utwórz korektę FV
                 </Button>
               )}
             </div>

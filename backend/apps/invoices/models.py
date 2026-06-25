@@ -131,20 +131,38 @@ class Invoice(models.Model):
         choices=STATUS_CHOICES,
         default=STATUS_DRAFT,
     )
+    is_correction = models.BooleanField(
+        default=False,
+        help_text="True for FV-KOR (correction invoice).",
+    )
+    corrects_invoice = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="corrections",
+        help_text="For FV-KOR: the original invoice this document corrects.",
+    )
+    correction_reason = models.TextField(
+        blank=True,
+        default="",
+        help_text="Required reason for FV-KOR.",
+    )
     paid_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
-    def _next_invoice_number(cls, company_id, issue_date) -> str:
+    def _next_invoice_number(cls, company_id, issue_date, is_correction: bool = False) -> str:
         """
-        Next FV/{year}/{seq:04d} for this company, using issue_date's year.
+        Next FV/{year}/{seq:04d} (or FV-KOR/{year}/{seq:04d}) for this company.
         Must run inside the same transaction.atomic() as a Company row lock.
         """
+        prefix_type = "FV-KOR" if is_correction else "FV"
         y = (issue_date or timezone.localdate()).year
-        prefix = f"FV/{y}/"
-        pat = re.compile(rf"^FV/{y}/" + r"(\d{4})$")
+        prefix = f"{prefix_type}/{y}/"
+        pat = re.compile(rf"^{re.escape(prefix_type)}/{y}/" + r"(\d{4})$")
         max_seq = 0
         for num in (
             cls.objects.filter(
@@ -157,7 +175,7 @@ class Invoice(models.Model):
             m = pat.match(num)
             if m:
                 max_seq = max(max_seq, int(m.group(1)))
-        return f"FV/{y}/{max_seq + 1:04d}"
+        return f"{prefix_type}/{y}/{max_seq + 1:04d}"
 
     def save(self, *args, **kwargs):
         if self._state.adding and not self.invoice_number and self.company_id:
@@ -169,6 +187,7 @@ class Invoice(models.Model):
                 self.invoice_number = self._next_invoice_number(
                     self.company_id,
                     issue_date,
+                    is_correction=self.is_correction,
                 )
         super().save(*args, **kwargs)
 
@@ -184,8 +203,11 @@ class Invoice(models.Model):
             ),
             models.UniqueConstraint(
                 fields=["company", "order"],
-                condition=models.Q(status__in=["draft", "issued", "sent", "paid", "overdue"]),
-                name="invoices_unique_active_invoice_per_order",
+                condition=models.Q(
+                    status__in=["draft", "issued", "sent", "paid", "overdue"],
+                    is_correction=False,
+                ),
+                name="invoices_unique_active_non_correction_per_order",
             ),
         ]
 

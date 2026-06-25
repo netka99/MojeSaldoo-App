@@ -125,6 +125,10 @@ class ReceivedKSeFInvoice(models.Model):
     currency = models.CharField(max_length=10, default="PLN")
     invoice_type = models.CharField(max_length=50, blank=True)
 
+    # For KOR / KOR_ZAL / KOR_ROZ invoices — the KSeF number of the original invoice being corrected.
+    # Populated when the FA-3 XML is downloaded and parsed (Fa/DaneFaKorygowanej/NrKSeFFaKorygowanej).
+    original_ksef_number = models.CharField(max_length=255, blank=True)
+
     # Seller address — populated when XML is downloaded and parsed
     seller_address_l1 = models.CharField(max_length=512, blank=True)
     seller_address_l2 = models.CharField(max_length=512, blank=True)

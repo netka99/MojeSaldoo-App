@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from apps.products.models import ProductStock
 from apps.users.models import Company
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 
 from .models import InventoryCount, InventoryCountItem
 from .serializers import (
@@ -24,7 +25,8 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
     """CRUD for inventory count documents, scoped to request.user.current_company."""
 
     serializer_class = InventoryCountSerializer
-    permission_classes = [IsAuthenticated]
+    required_permission = 'can_manage_inventory'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self) -> QuerySet:

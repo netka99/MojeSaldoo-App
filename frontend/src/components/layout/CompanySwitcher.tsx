@@ -122,7 +122,7 @@ export function CompanySwitcher() {
         <p className="truncate text-sm text-muted-foreground" title={currentLabel}>
           {currentLabel}
         </p>
-        {showAddCompanyInShell && (
+        {showAddCompanyInShell && user?.is_company_admin && (
           <CreateCompanyDialog
             triggerClassName="text-xs text-primary"
             triggerLabel="Dodaj kolejną firmę"
@@ -192,7 +192,7 @@ export function CompanySwitcher() {
               </li>
             );
           })}
-          {showAddCompanyInShell && (
+          {showAddCompanyInShell && user?.is_company_admin && (
             <li className="list-none border-t border-zinc-200 p-1 pt-2 dark:border-zinc-600" role="presentation">
               <div className="px-1">
                 <CreateCompanyDialog

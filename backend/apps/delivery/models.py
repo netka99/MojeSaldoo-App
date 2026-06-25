@@ -26,6 +26,7 @@ class DeliveryDocument(models.Model):
     DOC_TYPE_ZW = "ZW"
     DOC_TYPE_RW = "RW"
     DOC_TYPE_PZ_KOR = "PZ-KOR"
+    DOC_TYPE_WZ_KOR = "WZ-KOR"
 
     DOC_TYPE_CHOICES = [
         (DOC_TYPE_WZ, "Wydanie Zewnętrzne"),
@@ -34,6 +35,7 @@ class DeliveryDocument(models.Model):
         (DOC_TYPE_ZW, "Zwrot Zewnętrzny"),
         (DOC_TYPE_RW, "Rozchód Wewnętrzny"),
         (DOC_TYPE_PZ_KOR, "Korekta Przyjęcia Zewnętrznego"),
+        (DOC_TYPE_WZ_KOR, "Korekta Wydania Zewnętrznego"),
     ]
 
     STATUS_DRAFT = "draft"
@@ -137,8 +139,16 @@ class DeliveryDocument(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="corrections",
+        related_name="pz_corrections",
         help_text="For PZ-KOR: the original PZ this document corrects.",
+    )
+    corrects_wz = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="wz_corrections",
+        help_text="For WZ-KOR: the original WZ this document corrects.",
     )
     status = models.CharField(
         max_length=20,

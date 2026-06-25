@@ -57,6 +57,8 @@ export const companyKeys = {
   workflowSettings: (companyId: string) => [...companyKeys.all, 'workflow-settings', companyId] as const,
   ksefCertificateStatus: (companyId: string) =>
     [...companyKeys.all, 'ksef-certificate', 'status', companyId] as const,
+  roles: (companyId: string) => [...companyKeys.all, 'roles', companyId] as const,
+  members: (companyId: string) => [...companyKeys.all, 'members', companyId] as const,
 };
 
 /** List cache key: page + active company + filter fields (after `page` is stripped from `OrderListParams`). */

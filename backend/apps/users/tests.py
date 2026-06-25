@@ -7,7 +7,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient, APIRequestFactory
 
-from apps.users.models import Company, CompanyMembership, CompanyModule
+from apps.users.models import Company, CompanyMembership, CompanyModule, CompanyRole
 from apps.users.permissions import IsCompanyAdmin, IsCompanyMember
 
 
@@ -482,3 +482,415 @@ class CompanyPermissionTests(TestCase):
         self.user.current_company = self.company
         self.user.save(update_fields=["current_company"])
         self.assertFalse(IsCompanyAdmin().has_permission(self._request(self.user), None))
+
+
+class FCMTokenAPITests(TestCase):
+    """Tests for POST/DELETE /api/auth/fcm-token/"""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="fcm-user",
+            email="fcm@test.com",
+            password="test12345",
+        )
+        self.url = reverse("fcm_token")
+
+    def test_register_token_creates_record(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, {"token": "abc123", "device_name": "iPhone 14"})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["registered"])
+        self.assertTrue(response.data["created"])
+
+    def test_register_same_token_returns_200(self):
+        self.client.force_authenticate(user=self.user)
+        self.client.post(self.url, {"token": "dup-token"})
+        response = self.client.post(self.url, {"token": "dup-token"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["created"])
+
+    def test_register_token_without_auth_returns_401(self):
+        response = self.client.post(self.url, {"token": "abc"})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_register_missing_token_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, {})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_token_removes_record(self):
+        from apps.users.models import FCMDeviceToken
+        self.client.force_authenticate(user=self.user)
+        self.client.post(self.url, {"token": "del-token"})
+        self.assertEqual(FCMDeviceToken.objects.filter(token="del-token").count(), 1)
+        response = self.client.delete(self.url, {"token": "del-token"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["unregistered"])
+        self.assertEqual(FCMDeviceToken.objects.filter(token="del-token").count(), 0)
+
+    def test_delete_nonexistent_token_returns_false(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(self.url, {"token": "never-existed"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["unregistered"])
+
+
+class WebPushSubscriptionAPITests(TestCase):
+    """Tests for POST/DELETE /api/auth/push-subscription/ and GET /api/auth/push-public-key/"""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="push-user",
+            email="push@test.com",
+            password="test12345",
+        )
+        self.sub_url = reverse("push_subscription")
+        self.key_url = reverse("push_public_key")
+        self.valid_sub = {
+            "endpoint": "https://fcm.googleapis.com/fcm/send/test-endpoint-123",
+            "p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtZ5MZwEMlGBnB7nzTcq5F0tJ9kpLweb4NHgEiO6mFRWFlq8DM_q9iBCKGOd4Q",
+            "auth": "tBHItJI5svbpez7KI4CCXg",
+        }
+
+    def test_register_subscription_creates_record(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.sub_url, self.valid_sub)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["registered"])
+        self.assertTrue(response.data["created"])
+
+    def test_register_same_endpoint_returns_200(self):
+        self.client.force_authenticate(user=self.user)
+        self.client.post(self.sub_url, self.valid_sub)
+        response = self.client.post(self.sub_url, self.valid_sub)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["created"])
+
+    def test_register_without_auth_returns_401(self):
+        response = self.client.post(self.sub_url, self.valid_sub)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_register_missing_fields_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.sub_url, {"endpoint": "https://example.com"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_subscription_removes_record(self):
+        from apps.users.models import WebPushSubscription
+        self.client.force_authenticate(user=self.user)
+        self.client.post(self.sub_url, self.valid_sub)
+        self.assertEqual(WebPushSubscription.objects.filter(user=self.user).count(), 1)
+        response = self.client.delete(self.sub_url, {"endpoint": self.valid_sub["endpoint"]})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["unregistered"])
+        self.assertEqual(WebPushSubscription.objects.filter(user=self.user).count(), 0)
+
+    def test_delete_nonexistent_returns_false(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(self.sub_url, {"endpoint": "https://never.existed"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["unregistered"])
+
+    def test_public_key_returns_vapid_key(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(self.key_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("public_key", response.data)
+        self.assertTrue(len(response.data["public_key"]) > 10)
+
+
+# ---------------------------------------------------------------------------
+# Team management: CompanyRole + Members
+# ---------------------------------------------------------------------------
+
+def _make_company_with_admin(username, email="admin@test.com"):
+    """Create a company with an admin user and the Administrator role."""
+    User = get_user_model()
+    admin = User.objects.create_user(username=username, email=email, password="test12345")
+    company = Company.objects.create(name=f"{username}_co")
+    admin_role = CompanyRole.objects.create(company=company, name="Administrator", is_admin=True)
+    CompanyMembership.objects.create(
+        user=admin, company=company, role="admin", company_role=admin_role, is_active=True
+    )
+    admin.current_company = company
+    admin.save(update_fields=["current_company"])
+    return admin, company, admin_role
+
+
+class CompanyRolesAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, self.admin_role = _make_company_with_admin(
+            "role-admin", "role-admin@test.com"
+        )
+        User = get_user_model()
+        self.viewer_user = User.objects.create_user(
+            username="role-viewer", email="role-viewer@test.com", password="test12345"
+        )
+        self.viewer_role = CompanyRole.objects.create(
+            company=self.company, name="Pracownik", is_admin=False, can_see_prices=False
+        )
+        CompanyMembership.objects.create(
+            user=self.viewer_user, company=self.company, role="viewer",
+            company_role=self.viewer_role, is_active=True
+        )
+        self.viewer_user.current_company = self.company
+        self.viewer_user.save(update_fields=["current_company"])
+
+    def _list_url(self):
+        return reverse("company-roles-list", kwargs={"company_id": self.company.pk})
+
+    def _detail_url(self, role_id):
+        return reverse("company-role-detail", kwargs={"company_id": self.company.pk, "role_id": role_id})
+
+    def test_list_returns_all_roles(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(self._list_url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        names = {row["name"] for row in r.data}
+        self.assertIn("Administrator", names)
+        self.assertIn("Pracownik", names)
+
+    def test_list_allowed_for_any_member(self):
+        self.client.force_authenticate(user=self.viewer_user)
+        r = self.client.get(self._list_url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_create_role_by_admin(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.post(
+            self._list_url(),
+            {"name": "Kierowca", "can_access_routes": True, "can_manage_delivery": True, "can_see_prices": False},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["name"], "Kierowca")
+        self.assertFalse(r.data["can_see_prices"])
+        self.assertTrue(r.data["can_access_routes"])
+
+    def test_create_role_forbidden_for_non_admin(self):
+        self.client.force_authenticate(user=self.viewer_user)
+        r = self.client.post(self._list_url(), {"name": "X"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_duplicate_name_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.post(self._list_url(), {"name": "Pracownik"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_role_permissions(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(
+            self._detail_url(self.viewer_role.pk),
+            {"can_see_prices": True, "can_manage_orders": True},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["can_see_prices"])
+        self.viewer_role.refresh_from_db()
+        self.assertTrue(self.viewer_role.can_see_prices)
+
+    def test_patch_admin_role_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(
+            self._detail_url(self.admin_role.pk),
+            {"can_see_prices": False},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_role_with_no_members(self):
+        empty_role = CompanyRole.objects.create(company=self.company, name="Empty")
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(self._detail_url(empty_role.pk))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(CompanyRole.objects.filter(pk=empty_role.pk).exists())
+
+    def test_delete_role_with_members_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(self._detail_url(self.viewer_role.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_admin_role_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(self._detail_url(self.admin_role.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class CompanyMembersAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, self.admin_role = _make_company_with_admin(
+            "mem-admin", "mem-admin@test.com"
+        )
+        self.worker_role = CompanyRole.objects.create(
+            company=self.company, name="Pracownik",
+            can_manage_delivery=True, can_see_prices=False,
+        )
+
+    def _list_url(self):
+        return reverse("company-members-list", kwargs={"company_id": self.company.pk})
+
+    def _detail_url(self, m_id):
+        return reverse("company-member-detail", kwargs={"company_id": self.company.pk, "membership_id": m_id})
+
+    def test_list_members_by_admin(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(self._list_url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)  # just admin
+
+    def test_list_members_forbidden_for_non_admin(self):
+        User = get_user_model()
+        viewer = User.objects.create_user(username="mem-viewer", email="mem-v@test.com", password="x")
+        CompanyMembership.objects.create(
+            user=viewer, company=self.company, role="viewer", company_role=self.worker_role, is_active=True
+        )
+        viewer.current_company = self.company
+        viewer.save(update_fields=["current_company"])
+        self.client.force_authenticate(user=viewer)
+        r = self.client.get(self._list_url())
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_add_member_creates_user_and_membership(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.post(
+            self._list_url(),
+            {
+                "username": "jan.kowalski",
+                "email": "jan@firma.pl",
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "password": "haslo12345",
+                "company_role_id": str(self.worker_role.pk),
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["user"]["username"], "jan.kowalski")
+        self.assertEqual(r.data["company_role"]["name"], "Pracownik")
+        self.assertTrue(get_user_model().objects.filter(username="jan.kowalski").exists())
+
+    def test_add_member_duplicate_username_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        # Add once
+        self.client.post(self._list_url(), {
+            "username": "dup-user", "email": "dup@co.pl",
+            "first_name": "D", "last_name": "U", "password": "haslo12345",
+            "company_role_id": str(self.worker_role.pk),
+        }, format="json")
+        # Try again with same username
+        r = self.client.post(self._list_url(), {
+            "username": "dup-user", "email": "dup2@co.pl",
+            "first_name": "D", "last_name": "U", "password": "haslo12345",
+            "company_role_id": str(self.worker_role.pk),
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_member_role(self):
+        User = get_user_model()
+        worker = User.objects.create_user(username="mem-w2", email="w2@co.pl", password="x")
+        m = CompanyMembership.objects.create(
+            user=worker, company=self.company, role="viewer", company_role=self.worker_role, is_active=True
+        )
+        new_role = CompanyRole.objects.create(company=self.company, name="Magazynier", can_manage_products=True)
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(
+            self._detail_url(m.pk),
+            {"company_role_id": str(new_role.pk)},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["company_role"]["name"], "Magazynier")
+
+    def test_remove_member_deactivates(self):
+        User = get_user_model()
+        worker = User.objects.create_user(username="mem-del", email="del@co.pl", password="x")
+        m = CompanyMembership.objects.create(
+            user=worker, company=self.company, role="viewer", company_role=self.worker_role, is_active=True
+        )
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(self._detail_url(m.pk))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+        m.refresh_from_db()
+        self.assertFalse(m.is_active)
+
+    def test_cannot_remove_self(self):
+        admin_m = CompanyMembership.objects.get(user=self.admin, company=self.company)
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(self._detail_url(admin_m.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class UserPermissionsInSerializerTests(TestCase):
+    """Verify /auth/me/ returns is_company_admin and permissions fields."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, _ = _make_company_with_admin(
+            "perm-ser-admin", "perm-ser@test.com"
+        )
+        worker_role = CompanyRole.objects.create(
+            company=self.company, name="Pracownik",
+            can_see_prices=False, can_manage_delivery=True,
+        )
+        User = get_user_model()
+        self.worker = User.objects.create_user(
+            username="perm-worker", email="perm-w@test.com", password="test12345"
+        )
+        CompanyMembership.objects.create(
+            user=self.worker, company=self.company, role="viewer",
+            company_role=worker_role, is_active=True,
+        )
+        self.worker.current_company = self.company
+        self.worker.save(update_fields=["current_company"])
+
+    def test_admin_is_company_admin_true(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(reverse("current_user"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["user"]["is_company_admin"])
+        self.assertTrue(r.data["user"]["permissions"]["can_manage_team"])
+        self.assertTrue(r.data["user"]["permissions"]["can_see_prices"])
+
+    def test_worker_is_company_admin_false(self):
+        self.client.force_authenticate(user=self.worker)
+        r = self.client.get(reverse("current_user"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertFalse(r.data["user"]["is_company_admin"])
+        self.assertFalse(r.data["user"]["permissions"]["can_see_prices"])
+        self.assertTrue(r.data["user"]["permissions"]["can_manage_delivery"])
+
+    def test_company_create_creates_administrator_role(self):
+        User = get_user_model()
+        u = User.objects.create_user(username="role-create-test", email="rct@test.com", password="test12345")
+        self.client.force_authenticate(user=u)
+        r = self.client.post(reverse("company-create"), {"name": "NewCo2"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        cid = r.data["id"]
+        self.assertTrue(CompanyRole.objects.filter(company_id=cid, is_admin=True, name="Administrator").exists())
+
+    def test_new_permission_flags_present_in_serializer(self):
+        """can_access_ksef_inbox and can_manage_stock_moves appear in permissions dict."""
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(reverse("current_user"))
+        self.assertEqual(r.status_code, 200)
+        perms = r.data["user"]["permissions"]
+        self.assertIn("can_access_ksef_inbox", perms)
+        self.assertIn("can_manage_stock_moves", perms)
+        # Admin role has all permissions True
+        self.assertTrue(perms["can_access_ksef_inbox"])
+        self.assertTrue(perms["can_manage_stock_moves"])
+
+    def test_worker_new_flags_default_false(self):
+        """New flags default to False for non-admin roles."""
+        self.client.force_authenticate(user=self.worker)
+        r = self.client.get(reverse("current_user"))
+        self.assertEqual(r.status_code, 200)
+        perms = r.data["user"]["permissions"]
+        self.assertFalse(perms["can_access_ksef_inbox"])
+        self.assertFalse(perms["can_manage_stock_moves"])

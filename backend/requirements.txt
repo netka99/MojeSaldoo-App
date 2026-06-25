@@ -8,6 +8,7 @@ Pillow>=10.4.0,<12
 python-decouple==3.8
 python-dotenv==1.0.0
 requests==2.31.0
+google-auth>=2.55.0
 cryptography>=41.0.7
 signxml>=3.2.0
 lxml>=4.9.0
@@ -19,3 +20,4 @@ whitenoise==6.6.0
 openpyxl==3.1.5
 # OCR for paper invoice scanner (requires system Tesseract: apt install tesseract-ocr tesseract-ocr-pol)
 pytesseract>=0.3.10
+pywebpush>=2.0.0

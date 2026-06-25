@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import type { OpexCategory, PzDocumentRef, ReceivedInvoiceMeta } from '@/services/ksef.service';
-import { OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
+import { isKorType, OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
 import type { AccountingStatus, InvoiceAnnotationWrite, LineAnnotation, LineSplitWrite } from '@/types/cost-allocation.types';
 import { ACCOUNTING_STATUS_COLORS, ACCOUNTING_STATUS_LABELS } from '@/types/cost-allocation.types';
 
@@ -65,6 +65,7 @@ interface InvoiceRowProps {
   downloading: string | null;
   onDownload: (ref: string) => void;
   onCreatePz: (ref: string) => void;
+  onCreatePzKor: (ref: string) => void;
 }
 
 function OpexTagButton({ inv }: { inv: ReceivedInvoiceMeta }) {
@@ -691,11 +692,12 @@ function AnnotationPanel({ ksefNumber, lines }: AnnotationPanelProps) {
   );
 }
 
-function InvoiceRow({ inv, downloading, onDownload, onCreatePz }: InvoiceRowProps) {
+function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor }: InvoiceRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showMatchPanel, setShowMatchPanel] = useState(false);
   const hasCostAllocation = useModuleGuard('cost_allocation');
 
+  const isKor = isKorType(inv.invoiceType);
   const hasActivePz = (inv.pzDocuments ?? []).some((pz) => pz.status !== 'cancelled');
   // Close match panel automatically once invoice becomes linked
   if (showMatchPanel && hasActivePz) setShowMatchPanel(false);
@@ -718,7 +720,16 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz }: InvoiceRowProp
         <td className="px-3 py-2 text-sm text-muted-foreground whitespace-nowrap">
           {isoToDisplay(inv.issueDate)}
         </td>
-        <td className="px-3 py-2 text-sm font-medium">{inv.invoiceNumber || '—'}</td>
+        <td className="px-3 py-2 text-sm font-medium">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {inv.invoiceNumber || '—'}
+            {isKor && (
+              <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
+                {inv.invoiceType}
+              </span>
+            )}
+          </div>
+        </td>
         <td className="px-3 py-2 text-sm">
           <div>{sellerName}</div>
           <div className="text-xs text-muted-foreground">{sellerNip}</div>
@@ -776,9 +787,20 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz }: InvoiceRowProp
             >
               XML
             </Button>
-            <Button size="sm" onClick={() => onCreatePz(inv.ksefNumber)}>
-              + PZ
-            </Button>
+            {isKor ? (
+              <Button
+                size="sm"
+                className="bg-orange-500 hover:bg-orange-600 text-white"
+                onClick={() => onCreatePzKor(inv.ksefNumber)}
+                title="Utwórz korektę PZ na podstawie tej faktury korygującej"
+              >
+                PZ-KOR
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => onCreatePz(inv.ksefNumber)}>
+                + PZ
+              </Button>
+            )}
             {!hasActivePz && (
               <Button
                 size="sm"
@@ -1078,6 +1100,7 @@ export function KSeFInboxPage() {
                         downloading={downloading}
                         onDownload={handleDownload}
                         onCreatePz={(ref) => navigate(`/ksef/inbox/${encodeURIComponent(ref)}/pz`)}
+                        onCreatePzKor={(ref) => navigate(`/ksef/inbox/${encodeURIComponent(ref)}/pz-kor`)}
                       />
                     ))}
                   </tbody>

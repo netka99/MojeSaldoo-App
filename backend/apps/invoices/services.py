@@ -192,6 +192,78 @@ def generate_invoice_from_order(
     return invoice
 
 
+@transaction.atomic
+def create_invoice_correction(
+    *,
+    original_invoice: Invoice,
+    company,
+    user,
+    correction_reason: str,
+    items_data: list[dict],
+    issue_date: date | None = None,
+) -> Invoice:
+    """
+    Create a draft FV-KOR (correction invoice) linked to ``original_invoice``.
+
+    ``items_data`` is a list of dicts:
+        [{"item_id": "<uuid>", "quantity": Decimal, "unit_price_net": Decimal}, ...]
+    Any item not present in the list is copied with its original quantity/price.
+    Quantity and price must be > 0 (they represent the corrected final values).
+    """
+    if original_invoice.status not in (Invoice.STATUS_ISSUED, Invoice.STATUS_PAID):
+        raise ValidationError(
+            {"detail": "Korektę można wystawić tylko do faktury wystawionej lub opłaconej."}
+        )
+
+    if not correction_reason or not correction_reason.strip():
+        raise ValidationError({"correction_reason": "Powód korekty jest wymagany."})
+
+    resolved_issue = issue_date or timezone.localdate()
+    pay_days = getattr(original_invoice.customer, "payment_terms", None) or 14
+
+    correction = Invoice(
+        company=company,
+        user=user,
+        order=original_invoice.order,
+        customer=original_invoice.customer,
+        delivery_document=original_invoice.delivery_document,
+        issue_date=resolved_issue,
+        sale_date=original_invoice.sale_date,
+        due_date=resolved_issue + timedelta(days=int(pay_days)),
+        payment_method=original_invoice.payment_method,
+        status=Invoice.STATUS_DRAFT,
+        is_correction=True,
+        corrects_invoice=original_invoice,
+        correction_reason=correction_reason.strip(),
+    )
+    correction.save()
+
+    override_map = {str(d["item_id"]): d for d in items_data}
+
+    for orig_item in original_invoice.items.all().select_related("product"):
+        override = override_map.get(str(orig_item.id), {})
+        qty = Decimal(str(override.get("quantity", orig_item.quantity)))
+        price = Decimal(str(override.get("unit_price_net", orig_item.unit_price_net)))
+
+        InvoiceItem.objects.create(
+            invoice=correction,
+            order_item=orig_item.order_item,
+            product=orig_item.product,
+            product_name=orig_item.product_name,
+            product_unit=orig_item.product_unit,
+            pkwiu=orig_item.pkwiu,
+            quantity=qty,
+            unit_price_net=price,
+            vat_rate=orig_item.vat_rate,
+        )
+
+    recalculate_invoice_totals(correction)
+    correction.save(
+        update_fields=["subtotal_net", "subtotal_gross", "vat_amount", "total_gross", "updated_at"]
+    )
+    return correction
+
+
 def _fmt_money(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):.2f}"
 

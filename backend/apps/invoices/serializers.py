@@ -91,3 +91,16 @@ class InvoiceSerializer(serializers.ModelSerializer):
                 {"detail": "Only draft invoices can be edited."}
             )
         return super().update(instance, validated_data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Expose correction FK as UUID string
+        data["corrects_invoice_id"] = (
+            str(instance.corrects_invoice_id) if instance.corrects_invoice_id else None
+        )
+        data["corrects_invoice_number"] = (
+            instance.corrects_invoice.invoice_number
+            if instance.corrects_invoice_id
+            else None
+        )
+        return data

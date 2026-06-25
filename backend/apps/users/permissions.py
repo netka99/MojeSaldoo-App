@@ -1,6 +1,6 @@
 from rest_framework import permissions
 
-from .models import CompanyModule
+from .models import CompanyMembership, CompanyModule
 
 
 def company_has_module(company, module_key: str) -> bool:
@@ -12,28 +12,66 @@ def company_has_module(company, module_key: str) -> bool:
     ).exists()
 
 
+def _get_active_membership(user):
+    """Return the user's active membership for their current company, or None."""
+    if not user.is_authenticated or not user.current_company_id:
+        return None
+    return (
+        CompanyMembership.objects.select_related("company_role")
+        .filter(user=user, company=user.current_company, is_active=True)
+        .first()
+    )
+
+
 class IsCompanyMember(permissions.BasePermission):
     def has_permission(self, request, view):
-        user = request.user
-        if not user.is_authenticated:
-            return False
-        return (
-            user.current_company is not None
-            and user.memberships.filter(
-                company=user.current_company, is_active=True
-            ).exists()
-        )
+        return _get_active_membership(request.user) is not None
 
 
-class IsCompanyAdmin(IsCompanyMember):
+class IsCompanyAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
+        m = _get_active_membership(request.user)
+        return m is not None and m.is_admin_member()
+
+
+class HasCompanyPermission(permissions.BasePermission):
+    """
+    Checks a fine-grained permission flag on the user's current company membership.
+
+    Usage in ViewSet:
+        required_permission = 'can_manage_customers'   # write actions
+        read_permission = 'can_manage_customers'        # optional, defaults to required_permission
+        permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+
+    Admins (is_admin_member()) always pass.
+    Safe methods (GET, HEAD, OPTIONS) are allowed to any active member unless
+    read_permission is also set and the user lacks it.
+    """
+    message = "Nie masz uprawnień do tej operacji."
+
+    def has_permission(self, request, view):
+        m = _get_active_membership(request.user)
+        if m is None:
             return False
-        return request.user.memberships.filter(
-            company=request.user.current_company,
-            role__in=["admin"],
-            is_active=True,
-        ).exists()
+        if m.is_admin_member():
+            return True
+
+        # Choose which flag to check.
+        # read_permission explicitly set to None means "open reads to any company member".
+        # read_permission not set at all → fall back to required_permission.
+        if request.method in permissions.SAFE_METHODS:
+            if hasattr(view, 'read_permission'):
+                flag = view.read_permission  # None = open, string = check that flag
+            else:
+                flag = getattr(view, 'required_permission', None)
+        else:
+            flag = getattr(view, 'required_permission', None)
+
+        if flag is None:
+            return True  # no flag specified — allow
+
+        perms = m.get_permissions()
+        return perms.get(flag, False)
 
 
 class ModuleRequired(permissions.BasePermission):

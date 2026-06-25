@@ -49,7 +49,7 @@ function StockTable({ rows }: { rows: InventoryReportRow[] }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+        <label className="no-print flex items-center gap-2 text-sm cursor-pointer select-none">
           <input
             type="checkbox"
             checked={showOnlyLow}
@@ -111,22 +111,25 @@ function ExpiryTable({ rows }: { rows: ExpiryAlertRow[] }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm text-muted-foreground">Pokaż partie wygasające w ciągu:</span>
-        {[30, 60, 90].map((d) => (
-          <button
-            key={d}
-            type="button"
-            onClick={() => setHorizonDays(d)}
-            className={cn(
-              'rounded px-3 py-1 text-sm font-medium transition-colors',
-              horizonDays === d
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80',
-            )}
-          >
-            {d} dni
-          </button>
-        ))}
+        <span className="no-print text-sm text-muted-foreground">Pokaż partie wygasające w ciągu:</span>
+        <div className="no-print flex flex-wrap gap-2">
+          {[30, 60, 90].map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setHorizonDays(d)}
+              className={cn(
+                'rounded px-3 py-1 text-sm font-medium transition-colors',
+                horizonDays === d
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80',
+              )}
+            >
+              {d} dni
+            </button>
+          ))}
+        </div>
+        <span className="print-only text-xs text-muted-foreground">Horyzont: {horizonDays} dni</span>
         <span className="ml-auto text-xs text-muted-foreground">{filtered.length} partii</span>
       </div>
       {filtered.length === 0 ? (
@@ -194,15 +197,24 @@ function InventoryReportPageContent() {
             Stan zapasów, rotacja towaru i partie bliskie terminu ważności.
           </p>
         </div>
-        {inventory.data && inventory.data.length > 0 && (
+        <div className="flex gap-2">
+          {inventory.data && inventory.data.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void downloadCsv('/reports/inventory/', {}, 'raport-magazyn.csv')}
+              className="no-print rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            >
+              Pobierz CSV
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => void downloadCsv('/reports/inventory/', {}, 'raport-magazyn.csv')}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            onClick={() => window.print()}
+            className="no-print rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
           >
-            Pobierz CSV
+            Drukuj PDF
           </button>
-        )}
+        </div>
       </div>
 
       {/* Summary badges */}

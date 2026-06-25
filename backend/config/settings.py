@@ -175,10 +175,24 @@ KSEF_CERTIFICATE_PATH = BASE_DIR / 'media' / 'certificates'
 KSEF_KEY_PATH = BASE_DIR / 'media' / 'keys'
 
 
+# Web Push (VAPID) — self-hosted, no Firebase needed.
+# Generate keys once with: python -c "from py_vapid import Vapid; v=Vapid(); v.generate_keys(); print(v.private_pem().decode())"
+# VAPID_PUBLIC_KEY: uncompressed EC point, base64url-encoded (no padding) — sent to browser
+# VAPID_PRIVATE_KEY: full PEM string — used by pywebpush to sign push requests
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+VAPID_PUBLIC_KEY = os.environ.get(
+    'VAPID_PUBLIC_KEY',
+    'BOLHgboPBSpvCYeLmbsriNZvawjj042M9yAfAWGGgVPh-CBJ7OI5DzeEg6VQix-2JZi0hHSwWp4bsN5hiX19pQE',
+)
+VAPID_CLAIMS_EMAIL = os.environ.get('VAPID_CLAIMS_EMAIL', 'mailto:admin@mojesaldoo.pl')
+
 # Email — prints to terminal in dev, swap backend + settings for production
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'MojeSaldoo <noreply@mojesaldoo.pl>')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+# Google OAuth — set GOOGLE_CLIENT_ID in .env to enable "Sign in with Google".
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 
 # Logging configuration
 LOGGING = {

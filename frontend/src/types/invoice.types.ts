@@ -67,11 +67,26 @@ export interface Invoice {
   invoice_hash: string;
   upo_received: boolean;
   status: InvoiceStatus;
+  is_correction: boolean;
+  corrects_invoice_id: string | null;
+  corrects_invoice_number: string | null;
+  correction_reason: string;
   paid_at: string | null;
   notes: string;
   created_at: string;
   updated_at: string;
   items: InvoiceItem[];
+}
+
+/** Body for `POST /api/invoices/:id/create-correction/`. */
+export interface CreateCorrectionBody {
+  correction_reason: string;
+  issue_date?: string;
+  items?: Array<{
+    item_id: string;
+    quantity?: string | number;
+    unit_price_net?: string | number;
+  }>;
 }
 
 /** `POST /api/invoices/` — writable fields (`status` is server / action controlled). */

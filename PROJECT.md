@@ -264,34 +264,91 @@ User → Frontend → API Request → Backend → Database
 ## Moduły Aplikacji
 
 ### 1. ONBOARDING (Moduł 1)
-**Cel**: Rejestracja użytkownika i konfiguracja dostępu do KSeF
+**Cel**: Zero-friction rejestracja + personalizacja profilu firmy bez zbędnej biurokracji
 
-#### Funkcjonalności:
-- Utworzenie konta użytkownika
-- Przesłanie certyfikatu i klucza (lub generowanie)
-- Konfiguracja dostępu do KSeF (token, session)
-- Opcja: Skip certyfikatu na początku
+#### Filozofia
+- Użytkownik wchodzi do aplikacji w **< 60 sekund** bez podawania NIP, adresu ani żadnych danych firmy
+- Dane firmy (NIP, adres) są zbierane **just-in-time** — dopiero gdy użytkownik chce wysłać pierwszą fakturę przez KSeF
+- Wybór profilu firmy **aktywuje moduły** — użytkownik widzi tylko to, czego potrzebuje
+- Każdy moduł można później włączyć/wyłączyć w Ustawienia → Moduły
 
-#### Przepływ:
+#### Przepływ (6 ekranów)
+
 ```
-Create Account → Ask for Certificates →
-  ├─> Upload Certificate & Key → Send to Server → Store & Encrypt
-  └─> Skip for Now → Continue without KSeF
+[Ekran 0] Landing / Splash
+    ↓ "Zacznij za darmo"
+[Ekran 1] Rejestracja
+    Google OAuth  lub  Email + Hasło  (nic więcej)
+    ↓
+[Ekran 2] "Co robi Twoja firma?" — multi-select kafelki
+    🛒 Kupuję gotowy towar
+    🛠️ Produkuję z surowców i receptur
+    🏪 Prowadzę magazyn
+    💼 Opisuję koszty dla księgowego
+    📋 Wystawiam faktury (zawsze aktywne, nie można odznaczyć)
+    ↓ (skip Ekran 3 jeśli wybrano tylko 📋 / 💼)
+[Ekran 3] "Jak docierasz do klientów?" — single-select (tap = auto-advance)
+    🚐 Jeżdżę w trasie (pełny van workflow: MM, trasa, rozliczenie)
+    📦 Wysyłam / klient odbiera (WZ + ZW, bez trasy)
+    📋 Tylko dokumenty i faktury
+    ↓
+[Ekran 4] Potwierdzenie modułów
+    Lista aktywowanych modułów z możliwością korekty inline
+    "Możesz zmienić to zawsze w Ustawienia → Moduły"
+    ↓ "Zacznij korzystać →"
+[Ekran 5] Dashboard (pierwsze wejście)
+    Pasek SetupNudge: ○ Dodaj produkty  ○ Dodaj klientów  ○ Uzupełnij dane firmy
+    Znika automatycznie po wykonaniu wszystkich 3 kroków
 ```
 
-#### Ekrany Figma:
-- Ekran główny: "Witaj Anna" (home screen)
-- Formularz logowania/rejestracji
+#### Mapowanie kafelków → moduły
+
+| Kafelek | Aktywowane moduły |
+|---|---|
+| 🛒 Kupuję towar | PZ, Dostawcy, KSeF Inbox, stany magazynowe, FIFO koszty zakupu, Raporty Marże |
+| 🛠️ Produkuję | Receptury, Zlecenia produkcji, koszt/szt. FIFO, daty ważności, Etykiety QR, Raport produkcji |
+| 🏪 Magazyn | Multi-warehouse, stany per magazyn, inwentaryzacja (spis z natury), Raporty Magazyn |
+| 💼 Koszty księgowego | Adnotacje kosztowe, KSeF Inbox (faktury zakupowe), eksport CSV dla biura, Raporty Koszty |
+| 📋 Faktury (zawsze) | Fakturowanie, KSeF send, Klienci, Zamówienia, Raporty P&L, Raporty Sprzedaż |
+| 🚐 Trasa | Van warehouse (MG→van MM), załadunek, rozliczenie trasy, ZW zwroty, Raporty Dostawa |
+| 📦 Wysyłam/odbiera | WZ dokumenty, ZW zwroty, Raporty Dostawa (basic) |
+| 📋 Tylko dokumenty | WZ tylko, bez van routing |
+
+#### Typy firm (company_type) zapisywane w DB
+
+Automatycznie wnioskowane z kombinacji kafelków:
+
+| Kombinacja | company_type |
+|---|---|
+| Tylko 📋 i/lub 💼 | `invoicing` |
+| 🛒 + 🚐 (bez 🛠️) | `van_selling` |
+| 🛒 + 🏪 + 📦/📋 (bez 🛠️) | `warehouse` |
+| 🛠️ (cokolwiek) | `production` |
+| Mieszane | `mixed` |
+
+#### Dane zawsze aktywne (niezależnie od wyboru)
+- Faktury VAT + KSeF wysyłanie
+- Klienci (baza kontrahentów)
+- Zamówienia (podstawowe)
+- Raporty P&L (miesięczny wynik)
+- Cenniki indywidualne per klient (aktywne gdy klienci + faktury)
+
+#### Dane firmy — progressive disclosure
+- **NIP** → wymagany dopiero przy pierwszym wysłaniu faktury przez KSeF
+- **Adres firmy** → wymagany dopiero przy generowaniu faktury
+- **Certyfikat KSeF** → wymagany dopiero przy połączeniu z KSeF
+- **Logo** → opcjonalne, zawsze później w Ustawienia
 
 ---
 
 ### 2. INITIAL TENANCY CONFIGURATION
-**Cel**: Konfiguracja początkowa biznesu (produkty, klienci)
+**Cel**: Konfiguracja podstawowych danych biznesowych (stopniowa, nie blokująca)
 
 #### Funkcjonalności:
-- Utworzenie katalogu produktów
-- Dodanie klientów/kontrahentów
-- Konfiguracja podstawowych ustawień
+- Opcjonalne uzupełnienie danych firmy (NIP, adres) — wymagane tylko przy KSeF
+- Dodanie pierwszych produktów (sugerowane przez SetupNudge na dashboardzie)
+- Dodanie pierwszych klientów (sugerowane przez SetupNudge)
+- Konfiguracja magazynów (domyślny MG tworzony automatycznie)
 
 #### Ekrany Figma:
 - a
@@ -474,10 +531,12 @@ Moduł Raporty → Wybierz kategorię (Sprzedaż / Marże / Magazyn / ...) →
 ## Przepływy Biznesowe
 
 ### Przepływ 1: Rejestracja i Onboarding
-1. Użytkownik tworzy konto
-2. Dodaje certyfikat + klucz (lub pomija)
-3. System zapisuje zaszyfrowane dane certyfikatu
-4. Użytkownik może rozpocząć pracę
+1. Użytkownik klika "Zacznij za darmo" → rejestruje się Google OAuth lub email/hasło
+2. Wybiera kafelki aktywności firmy (multi-select: kupuję / produkuję / magazyn / koszty)
+3. Wybiera metodę dostawy (opcjonalnie: trasa / wysyłam / tylko dokumenty)
+4. System aktywuje moduły wg kombinacji kafelków, zapisuje `company_type`
+5. Użytkownik trafia na dashboard z paskiem SetupNudge (produkty / klienci / dane firmy)
+6. Dane firmy (NIP, adres, certyfikat KSeF) uzupełniane jest dopiero gdy użytkownik chce wysłać fakturę
 
 ### Przepływ 2: Przyjęcie Zamówienia
 1. Użytkownik wybiera datę i klienta
@@ -1657,12 +1716,18 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - Optymalizacja obrazów (Capacitor Asset optimization)
 
 ### Możliwości rozwoju (przyszłość)
-- [ ] Korekty do faktur i PZ i Wz
+- [ ] **Korekty do faktur i PZ i WZ** — (#12 Steps.md)
+  - [ ] FV-KOR: Invoice.is_correction + corrects_invoice FK, endpoint create-correction, CorrectionInvoiceCreatePage
+  - [ ] WZ-KOR: DOC_TYPE_WZ_KOR + corrects_wz FK, endpoint create-wz-correction
+  - [x] PZ-KOR model (DOC_TYPE_PZ_KOR + corrects_pz FK — struktura gotowa w DeliveryDocument)
+  - [ ] PZ-KOR z KSeF KOR invoice — parsowanie FakturaRef, przycisk "Utwórz PZ-KOR" w inbox (zablokowane: brak testu z prawdziwą fakturą KOR)
+- [ ] **Eksport raportów do PDF** — (#13 Steps.md) browser print + @media print CSS, PrintReportHeader, przycisk "Drukuj PDF" na każdym raporcie
+- [ ] **Powiadomienia push (statusy KSeF)** — (#14 Steps.md) Dwa kanały w zależności od platformy:
+  - **Web Push VAPID** (przeglądarka + PWA + iOS Safari home screen) — ✅ zaimplementowane. Backend: `pywebpush` + `WebPushSubscription` model + endpoint `/api/auth/push-subscription/` + trigger na KSeF accepted/rejected. Frontend: `sw.js` service worker + `useWebPushSubscription` hook + `PushManager.subscribe()`. ⚠️ Do zrobienia z backendowcem: wygenerować klucze VAPID (`pywebpush` CLI) i ustawić env vars `VAPID_PRIVATE_KEY` + `VAPID_PUBLIC_KEY` na Hetznerze.
+  - **FCM / Firebase Cloud Messaging** (natywny APK Android via Capacitor) — ✅ hook `usePushNotifications.ts` napisany, czeka na konfigurację Firebase. ⚠️ Do zrobienia z backendowcem: (1) założyć projekt Firebase (bezpłatny tier, nieograniczone powiadomienia), (2) pobrać `google-services.json` i wrzucić do `android/app/`, (3) dodać `firebase-admin` do backendu i podpiąć `push_service.py` pod triggery KSeF. **GDPR**: FCM jest legalny w Polsce — Google certyfikowany pod EU–US Data Privacy Framework (lipiec 2023) + DPA dostępne w konsoli Firebase do podpisania jednym kliknięciem. Wystarczy dodać "Firebase Cloud Messaging (Google LLC, USA)" do polityki prywatności. Nie wkładać danych osobowych (NIP, nazwiska) w treść powiadomienia.
 - [ ] Synchronizacja offline
-- [ ] Powiadomienia push (statusy KSeF)
-- [ ] Eksport raportów do PDF/Excel
 - [ ] Możliwośc zrobienia backup dokumentów na dysk
-- [ ] Integracja z drukarkami fiskalny
+- [ ] Integracja z drukarkami fiskalnymi
 - [ ] Multi-tenancy (wiele firm na jednym koncie)
 - [ ] OCR do skanowania dokumentów
 - [ ] API webhooks (powiadomienia o statusach)
@@ -1709,3 +1774,67 @@ GET    /api/reports/inventory/      # Raport magazynowy
 
 **Ostatnia aktualizacja**: 2026-06-20
 **Wersja dokumentu**: 1.0
+
+
+Full coverage summary
+App module	Tile that unlocks it
+Produkty
+🛒 or 🛠️ or 🏪
+
+Magazyn (multi)
+🏪
+
+Klienci
+Always ON
+
+Zamówienia
+Always ON
+
+WZ dokumenty
+Screen 2 any option
+
+ZW zwroty
+Screen 2 (🚐 or 📦)
+
+MM + Van routing
+Screen 2 🚐
+Rozliczenie trasy
+Screen 2 🚐
+Fakturowanie
+Always ON
+KSeF send
+Always ON
+KSeF Inbox
+🛒 OR 💼
+PZ zakupy
+🛒
+Receptury
+🛠️
+Zlecenia produkcji
+🛠️
+FIFO koszt produkcji
+🛠️
+Daty ważności
+🛠️ or 🛒 (surowce)
+Adnotacje kosztowe
+💼
+Inwentaryzacja
+🏪
+Etykiety QR/EAN
+🛠️ or 🏪
+Cenniki per klient
+Auto (📋 + delivery)
+Raporty Sprzedaż
+Always ON
+Raporty Marże
+🛒 + 📋
+Raporty Dostawa
+Screen 2
+Raporty Magazyn
+🏪
+Raporty Koszty
+💼
+Raporty P&L
+Always ON
+Raporty Produkcja
+🛠️

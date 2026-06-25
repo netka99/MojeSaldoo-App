@@ -93,6 +93,15 @@ vi.mock('@/query/use-companies', () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useWorkflowSettingsQuery: () => ({
+    data: { orders_required: false, wz_required_before_invoice: true },
+    isPending: false,
+    isError: false,
+  }),
+  useUpdateWorkflowSettingsMutation: () => ({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
 }));
 
 describe('CompanySettingsPage', () => {
@@ -101,7 +110,14 @@ describe('CompanySettingsPage', () => {
     authState.user = {
       id: 1,
       current_company: '550e8400-e29b-41d4-a716-446655440000',
-      current_company_role: 'admin',
+      current_company_role: 'Administrator',
+      is_company_admin: true,
+      permissions: {
+        can_manage_team: true, can_manage_settings: true, can_see_prices: true,
+        can_manage_products: true, can_manage_customers: true, can_manage_orders: true,
+        can_manage_delivery: true, can_access_routes: true, can_manage_invoices: true,
+        can_manage_purchasing: true, can_manage_production: true, can_view_reports: true,
+      },
     };
     myCompaniesListState.data = [
       {
@@ -126,7 +142,7 @@ describe('CompanySettingsPage', () => {
     expect(screen.getByText('5260250274')).toBeInTheDocument();
     const roleGroup = screen.getByText('Twoja rola').parentElement;
     expect(roleGroup).toBeTruthy();
-    expect(within(roleGroup as HTMLElement).getByText('admin', { exact: true })).toBeInTheDocument();
+    expect(within(roleGroup as HTMLElement).getByText('Administrator', { exact: true })).toBeInTheDocument();
     expect(screen.getByText('Produkty i magazyn')).toBeInTheDocument();
     expect(screen.getByText('Moduł aktywny')).toBeInTheDocument();
   });
@@ -147,7 +163,14 @@ describe('CompanySettingsPage', () => {
   });
 
   it('disables module switches for non-admin roles', () => {
-    authState.user.current_company_role = 'viewer';
+    authState.user.current_company_role = 'Pracownik';
+    authState.user.is_company_admin = false;
+    authState.user.permissions = {
+      can_manage_team: false, can_manage_settings: false, can_see_prices: true,
+      can_manage_products: true, can_manage_customers: true, can_manage_orders: true,
+      can_manage_delivery: true, can_access_routes: false, can_manage_invoices: false,
+      can_manage_purchasing: false, can_manage_production: false, can_view_reports: false,
+    };
     renderPage();
 
     const switches = screen.getAllByRole('switch');

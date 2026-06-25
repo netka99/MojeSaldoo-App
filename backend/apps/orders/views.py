@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.products.models import ProductStock, StockMovement, Warehouse
-from apps.users.permissions import IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .filters import OrderFilter
@@ -39,7 +39,8 @@ class OrderViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_manage_orders'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     filterset_class = OrderFilter
     filter_backends = [
         DjangoFilterBackend,

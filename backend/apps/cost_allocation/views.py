@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.ksef.models import ReceivedKSeFInvoice, ReceivedKSeFInvoiceLine
-from apps.users.permissions import IsCompanyMember, ModuleRequired
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired
 
 from .models import CostProject, InvoiceAnnotation, InvoiceLineAnnotation, InvoiceLineAnnotationSplit
 from .serializers import CostProjectSerializer, InvoiceAnnotationSerializer
@@ -156,8 +156,9 @@ class CostProjectListView(APIView):
     POST /api/cost-allocation/projects/  — create a new project
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired]
+    required_permission = 'can_manage_accounting'
     module_required = "cost_allocation"
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
 
     def get(self, request):
         company = request.user.current_company
@@ -185,8 +186,9 @@ class CostProjectDetailView(APIView):
     DELETE /api/cost-allocation/projects/<id>/  — soft-delete (is_active=False)
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired]
+    required_permission = 'can_manage_accounting'
     module_required = "cost_allocation"
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
 
     def _get_project(self, company, pk):
         return CostProject.objects.filter(id=pk, company=company).first()
@@ -232,8 +234,9 @@ class InvoiceAnnotationView(APIView):
           }
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired]
+    required_permission = 'can_manage_accounting'
     module_required = "cost_allocation"
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
 
     def _get_invoice(self, company, ksef_number):
         return ReceivedKSeFInvoice.objects.filter(
@@ -324,8 +327,9 @@ class CostAllocationExportView(APIView):
     Marks exported invoices as 'exported' unless already 'booked'.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired]
+    required_permission = 'can_manage_accounting'
     module_required = "cost_allocation"
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
 
     def get(self, request):
         company = request.user.current_company

@@ -1175,6 +1175,137 @@ def _preview_customer_party(doc: DeliveryDocument) -> dict:
     }
 
 
+@transaction.atomic
+def create_wz_correction(
+    original_wz: "DeliveryDocument",
+    correction_items: list,
+    user,
+    correction_reason: str = "",
+    issue_date=None,
+) -> "DeliveryDocument":
+    """
+    Create a WZ-KOR (Korekta Wydania Zewnętrznego) for a delivered WZ.
+
+    correction_items: list of dicts:
+        {
+            'delivery_item_id': str UUID,
+            'quantity_returned': Decimal,   # how many units to reverse
+            'return_reason': str,           # optional
+        }
+
+    For each line, stock is returned to the WZ source warehouse.
+    The WZ-KOR is created immediately in STATUS_DELIVERED (corrections are applied instantly).
+    Returns the created WZ-KOR document.
+    """
+    from .models import DeliveryDocument, DeliveryItem
+
+    if original_wz.document_type != DeliveryDocument.DOC_TYPE_WZ:
+        raise ValidationError({"detail": "Korektę można utworzyć tylko dla dokumentu WZ."})
+    if original_wz.status != DeliveryDocument.STATUS_DELIVERED:
+        raise ValidationError({"detail": "Korektę można utworzyć tylko dla zatwierdzonego WZ."})
+    if not correction_items:
+        raise ValidationError({"detail": "Brak pozycji do korekty."})
+
+    warehouse = original_wz.from_warehouse
+    if warehouse is None:
+        raise ValidationError({"detail": "WZ nie ma przypisanego magazynu źródłowego."})
+
+    company_id = original_wz.company_id
+    doc_label = original_wz.document_number or str(original_wz.id)
+
+    # Pre-fetch original items
+    orig_items = list(original_wz.items.select_related("product").order_by("created_at"))
+    orig_item_map = {str(it.id): it for it in orig_items}
+
+    changes = []
+    for row in correction_items:
+        item_id = str(row.get("delivery_item_id", ""))
+        qty_returned = Decimal(str(row.get("quantity_returned", 0)))
+        return_reason = str(row.get("return_reason", "")).strip()
+
+        if item_id not in orig_item_map:
+            raise ValidationError({"detail": f"Pozycja WZ {item_id} nie istnieje."})
+        if qty_returned <= 0:
+            raise ValidationError({"detail": "Ilość do zwrotu musi być większa niż 0."})
+
+        orig_item = orig_item_map[item_id]
+        delivered = orig_item.quantity_actual if orig_item.quantity_actual is not None else orig_item.quantity_planned
+        if qty_returned > delivered:
+            raise ValidationError(
+                {"detail": f"Ilość zwrotu ({qty_returned}) przekracza ilość dostarczoną ({delivered}) dla {orig_item.product.name}."}
+            )
+
+        changes.append({
+            "orig_item": orig_item,
+            "qty_returned": qty_returned,
+            "return_reason": return_reason,
+        })
+
+    # Create the WZ-KOR document
+    resolved_issue = issue_date or timezone.localdate()
+    wz_kor = DeliveryDocument(
+        company_id=company_id,
+        order=original_wz.order,
+        user=user,
+        document_type=DeliveryDocument.DOC_TYPE_WZ_KOR,
+        issue_date=resolved_issue,
+        from_warehouse=warehouse,
+        to_customer=original_wz.to_customer,
+        van_route=original_wz.van_route,
+        corrects_wz=original_wz,
+        status=DeliveryDocument.STATUS_DELIVERED,
+        notes=correction_reason,
+        delivered_at=timezone.now(),
+    )
+    wz_kor.save()
+
+    for change in changes:
+        orig_item = change["orig_item"]
+        qty = change["qty_returned"]
+
+        DeliveryItem.objects.create(
+            delivery_document=wz_kor,
+            order_item=orig_item.order_item,
+            product=orig_item.product,
+            quantity_planned=qty,
+            quantity_actual=qty,
+            quantity_returned=qty,
+            return_reason=change["return_reason"],
+        )
+
+        # Return stock to source warehouse
+        try:
+            stock = ProductStock.objects.get(product=orig_item.product, warehouse=warehouse)
+        except ProductStock.DoesNotExist:
+            stock = ProductStock.objects.create(
+                company_id=company_id,
+                product=orig_item.product,
+                warehouse=warehouse,
+                quantity_available=Decimal("0"),
+            )
+
+        qty_before = stock.quantity_available
+        stock.quantity_available += qty
+        stock.save(update_fields=["quantity_available"])
+
+        StockMovement.objects.create(
+            company_id=company_id,
+            product=orig_item.product,
+            warehouse=warehouse,
+            user=user,
+            movement_type=StockMovement.MovementType.ADJUSTMENT,
+            quantity=qty,
+            quantity_before=qty_before,
+            quantity_after=stock.quantity_available,
+            reference_type="wz_correction",
+            reference_id=wz_kor.id,
+            notes=f"Korekta WZ {doc_label}" + (f" — {change['return_reason']}" if change["return_reason"] else ""),
+            created_by=user,
+        )
+
+    return wz_kor
+
+
 def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
     """Structured payload for WZ / delivery document print or PDF."""
     company = doc.company

@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.users.permissions import IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .models import ProductionOrder, Recipe
@@ -29,7 +29,8 @@ def _parse_date(raw: str | None) -> _date | None:
 
 
 class RecipeViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_manage_production'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     pagination_class = None
 
     def get_queryset(self):
@@ -54,7 +55,8 @@ class RecipeViewSet(viewsets.ModelViewSet):
 
 
 class ProductionOrderViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_manage_production'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get_queryset(self):
         qs = (

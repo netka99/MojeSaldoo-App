@@ -1455,3 +1455,395 @@ class InvoiceIssueLevel2GuardTests(TestCase):
         inv = self._create_invoice_with_qty(Decimal("10.00"))  # far exceeds delivered
         r = self.client.post(self._issue_url(inv.id), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+
+
+# ---------------------------------------------------------------------------
+# FV-KOR — Invoice correction tests
+# ---------------------------------------------------------------------------
+
+
+class InvoiceCorrectionNumberingTests(TestCase):
+    """FV-KOR invoices get FV-KOR/{year}/{seq:04d} numbers."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-num-user", email="kor-num@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR Co")
+        self.customer = Customer.objects.create(name="KOR Cust", company=self.company)
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+
+    def _make_invoice(self, order=None, **kwargs):
+        return Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=order or self.order,
+            customer=self.customer,
+            issue_date=kwargs.pop("issue_date", date(2026, 6, 1)),
+            sale_date=kwargs.pop("sale_date", date(2026, 6, 1)),
+            due_date=kwargs.pop("due_date", date(2026, 6, 30)),
+            **kwargs,
+        )
+
+    def test_correction_gets_fv_kor_number(self):
+        original = self._make_invoice()
+        kor = self._make_invoice(
+            is_correction=True,
+            corrects_invoice=original,
+            correction_reason="Test",
+            # needs separate order slot or no active-non-correction constraint
+        )
+        self.assertTrue(kor.invoice_number.startswith("FV-KOR/2026/"))
+
+    def test_correction_numbering_is_sequential(self):
+        original = self._make_invoice()
+        # Create two corrections on the same order (allowed because is_correction=True)
+        kor1 = self._make_invoice(
+            is_correction=True, corrects_invoice=original, correction_reason="R1"
+        )
+        kor2 = self._make_invoice(
+            is_correction=True, corrects_invoice=original, correction_reason="R2"
+        )
+        self.assertEqual(kor1.invoice_number, "FV-KOR/2026/0001")
+        self.assertEqual(kor2.invoice_number, "FV-KOR/2026/0002")
+
+    def test_fv_and_fv_kor_sequences_are_independent(self):
+        order2 = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 2),
+            delivery_date=date(2026, 6, 11),
+            status=Order.STATUS_DELIVERED,
+        )
+        inv1 = self._make_invoice()
+        inv2 = self._make_invoice(order=order2)
+        kor = self._make_invoice(
+            is_correction=True, corrects_invoice=inv1, correction_reason="R"
+        )
+        self.assertEqual(inv2.invoice_number, "FV/2026/0002")
+        self.assertEqual(kor.invoice_number, "FV-KOR/2026/0001")
+
+
+class CreateInvoiceCorrectionServiceTests(TestCase):
+    """Unit tests for create_invoice_correction service."""
+
+    def setUp(self):
+        from apps.invoices.services import create_invoice_correction
+
+        self.service = create_invoice_correction
+
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-svc-user", email="kor-svc@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR Svc Co")
+        self.customer = Customer.objects.create(name="Cust", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Bread", unit="szt", price_gross="5.00"
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name="Bread",
+            product_unit="szt",
+            quantity=Decimal("10"),
+            quantity_delivered=Decimal("10"),
+            unit_price_net=Decimal("4.07"),
+            unit_price_gross=Decimal("5.00"),
+            vat_rate=Decimal("23"),
+            line_total_net=Decimal("40.70"),
+            line_total_gross=Decimal("50.00"),
+        )
+        self.invoice = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_ISSUED,
+        )
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            order_item=self.order_item,
+            product=self.product,
+            product_name="Bread",
+            product_unit="szt",
+            quantity=Decimal("10"),
+            unit_price_net=Decimal("4.07"),
+            vat_rate=Decimal("23"),
+        )
+
+    def test_creates_correction_for_issued_invoice(self):
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Błędna ilość",
+            items_data=[],
+        )
+        self.assertTrue(kor.is_correction)
+        self.assertEqual(kor.corrects_invoice, self.invoice)
+        self.assertEqual(kor.correction_reason, "Błędna ilość")
+        self.assertEqual(kor.status, Invoice.STATUS_DRAFT)
+        self.assertTrue(kor.invoice_number.startswith("FV-KOR/"))
+
+    def test_creates_correction_for_paid_invoice(self):
+        self.invoice.status = Invoice.STATUS_PAID
+        self.invoice.save(update_fields=["status"])
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Zwrot",
+            items_data=[],
+        )
+        self.assertIsNotNone(kor.id)
+
+    def test_raises_for_draft_invoice(self):
+        self.invoice.status = Invoice.STATUS_DRAFT
+        self.invoice.save(update_fields=["status"])
+        with self.assertRaises(Exception):
+            self.service(
+                original_invoice=self.invoice,
+                company=self.company,
+                user=self.user,
+                correction_reason="R",
+                items_data=[],
+            )
+
+    def test_raises_when_correction_reason_is_empty(self):
+        with self.assertRaises(Exception):
+            self.service(
+                original_invoice=self.invoice,
+                company=self.company,
+                user=self.user,
+                correction_reason="",
+                items_data=[],
+            )
+
+    def test_items_copied_from_original_when_no_overrides(self):
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Korekta",
+            items_data=[],
+        )
+        kor_items = list(kor.items.all())
+        self.assertEqual(len(kor_items), 1)
+        self.assertEqual(kor_items[0].quantity, Decimal("10"))
+        self.assertEqual(kor_items[0].unit_price_net, Decimal("4.07"))
+
+    def test_item_override_quantity_and_price(self):
+        orig_item = self.invoice.items.first()
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Korekta ceny",
+            items_data=[{"item_id": str(orig_item.id), "quantity": "8", "unit_price_net": "3.00"}],
+        )
+        kor_item = kor.items.first()
+        self.assertEqual(kor_item.quantity, Decimal("8"))
+        self.assertEqual(kor_item.unit_price_net, Decimal("3.00"))
+
+    def test_totals_recalculated_on_correction(self):
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Korekta",
+            items_data=[],
+        )
+        self.assertGreater(kor.total_gross, Decimal("0"))
+
+
+class InvoiceCorrectionAPITests(TestCase):
+    """POST /api/invoices/{id}/create-correction/ endpoint."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-api-user", email="kor-api@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR API Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        self.customer = Customer.objects.create(name="API Cust", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Milk", unit="l", price_gross="2.00"
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.invoice = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_ISSUED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name="Milk",
+            product_unit="l",
+            quantity=Decimal("5"),
+            unit_price_net=Decimal("1.63"),
+            unit_price_gross=Decimal("2.00"),
+            vat_rate=Decimal("23"),
+            line_total_net=Decimal("8.15"),
+            line_total_gross=Decimal("10.00"),
+        )
+        InvoiceItem.objects.create(
+            invoice=self.invoice,
+            order_item=self.order_item,
+            product=self.product,
+            product_name="Milk",
+            product_unit="l",
+            quantity=Decimal("5"),
+            unit_price_net=Decimal("1.63"),
+            vat_rate=Decimal("23"),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _url(self, invoice_id):
+        return reverse("invoice-create-correction", kwargs={"pk": str(invoice_id)})
+
+    def test_returns_201_with_correction_data(self):
+        r = self.client.post(
+            self._url(self.invoice.id),
+            data={"correction_reason": "Błędna ilość"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertTrue(r.data["is_correction"])
+        self.assertEqual(r.data["corrects_invoice_number"], self.invoice.invoice_number)
+
+    def test_returns_400_for_draft_invoice(self):
+        self.invoice.status = Invoice.STATUS_DRAFT
+        self.invoice.save(update_fields=["status"])
+        r = self.client.post(
+            self._url(self.invoice.id),
+            data={"correction_reason": "Test"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_returns_400_when_reason_missing(self):
+        r = self.client.post(
+            self._url(self.invoice.id),
+            data={},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class InvoiceCorrectionFilterTests(TestCase):
+    """GET /api/invoices/?is_correction=true/false filter."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-filter-user", email="kor-filter@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR Filter Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        self.customer = Customer.objects.create(name="Cust", company=self.company)
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.invoice = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_ISSUED,
+        )
+        self.correction = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 6, 2),
+            sale_date=date(2026, 6, 2),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_DRAFT,
+            is_correction=True,
+            corrects_invoice=self.invoice,
+            correction_reason="Test",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _list_url(self, **params):
+        from django.urls import reverse as rev
+        url = rev("invoice-list")
+        if params:
+            qs = "&".join(f"{k}={v}" for k, v in params.items())
+            url = f"{url}?{qs}"
+        return url
+
+    def test_filter_is_correction_true_returns_only_corrections(self):
+        r = self.client.get(self._list_url(is_correction="true"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        ids = [item["id"] for item in r.data["results"]]
+        self.assertIn(str(self.correction.id), ids)
+        self.assertNotIn(str(self.invoice.id), ids)
+
+    def test_filter_is_correction_false_returns_only_regular_invoices(self):
+        r = self.client.get(self._list_url(is_correction="false"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        ids = [item["id"] for item in r.data["results"]]
+        self.assertIn(str(self.invoice.id), ids)
+        self.assertNotIn(str(self.correction.id), ids)
+
+    def test_no_filter_returns_both(self):
+        r = self.client.get(self._list_url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        ids = [item["id"] for item in r.data["results"]]
+        self.assertIn(str(self.invoice.id), ids)
+        self.assertIn(str(self.correction.id), ids)

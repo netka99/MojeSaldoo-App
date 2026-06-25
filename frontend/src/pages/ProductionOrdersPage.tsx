@@ -13,6 +13,7 @@ import {
 } from '@/query/use-production';
 import { useAllProductsQuery } from '@/query/use-products';
 import { authStorage } from '@/services/api';
+import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
 import type { ProductionOrderCreate, ProductionPlanningItem, Recipe } from '@/types/production.types';
 
@@ -325,10 +326,12 @@ function PlanningRow({
   item,
   draftQtyInProduction,
   onCreateOrder,
+  canManage,
 }: {
   item: ProductionPlanningItem;
   draftQtyInProduction: number;
   onCreateOrder: (recipeId: string, qty: number, sourceOrders: string[]) => void;
+  canManage: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const shortfall = Number(item.shortfall);
@@ -390,7 +393,7 @@ function PlanningRow({
           >
             {expanded ? 'zwiń' : 'szczegóły'}
           </button>
-          {hasShortfall && (
+          {hasShortfall && canManage && (
             <Button size="sm" onClick={() => onCreateOrder(item.recipe_id, shortfall, item.orders.map((o) => o.order_number))}>
               + Zlecenie
             </Button>
@@ -427,6 +430,8 @@ type FormState =
   | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[] };
 
 export function ProductionOrdersPage() {
+  const canProduction = usePermission('can_manage_production');
+
   if (!authStorage.getAccessToken()) return <Navigate to="/login" replace />;
 
   const [dateFrom, setDateFrom] = useState('');
@@ -536,6 +541,7 @@ export function ProductionOrdersPage() {
                     item={item}
                     draftQtyInProduction={draftQtyInProduction}
                     onCreateOrder={openFormFromPlanning}
+                    canManage={canProduction}
                   />
                 ))}
               </div>
@@ -570,7 +576,7 @@ export function ProductionOrdersPage() {
       <div className="flex items-center gap-3 pt-2">
         <span className="text-base font-semibold">Zlecenia produkcji</span>
         <div className="flex-1 border-t border-border" />
-        {!form.open && (
+        {!form.open && canProduction && (
           <Button size="sm" onClick={() => setForm({ open: true })}>+ Nowe zlecenie</Button>
         )}
       </div>
@@ -639,36 +645,38 @@ export function ProductionOrdersPage() {
                     </ul>
                   )}
                 </div>
-                <div className="flex shrink-0 flex-col gap-1.5">
-                  {!isCompleted && (
-                    <Button
-                      size="sm"
-                      disabled={completeM.isPending}
-                      onClick={() => {
-                        if (confirm(`Zakończyć zlecenie ${order.order_number}?\n\nSystem pobierze surowce z magazynu (FIFO) i doda gotowy wyrób.`)) {
-                          void completeM.mutateAsync(order.id);
-                        }
-                      }}
-                    >
-                      {completeM.isPending ? '…' : 'Zakończ'}
-                    </Button>
-                  )}
-                  {!isCompleted && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      disabled={deleteM.isPending}
-                      onClick={() => {
-                        if (confirm('Usunąć zlecenie?')) {
-                          void deleteM.mutateAsync(order.id);
-                        }
-                      }}
-                    >
-                      Usuń
-                    </Button>
-                  )}
-                </div>
+                {canProduction && (
+                  <div className="flex shrink-0 flex-col gap-1.5">
+                    {!isCompleted && (
+                      <Button
+                        size="sm"
+                        disabled={completeM.isPending}
+                        onClick={() => {
+                          if (confirm(`Zakończyć zlecenie ${order.order_number}?\n\nSystem pobierze surowce z magazynu (FIFO) i doda gotowy wyrób.`)) {
+                            void completeM.mutateAsync(order.id);
+                          }
+                        }}
+                      >
+                        {completeM.isPending ? '…' : 'Zakończ'}
+                      </Button>
+                    )}
+                    {!isCompleted && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        disabled={deleteM.isPending}
+                        onClick={() => {
+                          if (confirm('Usunąć zlecenie?')) {
+                            void deleteM.mutateAsync(order.id);
+                          }
+                        }}
+                      >
+                        Usuń
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );

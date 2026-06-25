@@ -4,8 +4,9 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useDashboardSummaryQuery } from '@/query/use-reports';
+import { SetupNudgeBar } from '@/components/SetupNudgeBar';
 import { cn } from '@/lib/utils';
-import type { ModuleName } from '@/types';
+import type { ModuleName, UserPermissions } from '@/types';
 
 const MotionLink = motion.create(Link);
 
@@ -118,10 +119,77 @@ function IconTileProducts({ className }: { className?: string }) {
   );
 }
 
+function IconTileCustomers({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconTileInvoices({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconTileWarehouse({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 22V12h6v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconTileSuppliers({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M16 10a4 4 0 0 1-8 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconTileProduction({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 0v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconTileKsef({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.35 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.59a16 16 0 0 0 5.5 5.5l.96-.96a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 const VAN_STATUS_LABELS: Record<string, string> = {
   loading: 'Ładowanie',
   in_progress: 'W trasie',
   settling: 'Rozliczanie',
+};
+
+const COMPANY_TYPE_SUBTITLE: Record<string, string> = {
+  van_selling: 'Sprawdź trasy, zamówienia i dostawy na dziś.',
+  production: 'Sprawdź zlecenia produkcyjne i stany surowców.',
+  warehouse: 'Sprawdź stany magazynowe i zamówienia.',
+  invoicing: 'Sprawdź faktury i zamówienia od klientów.',
+  mixed: 'Oto podsumowanie najważniejszych informacji z dzisiaj.',
 };
 
 interface DashboardTileDef {
@@ -129,23 +197,25 @@ interface DashboardTileDef {
   label: string
   to: string
   module: ModuleName
+  permission?: keyof UserPermissions
   Icon: (props: { className?: string }) => React.ReactElement
 }
 
 const DASHBOARD_TILES: DashboardTileDef[] = [
-  { key: 'order', label: 'Zamówienia', to: '/orders', module: 'orders', Icon: IconTileOrder },
-  {
-    key: 'zestawienie',
-    label: 'Zestawienie',
-    to: '/delivery',
-    module: 'delivery',
-    Icon: IconTileReconciliation,
-  },
-  { key: 'van', label: 'Załaduj Van', to: '/van-routes', module: 'delivery', Icon: IconTileVan },
-  { key: 'wz', label: 'WZ', to: '/delivery', module: 'delivery', Icon: IconTileWZ },
-  { key: 'analytics', label: 'Analityka', to: '/reports', module: 'reporting', Icon: IconTileAnalytics },
-  { key: 'products', label: 'Produkty', to: '/products', module: 'products', Icon: IconTileProducts },
+  { key: 'orders', label: 'Zamówienia', to: '/orders', module: 'orders', permission: 'can_manage_orders', Icon: IconTileOrder },
+  { key: 'customers', label: 'Klienci', to: '/customers', module: 'customers', permission: 'can_manage_customers', Icon: IconTileCustomers },
+  { key: 'products', label: 'Produkty', to: '/products', module: 'products', permission: 'can_manage_products', Icon: IconTileProducts },
+  { key: 'van', label: 'Trasy Van', to: '/van-routes', module: 'van_routes', permission: 'can_access_routes', Icon: IconTileVan },
+  { key: 'zestawienie', label: 'Dostawy / WZ', to: '/delivery', module: 'delivery', permission: 'can_manage_delivery', Icon: IconTileReconciliation },
+  { key: 'wz', label: 'Wydania WZ', to: '/delivery', module: 'delivery', permission: 'can_manage_delivery', Icon: IconTileWZ },
+  { key: 'warehouses', label: 'Magazyny', to: '/warehouses', module: 'warehouses', permission: 'can_manage_warehouses', Icon: IconTileWarehouse },
+  { key: 'invoices', label: 'Faktury', to: '/invoices', module: 'invoicing', permission: 'can_manage_invoices', Icon: IconTileInvoices },
+  { key: 'purchasing', label: 'Dostawcy', to: '/suppliers', module: 'purchasing', permission: 'can_manage_purchasing', Icon: IconTileSuppliers },
+  { key: 'production', label: 'Produkcja', to: '/production/orders', module: 'production', permission: 'can_manage_production', Icon: IconTileProduction },
+  { key: 'ksef', label: 'KSeF', to: '/ksef', module: 'ksef', permission: 'can_manage_invoices', Icon: IconTileKsef },
+  { key: 'analytics', label: 'Analityka', to: '/reports', module: 'reporting', permission: 'can_view_reports', Icon: IconTileAnalytics },
 ];
+
 
 function StatCard({
   label,
@@ -200,23 +270,24 @@ function StatCard({
 
 export const Home: React.FC = () => {
   const { user } = useAuth();
-  const ordersEnabled = useModuleGuard('orders');
-  const deliveryEnabled = useModuleGuard('delivery');
-  const reportingEnabled = useModuleGuard('reporting');
-  const productsEnabled = useModuleGuard('products');
+
+  const hasPermission = (key: keyof UserPermissions): boolean =>
+    !!(user?.is_company_admin || user?.permissions?.[key]);
 
   const moduleEnabled: Record<ModuleName, boolean> = {
     customers: useModuleGuard('customers'),
-    orders: ordersEnabled,
-    products: productsEnabled,
+    orders: useModuleGuard('orders'),
+    products: useModuleGuard('products'),
     warehouses: useModuleGuard('warehouses'),
-    delivery: deliveryEnabled,
+    delivery: useModuleGuard('delivery'),
     invoicing: useModuleGuard('invoicing'),
-    reporting: reportingEnabled,
+    reporting: useModuleGuard('reporting'),
     ksef: useModuleGuard('ksef'),
+    ksef_inbox: useModuleGuard('ksef_inbox'),
     cost_allocation: useModuleGuard('cost_allocation'),
     purchasing: useModuleGuard('purchasing'),
     production: useModuleGuard('production'),
+    van_routes: useModuleGuard('van_routes'),
   };
 
   const dashQ = useDashboardSummaryQuery();
@@ -226,11 +297,24 @@ export const Home: React.FC = () => {
   const shortGreetingName = displayName.split(/\s+/)[0] ?? displayName;
   const initials = initialsFromUser(user?.first_name, user?.last_name, user?.username);
 
+  const companyType = (user as { company_type?: string | null } | undefined)?.company_type ?? null;
+  const subtitle =
+    (companyType && COMPANY_TYPE_SUBTITLE[companyType]) ??
+    'Oto podsumowanie najważniejszych informacji z dzisiaj.';
+
   const overdueCount = d?.invoices_overdue.count ?? 0;
   const overdueTotal = d ? Number.parseFloat(d.invoices_overdue.total_gross) : 0;
   const overdueTotalFmt = Number.isNaN(overdueTotal)
     ? '—'
     : new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(overdueTotal);
+
+  const activeTiles = DASHBOARD_TILES.filter(({ module, key, permission }) => {
+    if (!moduleEnabled[module]) return false;
+    if (permission && !hasPermission(permission)) return false;
+    // deduplicate delivery tiles: show only zestawienie (WZ list) and van when van_routes active
+    if (key === 'wz' && moduleEnabled.van_routes) return false;
+    return true;
+  });
 
   return (
     <div className="min-h-full bg-surface pb-6">
@@ -259,85 +343,74 @@ export const Home: React.FC = () => {
         <h1 className="text-[2rem] font-bold leading-tight tracking-tight text-on-surface">
           Witaj {shortGreetingName}
         </h1>
-        <p className="mt-1 text-sm text-on-surface-variant">
-          Oto podsumowanie najważniejszych informacji z dzisiaj.
-        </p>
+        <p className="mt-1 text-sm text-on-surface-variant">{subtitle}</p>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 px-4">
-        {DASHBOARD_TILES.map(({ key, label, to, module, Icon }) => {
-          const enabled = moduleEnabled[module];
-          const tileInner = (
-            <>
-              <span className="flex rounded-full bg-primary-light p-3">
-                <Icon className="h-6 w-6 text-primary" />
-              </span>
-              <span className="text-[13px] font-medium leading-snug text-on-surface">{label}</span>
-            </>
-          );
-          const tileClass =
-            'flex flex-col items-center gap-2 rounded-2xl bg-surface-card p-5 text-center outline-none transition-opacity';
+      <SetupNudgeBar />
 
-          if (!enabled) {
-            return (
-              <div
-                key={key}
-                className={cn(tileClass, 'cursor-not-allowed opacity-40')}
-                aria-disabled="true"
-              >
-                {tileInner}
-              </div>
-            );
-          }
-
-          return (
+      {activeTiles.length > 0 && (
+        <section className="grid grid-cols-2 gap-3 px-4 mt-4">
+          {activeTiles.map(({ key, label, to, Icon }) => (
             <MotionLink
               key={key}
               to={to}
               whileTap={{ scale: 0.97 }}
               transition={{ duration: 0.1 }}
-              className={cn(
-                tileClass,
-                'no-underline active:opacity-90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
-              )}
+              className="flex flex-col items-center gap-2 rounded-2xl bg-surface-card p-5 text-center outline-none no-underline active:opacity-90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
-              {tileInner}
+              <span className="flex rounded-full bg-primary-light p-3">
+                <Icon className="h-6 w-6 text-primary" />
+              </span>
+              <span className="text-[13px] font-medium leading-snug text-on-surface">{label}</span>
             </MotionLink>
-          );
-        })}
-      </section>
+          ))}
+        </section>
+      )}
 
-      {/* Operational stats */}
-      <section className="mt-6 grid grid-cols-2 gap-3 px-4">
-        <StatCard
-          label="Zamówienia do potwierdzenia"
-          value={d ? d.orders_pending_confirmation : '—'}
-          accent={d && d.orders_pending_confirmation > 0 ? 'amber' : undefined}
-          to="/orders"
-        />
-        <StatCard
-          label="WZ w trasie"
-          value={d ? d.wz_in_transit : '—'}
-          accent={d && d.wz_in_transit > 0 ? 'blue' : undefined}
-          to="/delivery"
-        />
-        <StatCard
-          label="Przeterminowane faktury"
-          value={d ? overdueCount : '—'}
-          sub={d && overdueCount > 0 ? overdueTotalFmt : undefined}
-          accent={d && overdueCount > 0 ? 'red' : undefined}
-          to="/invoices"
-        />
-        <StatCard
-          label="Produkty poniżej min."
-          value={d ? d.low_stock_alerts.length : '—'}
-          accent={d && d.low_stock_alerts.length > 0 ? 'red' : undefined}
-          to="/products"
-        />
-      </section>
+      {/* Operational stats — only shown when the related module is active and user has permission */}
+      {((moduleEnabled.orders && hasPermission('can_manage_orders')) ||
+        (moduleEnabled.delivery && hasPermission('can_manage_delivery')) ||
+        (moduleEnabled.invoicing && hasPermission('can_manage_invoices')) ||
+        (moduleEnabled.warehouses && hasPermission('can_manage_products'))) && (
+        <section className="mt-6 grid grid-cols-2 gap-3 px-4">
+          {moduleEnabled.orders && hasPermission('can_manage_orders') && (
+            <StatCard
+              label="Zamówienia do potwierdzenia"
+              value={d ? d.orders_pending_confirmation : '—'}
+              accent={d && d.orders_pending_confirmation > 0 ? 'amber' : undefined}
+              to="/orders"
+            />
+          )}
+          {moduleEnabled.delivery && hasPermission('can_manage_delivery') && (
+            <StatCard
+              label="WZ w trasie"
+              value={d ? d.wz_in_transit : '—'}
+              accent={d && d.wz_in_transit > 0 ? 'blue' : undefined}
+              to="/delivery"
+            />
+          )}
+          {moduleEnabled.invoicing && hasPermission('can_manage_invoices') && (
+            <StatCard
+              label="Przeterminowane faktury"
+              value={d ? overdueCount : '—'}
+              sub={d && overdueCount > 0 ? overdueTotalFmt : undefined}
+              accent={d && overdueCount > 0 ? 'red' : undefined}
+              to="/invoices"
+            />
+          )}
+          {moduleEnabled.warehouses && hasPermission('can_manage_products') && (
+            <StatCard
+              label="Produkty poniżej min."
+              value={d ? d.low_stock_alerts.length : '—'}
+              accent={d && d.low_stock_alerts.length > 0 ? 'red' : undefined}
+              to="/products"
+            />
+          )}
+        </section>
+      )}
 
       {/* Today's van routes */}
-      {(d?.van_routes_today.length ?? 0) > 0 && (
+      {moduleEnabled.van_routes && hasPermission('can_access_routes') && (d?.van_routes_today.length ?? 0) > 0 && (
         <section className="mt-6 px-4">
           <h2 className="mb-2 text-base font-semibold text-on-surface">Trasy dzisiaj</h2>
           <ul className="list-none space-y-2 p-0">
@@ -362,7 +435,7 @@ export const Home: React.FC = () => {
       )}
 
       {/* Low stock alerts */}
-      {(d?.low_stock_alerts.length ?? 0) > 0 && (
+      {moduleEnabled.warehouses && hasPermission('can_manage_products') && (d?.low_stock_alerts.length ?? 0) > 0 && (
         <section className="mt-6 px-4">
           <div className="flex items-baseline justify-between gap-3">
             <h2 className="text-base font-semibold text-on-surface">Niski stan magazynowy</h2>

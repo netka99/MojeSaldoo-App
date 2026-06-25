@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { useSupplierListQuery } from '@/query/use-suppliers';
+import { usePermission } from '@/hooks/usePermission';
 
 function PlusIcon() {
   return (
@@ -19,6 +20,7 @@ function supplierCountLabel(n: number): string {
 
 export function SuppliersPage() {
   const navigate = useNavigate();
+  const canPurchasing = usePermission('can_manage_purchasing');
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -48,15 +50,17 @@ export function SuppliersPage() {
             {isFetching && totalCount === 0 ? 'Ładowanie…' : supplierCountLabel(totalCount)}
           </p>
         </div>
-        <Button
-          type="button"
-          size="icon"
-          className="shrink-0 rounded-full"
-          onClick={() => navigate('/suppliers/new')}
-          aria-label="Dodaj dostawcę"
-        >
-          <PlusIcon />
-        </Button>
+        {canPurchasing && (
+          <Button
+            type="button"
+            size="icon"
+            className="shrink-0 rounded-full"
+            onClick={() => navigate('/suppliers/new')}
+            aria-label="Dodaj dostawcę"
+          >
+            <PlusIcon />
+          </Button>
+        )}
       </header>
 
       {/* search */}
@@ -122,7 +126,7 @@ export function SuppliersPage() {
             <button
               key={s.id}
               type="button"
-              onClick={() => navigate(`/suppliers/${s.id}/edit`)}
+              onClick={canPurchasing ? () => navigate(`/suppliers/${s.id}/edit`) : undefined}
               className="flex w-full items-center gap-3 rounded-xl bg-card p-4 text-left shadow-[0_2px_8px_rgba(26,28,31,0.06)] hover:bg-muted/40 transition-colors"
             >
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-base font-semibold text-violet-700" aria-hidden>
@@ -171,13 +175,17 @@ export function SuppliersPage() {
       <div className="rounded-2xl border border-dashed border-border p-4 text-center">
         <p className="text-[13px] text-muted-foreground">
           Chcesz przyjąć towar?{' '}
-          <button
-            type="button"
-            onClick={() => navigate('/delivery/new-pz')}
-            className="font-medium text-primary hover:underline"
-          >
-            Utwórz dokument PZ
-          </button>
+          {canPurchasing ? (
+            <button
+              type="button"
+              onClick={() => navigate('/delivery/new-pz')}
+              className="font-medium text-primary hover:underline"
+            >
+              Utwórz dokument PZ
+            </button>
+          ) : (
+            <span>Brak uprawnień do tworzenia PZ.</span>
+          )}
         </p>
       </div>
     </div>

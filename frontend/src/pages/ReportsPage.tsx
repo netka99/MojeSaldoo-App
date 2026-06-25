@@ -140,18 +140,32 @@ function ReportsPageContent() {
 
   return (
     <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Raporty</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Podsumowanie sprzedaży, rankingi i status KSeF dla aktywnej firmy.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Raporty</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Podsumowanie sprzedaży, rankingi i status KSeF dla aktywnej firmy.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="no-print shrink-0 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+        >
+          Drukuj PDF
+        </button>
       </div>
 
       <div className="space-y-6">
         <Card>
           <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <CardTitle className="text-lg">Podsumowanie sprzedaży</CardTitle>
-            <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <CardTitle className="text-lg">Podsumowanie sprzedaży</CardTitle>
+              <p className="print-only mt-1 text-xs text-muted-foreground">
+                Okres: {dateFrom} — {dateTo}
+              </p>
+            </div>
+            <div className="no-print flex flex-wrap items-end gap-3">
               <div>
                 <label htmlFor="report-date-from" className="mb-1 block text-xs text-muted-foreground">
                   Od

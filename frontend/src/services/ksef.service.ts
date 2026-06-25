@@ -53,6 +53,12 @@ export const OPEX_CATEGORY_LABELS: Record<OpexCategory, string> = {
   other: 'Inne',
 };
 
+export type KorInvoiceType = 'KOR' | 'KOR_ZAL' | 'KOR_ROZ';
+
+export function isKorType(invoiceType: string): invoiceType is KorInvoiceType {
+  return invoiceType === 'KOR' || invoiceType === 'KOR_ZAL' || invoiceType === 'KOR_ROZ';
+}
+
 export interface ReceivedInvoiceMeta {
   /** UUID of the ReceivedKSeFInvoice DB record — use for PZ linking. */
   id: string;
@@ -66,10 +72,42 @@ export interface ReceivedInvoiceMeta {
   grossAmount: number;
   vatAmount: number;
   currency: string;
+  /** FA-3 RodzajFaktury: VAT | KOR | ZAL | ROZ | UPR | KOR_ZAL | KOR_ROZ */
   invoiceType: string;
+  /** KSeF number of the original invoice for KOR/KOR_ZAL/KOR_ROZ. Null for regular invoices. */
+  originalKsefNumber: string | null;
   pzDocuments: PzDocumentRef[];
   opex_category: OpexCategory | null;
   opex_tagged_at: string | null;
+}
+
+export interface KorMatchPzItem {
+  id: string;
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  unitCost: number;
+  unit: string;
+}
+
+export interface KorMatchPzDocument {
+  id: string;
+  documentNumber: string;
+  status: string;
+  issueDate: string | null;
+  items: KorMatchPzItem[];
+}
+
+export interface KorMatchResult {
+  original_ksef_number: string;
+  original_invoice: {
+    ksefNumber: string;
+    invoiceNumber: string;
+    issueDate: string | null;
+    seller: ReceivedInvoiceParty;
+  } | null;
+  pz_documents: KorMatchPzDocument[];
+  matched: boolean;
 }
 
 export interface ReceivedInvoicesResult {
@@ -164,6 +202,14 @@ export const ksefService = {
 
   parseInvoice: (ksefNumber: string) =>
     api.get<ParsedInvoiceResult>(`/ksef/inbox/${encodeURIComponent(ksefNumber)}/parse/`),
+
+  /**
+   * For a KOR invoice: returns the original invoice and its linked PZ documents
+   * so the PZ-KOR flow can be pre-filled.
+   * GET /api/ksef/inbox/<ksefNumber>/kor-match/
+   */
+  getKorMatch: (ksefNumber: string) =>
+    api.get<KorMatchResult>(`/ksef/inbox/${encodeURIComponent(ksefNumber)}/kor-match/`),
 
   syncInbox: (dateFrom: string, dateTo: string) =>
     api.post<{ new_count: number; total: number }>('/ksef/inbox/sync/', { date_from: dateFrom, date_to: dateTo }),

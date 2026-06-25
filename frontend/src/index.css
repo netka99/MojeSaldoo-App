@@ -115,6 +115,39 @@ body {
   }
 }
 
+@media print {
+  /* Hide interactive chrome — sidebar, bottom nav, buttons with .no-print */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Remove backgrounds/shadows that waste ink */
+  body {
+    background: white !important;
+  }
+
+  /* Cards: flatten border, remove shadow */
+  [class*="shadow"],
+  .shadow-soft {
+    box-shadow: none !important;
+  }
+
+  /* Ensure tables don't break mid-row */
+  tr {
+    page-break-inside: avoid;
+  }
+
+  /* Show a print-only title block */
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* Screen: hide print-only elements */
+.print-only {
+  display: none;
+}
+
 @layer utilities {
   .safe-area-pt {
     padding-top: max(env(safe-area-inset-top), 1rem);

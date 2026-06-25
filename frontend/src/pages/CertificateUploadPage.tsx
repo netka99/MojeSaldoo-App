@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
 import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import {
   useKsefCertificateDeleteMutation,
@@ -44,6 +45,7 @@ function statusSummaryPl(status: { uploaded: boolean; valid: boolean; expired: b
 
 export function CertificateUploadPage() {
   const { user } = useAuth();
+  const canManageInvoices = usePermission('can_manage_invoices');
   const resolved = useResolvedCompanyId();
   const titleId = useId();
   const certInputRef = useRef<HTMLInputElement>(null);
@@ -85,7 +87,7 @@ export function CertificateUploadPage() {
   };
 
   const canManage =
-    (user?.current_company_role === 'admin' || user?.current_company_role === 'manager') &&
+    canManageInvoices &&
     companyId &&
     user?.current_company === companyId;
 
@@ -349,7 +351,7 @@ export function CertificateUploadPage() {
             />
             {!canManage && (
               <p className="text-sm text-muted-foreground">
-                Tylko administrator lub menedżer firmy może wgrać lub usunąć certyfikat.
+                Nie masz uprawnień do zarządzania certyfikatem KSeF. Wymagane uprawnienie: Faktury.
               </p>
             )}
             <div className="flex flex-wrap gap-2">

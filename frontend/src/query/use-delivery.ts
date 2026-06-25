@@ -15,6 +15,7 @@ import type {
   StandaloneWzCreate,
   VanLoadingPayload,
   VanReconciliationPayload,
+  WzKorPayload,
 } from '@/types';
 import { deliveryKeys, orderKeys, vanRouteKeys, stockSnapshotKeys, warehouseStockKeys } from './keys';
 
@@ -498,6 +499,22 @@ export function useCreatePzKorMutation() {
       void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
       if (kor.corrects_pz_id) {
         void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(kor.corrects_pz_id) });
+      }
+    },
+  });
+}
+
+export function useCreateWzKorMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: WzKorPayload }) =>
+      deliveryService.createWzKor(id, data),
+    onSuccess: (kor: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+      if (kor.corrects_wz_id) {
+        void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(kor.corrects_wz_id) });
       }
     },
   });

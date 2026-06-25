@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { companyService } from '@/services/company.service';
+import { authStorage } from '@/services/api';
 import type { CompanyWorkflowSettings, CompanyWrite, ModuleName } from '@/types';
 import { companyKeys } from './keys';
 
@@ -7,6 +8,8 @@ export function useMyCompaniesQuery() {
   return useQuery({
     queryKey: companyKeys.me(),
     queryFn: () => companyService.getMyCompanies(),
+    // Skip when there is no access token to avoid a 401 on every unauthenticated page load.
+    enabled: Boolean(authStorage.getAccessToken()),
   });
 }
 

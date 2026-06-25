@@ -16,6 +16,7 @@ import type {
   VanLoadingPayload,
   VanReconciliationPayload,
   VanReconciliationResult,
+  WzKorPayload,
 } from '../types';
 
 /**
@@ -131,6 +132,10 @@ export const deliveryService = {
   /** `POST /api/delivery/:id/create-kor/` — create a PZ-KOR correction document. */
   createPzKor: (id: string, data: PzKorPayload) =>
     api.post<DeliveryDocument>(`${basePath}${id}/create-kor/`, data),
+
+  /** `POST /api/delivery/:id/create-wz-correction/` — create a WZ-KOR correction document. */
+  createWzKor: (id: string, data: WzKorPayload) =>
+    api.post<DeliveryDocument>(`${basePath}${id}/create-wz-correction/`, data),
 
   /** `POST /api/delivery/create-rw/` — create and immediately post a manual RW write-off. */
   createRw: (data: RwCreatePayload) =>

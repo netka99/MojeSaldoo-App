@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
+import { usePermission } from '@/hooks/usePermission';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -91,6 +92,7 @@ export function buildInvoiceListFilters(
   customerId: string,
   dateFrom: string,
   dateTo: string,
+  isCorrection?: boolean,
 ): InvoiceListFilters {
   const filters: InvoiceListFilters = {};
   if (status) filters.status = status;
@@ -98,6 +100,7 @@ export function buildInvoiceListFilters(
   if (customerId) filters.customer = customerId;
   if (dateFrom) filters.issue_date_after = dateFrom;
   if (dateTo) filters.issue_date_before = dateTo;
+  if (isCorrection !== undefined) filters.is_correction = isCorrection;
   return filters;
 }
 
@@ -110,12 +113,15 @@ export function InvoicesPage() {
 }
 
 function InvoicesPageContent() {
+  const canInvoices = usePermission('can_manage_invoices');
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<'' | InvoiceStatus>('');
   const [ksefStatus, setKsefStatus] = useState<'' | InvoiceKsefStatus>('');
   const [customerId, setCustomerId] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // tri-state: undefined = all, true = KOR only, false = non-KOR only
+  const [correctionFilter, setCorrectionFilter] = useState<boolean | undefined>(undefined);
 
   const [customerSearchInput, setCustomerSearchInput] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -129,7 +135,7 @@ function InvoicesPageContent() {
   const { data: customersData, isFetching: customersLoading } = useCustomerListQuery(1, customerSearch);
   const customerOptions = customersData?.results ?? [];
 
-  const listFilters = buildInvoiceListFilters(status, ksefStatus, customerId, dateFrom, dateTo);
+  const listFilters = buildInvoiceListFilters(status, ksefStatus, customerId, dateFrom, dateTo, correctionFilter);
   const { data, isFetching, isError, error, refetch } = useInvoiceListQuery(page, listFilters);
   const items = data?.results ?? [];
   const count = data?.count ?? 0;
@@ -144,12 +150,14 @@ function InvoicesPageContent() {
     <div className="space-y-4 p-6">
       <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Faktury</h1>
-        <Link
-          to="/invoices/new"
-          className="inline-flex h-10 shrink-0 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        >
-          Nowa faktura z zamówienia
-        </Link>
+        {canInvoices && (
+          <Link
+            to="/invoices/new"
+            className="inline-flex h-10 shrink-0 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            Nowa faktura z zamówienia
+          </Link>
+        )}
       </div>
 
       <Card className="mx-auto w-full max-w-6xl shadow-sm">
@@ -262,6 +270,28 @@ function InvoicesPageContent() {
                 aria-label="Data wystawienia do"
               />
             </div>
+            <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-3">
+              <span className="text-sm font-medium text-muted-foreground">Typ:</span>
+              {([
+                { label: 'Wszystkie', value: undefined },
+                { label: 'Korekty FV-KOR', value: true },
+                { label: 'Tylko zwykłe', value: false },
+              ] as { label: string; value: boolean | undefined }[]).map(({ label, value }) => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  onClick={() => { setCorrectionFilter(value); resetPage(); }}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    correctionFilter === value
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-foreground hover:bg-muted',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="pt-6">
@@ -283,12 +313,29 @@ function InvoicesPageContent() {
                 <li key={row.id}>
                   <div className="flex flex-col gap-2 px-4 py-4 transition-colors active:bg-surface-low hover:bg-surface-low/60">
                     <div className="flex items-start justify-between gap-3">
-                      <Link
-                        to={`/invoices/${row.id}`}
-                        className="min-w-0 font-medium text-primary hover:underline"
-                      >
-                        {row.invoice_number ?? row.id.slice(0, 8)}
-                      </Link>
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            to={`/invoices/${row.id}`}
+                            className="font-medium text-primary hover:underline"
+                          >
+                            {row.invoice_number ?? row.id.slice(0, 8)}
+                          </Link>
+                          {row.is_correction && (
+                            <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                              KOR
+                            </span>
+                          )}
+                        </div>
+                        {row.is_correction && row.corrects_invoice_id && (
+                          <Link
+                            to={`/invoices/${row.corrects_invoice_id}`}
+                            className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                          >
+                            Koryguje: {row.corrects_invoice_number ?? row.corrects_invoice_id.slice(0, 8)}
+                          </Link>
+                        )}
+                      </div>
                       <span
                         className={cn(
                           'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
@@ -355,10 +402,26 @@ function InvoicesPageContent() {
                   {items.map((row: Invoice) => (
                     <tr key={row.id} className="transition-colors hover:bg-surface-low/50 active:bg-surface-low">
                       <td className="whitespace-nowrap px-4 py-4 font-medium">
-                        <div className="flex flex-col">
-                          <Link to={`/invoices/${row.id}`} className="text-primary hover:underline">
-                            {row.invoice_number ?? row.id.slice(0, 8)}
-                          </Link>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <Link to={`/invoices/${row.id}`} className="text-primary hover:underline">
+                              {row.invoice_number ?? row.id.slice(0, 8)}
+                            </Link>
+                            {row.is_correction && (
+                              <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                                KOR
+                              </span>
+                            )}
+                          </div>
+                          {row.is_correction && row.corrects_invoice_id && (
+                            <Link
+                              to={`/invoices/${row.corrects_invoice_id}`}
+                              className="text-xs font-normal text-muted-foreground hover:text-primary hover:underline"
+                              title="Przejdź do korygowanej faktury"
+                            >
+                              Koryguje: {row.corrects_invoice_number ?? row.corrects_invoice_id.slice(0, 8)}
+                            </Link>
+                          )}
                           <Link
                             to={`/orders/${row.order.id}`}
                             className="text-xs font-normal text-primary hover:underline"

@@ -9,7 +9,7 @@
 
 import axios, { type AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
 
-import type { CompanyRole } from '@/types';
+import type { CompanyRole, UserPermissions } from '@/types';
 
 /**
  * Backend API root (must include `/api` if your Django routes are mounted there).
@@ -88,8 +88,18 @@ export interface AuthUser {
   is_active: boolean;
   /** Active tenant from `POST /api/companies/switch/`; drives module guards. */
   current_company?: string | null;
-  /** Role in `current_company`; from `GET /auth/me/`. */
+  /** Role display name in `current_company`; from `GET /auth/me/`. */
   current_company_role?: CompanyRole | null;
+  /** True when the user's role has is_admin=True (full access). */
+  is_company_admin?: boolean;
+  /** Fine-grained permission flags for the current company. */
+  permissions?: UserPermissions | null;
+  /** True once the user completed the onboarding tile wizard. */
+  onboarding_completed?: boolean;
+  /** Inferred company type from tile selection. */
+  company_type?: string | null;
+  /** Dict of module_key → is_enabled for the current company. */
+  modules?: Record<string, boolean>;
 }
 
 export interface AuthResponse {
@@ -257,6 +267,11 @@ export const api = {
 export const authApi = {
   login: async (username: string, password: string): Promise<AuthResponse> => {
     const data = await api.post<AuthResponse>('/auth/login/', { username, password });
+    authStorage.setTokens(data.access, data.refresh);
+    return data;
+  },
+  loginWithGoogle: async (credential: string): Promise<AuthResponse> => {
+    const data = await api.post<AuthResponse>('/auth/google/', { credential });
     authStorage.setTokens(data.access, data.refresh);
     return data;
   },

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
+import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/context/AuthContext';
 import { CompanySwitcher } from './CompanySwitcher';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -9,7 +10,9 @@ import { AppNavItemLink, ModuleNavItem, NavGroupTitle } from './Navigation';
 function NavSectionSprzedaz() {
   const customersEnabled = useModuleGuard('customers');
   const ordersEnabled = useModuleGuard('orders');
-  const anyEnabled = customersEnabled || ordersEnabled;
+  const canCustomers = usePermission('can_manage_customers');
+  const canOrders = usePermission('can_manage_orders');
+  const anyEnabled = (customersEnabled && canCustomers) || (ordersEnabled && canOrders);
   if (!anyEnabled) {
     return null;
   }
@@ -17,12 +20,16 @@ function NavSectionSprzedaz() {
     <div className="space-y-1">
       <NavGroupTitle>Sprzedaż</NavGroupTitle>
       <div className="space-y-0.5">
-        <ModuleNavItem module="customers" to="/customers">
-          Klienci
-        </ModuleNavItem>
-        <ModuleNavItem module="orders" to="/orders">
-          Zamówienia
-        </ModuleNavItem>
+        {canCustomers && (
+          <ModuleNavItem module="customers" to="/customers">
+            Klienci
+          </ModuleNavItem>
+        )}
+        {canOrders && (
+          <ModuleNavItem module="orders" to="/orders">
+            Zamówienia
+          </ModuleNavItem>
+        )}
       </div>
     </div>
   );
@@ -31,7 +38,12 @@ function NavSectionSprzedaz() {
 function NavSectionMagazyn() {
   const productsEnabled = useModuleGuard('products');
   const warehousesEnabled = useModuleGuard('warehouses');
-  const anyEnabled = productsEnabled || warehousesEnabled;
+  const canProducts = usePermission('can_manage_products');
+  const canWarehouses = usePermission('can_manage_warehouses');
+  const canInventory = usePermission('can_manage_inventory');
+  const canRW = usePermission('can_manage_stock_moves');
+  const anyEnabled = (productsEnabled && canProducts)
+    || (warehousesEnabled && (canWarehouses || canInventory || canRW));
   if (!anyEnabled) {
     return null;
   }
@@ -39,18 +51,26 @@ function NavSectionMagazyn() {
     <div className="space-y-1">
       <NavGroupTitle>Magazyn</NavGroupTitle>
       <div className="space-y-0.5">
-        <ModuleNavItem module="products" to="/products">
-          Produkty
-        </ModuleNavItem>
-        <ModuleNavItem module="warehouses" to="/warehouses">
-          Magazyny
-        </ModuleNavItem>
-        <ModuleNavItem module="warehouses" to="/inventory">
-          Inwentaryzacja
-        </ModuleNavItem>
-        <ModuleNavItem module="warehouses" to="/delivery/new-rw">
-          Odpisy (RW)
-        </ModuleNavItem>
+        {canProducts && (
+          <ModuleNavItem module="products" to="/products">
+            Produkty
+          </ModuleNavItem>
+        )}
+        {canWarehouses && (
+          <ModuleNavItem module="warehouses" to="/warehouses">
+            Magazyny
+          </ModuleNavItem>
+        )}
+        {canInventory && (
+          <ModuleNavItem module="warehouses" to="/inventory">
+            Inwentaryzacja
+          </ModuleNavItem>
+        )}
+        {canRW && (
+          <ModuleNavItem module="warehouses" to="/delivery/new-rw">
+            Odpisy (RW)
+          </ModuleNavItem>
+        )}
       </div>
     </div>
   );
@@ -60,7 +80,11 @@ function NavSectionDokumenty() {
   const deliveryEnabled = useModuleGuard('delivery');
   const invoicingEnabled = useModuleGuard('invoicing');
   const ksefEnabled = useModuleGuard('ksef');
-  const anyEnabled = deliveryEnabled || invoicingEnabled || ksefEnabled;
+  const canRoutes = usePermission('can_access_routes');
+  const canDelivery = usePermission('can_manage_delivery');
+  const canInvoices = usePermission('can_manage_invoices');
+  const canKsefInbox = usePermission('can_access_ksef_inbox');
+  const anyEnabled = (deliveryEnabled && (canDelivery || canRoutes)) || (invoicingEnabled && canInvoices) || (ksefEnabled && (canInvoices || canKsefInbox));
   if (!anyEnabled) {
     return null;
   }
@@ -68,24 +92,36 @@ function NavSectionDokumenty() {
     <div className="space-y-1">
       <NavGroupTitle>Dokumenty</NavGroupTitle>
       <div className="space-y-0.5">
-        <ModuleNavItem module="delivery" to="/van-routes">
-          Trasy Vana
-        </ModuleNavItem>
-        <ModuleNavItem module="delivery" to="/delivery">
-          Dostawa
-        </ModuleNavItem>
-        <ModuleNavItem module="invoicing" to="/invoices">
-          Faktury
-        </ModuleNavItem>
-        <ModuleNavItem module="ksef" to="/ksef">
-          KSeF
-        </ModuleNavItem>
-        <ModuleNavItem module="ksef" to="/ksef/inbox">
-          Odebrane faktury
-        </ModuleNavItem>
-        <ModuleNavItem module="ksef" to="/ksef/scan-paper">
-          Skanuj fakturę papierową
-        </ModuleNavItem>
+        {canRoutes && (
+          <ModuleNavItem module="delivery" to="/van-routes">
+            Trasy Vana
+          </ModuleNavItem>
+        )}
+        {canDelivery && (
+          <ModuleNavItem module="delivery" to="/delivery">
+            Dostawa
+          </ModuleNavItem>
+        )}
+        {canInvoices && (
+          <ModuleNavItem module="invoicing" to="/invoices">
+            Faktury
+          </ModuleNavItem>
+        )}
+        {canInvoices && (
+          <ModuleNavItem module="ksef" to="/ksef">
+            KSeF
+          </ModuleNavItem>
+        )}
+        {canKsefInbox && (
+          <ModuleNavItem module="ksef" to="/ksef/inbox">
+            Odebrane faktury
+          </ModuleNavItem>
+        )}
+        {canInvoices && (
+          <ModuleNavItem module="ksef" to="/ksef/scan-paper">
+            Skanuj fakturę papierową
+          </ModuleNavItem>
+        )}
       </div>
     </div>
   );
@@ -93,7 +129,8 @@ function NavSectionDokumenty() {
 
 function NavSectionZakupy() {
   const purchasingEnabled = useModuleGuard('purchasing');
-  if (!purchasingEnabled) return null;
+  const canPurchasing = usePermission('can_manage_purchasing');
+  if (!purchasingEnabled || !canPurchasing) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Zakupy</NavGroupTitle>
@@ -111,7 +148,8 @@ function NavSectionZakupy() {
 
 function NavSectionKsiegowos() {
   const costAllocationEnabled = useModuleGuard('cost_allocation');
-  if (!costAllocationEnabled) return null;
+  const canAccounting = usePermission('can_manage_accounting');
+  if (!costAllocationEnabled || !canAccounting) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Księgowość</NavGroupTitle>
@@ -126,7 +164,8 @@ function NavSectionKsiegowos() {
 
 function NavSectionProdukcja() {
   const enabled = useModuleGuard('production');
-  if (!enabled) return null;
+  const canProduction = usePermission('can_manage_production');
+  if (!enabled || !canProduction) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Produkcja</NavGroupTitle>
@@ -144,7 +183,8 @@ function NavSectionProdukcja() {
 
 function NavSectionAdministracja() {
   const anyEnabled = useModuleGuard('reporting');
-  if (!anyEnabled) {
+  const canReports = usePermission('can_view_reports');
+  if (!anyEnabled || !canReports) {
     return null;
   }
   return (
@@ -178,9 +218,12 @@ function NavSectionAdministracja() {
 }
 
 export function Sidebar() {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const canSettings = user?.is_company_admin || user?.permissions?.can_manage_settings;
+  const canTeam = user?.is_company_admin || user?.permissions?.can_manage_team;
+  const canKsefCert = user?.is_company_admin || user?.permissions?.can_manage_invoices;
 
   return (
     <aside
@@ -208,12 +251,21 @@ export function Sidebar() {
       </nav>
 
       <div className="space-y-1 border-t border-border p-3">
-        <AppNavItemLink to="/settings/company" end>
-          Ustawienia
-        </AppNavItemLink>
-        <ModuleNavItem module="ksef" to="/settings/certificate" end>
-          Certyfikat KSeF
-        </ModuleNavItem>
+        {canSettings && (
+          <AppNavItemLink to="/settings/company" end>
+            Ustawienia
+          </AppNavItemLink>
+        )}
+        {canKsefCert && (
+          <ModuleNavItem module="ksef" to="/settings/certificate" end>
+            Certyfikat KSeF
+          </ModuleNavItem>
+        )}
+        {canTeam && (
+          <AppNavItemLink to="/settings/team" end>
+            Zespół
+          </AppNavItemLink>
+        )}
         {isAuthenticated ? (
           <Button
             type="button"

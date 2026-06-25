@@ -3,7 +3,7 @@
  */
 
 /** `DeliveryDocument.document_type`. */
-export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW' | 'RW' | 'PZ-KOR';
+export type DeliveryDocumentType = 'WZ' | 'MM' | 'PZ' | 'ZW' | 'RW' | 'PZ-KOR' | 'WZ-KOR';
 
 /** `DeliveryDocument.status`. */
 export type DeliveryDocumentStatus =
@@ -121,7 +121,11 @@ export interface DeliveryDocument {
   corrects_pz_id?: string | null;
   /** For PZ-KOR: document number of the original PZ (read-only). */
   corrects_pz_number?: string | null;
-  /** For PZ: list of PZ-KOR correction documents (read-only). */
+  /** For WZ-KOR: UUID of the original WZ being corrected. */
+  corrects_wz_id?: string | null;
+  /** For WZ-KOR: document number of the original WZ (read-only). */
+  corrects_wz_number?: string | null;
+  /** For WZ/PZ: list of WZ-KOR / PZ-KOR correction documents (read-only). */
   corrections?: Array<{ id: string; document_number: string | null; issue_date: string }>;
   /** True when an invoice references this delivery document (editing blocked server-side). */
   locked_for_edit?: boolean;
@@ -256,6 +260,19 @@ export interface PzKorItemPayload {
 export interface PzKorPayload {
   items: PzKorItemPayload[];
   notes?: string;
+}
+
+/** POST `/api/delivery/:id/create-wz-correction/` — WZ-KOR payload. */
+export interface WzKorItemPayload {
+  delivery_item_id: string;
+  quantity_returned: string;  // decimal string, e.g. "3.000"
+  return_reason?: string;
+}
+
+export interface WzKorPayload {
+  items: WzKorItemPayload[];
+  correction_reason?: string;
+  issue_date?: string;
 }
 
 export interface PaginatedDeliveryDocuments {

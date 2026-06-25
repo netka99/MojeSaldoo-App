@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { authStorage } from '@/services/api';
 import { warehouseService } from '@/services/warehouse.service';
+import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
 import { openINWPrintWindow } from '@/lib/openINWPrintWindow';
 import {
@@ -108,7 +109,7 @@ function CreateForm({
 }
 
 /* ── Count sheet (detail view) ──────────────────────────────────── */
-function CountSheet({ countId, onClose }: { countId: string; onClose: () => void }) {
+function CountSheet({ countId, onClose, canManage }: { countId: string; onClose: () => void; canManage: boolean }) {
   const { data: count, isLoading } = useInventoryDetailQuery(countId);
   const updateM = useUpdateInventoryItemsMutation();
   const completeM = useCompleteInventoryMutation();
@@ -290,7 +291,7 @@ function CountSheet({ countId, onClose }: { countId: string; onClose: () => void
       </div>
 
       {/* Action buttons */}
-      {isDraft && (
+      {isDraft && canManage && (
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={() => void handleSaveDraft()} disabled={busy}>
             {updateM.isPending ? 'Zapisywanie…' : 'Zapisz szkic'}
@@ -339,6 +340,8 @@ function CountSheet({ countId, onClose }: { countId: string; onClose: () => void
 
 /* ── Page ───────────────────────────────────────────────────────── */
 export function InventoryPage() {
+  const canManageProducts = usePermission('can_manage_inventory');
+
   if (!authStorage.getAccessToken()) return <Navigate to="/login" replace />;
 
   const [page] = useState(1);
@@ -363,7 +366,7 @@ export function InventoryPage() {
   if (selectedId) {
     return (
       <div className="space-y-4 p-4">
-        <CountSheet countId={selectedId} onClose={() => setSelectedId(null)} />
+        <CountSheet countId={selectedId} onClose={() => setSelectedId(null)} canManage={canManageProducts} />
       </div>
     );
   }
@@ -372,7 +375,7 @@ export function InventoryPage() {
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Inwentaryzacja</h1>
-        {!showForm && (
+        {!showForm && canManageProducts && (
           <Button onClick={() => setShowForm(true)}>+ Nowa INW</Button>
         )}
       </div>

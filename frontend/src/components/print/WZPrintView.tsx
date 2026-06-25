@@ -21,6 +21,7 @@ const DOC_TYPE_LABEL_PL: Record<DeliveryDocumentType, string> = {
   ZW: 'ZW — Zwrot zewnętrzny',
   RW: 'RW — Rozchód wewnętrzny',
   'PZ-KOR': 'PZ-KOR — Korekta przyjęcia zewnętrznego',
+  'WZ-KOR': 'WZ-KOR — Korekta wydania zewnętrznego',
 };
 
 function formatQty(value: string | null | undefined): string {

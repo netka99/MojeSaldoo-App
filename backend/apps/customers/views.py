@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from .filters import CustomerFilter
 from .models import Customer
 from .serializers import CustomerSerializer
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 
@@ -13,7 +14,9 @@ class CustomerViewSet(viewsets.ModelViewSet):
     """Full CRUD for customers in the user's active company."""
 
     serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated]
+    required_permission = 'can_manage_customers'
+    read_permission = None  # any company member may list/read customers (needed for orders)
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,

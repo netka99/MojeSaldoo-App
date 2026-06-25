@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.products.models import Warehouse
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .models import VanRoute
@@ -21,7 +22,8 @@ from .services import _validate_orders_for_route, close_route, confirm_loading, 
 
 
 class VanRouteViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    required_permission = 'can_access_routes'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):

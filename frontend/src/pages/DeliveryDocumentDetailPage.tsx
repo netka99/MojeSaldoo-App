@@ -1290,6 +1290,16 @@ export function DeliveryDocumentDetailPage() {
               </p>
             )}
 
+            {/* WZ-KOR: show which WZ this corrects */}
+            {doc.document_type === 'WZ-KOR' && doc.corrects_wz_id && (
+              <p className="px-1 text-[13px] text-muted-foreground">
+                Koryguje:{' '}
+                <Link to={`/delivery/${doc.corrects_wz_id}`} className="font-medium text-primary hover:underline">
+                  {doc.corrects_wz_number ?? doc.corrects_wz_id.slice(0, 8)}
+                </Link>
+              </p>
+            )}
+
             {/* PZ: supplier + warehouse + KSeF reference */}
             {isPZ && (
               <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
@@ -1657,6 +1667,19 @@ export function DeliveryDocumentDetailPage() {
                     id="delivery-action-complete-toggle"
                   >
                     {(startM.isPending || completeM.isPending) ? 'Zapisywanie…' : 'Zakończ dostawę'}
+                  </Button>
+                )}
+
+                {/* ── WZ-KOR correction ── */}
+                {doc.document_type === 'WZ' && doc.status === 'delivered' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => navigate(`/delivery/${id}/wz-correction/new`)}
+                    disabled={workflowBusy}
+                    className="border-amber-400/60 text-amber-700 hover:bg-amber-50 dark:text-amber-400"
+                  >
+                    Utwórz korektę WZ
                   </Button>
                 )}
               </div>

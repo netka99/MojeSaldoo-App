@@ -288,7 +288,7 @@ export function CompanySettingsPage() {
   const resolved = useResolvedCompanyId();
   const ksefEnabled = useModuleGuard('ksef');
 
-  const canChangeModules = user?.current_company_role === 'admin';
+  const canChangeModules = user?.is_company_admin === true;
 
   if (resolved.state === 'loading') {
     return (
@@ -416,7 +416,7 @@ export function CompanySettingsPage() {
 
       <WorkflowSettingsSection
         companyId={companyId}
-        canEdit={user?.current_company_role === 'admin' || user?.current_company_role === 'manager'}
+        canEdit={user?.is_company_admin === true || user?.permissions?.can_manage_settings === true}
       />
     </div>
   );

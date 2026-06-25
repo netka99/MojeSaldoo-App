@@ -3756,3 +3756,269 @@ class ZWReturnBatchTests(TestCase):
         )
         self.assertEqual(mv.movement_type, StockMovement.MovementType.RETURN)
         self.assertEqual(mv.quantity, Decimal("3.000"))
+
+
+# ---------------------------------------------------------------------------
+# WZ-KOR — Delivery correction tests
+# ---------------------------------------------------------------------------
+
+
+class WzKorServiceTests(TestCase):
+    """Unit tests for create_wz_correction service."""
+
+    def setUp(self):
+        from apps.delivery.services import create_wz_correction
+
+        self.service = create_wz_correction
+
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="wzkor-svc-user", email="wzkor-svc@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="WZ KOR Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.warehouse = Warehouse.objects.create(
+            company=self.company, user=self.user, name="Main", code="MG", warehouse_type="main"
+        )
+        self.customer = Customer.objects.create(name="Shop A", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Bread", unit="szt", price_gross="5.00"
+        )
+        self.stock = ProductStock.objects.create(
+            company=self.company,
+            product=self.product,
+            warehouse=self.warehouse,
+            quantity_available=Decimal("0"),
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name="Bread",
+            product_unit="szt",
+            quantity=Decimal("10"),
+            quantity_delivered=Decimal("10"),
+            unit_price_net=Decimal("4.07"),
+            unit_price_gross=Decimal("5.00"),
+            vat_rate=Decimal("23"),
+            line_total_net=Decimal("40.70"),
+            line_total_gross=Decimal("50.00"),
+        )
+        self.wz = DeliveryDocument.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 10),
+            from_warehouse=self.warehouse,
+            to_customer=self.customer,
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        self.wz_item = DeliveryItem.objects.create(
+            delivery_document=self.wz,
+            order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("10"),
+            quantity_actual=Decimal("10"),
+        )
+
+    def test_creates_wz_kor_document(self):
+        kor = self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.id),
+                "quantity_returned": Decimal("3"),
+            }],
+            user=self.user,
+            correction_reason="Zwrot",
+        )
+        self.assertEqual(kor.document_type, DeliveryDocument.DOC_TYPE_WZ_KOR)
+        self.assertEqual(kor.corrects_wz, self.wz)
+        self.assertEqual(kor.status, DeliveryDocument.STATUS_DELIVERED)
+        self.assertTrue(kor.document_number.startswith("WZ-KOR/"))
+
+    def test_stock_returned_to_warehouse(self):
+        self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.id),
+                "quantity_returned": Decimal("4"),
+            }],
+            user=self.user,
+        )
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.quantity_available, Decimal("4"))
+
+    def test_stock_movement_recorded(self):
+        self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.id),
+                "quantity_returned": Decimal("2"),
+            }],
+            user=self.user,
+        )
+        mv = StockMovement.objects.filter(
+            reference_type="wz_correction", product=self.product
+        ).first()
+        self.assertIsNotNone(mv)
+        self.assertEqual(mv.quantity, Decimal("2"))
+
+    def test_raises_for_non_wz_document(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        pz = DeliveryDocument.objects.create(
+            company=self.company,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_PZ,
+            issue_date=date(2026, 6, 10),
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        with self.assertRaises((DRFValidationError, Exception)):
+            self.service(
+                original_wz=pz,
+                correction_items=[{
+                    "delivery_item_id": str(self.wz_item.id),
+                    "quantity_returned": Decimal("1"),
+                }],
+                user=self.user,
+            )
+
+    def test_raises_when_quantity_exceeds_delivered(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        with self.assertRaises((DRFValidationError, Exception)):
+            self.service(
+                original_wz=self.wz,
+                correction_items=[{
+                    "delivery_item_id": str(self.wz_item.id),
+                    "quantity_returned": Decimal("99"),
+                }],
+                user=self.user,
+            )
+
+    def test_raises_for_non_delivered_wz(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        self.wz.status = DeliveryDocument.STATUS_SAVED
+        self.wz.save(update_fields=["status"])
+        with self.assertRaises((DRFValidationError, Exception)):
+            self.service(
+                original_wz=self.wz,
+                correction_items=[{
+                    "delivery_item_id": str(self.wz_item.id),
+                    "quantity_returned": Decimal("1"),
+                }],
+                user=self.user,
+            )
+
+
+class WzKorAPITests(TestCase):
+    """POST /api/delivery/{id}/create-wz-correction/ endpoint."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="wzkor-api-user", email="wzkor-api@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="WZ API Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        self.warehouse = Warehouse.objects.create(
+            company=self.company, user=self.user, name="MG", code="MG", warehouse_type="main"
+        )
+        self.customer = Customer.objects.create(name="Shop B", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Roll", unit="szt", price_gross="1.00"
+        )
+        ProductStock.objects.create(
+            company=self.company,
+            product=self.product,
+            warehouse=self.warehouse,
+            quantity_available=Decimal("0"),
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name="Roll",
+            product_unit="szt",
+            quantity=Decimal("20"),
+            quantity_delivered=Decimal("20"),
+            unit_price_net=Decimal("0.81"),
+            unit_price_gross=Decimal("1.00"),
+            vat_rate=Decimal("23"),
+            line_total_net=Decimal("16.20"),
+            line_total_gross=Decimal("20.00"),
+        )
+        self.wz = DeliveryDocument.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 10),
+            from_warehouse=self.warehouse,
+            to_customer=self.customer,
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        self.wz_item = DeliveryItem.objects.create(
+            delivery_document=self.wz,
+            order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("20"),
+            quantity_actual=Decimal("20"),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _url(self, doc_id):
+        return reverse("delivery-document-create-wz-correction-action", kwargs={"pk": str(doc_id)})
+
+    def test_returns_201_with_wz_kor(self):
+        r = self.client.post(
+            self._url(self.wz.id),
+            data={
+                "correction_reason": "Zwrot",
+                "items": [{"delivery_item_id": str(self.wz_item.id), "quantity_returned": "5.000"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertEqual(r.data["document_type"], "WZ-KOR")
+
+    def test_returns_400_for_non_delivered_wz(self):
+        self.wz.status = DeliveryDocument.STATUS_SAVED
+        self.wz.save(update_fields=["status"])
+        r = self.client.post(
+            self._url(self.wz.id),
+            data={"items": [{"delivery_item_id": str(self.wz_item.id), "quantity_returned": "1"}]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_returns_400_when_items_empty(self):
+        r = self.client.post(
+            self._url(self.wz.id),
+            data={"items": []},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)

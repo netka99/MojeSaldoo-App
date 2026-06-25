@@ -174,6 +174,20 @@ class PzKorSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
+class WzKorItemSerializer(serializers.Serializer):
+    delivery_item_id = serializers.UUIDField()
+    quantity_returned = serializers.DecimalField(
+        max_digits=10, decimal_places=3, min_value=Decimal("0.001")
+    )
+    return_reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
+class WzKorSerializer(serializers.Serializer):
+    items = WzKorItemSerializer(many=True, allow_empty=False)
+    correction_reason = serializers.CharField(required=False, allow_blank=True)
+    issue_date = serializers.DateField(required=False)
+
+
 class LinkedZWItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
 
@@ -524,10 +538,16 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
         return None
 
     def get_corrections(self, obj):
-        """Minimal list of PZ-KOR documents that correct this PZ."""
+        """Minimal list of PZ-KOR / WZ-KOR documents that correct this document."""
+        pz_kor = list(
+            obj.pz_corrections.only("id", "document_number", "issue_date").order_by("created_at")
+        )
+        wz_kor = list(
+            obj.wz_corrections.only("id", "document_number", "issue_date").order_by("created_at")
+        )
         return [
             {"id": str(c.id), "document_number": c.document_number, "issue_date": str(c.issue_date)}
-            for c in obj.corrections.only("id", "document_number", "issue_date").order_by("created_at")
+            for c in pz_kor + wz_kor
         ]
 
     def get_ksef_invoice_ref(self, obj):

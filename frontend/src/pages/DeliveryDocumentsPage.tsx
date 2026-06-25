@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
+import { usePermission } from '@/hooks/usePermission';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -11,7 +13,7 @@ import { deliveryService } from '@/services/delivery.service';
 import { DELIVERY_STATUS_LABELS_PL, deliveryStatusFilterOptions } from '@/constants/deliveryStatusPl';
 import { openMultiWZPrintWindow } from '@/lib/openMultiWZPrintWindow';
 import { cn } from '@/lib/utils';
-import type { DeliveryDocument, DeliveryDocumentStatus, DeliveryDocumentType, DeliveryItem } from '@/types';
+import type { DeliveryDocument, DeliveryDocumentStatus, DeliveryDocumentType, DeliveryItem, UserPermissions } from '@/types';
 
 const PAGE_SIZE = 20;
 
@@ -62,6 +64,17 @@ const DOC_TYPE_LABELS_PL: Record<DeliveryDocumentType, string> = {
   ZW: 'ZW',
   RW: 'RW',
   'PZ-KOR': 'PZ-KOR',
+  'WZ-KOR': 'WZ-KOR',
+};
+
+const DOC_TYPE_PERMISSION: Partial<Record<DeliveryDocumentType, keyof UserPermissions>> = {
+  WZ: 'can_manage_delivery',
+  ZW: 'can_manage_delivery',
+  'WZ-KOR': 'can_manage_delivery',
+  PZ: 'can_manage_purchasing',
+  'PZ-KOR': 'can_manage_purchasing',
+  RW: 'can_manage_stock_moves',
+  MM: 'can_manage_stock_moves',
 };
 
 /** Kept for backwards compatibility — filters are now applied client-side in the Lista tab. */
@@ -499,6 +512,11 @@ export function DeliveryDocumentsPage() {
 }
 
 function DeliveryDocumentsPageContent() {
+  const { user } = useAuth();
+  const canDelivery = usePermission('can_manage_delivery');
+
+  const hasPermission = (key: keyof UserPermissions): boolean =>
+    !!(user?.is_company_admin || user?.permissions?.[key]);
   // --- Shared date range (default: current month) ---
   const [dateFrom, setDateFrom] = useState(() => currentMonthRange().from);
   const [dateTo, setDateTo] = useState(() => currentMonthRange().to);
@@ -604,9 +622,11 @@ function DeliveryDocumentsPageContent() {
       <div className="mx-auto w-full max-w-6xl space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Dokumenty</h1>
-          <Link to="/delivery/new">
-            <Button className="w-full sm:w-auto">+ Nowe WZ</Button>
-          </Link>
+          {canDelivery && (
+            <Link to="/delivery/new">
+              <Button className="w-full sm:w-auto">+ Nowe WZ</Button>
+            </Link>
+          )}
         </div>
 
         {/* Toolbar: tabs | custom date inputs | print */}
@@ -870,9 +890,22 @@ function DeliveryDocumentsPageContent() {
                 </table>
               </div>
 
-              {!isFetching && pagedListDocs.length === 0 && (
-                <p className="py-12 text-center text-sm text-muted-foreground">Brak dokumentów spełniających kryteria.</p>
-              )}
+              {!isFetching && pagedListDocs.length === 0 && (() => {
+                const requiredPerm = listDocType ? DOC_TYPE_PERMISSION[listDocType] : undefined;
+                const isRestricted = requiredPerm ? !hasPermission(requiredPerm) : false;
+                return isRestricted ? (
+                  <div className="flex flex-col items-center gap-2 py-12 text-center">
+                    <svg className="h-8 w-8 text-muted-foreground/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <p className="text-sm font-medium text-muted-foreground">Brak uprawnień do wyświetlenia tych dokumentów.</p>
+                    <p className="text-xs text-muted-foreground/70">Twój zestaw uprawnień nie obejmuje dokumentów typu {listDocType}.</p>
+                  </div>
+                ) : (
+                  <p className="py-12 text-center text-sm text-muted-foreground">Brak dokumentów spełniających kryteria.</p>
+                );
+              })()}
 
               {totalListPages > 1 && (
                 <nav

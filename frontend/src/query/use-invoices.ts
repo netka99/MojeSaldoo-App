@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { invoiceService, type InvoiceListParams } from '@/services/invoice.service';
-import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult, type OpexCategory, type PaperScanResult } from '@/services/ksef.service';
+import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult, type OpexCategory, type PaperScanResult, type KorMatchResult } from '@/services/ksef.service';
 import type {
   GenerateInvoiceFromOrderBody,
   Invoice,
@@ -204,6 +204,21 @@ export function useKsefInboxParseQuery(ksefNumber: string, enabled = true) {
   });
 }
 
+/**
+ * For a KOR/KOR_ZAL/KOR_ROZ invoice: fetch the original PZ and its line items
+ * to pre-fill the PZ-KOR creation form.
+ */
+export function useKsefKorMatchQuery(ksefNumber: string, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<KorMatchResult>({
+    queryKey: ['ksef', 'kor-match', { companyId, ksefNumber }],
+    queryFn: () => ksefService.getKorMatch(ksefNumber),
+    enabled: enabled && Boolean(companyId) && Boolean(ksefNumber),
+    staleTime: 60_000,
+  });
+}
+
 /** Tag or clear an OPEX category on a received KSeF invoice. */
 export function useKsefTagOpexMutation() {
   const queryClient = useQueryClient();
@@ -236,5 +251,18 @@ export function useKsefInboxQuery(
 export function useKsefScanPaperMutation() {
   return useMutation<PaperScanResult, Error, File>({
     mutationFn: (image: File) => ksefService.scanPaperInvoice(image),
+  });
+}
+
+/** Create a draft FV-KOR correction for an issued or paid invoice. */
+export function useCreateCorrectionMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: import('@/types').CreateCorrectionBody }) =>
+      invoiceService.createCorrection(id, body),
+    onSuccess: (correction: Invoice) => {
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(correction.corrects_invoice_id ?? '') });
+    },
   });
 }

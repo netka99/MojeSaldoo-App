@@ -22,6 +22,7 @@ from .serializers import (
     WarehouseSerializer,
     WarehouseStockItemSerializer,
 )
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 
@@ -33,7 +34,9 @@ class ProductViewSet(viewsets.ModelViewSet):
     """Full CRUD for products in the user's active company."""
 
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    required_permission = 'can_manage_products'
+    read_permission = None  # any company member may list/read products (needed for orders, WZ, production)
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -234,7 +237,9 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     """Full CRUD for warehouses in the user's active company."""
 
     serializer_class = WarehouseSerializer
-    permission_classes = [IsAuthenticated]
+    required_permission = 'can_manage_warehouses'
+    read_permission = None  # any company member may list/read warehouses
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -353,7 +358,8 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
 
 class CustomerProductPriceViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerProductPriceSerializer
-    permission_classes = [IsAuthenticated]
+    required_permission = 'can_manage_customers'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     pagination_class = None
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 

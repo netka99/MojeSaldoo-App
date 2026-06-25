@@ -1061,3 +1061,606 @@ Magazyn (/reports/inventory) — "Pobierz CSV" button in the top-right corner
 Wynik finansowy P&L (/reports/profit-loss) — "Pobierz CSV" top-right
 Marże na produktach (/reports/product-margin) — "Pobierz CSV" top-right
 The buttons only appear when there's data. Downloaded files open correctly in Excel (semicolons, UTF-8 BOM, Polish decimal commas).
+
+
+=================================================
+Plan implementacji — Runda 3
+
+#12 Korekty do faktur i dokumentów (FV-KOR, WZ-KOR, PZ-KOR z KSeF)
+#13 Eksport PDF raportów (druk przez przeglądarkę)
+#14 Powiadomienia push — statusy KSeF (FCM + Capacitor)
+
+Kolejność pracy:
+#12 Korekty   [12.1] → [12.2] → [12.3] → [12.4] → [12.5]
+#13 PDF       [13.1] → [13.2] → [13.3]
+#14 Push      [14.1] → [14.2] → [14.3] → [14.4] → [14.5]
+
+=================================================
+
+#12 Korekty do faktur i dokumentów
+Priorytet: PIERWSZY — realna potrzeba prawna/księgowa dla każdej firmy.
+
+Stan wyjściowy:
+- PZ-KOR: model gotowy (DOC_TYPE_PZ_KOR, corrects_pz FK w DeliveryDocument)
+- FV-KOR: brak — Invoice nie ma pola is_correction ani corrects_invoice FK
+- WZ-KOR: brak — DeliveryDocument nie ma DOC_TYPE_WZ_KOR ani corrects_wz FK
+- KSeF KOR: ReceivedKSeFInvoice.invoice_type istnieje, brak parsowania FakturaRef
+
+--- 12.1 FV-KOR — Backend ---
+
+TASK A — Rozszerz model Invoice w apps/invoices/models.py:
+  is_correction = BooleanField(default=False)
+  corrects_invoice = FK('self', null=True, blank=True, on_delete=PROTECT, related_name='corrections')
+  correction_reason = TextField(blank=True)
+  Numer korekty: generuj "FV-KOR/{year}/{seq:04d}" w save() gdy is_correction=True
+
+TASK B — Endpoint: POST /api/invoices/{id}/create-correction/
+  - Walidacja: oryginalna faktura ma status 'issued' lub 'paid'
+  - Tworzy nową Invoice z is_correction=True, corrects_invoice=original
+  - Kopiuje InvoiceItems z oryginalnej (z możliwością edycji ilości/cen przed zapisem)
+  - Nowa faktura trafia w status 'draft'
+  - Zwraca {correctionId, correctionNumber}
+
+TASK C — InvoiceCorrectionSerializer:
+  - Pole items: lista linii z oryginalnej faktury (edytowalne: quantity_corrected, unit_price_net)
+  - Automatycznie liczy różnicę (kwota korekty = nowa wartość - stara wartość)
+  - correction_reason wymagane
+
+TASK D — Migracja + testy backendu:
+  - Test: create-correction tworzy powiązaną fakturę z is_correction=True
+  - Test: nie można skorygować faktury w statusie 'draft'
+  - Test: correction_number ma format FV-KOR/YYYY/NNNN
+
+--- 12.2 FV-KOR — Frontend ---
+
+TASK A — InvoiceDetailPage:
+  - Dodaj przycisk "Utwórz korektę FV" (widoczny tylko dla status='issued' lub 'paid')
+  - Przycisk → nawiguje do /invoices/{id}/correction/new
+
+TASK B — Nowa strona: CorrectionInvoiceCreatePage (/invoices/:id/correction/new):
+  - Nagłówek: "Korekta do faktury {originalNumber}"
+  - Sekcja: powód korekty (pole tekstowe, wymagane)
+  - Tabela linii: pozycje z oryginalnej faktury, edytowalne kolumny:
+    - Ilość oryginalna (read-only)
+    - Ilość po korekcie (edytowalna)
+    - Cena netto oryginalna (read-only)
+    - Cena netto po korekcie (edytowalna)
+    - Różnica wartości (live-count)
+  - Podsumowanie: kwota korekty netto/brutto
+  - Przyciski: "Zapisz korektę" (status=draft) + "Zapisz i wystaw" (status=issued)
+
+TASK C — InvoicesPage:
+  - Badge "KOR" na korektach (czerwone tło)
+  - Kolumna "Koryguje" → link do oryginalnej faktury
+
+TASK D — Testy frontendu:
+  - Test: przycisk "Utwórz korektę FV" widoczny tylko dla issued/paid
+  - Test: submit wysyła POST do /api/invoices/{id}/create-correction/
+
+--- 12.3 WZ-KOR — Backend ---
+
+TASK A — Rozszerz model DeliveryDocument w apps/delivery/models.py:
+  DOC_TYPE_WZ_KOR = "WZ-KOR"  (dodaj do DOC_TYPE_CHOICES)
+  corrects_wz = FK('self', null=True, blank=True, on_delete=PROTECT, related_name='wz_corrections')
+  Numer: "WZ-KOR/{year}/{seq:04d}"
+
+TASK B — Endpoint: POST /api/delivery/{id}/create-wz-correction/
+  - Walidacja: oryginalne WZ ma status 'delivered' lub 'saved'
+  - Tworzy nowy DeliveryDocument z document_type='WZ-KOR', corrects_wz=original
+  - Kopiuje DeliveryItems (edytowalne quantity_actual — ilość zwrotu)
+  - Ruch magazynowy: zwrot towaru do magazynu (StockMovement type='return')
+
+TASK C — Migracja + testy backendu
+
+--- 12.4 WZ-KOR — Frontend ---
+
+TASK A — DeliveryDocumentDetailPage:
+  - Przycisk "Utwórz korektę WZ" (dla status='delivered')
+  - Strona /delivery/{id}/correction/new — analogicznie do CorrectionInvoiceCreatePage
+  - Pola: powód zwrotu, ilości do zwrotu per linia
+
+TASK B — Testy frontendu
+
+--- 12.5 PZ-KOR z KSeF (korekta od dostawcy) ---
+
+Warunek: musi być przetestowane z prawdziwą fakturą korygującą z KSeF!
+Dopóki nie ma testu — implementacja może być oparta na założeniu struktury XML.
+
+TASK A — Backend: rozszerz ReceivedKSeFInvoiceParseView (/api/ksef/inbox/{num}/parse/):
+  - Jeśli invoice_type == "KOR" → parsuj też FakturaRef/NrKSeF z XML (referencja do oryginału)
+  - Zwróć dodatkowe pole: { isCorrection: true, originalKsefNumber: "...", originalPzId: "..." }
+  - Szukaj originalPzId przez: DeliveryDocument.objects.filter(ksef_invoice_id=originalKsefNumber).first()
+
+TASK B — Frontend: KSeF inbox list:
+  - Dla invoice_type="KOR" → pokaż badge "KOREKTA" zamiast "FV"
+  - Przycisk "Utwórz PZ-KOR" zamiast "Utwórz PZ"
+
+TASK C — Frontend: KSeFInboxPZPage — dodaj wariant PZ-KOR:
+  - Jeśli isCorrection=true → pre-fill formularz jako PZ-KOR
+  - Pokaż powiązane oryginalne PZ (jeśli znalezione)
+  - Ilości: ujemne (korekta in-minus)
+  - Submit → POST /api/delivery/create-pz/ z doc_type='PZ-KOR'
+
+TASK D — Testy (po otrzymaniu prawdziwej faktury KOR z KSeF)
+
+=================================================
+
+#13 Eksport PDF raportów
+Priorytet: DRUGI — zero nowych zależności, buduje na wzorcu WZPrintView/InvoicePrintView.
+
+Podejście: browser print z CSS @media print (identyczny wzorzec jak istniejące wydruki WZ i faktur).
+Brak nowych bibliotek — window.print() + CSS print styles.
+
+--- 13.1 Wspólny komponent PrintReportHeader ---
+
+Nowy plik: frontend/src/components/print/PrintReportHeader.tsx
+Props: { title: string; companyName: string; dateFrom?: string; dateTo?: string; generatedAt?: string }
+Renderuje: nazwa firmy, tytuł raportu, zakres dat, data wygenerowania
+Widoczny TYLKO przy druku (@media print) — ukryty w normalnym widoku
+
+--- 13.2 CSS @media print per strona raportu ---
+
+Dla każdej strony: PaymentAgingPage, ProductMarginPage, ProfitLossPage, InventoryReportPage, SupplierCostsPage:
+  - Ukryj przy druku: sidebar/nav, przyciski filtrów, przycisk "Pobierz CSV", pagination
+  - Pokaż przy druku: PrintReportHeader, pełna tabela (bez obcięcia), kolumny na całą szerokość
+  - Dodaj @page { size: A4 landscape; margin: 10mm } dla tabel z wieloma kolumnami
+  - page-break-inside: avoid na każdym wierszu tabeli
+  - Dodaj klasę print:hidden do elementów które nie powinny się drukować
+
+--- 13.3 Przycisk "Drukuj PDF" ---
+
+Na każdej stronie raportu — obok istniejącego "Pobierz CSV":
+  <Button variant="outline" onClick={() => window.print()}>
+    🖨 Drukuj / Zapisz PDF
+  </Button>
+Tooltip: "Użyj 'Zapisz jako PDF' w oknie druku przeglądarki"
+
+Testy:
+  - Test że przycisk renderuje się gdy są dane
+  - Test że PrintReportHeader wyświetla tytuł i datę
+
+=================================================
+
+#14 Powiadomienia push — statusy KSeF
+Priorytet: TRZECI — wymaga Firebase account + konfiguracji Capacitor.
+
+Architektura:
+  Backend:  firebase-admin SDK → wysyła FCM notification do tokenu urządzenia
+  Mobile:   @capacitor/push-notifications → rejestruje urządzenie, token → backend
+  Web:      Web Push API (przez Firebase) — opcjonalnie
+
+--- 14.1 Firebase setup ---
+
+TASK A — Utwórz projekt Firebase:
+  - console.firebase.google.com → New Project "MojeSaldoo"
+  - Enable Cloud Messaging
+  - Pobierz serviceAccountKey.json (Project Settings → Service Accounts)
+  - Zapisz jako backend/firebase-credentials.json (NEVER commit — dodaj do .gitignore!)
+  - Skopiuj FIREBASE_CREDENTIALS_PATH=./firebase-credentials.json do .env
+
+TASK B — Backend: dodaj firebase-admin do requirements.txt:
+  firebase-admin==6.4.0
+
+--- 14.2 Backend: model + endpoint rejestracji tokenu ---
+
+TASK A — Nowy model w apps/users/models.py lub nowy plik apps/notifications/models.py:
+
+  class FCMDeviceToken(models.Model):
+      id = UUIDField PK
+      user = FK(User, CASCADE, related_name='fcm_tokens')
+      token = CharField(max_length=512, unique=True)
+      device_type = CharField(choices=[('android','Android'),('ios','iOS'),('web','Web')], max_length=10)
+      is_active = BooleanField(default=True)
+      created_at, updated_at
+
+TASK B — Endpoint: POST /api/notifications/register-token/
+  Przyjmuje: { token, device_type }
+  Tworzy lub aktualizuje FCMDeviceToken dla zalogowanego użytkownika
+
+TASK C — Endpoint: DELETE /api/notifications/unregister-token/
+  Deaktywuje token (na wylogowanie)
+
+TASK D — Serwis powiadomień: apps/notifications/push_service.py:
+  def send_notification(user, title, body, data={}):
+      tokens = FCMDeviceToken.objects.filter(user=user, is_active=True)
+      for device in tokens:
+          firebase_admin.messaging.send(Message(
+              notification=Notification(title=title, body=body),
+              data=data,
+              token=device.token
+          ))
+
+--- 14.3 Backend: triggery powiadomień z KSeF ---
+
+W apps/ksef/views.py — po każdej zmianie statusu (KSeFSentInvoice):
+  Po statusie 'accepted':
+    send_notification(user, "KSeF: Faktura przyjęta ✓",
+      f"Faktura {invoice.invoice_number} została przyjęta przez KSeF",
+      {"type": "ksef_accepted", "invoiceId": str(invoice.id)})
+  Po statusie 'rejected':
+    send_notification(user, "KSeF: Faktura odrzucona ✗",
+      f"Faktura {invoice.invoice_number} odrzucona: {error_message}",
+      {"type": "ksef_rejected", "invoiceId": str(invoice.id)})
+  Po pobraniu UPO:
+    send_notification(user, "KSeF: UPO pobrane",
+      f"Urzędowe poświadczenie odbioru dla {invoice.invoice_number} gotowe",
+      {"type": "ksef_upo", "invoiceId": str(invoice.id)})
+
+--- 14.4 Frontend: rejestracja urządzenia (Capacitor) ---
+
+TASK A — Instalacja:
+  npm install @capacitor/push-notifications
+  npx cap sync android
+
+TASK B — Nowy hook: frontend/src/hooks/usePushNotifications.ts:
+  - Inicjalizuje @capacitor/push-notifications
+  - Żąda uprawnień (requestPermissions)
+  - Po uzyskaniu tokenu FCM → POST /api/notifications/register-token/
+  - Nasłuchuje na przychodzące notyfikacje → przekierowuje do właściwej strony (na podstawie data.type)
+  - Na wylogowaniu → DELETE /api/notifications/unregister-token/
+
+TASK C — Integracja w App.tsx:
+  - Wywołaj usePushNotifications() po zalogowaniu użytkownika
+  - Obsłuż deep link: ksef_accepted/ksef_rejected → /invoices/{invoiceId}
+
+--- 14.5 Testy ---
+
+Backend:
+  - Test że register-token tworzy FCMDeviceToken
+  - Mock firebase_admin.messaging.send → test że send_notification wywołuje go z prawdziwym tokenem
+  - Test że trigger po 'accepted' wysyła powiadomienie
+
+Frontend:
+  - Mock @capacitor/push-notifications → test że hook rejestruje token
+  - Test że po otrzymaniu powiadomienia ksef_rejected → nawiguje do /invoices/{id}
+
+
+Niski priorytet / przyszłość:
+
+Synchronizacja offline
+Multi-tenancy
+OCR
+
+=================================================
+#15 — Nowy Onboarding: wybór profilu firmy i aktywacja modułów
+Priorytet: WYSOKI — bezpośrednio wpływa na konwersję nowych użytkowników i personalizację UX
+
+Cel: Zastąpienie obecnego formularza rejestracyjnego (NIP, adres, dane firmy) nowym
+przepływem: Google/email sign-up → kafelki aktywności → metoda dostawy → moduły aktywne →
+dashboard z nudge barem. Użytkownik nie podaje żadnych danych firmy do momentu gdy są
+faktycznie potrzebne (pierwszy KSeF send).
+
+--- 15.1 Backend: model Company — nowe pola ---
+
+W backend/apps/users/models.py dodaj do modelu Company:
+
+  COMPANY_TYPE_CHOICES = [
+      ('invoicing',   'Tylko fakturowanie'),
+      ('van_selling', 'Van Selling'),
+      ('warehouse',   'Magazyn i handel'),
+      ('production',  'Produkcja'),
+      ('mixed',       'Mieszany'),
+  ]
+
+  company_type = models.CharField(
+      max_length=20, choices=COMPANY_TYPE_CHOICES,
+      default='invoicing', blank=True,
+  )
+  onboarding_completed = models.BooleanField(default=False)
+
+Migracja: python manage.py makemigrations users
+
+--- 15.2 Backend: CompanyModule — weryfikacja i uzupełnienie pól ---
+
+W backend/apps/users/models.py sprawdź model CompanyModule.
+Muszą istnieć następujące pola BooleanField (default=False jeśli opcjonalne, True jeśli core):
+
+  invoicing       = BooleanField(default=True)   # zawsze True
+  ksef            = BooleanField(default=True)   # zawsze True
+  customers       = BooleanField(default=True)   # zawsze True
+  orders          = BooleanField(default=True)   # zawsze True
+  purchasing      = BooleanField(default=False)  # kafelek 🛒
+  warehouses      = BooleanField(default=False)  # kafelek 🏪
+  production      = BooleanField(default=False)  # kafelek 🛠️
+  cost_allocation = BooleanField(default=False)  # kafelek 💼
+  delivery        = BooleanField(default=False)  # Screen 2 (📦 lub 🚐)
+  van_routes      = BooleanField(default=False)  # Screen 2 🚐 tylko
+  ksef_inbox      = BooleanField(default=False)  # kafelek 🛒 LUB 💼
+  reporting       = BooleanField(default=True)   # zawsze True
+
+Dodaj brakujące pola, stwórz migrację:
+  python manage.py makemigrations users
+
+--- 15.3 Backend: endpoint onboarding/complete/ ---
+
+Nowy plik backend/apps/users/onboarding_views.py:
+
+POST /api/onboarding/complete/
+Body:
+{
+  "activity_tiles": ["purchasing", "production", "warehouses"],
+  "delivery_method": "van_routes"  // "van_routes" | "delivery" | "docs_only" | null
+}
+
+Logika:
+1. Pobierz lub utwórz CompanyModule dla current_company
+2. Zawsze ustaw: invoicing=True, ksef=True, customers=True, orders=True, reporting=True
+3. Dla każdego tile w activity_tiles:
+   - "purchasing"      → purchasing=True, ksef_inbox=True
+   - "production"      → production=True, warehouses=True
+   - "warehouses"      → warehouses=True
+   - "cost_allocation" → cost_allocation=True, ksef_inbox=True
+4. Dla delivery_method:
+   - "van_routes"  → delivery=True, van_routes=True
+   - "delivery"    → delivery=True, van_routes=False
+   - "docs_only"   → delivery=True, van_routes=False
+   - null          → delivery=False (tylko faktury)
+5. Wnioskuj company_type z kombinacji:
+   - production=True                          → "production"
+   - purchasing=True AND van_routes=True      → "van_selling"
+   - purchasing=True AND van_routes=False     → "warehouse"
+   - tylko invoicing/cost_allocation          → "invoicing"
+   - inne                                     → "mixed"
+6. Zapisz CompanyModule, ustaw company.company_type i company.onboarding_completed=True
+7. Zwróć: { "company_type": ..., "modules": { ...wszystkie flagi... } }
+
+Dodaj do backend/apps/users/urls.py:
+  path('onboarding/complete/', OnboardingCompleteView.as_view()),
+
+--- 15.4 Backend: /api/users/me/ — zwróć onboarding_completed ---
+
+W UserSerializer (lub dedykowanym MeSerializer) dodaj pola:
+  onboarding_completed = serializers.BooleanField(source='current_company.onboarding_completed', read_only=True)
+  company_type = serializers.CharField(source='current_company.company_type', read_only=True)
+  modules = serializers.SerializerMethodField()
+
+  def get_modules(self, obj):
+      if not obj.current_company:
+          return {}
+      mod = CompanyModule.objects.filter(company=obj.current_company).first()
+      if not mod:
+          return {}
+      return {
+          'invoicing': mod.invoicing, 'ksef': mod.ksef,
+          'purchasing': mod.purchasing, 'warehouses': mod.warehouses,
+          'production': mod.production, 'cost_allocation': mod.cost_allocation,
+          'delivery': mod.delivery, 'van_routes': mod.van_routes,
+          'ksef_inbox': mod.ksef_inbox, 'reporting': mod.reporting,
+      }
+
+--- 15.5 Backend: testy ---
+
+Nowy plik backend/apps/users/tests_onboarding.py:
+
+class OnboardingCompleteTests(TestCase):
+  test_van_seller_tiles_activate_correct_modules:
+    POST tiles=["purchasing"], delivery="van_routes"
+    → purchasing=True, van_routes=True, delivery=True, ksef_inbox=True
+    → company_type="van_selling"
+
+  test_producer_tiles:
+    POST tiles=["production", "purchasing"], delivery="delivery"
+    → production=True, warehouses=True, purchasing=True, delivery=True
+    → company_type="production"
+
+  test_invoicing_only_no_delivery_screen:
+    POST tiles=[], delivery=null
+    → tylko core modules True
+    → company_type="invoicing"
+
+  test_cost_annotation_unlocks_ksef_inbox:
+    POST tiles=["cost_allocation"], delivery=null
+    → cost_allocation=True, ksef_inbox=True
+
+  test_onboarding_completed_flag_set:
+    Po POST → company.onboarding_completed=True
+
+  test_me_endpoint_returns_modules:
+    GET /api/users/me/ → modules dict zawiera wszystkie flagi
+
+--- 15.6 Frontend: typy i serwis ---
+
+Nowy plik frontend/src/types/onboarding.types.ts:
+
+  export type ActivityTile =
+    | 'purchasing'
+    | 'production'
+    | 'warehouses'
+    | 'cost_allocation';
+
+  export type DeliveryMethod = 'van_routes' | 'delivery' | 'docs_only';
+
+  export interface OnboardingPayload {
+    activity_tiles: ActivityTile[];
+    delivery_method: DeliveryMethod | null;
+  }
+
+  export interface CompanyModules {
+    invoicing: boolean;
+    ksef: boolean;
+    purchasing: boolean;
+    warehouses: boolean;
+    production: boolean;
+    cost_allocation: boolean;
+    delivery: boolean;
+    van_routes: boolean;
+    ksef_inbox: boolean;
+    reporting: boolean;
+  }
+
+Nowy plik frontend/src/services/onboarding.service.ts:
+
+  export const onboardingService = {
+    complete: (payload: OnboardingPayload) =>
+      api.post('/api/onboarding/complete/', payload),
+  };
+
+--- 15.7 Frontend: hook ---
+
+Nowy plik frontend/src/query/use-onboarding.ts:
+
+  export function useCompleteOnboardingMutation() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: onboardingService.complete,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['me'] });
+      },
+    });
+  }
+
+Zaktualizuj istniejący hook useMe() / useUserProfile() aby zwracał:
+  { onboarding_completed, company_type, modules }
+
+--- 15.8 Frontend: komponenty onboardingu ---
+
+Nowy katalog frontend/src/components/onboarding/
+
+PLIK 1: ActivityTilesStep.tsx
+  Props: { selected: ActivityTile[], onChange: (tiles: ActivityTile[]) => void }
+  Renderuje siatkę 2x2 kafelków + zawsze aktywny kafelek "Faktury".
+  Każdy kafelek: ikona (duża, 2rem), tytuł (bold), opis (text-sm, muted), stan selected
+  (kolorowe obramowanie + checkmark w rogu).
+  Kafelek "Faktury" ma inny styl (szary, lock icon) — nie można odznaczyć.
+
+PLIK 2: DeliveryMethodStep.tsx
+  Props: { onSelect: (method: DeliveryMethod) => void }
+  Renderuje 3 duże kafelki (pełna szerokość) — tap = natychmiastowe przejście.
+  🚐 Jeżdżę w trasie / 📦 Wysyłam lub klient odbiera / 📋 Tylko dokumenty i faktury
+
+PLIK 3: ModuleSummaryStep.tsx
+  Props: { modules: CompanyModules, onConfirm: () => void, loading: boolean }
+  Lista aktywnych modułów z zielonymi checkboxami.
+  Nieaktywne moduły z przyciskiem inline "Włącz".
+  Nota: "Możesz zmienić to zawsze w Ustawienia → Moduły"
+  Przycisk "Zacznij korzystać →"
+
+PLIK 4: OnboardingProgressDots.tsx
+  Props: { total: number, current: number }
+  Proste kropki ● ○ ○ jako wskaźnik postępu.
+
+--- 15.9 Frontend: strona OnboardingPage ---
+
+Nowy plik frontend/src/pages/OnboardingPage.tsx
+
+  Stany lokalne:
+    step: 1 | 2 | 3  (1=kafelki, 2=dostawa, 3=podsumowanie)
+    selectedTiles: ActivityTile[]
+    deliveryMethod: DeliveryMethod | null
+
+  Logika:
+    handleTilesNext():
+      const needsDelivery = selectedTiles.some(t =>
+        ['purchasing','production','warehouses'].includes(t))
+      if (needsDelivery) setStep(2)
+      else computeModulesAndGoToStep3()
+
+    handleDeliverySelect(method):
+      setDeliveryMethod(method)
+      setStep(3)
+
+    handleConfirm():
+      mutation.mutate({ activity_tiles: selectedTiles, delivery_method: deliveryMethod })
+      // onSuccess → navigate('/') dzięki invalidateQueries(['me'])
+
+  Render:
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-background">
+      <OnboardingProgressDots total={needsDelivery ? 3 : 2} current={step} />
+      {step === 1 && <ActivityTilesStep ... />}
+      {step === 2 && <DeliveryMethodStep ... />}
+      {step === 3 && <ModuleSummaryStep ... />}
+    </div>
+
+--- 15.10 Frontend: routing — guard onboardingu ---
+
+W frontend/src/App.tsx (lub router config):
+
+  Stwórz komponent OnboardingGuard:
+    const { data: me } = useMe();
+    if (!me) return null; // loading
+    if (!me.onboarding_completed) return <Navigate to="/onboarding" />;
+    return <>{children}</>;
+
+  Opakuj wszystkie chronione trasy w <OnboardingGuard>:
+    <Route path="/onboarding" element={<OnboardingPage />} />
+    <Route element={<OnboardingGuard><AppLayout /></OnboardingGuard>}>
+      ... wszystkie istniejące trasy ...
+    </Route>
+
+--- 15.11 Frontend: nawigacja zależna od modułów ---
+
+W komponencie Sidebar.tsx / Navigation.tsx:
+
+  Pobierz modules z useMe().data.modules
+  Każdy item nawigacji ma przypisany moduł, np.:
+
+  const NAV_ITEMS = [
+    { path: '/products',    label: 'Produkty',    module: 'warehouses'      },
+    { path: '/customers',   label: 'Klienci',     module: null              }, // zawsze
+    { path: '/orders',      label: 'Zamówienia',  module: null              }, // zawsze
+    { path: '/delivery',    label: 'Dostawa',     module: 'delivery'        },
+    { path: '/van-routes',  label: 'Trasa',       module: 'van_routes'      },
+    { path: '/production',  label: 'Produkcja',   module: 'production'      },
+    { path: '/purchasing',  label: 'Zakupy',      module: 'purchasing'      },
+    { path: '/invoices',    label: 'Faktury',     module: null              }, // zawsze
+    { path: '/ksef',        label: 'KSeF',        module: null              }, // zawsze
+    { path: '/reports',     label: 'Raporty',     module: null              }, // zawsze
+    { path: '/costs',       label: 'Koszty',      module: 'cost_allocation' },
+  ];
+
+  Renderuj item tylko gdy:
+    item.module === null  ||  modules?.[item.module] === true
+
+--- 15.12 Frontend: SetupNudgeBar na dashboardzie ---
+
+Nowy plik frontend/src/components/SetupNudgeBar.tsx
+
+  Sprawdza:
+    hasProducts  = useProductsQuery().data?.count > 0
+    hasCustomers = useCustomerListQuery().data?.count > 0
+    hasCompanyDetails = !!me?.company?.nip
+
+  Wyświetla pasek tylko gdy co najmniej jeden krok nieukończony.
+  Każdy krok klikalny → nawiguje do właściwej strony.
+  Przycisk ✕ w rogu → zapisz 'setup_nudge_dismissed' w localStorage → ukryj.
+  Pasek znika automatycznie gdy wszystkie 3 kroki gotowe.
+
+  Dodaj <SetupNudgeBar /> na górze <DashboardPage /> (lub w <AppLayout />
+  tylko dla / ścieżki).
+
+--- 15.13 Frontend: testy ---
+
+frontend/src/pages/OnboardingPage.test.tsx:
+  - test że po wyborze tylko 💼/📋 → krok dostawy pominięty
+  - test że po wyborze 🛒 → krok dostawy pokazany
+  - test że tap kafelka delivery → przechodzi do podsumowania
+  - test że onConfirm wywołuje POST /api/onboarding/complete/ z prawidłowym body
+  - test że po sukcesie → navigate('/')
+
+frontend/src/components/onboarding/ActivityTilesStep.test.tsx:
+  - test że kafelek "Faktury" nie może być odznaczony
+  - test że zaznaczenie kafelka zmienia jego styl (selected)
+  - test że "Dalej" zablokowane gdy żaden kafelek nie wybrany (poza Faktury)
+
+frontend/src/components/SetupNudgeBar.test.tsx:
+  - test że nie renderuje się gdy wszystkie kroki ukończone
+  - test że ✕ powoduje ukrycie i zapis w localStorage
+
+--- Kolejność implementacji ---
+
+Etap A (backend): 15.1 → 15.2 → 15.3 → 15.4 → 15.5
+Etap B (frontend): 15.6 → 15.7 → 15.8 → 15.9 → 15.10 → 15.11 → 15.12 → 15.13
+
+Etap C (opcjonalny, później): Google OAuth
+  Backend: pip install django-allauth, konfiguracja providers, endpoint /api/auth/google/
+  Frontend: @react-oauth/google, przycisk "Kontynuuj z Google" na Ekranie 1
+
+--- Definicja "gotowe" ---
+
+✅ Nowy użytkownik może zarejestrować się email+hasło bez podawania NIP
+✅ Wybór kafelków zapisuje CompanyModule flags w DB
+✅ Nawigacja ukrywa moduły nieaktywne dla danej firmy
+✅ GET /api/users/me/ zwraca onboarding_completed + modules
+✅ Użytkownik z onboarding_completed=False jest przekierowywany na /onboarding
+✅ SetupNudgeBar widoczny na dashboardzie dla nowych użytkowników
+✅ Wszystkie testy przechodzą

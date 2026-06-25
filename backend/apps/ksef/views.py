@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.users.permissions import IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 
 from django.http import HttpResponse
 
@@ -54,6 +54,7 @@ def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
         "vatAmount": float(inv.vat_amount) if inv.vat_amount is not None else None,
         "currency": inv.currency,
         "invoiceType": inv.invoice_type,
+        "originalKsefNumber": inv.original_ksef_number or None,
         "firstSeenAt": inv.first_seen_at.isoformat(),
         "annotationStatus": _annotation_status(inv),
         "opex_category": inv.opex_category,
@@ -74,7 +75,8 @@ class KSeFSessionView(APIView):
     DELETE /api/ksef/session/     — clear stored session
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_manage_invoices'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request):
         company = request.user.current_company
@@ -159,7 +161,8 @@ class ReceivedInvoicesView(APIView):
     Params: date_from, date_to (YYYY-MM-DD or ISO 8601), page, page_size
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request):
         company = request.user.current_company
@@ -269,7 +272,8 @@ class ReceivedInvoicesSyncView(APIView):
     Returns: { new_count, total }
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def post(self, request):
         company = request.user.current_company
@@ -309,7 +313,8 @@ class ReceivedInvoiceDownloadView(APIView):
     Download a received invoice XML from KSeF.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request, ksef_reference_number: str):
         company = request.user.current_company
@@ -347,7 +352,8 @@ class ReceivedInvoiceParseView(APIView):
     Download invoice XML from KSeF, parse FA-3 line items, and attempt product/supplier auto-match.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request, ksef_reference_number: str):
         company = request.user.current_company
@@ -366,12 +372,21 @@ class ReceivedInvoiceParseView(APIView):
         if db_invoice and db_invoice.xml_content:
             try:
                 result = _parse_fa3_invoice(db_invoice.xml_content.encode("utf-8"), company)
-                # Update address fields if not yet stored
+                # Update address + correction fields if not yet stored
+                update_fields = []
                 if not db_invoice.seller_address_l1 and result.get("seller_address_l1"):
                     db_invoice.seller_address_l1 = result["seller_address_l1"][:512]
                     db_invoice.seller_address_l2 = result.get("seller_address_l2", "")[:512]
                     db_invoice.seller_country = result.get("seller_country", "")[:10]
-                    db_invoice.save(update_fields=["seller_address_l1", "seller_address_l2", "seller_country"])
+                    update_fields += ["seller_address_l1", "seller_address_l2", "seller_country"]
+                if result.get("invoice_type") and not db_invoice.invoice_type:
+                    db_invoice.invoice_type = result["invoice_type"][:50]
+                    update_fields.append("invoice_type")
+                if result.get("original_ksef_number") and not db_invoice.original_ksef_number:
+                    db_invoice.original_ksef_number = result["original_ksef_number"][:255]
+                    update_fields.append("original_ksef_number")
+                if update_fields:
+                    db_invoice.save(update_fields=update_fields)
                 _cache_invoice_lines(db_invoice, ksef_reference_number, company, result)
                 _enrich_result_with_pz(result, db_invoice)
                 return Response(result)
@@ -529,6 +544,13 @@ def _store_invoice_xml(db_invoice: "ReceivedKSeFInvoice", xml_bytes: bytes, comp
         db_invoice.seller_address_l2 = parsed.get("seller_address_l2", "")[:512]
         db_invoice.seller_country = parsed.get("seller_country", "")[:10]
         update_fields += ["seller_address_l1", "seller_address_l2", "seller_country"]
+        # Persist invoice type + correction reference extracted from XML
+        if parsed.get("invoice_type"):
+            db_invoice.invoice_type = parsed["invoice_type"][:50]
+            update_fields.append("invoice_type")
+        if parsed.get("original_ksef_number"):
+            db_invoice.original_ksef_number = parsed["original_ksef_number"][:255]
+            update_fields.append("original_ksef_number")
         db_invoice.save(update_fields=update_fields)
         if not db_invoice.lines_cached:
             _cache_invoice_lines(db_invoice, db_invoice.ksef_number, company, parsed)
@@ -582,6 +604,19 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
 
     invoice_number = text(fa, "P_2")
     issue_date = text(fa, "P_1")
+
+    # Invoice type (RodzajFaktury): VAT | KOR | ZAL | ROZ | UPR | KOR_ZAL | KOR_ROZ
+    invoice_type = text(fa, "RodzajFaktury") or "VAT"
+
+    # For correction invoices: reference to the original invoice (DaneFaKorygowanej)
+    # An invoice can correct multiple originals (up to 50 000), we only need the first KSeF ref.
+    original_ksef_number = ""
+    kor_ref_el = find(fa, "DaneFaKorygowanej")
+    if kor_ref_el is not None:
+        # Only populated when NrKSeF == "1" (original was in KSeF)
+        nr_ksef_flag = (kor_ref_el.find(f"{{{ns}}}NrKSeF") or None)
+        if nr_ksef_flag is not None and (nr_ksef_flag.text or "").strip() == "1":
+            original_ksef_number = text(kor_ref_el, "NrKSeFFaKorygowanej")
 
     # Seller: Podmiot1 > DaneIdentyfikacyjne + Adres
     seller_node = find(root, "Podmiot1")
@@ -667,6 +702,8 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
     return {
         "invoice_number": invoice_number,
         "issue_date": issue_date,
+        "invoice_type": invoice_type,
+        "original_ksef_number": original_ksef_number,
         "seller_nip": seller_nip,
         "seller_name": seller_name,
         "seller_country": seller_country,
@@ -687,7 +724,8 @@ class KSeFProductMappingView(APIView):
     Idempotent — upserts on (company, seller_nip, invoice_line_name).
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def post(self, request):
         company = request.user.current_company
@@ -732,7 +770,8 @@ class InvoiceOpexTagView(APIView):
     Setting opex_category=null clears the tag.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def patch(self, request, ksef_reference_number: str):
         from django.utils import timezone as _tz
@@ -768,6 +807,99 @@ class InvoiceOpexTagView(APIView):
             "ksef_number": invoice.ksef_number,
             "opex_category": invoice.opex_category,
             "opex_tagged_at": invoice.opex_tagged_at,
+        })
+
+
+# ---------------------------------------------------------------------------
+# KOR match helper — finds the original PZ for a correction invoice
+# ---------------------------------------------------------------------------
+
+class KorMatchView(APIView):
+    """
+    GET /api/ksef/inbox/<ksef_reference_number>/kor-match/
+
+    For a KOR invoice, returns the linked original ReceivedKSeFInvoice and any
+    active PZ documents attached to it — ready to pre-fill a PZ-KOR flow.
+
+    Response shape:
+    {
+        "original_ksef_number": "...",
+        "original_invoice": { ksefNumber, invoiceNumber, issueDate, seller },
+        "pz_documents": [{ id, documentNumber, status, items: [...] }],
+        "matched": true|false   // false when original not found or has no PZ
+    }
+    """
+
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+
+    def get(self, request, ksef_reference_number: str):
+        from apps.delivery.serializers import DeliveryDocumentSerializer
+
+        company = request.user.current_company
+        if not company:
+            return Response({"detail": "No active company."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            kor_invoice = ReceivedKSeFInvoice.objects.get(
+                company=company, ksef_number=ksef_reference_number
+            )
+        except ReceivedKSeFInvoice.DoesNotExist:
+            return Response({"detail": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not kor_invoice.original_ksef_number:
+            return Response(
+                {"detail": "This invoice has no original KSeF reference. Download and parse XML first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        original = ReceivedKSeFInvoice.objects.filter(
+            company=company, ksef_number=kor_invoice.original_ksef_number
+        ).prefetch_related("pz_documents__items__product").first()
+
+        if not original:
+            return Response({
+                "original_ksef_number": kor_invoice.original_ksef_number,
+                "original_invoice": None,
+                "pz_documents": [],
+                "matched": False,
+            })
+
+        active_pzs = [
+            d for d in original.pz_documents.all()
+            if d.status not in ("cancelled",)
+        ]
+
+        pz_list = []
+        for pz in active_pzs:
+            items = []
+            for item in pz.items.select_related("product").all():
+                items.append({
+                    "id": str(item.id),
+                    "productId": str(item.product_id) if item.product_id else None,
+                    "productName": item.product.name if item.product else item.product_name or "",
+                    "quantity": float(item.quantity_actual or item.quantity_ordered or 0),
+                    "unitCost": float(item.unit_cost or 0),
+                    "unit": item.unit or "",
+                })
+            pz_list.append({
+                "id": str(pz.id),
+                "documentNumber": pz.document_number,
+                "status": pz.status,
+                "issueDate": pz.issue_date.isoformat() if pz.issue_date else None,
+                "items": items,
+            })
+
+        return Response({
+            "original_ksef_number": kor_invoice.original_ksef_number,
+            "original_invoice": {
+                "ksefNumber": original.ksef_number,
+                "invoiceNumber": original.invoice_number,
+                "issueDate": original.issue_date.isoformat() if original.issue_date else None,
+                "seller": {"nip": original.seller_nip, "name": original.seller_name},
+            },
+            "pz_documents": pz_list,
+            "matched": len(pz_list) > 0,
         })
 
 
@@ -1022,7 +1154,8 @@ class PaperScanView(APIView):
     lines: [{name, quantity, unit_price}] — product lines parsed from receipt (may be empty).
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    required_permission = 'can_manage_invoices'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def post(self, request):
         image_file = request.FILES.get("image")

@@ -4,6 +4,7 @@ import { CustomerList } from '@/components/features/customers/CustomerList';
 import { Button } from '@/components/ui/Button';
 import { authStorage } from '@/services/api';
 import { useCustomerListQuery } from '@/query/use-customers';
+import { usePermission } from '@/hooks/usePermission';
 
 function ChevronLeftIcon({ className }: { className?: string }) {
   return (
@@ -35,6 +36,7 @@ function contractorCountLabel(count: number): string {
 export function CustomersPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const canManageCustomers = usePermission('can_manage_customers');
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -74,15 +76,17 @@ export function CustomersPage() {
             {isFetching && totalCount === 0 ? 'Ładowanie…' : contractorCountLabel(totalCount)}
           </p>
         </div>
-        <Button
-          type="button"
-          size="icon"
-          className="shrink-0 rounded-full"
-          onClick={() => navigate('/customers/new')}
-          aria-label="Dodaj kontrahenta"
-        >
-          <PlusIcon className="h-5 w-5" />
-        </Button>
+        {canManageCustomers && (
+          <Button
+            type="button"
+            size="icon"
+            className="shrink-0 rounded-full"
+            onClick={() => navigate('/customers/new')}
+            aria-label="Dodaj kontrahenta"
+          >
+            <PlusIcon className="h-5 w-5" />
+          </Button>
+        )}
       </header>
 
       <CustomerList

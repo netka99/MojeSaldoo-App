@@ -6,7 +6,7 @@ from django.db.models import Prefetch, QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters, status, viewsets
+from rest_framework import filters, permissions, status, viewsets
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -16,7 +16,7 @@ from rest_framework.response import Response
 from apps.invoices.models import Invoice
 from apps.orders.models import Order, OrderItem
 from apps.products.models import ProductStock, StockMovement, Warehouse
-from apps.users.permissions import IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, _get_active_membership
 from apps.users.tenant import filter_queryset_for_current_company
 
 from .filters import DeliveryDocumentFilter
@@ -30,6 +30,7 @@ from .serializers import (
     SaveWithReturnsSerializer,
     VanLoadingSerializer,
     VanReconciliationSerializer,
+    WzKorSerializer,
 )
 from .services import (
     _deduct_fifo_batches,
@@ -40,9 +41,36 @@ from .services import (
     cancel_pz,
     create_pz_kor,
     create_van_loading_mm,
+    create_wz_correction,
     create_zw_from_pending_returns,
     default_from_warehouse_for_delivery,
 )
+
+
+# Maps each document type to the permission flag required to read/write it.
+_DOC_TYPE_PERMISSION = {
+    DeliveryDocument.DOC_TYPE_WZ: 'can_manage_delivery',
+    DeliveryDocument.DOC_TYPE_ZW: 'can_manage_delivery',
+    DeliveryDocument.DOC_TYPE_WZ_KOR: 'can_manage_delivery',
+    DeliveryDocument.DOC_TYPE_PZ: 'can_manage_purchasing',
+    DeliveryDocument.DOC_TYPE_PZ_KOR: 'can_manage_purchasing',
+    DeliveryDocument.DOC_TYPE_RW: 'can_manage_stock_moves',
+    DeliveryDocument.DOC_TYPE_MM: 'can_manage_stock_moves',
+}
+
+
+class HasAnyDeliveryPermission(permissions.BasePermission):
+    """Allow access if the user holds any delivery-related permission flag."""
+    message = "Nie masz uprawnień do dokumentów magazynowych."
+
+    def has_permission(self, request, view):
+        m = _get_active_membership(request.user)
+        if not m:
+            return False
+        if m.is_admin_member():
+            return True
+        perms = m.get_permissions()
+        return any(perms.get(f) for f in _DOC_TYPE_PERMISSION.values())
 
 
 class DeliveryDocumentPagination(PageNumberPagination):
@@ -58,7 +86,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
     serializer_class = DeliveryDocumentSerializer
     pagination_class = DeliveryDocumentPagination
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasAnyDeliveryPermission]
     filterset_class = DeliveryDocumentFilter
     filter_backends = [
         DjangoFilterBackend,
@@ -117,7 +145,34 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 ),
             )
 
-        return filter_queryset_for_current_company(qs, self.request.user)
+        qs = filter_queryset_for_current_company(qs, self.request.user)
+
+        # Filter to only document types the user has permission to access.
+        m = _get_active_membership(self.request.user)
+        if m and not m.is_admin_member():
+            perms = m.get_permissions()
+            allowed = [dt for dt, flag in _DOC_TYPE_PERMISSION.items() if perms.get(flag)]
+            qs = qs.filter(document_type__in=allowed)
+
+        return qs
+
+    def _check_doc_type_permission(self, doc_type: str):
+        """Raise PermissionDenied if the user lacks permission for a specific document type."""
+        flag = _DOC_TYPE_PERMISSION.get(doc_type)
+        if not flag:
+            return
+        m = _get_active_membership(self.request.user)
+        if not m or m.is_admin_member():
+            return
+        if not m.get_permissions().get(flag):
+            self.permission_denied(
+                self.request,
+                message=f"Nie masz uprawnień do tworzenia dokumentu typu {doc_type}.",
+            )
+
+    def create(self, request, *args, **kwargs):
+        self._check_doc_type_permission(request.data.get('document_type', ''))
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(
@@ -128,6 +183,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="create-standalone")
     def create_standalone(self, request):
         """POST /delivery/create-standalone/ — create a draft WZ with items in one call.
+        Requires can_manage_delivery.
 
         Body:
           {
@@ -143,6 +199,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         Returns the created DeliveryDocument with items populated.
         """
+        self._check_doc_type_permission(DeliveryDocument.DOC_TYPE_WZ)
         from apps.products.models import Product as ProductModel
         from apps.users.models import get_workflow_settings
         from apps.van_routes.services import get_van_route_for_document, validate_wz_van_route_link
@@ -393,6 +450,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             ]
           }
         """
+        self._check_doc_type_permission(DeliveryDocument.DOC_TYPE_PZ)
         from apps.products.models import Product as ProductModel
         from apps.suppliers.models import Supplier
         from apps.ksef.models import ReceivedKSeFInvoice
@@ -1199,6 +1257,67 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(self.get_serializer(kor_doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="create-wz-correction")
+    def create_wz_correction_action(self, request, pk=None):
+        """
+        POST /api/delivery/{id}/create-wz-correction/
+        Create a WZ-KOR (correction) for a delivered WZ document.
+
+        Body:
+          {
+            "correction_reason": "Zwrot towaru",
+            "issue_date": "2026-06-23",          // optional
+            "items": [
+              {
+                "delivery_item_id": "<uuid>",
+                "quantity_returned": "2.000",
+                "return_reason": "Uszkodzone opakowanie"  // optional
+              }
+            ]
+          }
+        Returns the created WZ-KOR document.
+        """
+        doc = self.get_object()
+
+        if doc.document_type != DeliveryDocument.DOC_TYPE_WZ:
+            return Response(
+                {"error": "Korekta dotyczy tylko dokumentów WZ."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if doc.status != DeliveryDocument.STATUS_DELIVERED:
+            return Response(
+                {"error": "Korektę można utworzyć tylko dla zatwierdzonego WZ."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ser = WzKorSerializer(data=request.data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        items = [
+            {
+                "delivery_item_id": str(it["delivery_item_id"]),
+                "quantity_returned": it["quantity_returned"],
+                "return_reason": it.get("return_reason", ""),
+            }
+            for it in ser.validated_data["items"]
+        ]
+
+        try:
+            wz_kor = create_wz_correction(
+                original_wz=doc,
+                correction_items=items,
+                user=request.user,
+                correction_reason=ser.validated_data.get("correction_reason", ""),
+                issue_date=ser.validated_data.get("issue_date"),
+            )
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(wz_kor).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="van-loading")
     def van_loading(self, request):

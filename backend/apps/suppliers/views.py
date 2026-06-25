@@ -1,7 +1,7 @@
 from rest_framework import filters, viewsets
 from rest_framework.permissions import IsAuthenticated
 
-from apps.users.permissions import ModuleRequired
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired
 
 from .models import Supplier
 from .serializers import SupplierListSerializer, SupplierSerializer
@@ -9,7 +9,8 @@ from .serializers import SupplierListSerializer, SupplierSerializer
 
 class SupplierViewSet(viewsets.ModelViewSet):
     module_required = 'purchasing'
-    permission_classes = [IsAuthenticated, ModuleRequired]
+    required_permission = 'can_manage_purchasing'
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'nip', 'city']
     ordering_fields = ['name', 'created_at']

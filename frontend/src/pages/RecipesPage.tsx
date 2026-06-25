@@ -9,6 +9,7 @@ import {
   useDeleteRecipeMutation,
 } from '@/query/use-production';
 import { authStorage } from '@/services/api';
+import { usePermission } from '@/hooks/usePermission';
 import { useAllProductsQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
 import type { Recipe, RecipeCreate, RecipeItem } from '@/types/production.types';
@@ -204,6 +205,8 @@ function calcEstimatedCost(items: RecipeItem[], yieldQty: number): number | null
 }
 
 export function RecipesPage() {
+  const canProduction = usePermission('can_manage_production');
+
   if (!authStorage.getAccessToken()) return <Navigate to="/login" replace />;
 
   const { data: recipes = [], isLoading } = useRecipesQuery();
@@ -232,7 +235,7 @@ export function RecipesPage() {
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Receptury</h1>
-        {!showForm && !editingId && (
+        {!showForm && !editingId && canProduction && (
           <Button onClick={() => setShowForm(true)}>+ Nowa receptura</Button>
         )}
       </div>
@@ -329,28 +332,30 @@ export function RecipesPage() {
                       );
                     })()}
                   </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => { setShowForm(false); setEditingId(recipe.id); }}
-                    >
-                      Edytuj
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      disabled={deleteM.isPending}
-                      onClick={() => {
-                        if (confirm(`Usunąć recepturę "${recipe.name || recipe.product_name}"?`)) {
-                          void deleteM.mutateAsync(recipe.id);
-                        }
-                      }}
-                    >
-                      Usuń
-                    </Button>
-                  </div>
+                  {canProduction && (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { setShowForm(false); setEditingId(recipe.id); }}
+                      >
+                        Edytuj
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        disabled={deleteM.isPending}
+                        onClick={() => {
+                          if (confirm(`Usunąć recepturę "${recipe.name || recipe.product_name}"?`)) {
+                            void deleteM.mutateAsync(recipe.id);
+                          }
+                        }}
+                      >
+                        Usuń
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

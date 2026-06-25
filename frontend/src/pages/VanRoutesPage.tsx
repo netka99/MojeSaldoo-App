@@ -1,6 +1,7 @@
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { authStorage } from '@/services/api';
 import { useVanRouteListQuery } from '@/query/use-van-routes';
+import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
 import type { VanRouteListItem, VanRouteStatus } from '@/types';
 
@@ -76,6 +77,7 @@ function RouteCard({ route, onClick }: { route: VanRouteListItem; onClick: () =>
 export function VanRoutesPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const canRoutes = usePermission('can_access_routes');
   const { data: routes = [], isLoading } = useVanRouteListQuery();
 
   if (!authStorage.getAccessToken()) {
@@ -90,16 +92,18 @@ export function VanRoutesPage() {
       {/* Header */}
       <div className="sticky top-0 z-20 flex items-center justify-between border-b border-border/40 bg-background/95 px-4 py-3 backdrop-blur">
         <h1 className="text-[17px] font-semibold tracking-tight text-foreground">Trasy Vana</h1>
-        <button
-          type="button"
-          onClick={() => navigate('/van-routes/new')}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 active:scale-95"
-          aria-label="Nowa trasa"
-        >
-          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2.5}>
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
-        </button>
+        {canRoutes && (
+          <button
+            type="button"
+            onClick={() => navigate('/van-routes/new')}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 active:scale-95"
+            aria-label="Nowa trasa"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2.5}>
+              <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col gap-4 px-4 pt-4 pb-[calc(83px+env(safe-area-inset-bottom))] md:pb-4">
@@ -121,13 +125,15 @@ export function VanRoutesPage() {
               <p className="font-semibold text-foreground">Brak tras</p>
               <p className="mt-1 text-sm text-muted-foreground">Utwórz pierwszą trasę vana</p>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate('/van-routes/new')}
-              className="rounded-xl bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
-            >
-              + Nowa trasa
-            </button>
+            {canRoutes && (
+              <button
+                type="button"
+                onClick={() => navigate('/van-routes/new')}
+                className="rounded-xl bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              >
+                + Nowa trasa
+              </button>
+            )}
           </div>
         )}
 
