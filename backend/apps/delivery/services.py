@@ -1658,7 +1658,7 @@ def apply_delivery_document_line_updates(
         raise ValidationError({"detail": "Cancelled documents cannot be changed."})
 
     doc = (
-        DeliveryDocument.objects.select_for_update()
+        DeliveryDocument.objects.select_for_update(of=("self",))
         .select_related("company", "order", "from_warehouse", "user")
         .prefetch_related("items__order_item", "items__product")
         .get(pk=doc.pk)

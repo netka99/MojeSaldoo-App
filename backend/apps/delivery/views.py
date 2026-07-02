@@ -376,7 +376,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             doc = (
-                DeliveryDocument.objects.select_for_update()
+                DeliveryDocument.objects.select_for_update(of=("self",))
                 .select_related("company", "from_warehouse", "to_customer")
                 .get(pk=doc.pk)
             )
@@ -737,7 +737,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
             with transaction.atomic():
                 doc = (
-                    DeliveryDocument.objects.select_for_update()
+                    DeliveryDocument.objects.select_for_update(of=("self",))
                     .select_related("to_warehouse", "from_supplier", "company")
                     .prefetch_related("items__product")
                     .get(pk=doc.pk)
@@ -800,7 +800,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             doc = (
-                DeliveryDocument.objects.select_for_update()
+                DeliveryDocument.objects.select_for_update(of=("self",))
                 .select_related("from_warehouse", "company", "order", "user")
                 .prefetch_related("items__product", "items__order_item")
                 .get(pk=doc.pk)
