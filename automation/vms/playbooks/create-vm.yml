@@ -1,0 +1,157 @@
+---
+# Spins up a local CentOS Stream 10 VM on libvirt (qemu:///system) using
+# virt-install --import against the official cloud image. No provisioning
+# is done — the VM is created and started as-is.
+#
+# Usage:
+#   ansible-playbook automation/vms/playbooks/create_centos_stream10_vm.yml \
+#     -e vm_name=my-centos-vm
+#
+# Requires: dnf, qemu-kvm, libvirt, virt-install (installed below via
+# become). The playbook talks to libvirt as the invoking user over
+# qemu:///system, so that user must already be authorized (e.g. member of the
+# `libvirt` group) as is the case for interactive `virsh` use.
+
+- name: Create a local CentOS Stream 10 libvirt VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    vm_name: "centos-stream10"
+    vm_vcpus: 2
+    vm_memory_mb: 4096
+    vm_disk_gb: 20
+    vm_network: "default"
+
+    libvirt_pool_name: "mojesaldoo-vms"
+    libvirt_pool_dir: "/var/lib/libvirt/images/mojesaldoo"
+
+    centos_image_filename: "CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2"
+    centos_image_url: "https://cloud.centos.org/centos/10-stream/x86_64/images/{{ centos_image_filename }}"
+    centos_checksum_url: "{{ centos_image_url }}.SHA256SUM"
+
+    base_image_path: "{{ libvirt_pool_dir }}/{{ centos_image_filename }}"
+    vm_disk_path: "{{ libvirt_pool_dir }}/{{ vm_name }}.qcow2"
+
+  tasks:
+    - name: Install required host packages
+      become: true
+      ansible.builtin.dnf:
+        name:
+          - qemu-kvm
+          - libvirt
+          - libvirt-daemon-kvm
+          - virt-install
+        state: present
+
+    - name: Ensure libvirtd is running and enabled
+      become: true
+      ansible.builtin.systemd:
+        name: libvirtd
+        state: started
+        enabled: true
+
+    - name: Ensure the libvirt storage pool directory exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ libvirt_pool_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0711"
+
+    - name: Check whether the libvirt storage pool is already defined
+      ansible.builtin.command: virsh --connect qemu:///system pool-info {{ libvirt_pool_name }}
+      register: pool_info
+      changed_when: false
+      failed_when: false
+
+    - name: Define the libvirt storage pool
+      when: pool_info.rc != 0
+      ansible.builtin.command: >
+        virsh --connect qemu:///system pool-define-as {{ libvirt_pool_name }}
+        dir --target {{ libvirt_pool_dir }}
+
+    - name: Build and start the storage pool, and enable autostart
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "virsh --connect qemu:///system pool-build {{ libvirt_pool_name }} --build"
+        - "virsh --connect qemu:///system pool-start {{ libvirt_pool_name }}"
+        - "virsh --connect qemu:///system pool-autostart {{ libvirt_pool_name }}"
+      when: pool_info.rc != 0
+      changed_when: true
+      failed_when: false
+
+    - name: Fetch the published SHA256SUM for the cloud image
+      ansible.builtin.uri:
+        url: "{{ centos_checksum_url }}"
+        return_content: true
+      register: centos_checksum_raw
+
+    - name: Extract the SHA256 checksum for the image file
+      ansible.builtin.set_fact:
+        centos_image_sha256: >-
+          {{ centos_checksum_raw.content
+             | regex_search('SHA256 \(' ~ centos_image_filename ~ '\) = ([0-9a-f]{64})', '\1')
+             | first }}
+
+    - name: Download the CentOS Stream 10 GenericCloud image (checksum-verified)
+      become: true
+      ansible.builtin.get_url:
+        url: "{{ centos_image_url }}"
+        dest: "{{ base_image_path }}"
+        checksum: "sha256:{{ centos_image_sha256 }}"
+        mode: "0644"
+        timeout: 600
+
+    - name: Check whether the VM disk already exists
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}"
+      register: vm_disk_stat
+
+    - name: Create a per-VM qcow2 disk backed by the base cloud image
+      become: true
+      when: not vm_disk_stat.stat.exists
+      ansible.builtin.command: >
+        qemu-img create -f qcow2 -F qcow2
+        -b {{ base_image_path }}
+        {{ vm_disk_path }} {{ vm_disk_gb }}G
+
+    - name: Set ownership and permissions on the VM disk
+      become: true
+      ansible.builtin.file:
+        path: "{{ vm_disk_path }}"
+        owner: qemu
+        group: qemu
+        mode: "0660"
+
+    - name: Check whether the VM is already defined
+      ansible.builtin.command: virsh --connect qemu:///system dominfo {{ vm_name }}
+      register: vm_info
+      changed_when: false
+      failed_when: false
+
+    - name: Define and start the VM with virt-install
+      when: vm_info.rc != 0
+      ansible.builtin.command: >
+        virt-install
+        --connect qemu:///system
+        --name {{ vm_name }}
+        --memory {{ vm_memory_mb }}
+        --vcpus {{ vm_vcpus }}
+        --osinfo detect=on,require=off
+        --import
+        --disk path={{ vm_disk_path }},format=qcow2,bus=virtio
+        --network network={{ vm_network }},model=virtio
+        --graphics none
+        --console pty,target_type=serial
+        --noautoconsole
+
+    - name: Ensure the VM is running
+      ansible.builtin.command: virsh --connect qemu:///system start {{ vm_name }}
+      register: vm_start
+      changed_when: "'error' not in vm_start.stderr"
+      failed_when: >
+        vm_start.rc != 0 and 'already active' not in vm_start.stderr
