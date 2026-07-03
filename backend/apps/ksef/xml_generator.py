@@ -34,7 +34,11 @@ def _fmt_date(d) -> str:
 
 
 def _fmt_amount(d: Decimal) -> str:
-    return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    """Format decimal: strip trailing zeros (600.00 → 600, 2.40 → 2.4)."""
+    s = str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
 
 
 def _payment_code(payment_method: str) -> str:
@@ -100,17 +104,83 @@ def generate_fa3_xml(invoice) -> str:
         city=customer.city,
     )
 
-    # --- VAT summary (P_13/P_14 fields) ---
+    is_kor = bool(getattr(invoice, "is_correction", False))
+
+    # --- Original invoice items (needed for KOR before/after lines) ---
+    # Match original→correction pairs by order_item_id (same FK copied by the service).
+    # Items without order_item fall back to position-based matching.
+    # pairs: list of (orig_item, corr_item)
+    # added_items: correction items with no original pair (new lines added in correction)
+    pairs: list[tuple] = []
+    added_items: list = []
+    if is_kor and invoice.corrects_invoice_id:
+        raw_orig = list(invoice.corrects_invoice.items.all())
+        raw_corr = list(invoice.items.all())
+
+        # Build lookup: order_item_id → correction item
+        corr_by_order_item: dict = {}
+        corr_no_link: list = []
+        for ci in raw_corr:
+            if ci.order_item_id:
+                corr_by_order_item[ci.order_item_id] = ci
+            else:
+                corr_no_link.append(ci)
+
+        for oi in raw_orig:
+            if oi.order_item_id and oi.order_item_id in corr_by_order_item:
+                pairs.append((oi, corr_by_order_item[oi.order_item_id]))
+            else:
+                # Fallback: pair by position for items without order_item
+                pairs.append((oi, corr_no_link.pop(0) if corr_no_link else oi))
+
+        # Remaining corr_no_link = added lines (no original counterpart)
+        added_items = corr_no_link
+
+    def _rate_key(item) -> str:
+        return str(int(item.vat_rate)) if item.vat_rate == item.vat_rate.to_integral_value() else str(item.vat_rate)
+
+    # --- VAT summary ---
+    # For KOR: show the DIFFERENCE (corrected − original); may be negative.
+    # For regular invoices: sum of all lines.
     vat_groups: dict[str, dict] = {}  # rate_str -> {net, vat}
     total_gross = Decimal("0.00")
 
-    for item in items:
-        rate_key = str(int(item.vat_rate)) if item.vat_rate == item.vat_rate.to_integral_value() else str(item.vat_rate)
-        if rate_key not in vat_groups:
-            vat_groups[rate_key] = {"net": Decimal("0.00"), "vat": Decimal("0.00")}
-        vat_groups[rate_key]["net"] += item.line_net
-        vat_groups[rate_key]["vat"] += item.line_vat
-        total_gross += item.line_gross
+    if is_kor and pairs:
+        # Build original totals keyed by rate
+        orig_vat: dict[str, dict] = {}
+        for orig, _corr in pairs:
+            rk = _rate_key(orig)
+            orig_vat.setdefault(rk, {"net": Decimal("0"), "vat": Decimal("0")})
+            orig_vat[rk]["net"] += orig.line_net
+            orig_vat[rk]["vat"] += orig.line_vat
+
+        # Build corrected totals: non-removed pairs + added items
+        new_vat: dict[str, dict] = {}
+        for _orig, corr in pairs:
+            if not getattr(corr, "is_removed", False):
+                rk = _rate_key(corr)
+                new_vat.setdefault(rk, {"net": Decimal("0"), "vat": Decimal("0")})
+                new_vat[rk]["net"] += corr.line_net
+                new_vat[rk]["vat"] += corr.line_vat
+        for added in added_items:
+            rk = _rate_key(added)
+            new_vat.setdefault(rk, {"net": Decimal("0"), "vat": Decimal("0")})
+            new_vat[rk]["net"] += added.line_net
+            new_vat[rk]["vat"] += added.line_vat
+
+        all_rates = set(orig_vat) | set(new_vat)
+        for rk in all_rates:
+            diff_net = new_vat.get(rk, {}).get("net", Decimal("0")) - orig_vat.get(rk, {}).get("net", Decimal("0"))
+            diff_vat = new_vat.get(rk, {}).get("vat", Decimal("0")) - orig_vat.get(rk, {}).get("vat", Decimal("0"))
+            vat_groups[rk] = {"net": diff_net, "vat": diff_vat}
+            total_gross += diff_net + diff_vat
+    else:
+        for item in items:
+            rate_key = _rate_key(item)
+            vat_groups.setdefault(rate_key, {"net": Decimal("0.00"), "vat": Decimal("0.00")})
+            vat_groups[rate_key]["net"] += item.line_net
+            vat_groups[rate_key]["vat"] += item.line_vat
+            total_gross += item.line_gross
 
     # FA-3 schema positions for VAT rates (covers most common Polish rates)
     _vat_position_map = {
@@ -122,7 +192,8 @@ def generate_fa3_xml(invoice) -> str:
 
     vat_fields_xml = ""
     for rate_key, amounts in vat_groups.items():
-        if amounts["net"] > Decimal("0"):
+        # For KOR include lines even if negative; for regular only if positive
+        if is_kor or amounts["net"] > Decimal("0"):
             tags = _vat_position_map.get(rate_key)
             if tags:
                 vat_fields_xml += (
@@ -131,24 +202,68 @@ def generate_fa3_xml(invoice) -> str:
                 )
 
     # --- Line items (FaWiersz) ---
-    lines_xml = ""
-    for idx, item in enumerate(items, start=1):
-        # FA-3 uses gross unit price (P_9B) and gross line total (P_11A)
-        vat_multiplier = Decimal("1") + item.vat_rate / Decimal("100")
-        unit_price_gross = (item.unit_price_net * vat_multiplier).quantize(
-            Decimal("0.0001"), rounding=ROUND_HALF_UP
-        )
+    def _item_gross_price(item) -> Decimal:
+        vat_mult = Decimal("1") + item.vat_rate / Decimal("100")
+        return (item.unit_price_net * vat_mult).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+    def _fa_wiersz(idx: int, item, stan_przed: bool = False) -> str:
         pkwiu_tag = f"\n      <PKWiU>{_escape(item.pkwiu)}</PKWiU>" if item.pkwiu else ""
-        lines_xml += f"""
+        stan_tag = "\n      <StanPrzed>1</StanPrzed>" if stan_przed else ""
+        if is_kor:
+            # KOR uses net price (P_9A) and net line total (P_11), not gross
+            return f"""
     <FaWiersz>
       <NrWierszaFa>{idx}</NrWierszaFa>
       <P_7>{_escape(item.product_name)}</P_7>{pkwiu_tag}
       <P_8A>{_escape(item.product_unit or "szt")}</P_8A>
       <P_8B>{_fmt_amount(item.quantity)}</P_8B>
-      <P_9B>{_fmt_amount(unit_price_gross)}</P_9B>
-      <P_11A>{_fmt_amount(item.line_gross)}</P_11A>
-      <P_12>{int(item.vat_rate) if item.vat_rate == item.vat_rate.to_integral_value() else item.vat_rate}</P_12>
+      <P_9A>{_fmt_amount(item.unit_price_net)}</P_9A>
+      <P_11>{_fmt_amount(item.line_net)}</P_11>
+      <P_12>{_rate_key(item)}</P_12>{stan_tag}
     </FaWiersz>"""
+        else:
+            # Regular invoice uses gross price (P_9B) and gross line total (P_11A)
+            return f"""
+    <FaWiersz>
+      <NrWierszaFa>{idx}</NrWierszaFa>
+      <P_7>{_escape(item.product_name)}</P_7>{pkwiu_tag}
+      <P_8A>{_escape(item.product_unit or "szt")}</P_8A>
+      <P_8B>{_fmt_amount(item.quantity)}</P_8B>
+      <P_9B>{_fmt_amount(_item_gross_price(item))}</P_9B>
+      <P_11A>{_fmt_amount(item.line_gross)}</P_11A>
+      <P_12>{_rate_key(item)}</P_12>
+    </FaWiersz>"""
+
+    lines_xml = ""
+    if is_kor and pairs:
+        for idx, (orig, corr) in enumerate(pairs, start=1):
+            # Always emit StanPrzed (original value)
+            lines_xml += _fa_wiersz(idx, orig, stan_przed=True)
+            # Emit "after" row only if line is NOT removed
+            if not getattr(corr, "is_removed", False):
+                lines_xml += _fa_wiersz(idx, corr, stan_przed=False)
+        # Added lines (no original counterpart) — emit "after" row only
+        for idx, added in enumerate(added_items, start=len(pairs) + 1):
+            lines_xml += _fa_wiersz(idx, added, stan_przed=False)
+    else:
+        for idx, item in enumerate(items, start=1):
+            lines_xml += _fa_wiersz(idx, item)
+
+    # --- KOR: DaneFaKorygowanej block ---
+    dane_kor_xml = ""
+    if is_kor and invoice.corrects_invoice_id:
+        orig_inv = invoice.corrects_invoice
+        orig_ksef = orig_inv.ksef_number or ""
+        ksef_nr_tag = ""
+        if orig_ksef:
+            ksef_nr_tag = f"\n    <NrKSeF>1</NrKSeF>\n    <NrKSeFFaKorygowanej>{_escape(orig_ksef)}</NrKSeFFaKorygowanej>"
+        dane_kor_xml = f"""
+  <DaneFaKorygowanej>
+    <DataWystFaKorygowanej>{_fmt_date(orig_inv.issue_date)}</DataWystFaKorygowanej>
+    <NrFaKorygowanej>{_escape(orig_inv.invoice_number)}</NrFaKorygowanej>{ksef_nr_tag}
+  </DaneFaKorygowanej>"""
+
+    rodzaj_faktury = "KOR" if is_kor else "VAT"
 
     # --- Creation timestamp (UTC, ISO 8601) ---
     now_utc = datetime.now(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -199,7 +314,7 @@ def generate_fa3_xml(invoice) -> str:
       <P_23>2</P_23>
       <PMarzy><P_PMarzyN>1</P_PMarzyN></PMarzy>
     </Adnotacje>
-    <RodzajFaktury>VAT</RodzajFaktury>
+    <RodzajFaktury>{rodzaj_faktury}</RodzajFaktury>{dane_kor_xml}
     {lines_xml}
     <Platnosc>
       <TerminPlatnosci>

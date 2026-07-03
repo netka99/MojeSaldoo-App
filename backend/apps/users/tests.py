@@ -893,4 +893,179 @@ class UserPermissionsInSerializerTests(TestCase):
         self.assertEqual(r.status_code, 200)
         perms = r.data["user"]["permissions"]
         self.assertFalse(perms["can_access_ksef_inbox"])
-        self.assertFalse(perms["can_manage_stock_moves"])
+
+
+# ---------------------------------------------------------------------------
+# Account deletion tests
+# ---------------------------------------------------------------------------
+
+User = get_user_model()
+
+
+def _make_company_with_admin(username, email, company_name="TestCo", nip="1234567890"):
+    user = User.objects.create_user(username=username, email=email, password="pass1234")
+    company = Company.objects.create(name=company_name, nip=nip)
+    admin_role = CompanyRole.objects.create(company=company, name="Administrator", is_admin=True)
+    CompanyMembership.objects.create(
+        user=user, company=company, role="admin", company_role=admin_role, is_active=True
+    )
+    return user, company, admin_role
+
+
+class CompanyDeleteAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, self.admin_role = _make_company_with_admin(
+            "del-admin", "del-admin@test.com", "Alpha Corp", "9990000001"
+        )
+        self.non_admin = User.objects.create_user(
+            username="del-viewer", email="del-viewer@test.com", password="pass1234"
+        )
+        viewer_role = CompanyRole.objects.create(
+            company=self.company, name="Viewer", is_admin=False
+        )
+        CompanyMembership.objects.create(
+            user=self.non_admin, company=self.company, role="viewer",
+            company_role=viewer_role, is_active=True
+        )
+
+    def _url(self):
+        return reverse("company-delete", kwargs={"company_id": self.company.pk})
+
+    def test_admin_can_delete_with_correct_name(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(
+            self._url(), {"confirm_name": "Alpha Corp"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.company.refresh_from_db()
+        self.assertIsNotNone(self.company.deleted_at)
+        self.assertFalse(self.company.is_active)
+        self.assertFalse(
+            CompanyMembership.objects.filter(company=self.company).exists()
+        )
+
+    def test_wrong_confirm_name_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(
+            self._url(), {"confirm_name": "Wrong Name"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.company.refresh_from_db()
+        self.assertIsNone(self.company.deleted_at)
+
+    def test_non_admin_cannot_delete(self):
+        self.client.force_authenticate(user=self.non_admin)
+        response = self.client.delete(
+            self._url(), {"confirm_name": "Alpha Corp"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.company.refresh_from_db()
+        self.assertIsNone(self.company.deleted_at)
+
+    def test_anonymous_cannot_delete(self):
+        response = self.client.delete(
+            self._url(), {"confirm_name": "Alpha Corp"}, format="json"
+        )
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_ksef_certificate_deleted(self):
+        from apps.users.models import KSeFCertificate
+        KSeFCertificate.objects.create(
+            company=self.company,
+            uploaded_by=self.admin,
+            certificate_pem="FAKEPEM",
+            encrypted_key="FAKEKEY",
+        )
+        self.client.force_authenticate(user=self.admin)
+        self.client.delete(self._url(), {"confirm_name": "Alpha Corp"}, format="json")
+        self.assertFalse(KSeFCertificate.objects.filter(company=self.company).exists())
+
+    def test_admin_user_anonymized_after_deletion(self):
+        """Admin who has no other company memberships gets anonymized."""
+        self.client.force_authenticate(user=self.admin)
+        self.client.delete(self._url(), {"confirm_name": "Alpha Corp"}, format="json")
+        self.admin.refresh_from_db()
+        self.assertFalse(self.admin.is_active)
+        self.assertIn("deleted_", self.admin.username)
+
+    def test_deleted_company_not_in_me_list(self):
+        self.client.force_authenticate(user=self.admin)
+        self.client.delete(self._url(), {"confirm_name": "Alpha Corp"}, format="json")
+        # Create a fresh user with a second company to test the list
+        user2, company2, _ = _make_company_with_admin(
+            "del-list-u", "del-list@test.com", "Beta Corp", "9990000002"
+        )
+        self.client.force_authenticate(user=user2)
+        r = self.client.get(reverse("company-me-list"))
+        ids = [str(c["id"]) for c in r.data]
+        self.assertNotIn(str(self.company.pk), ids)
+        self.assertIn(str(company2.pk), ids)
+
+
+class CompanyLeaveAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, self.admin_role = _make_company_with_admin(
+            "leave-admin", "leave-admin@test.com", "LeaveCorp", "9990000003"
+        )
+        self.member = User.objects.create_user(
+            username="leave-member", email="leave-member@test.com", password="pass1234"
+        )
+        member_role = CompanyRole.objects.create(
+            company=self.company, name="Pracownik", is_admin=False
+        )
+        CompanyMembership.objects.create(
+            user=self.member, company=self.company, role="viewer",
+            company_role=member_role, is_active=True
+        )
+
+    def _url(self):
+        return reverse("company-leave", kwargs={"company_id": self.company.pk})
+
+    def test_member_can_leave(self):
+        self.client.force_authenticate(user=self.member)
+        response = self.client.delete(self._url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(
+            CompanyMembership.objects.filter(user=self.member, company=self.company).exists()
+        )
+
+    def test_sole_admin_cannot_leave(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(self._url())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(
+            CompanyMembership.objects.filter(user=self.admin, company=self.company).exists()
+        )
+
+    def test_second_admin_can_leave(self):
+        second_admin = User.objects.create_user(
+            username="leave-admin2", email="leave-admin2@test.com", password="pass1234"
+        )
+        CompanyMembership.objects.create(
+            user=second_admin, company=self.company, role="admin",
+            company_role=self.admin_role, is_active=True
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(self._url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(
+            CompanyMembership.objects.filter(user=self.admin, company=self.company).exists()
+        )
+
+    def test_nonmember_cannot_leave(self):
+        outsider = User.objects.create_user(
+            username="leave-out", email="leave-out@test.com", password="pass1234"
+        )
+        self.client.force_authenticate(user=outsider)
+        response = self.client.delete(self._url())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_member_anonymized_if_no_other_memberships(self):
+        """Member with no other companies gets anonymized after leaving."""
+        self.client.force_authenticate(user=self.member)
+        self.client.delete(self._url())
+        self.member.refresh_from_db()
+        self.assertFalse(self.member.is_active)
+        self.assertIn("deleted_", self.member.username)

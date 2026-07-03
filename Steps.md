@@ -1664,3 +1664,62 @@ Etap C (opcjonalny, później): Google OAuth
 ✅ Użytkownik z onboarding_completed=False jest przekierowywany na /onboarding
 ✅ SetupNudgeBar widoczny na dashboardzie dla nowych użytkowników
 ✅ Wszystkie testy przechodzą
+===================================
+Testy Korekt
+1. FV-KOR — Create a correction invoice
+Setup: you need an issued or paid invoice first.
+
+Go to Faktury (/invoices)
+
+Open any invoice with status Wystawiona or Opłacona
+
+On the detail page, find the "Utwórz korektę FV" button in the top-right action area
+
+Verify it is not visible on a draft invoice
+Verify it is not visible on an invoice that is already a correction
+Click "Utwórz korektę FV" → you land on /invoices/{id}/correction/new
+
+On the correction form: 5. Try clicking "Utwórz korektę FV (draft)" without filling in the reason — the button should be disabled 6. Fill in a reason, e.g. Błędna cena 7. Optionally change a line item quantity or price 8. Watch the Różnica live-counter update at the bottom 9. Click "Utwórz korektę FV (draft)" 10. You should be redirected to the new correction's detail page
+
+Verify in the correction detail:
+
+Invoice number should be FV-KOR/2026/NNNN
+Header shows "Korekta FV/2026/XXXX" (linking back to the original)
+Reason text is displayed
+Verify in the invoice list (/invoices):
+
+The new correction row has a red KOR badge next to the number
+Below the number: "Koryguje: FV/2026/XXXX" — clicking it navigates to the original
+2. FV-KOR list filters
+On the /invoices page, use the Typ toggle buttons:
+
+Button	Expected result
+Korekty FV-KOR
+Only FV-KOR/… invoices visible
+Tylko zwykłe
+Only FV/… invoices visible, no KOR badges
+Wszystkie
+Both types visible
+3. KSeF KOR → PZ-KOR (inbound correction)
+Go to KSeF → Skrzynka odbiorcza (/ksef/inbox)
+Find or sync a correction invoice (one with RodzajFaktury = KOR in its XML)
+That row should show an orange KOR badge next to the invoice number
+Instead of the normal + PZ button, there should be an orange PZ-KOR button
+Click PZ-KOR → you land on /ksef/inbox/{ksefNumber}/pz-kor
+On the PZ-KOR flow page: 6. If the original PZ is found: select it from the list 7. Check/uncheck line items, change quantities or unit costs for corrected lines 8. Fill in an optional reason 9. Click "Utwórz PZ-KOR" → redirected to the new delivery document
+
+Edge case — no PZ matched:
+
+Should show an amber warning: "Nie znaleziono powiązanego PZ" with guidance to first create a PZ for the original invoice
+4. Quick sanity checks
+What to check	                               Where
+FV-KOR number format is FV-KOR/2026/0001
+                                             Correction detail page
+Second correction gets FV-KOR/2026/0002
+                                              Create a second one
+Can't correct a draft invoice
+                                              Button hidden in detail
+Can't correct a FV-KOR itself
+                                               Button hidden in detail
+?is_correction=true API filter
+                                            GET /api/invoices/?is_correction=true in browser/Postman

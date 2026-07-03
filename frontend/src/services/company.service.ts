@@ -68,4 +68,10 @@ export const companyService = {
 
   updateWorkflowSettings: (companyId: string, data: Partial<CompanyWorkflowSettings>) =>
     api.patch<CompanyWorkflowSettings>(`/companies/${companyId}/workflow-settings/`, data),
+
+  deleteCompany: (companyId: string, confirmName: string) =>
+    api.delete<{ detail: string }>(`/companies/${companyId}/delete/`, { data: { confirm_name: confirmName } }),
+
+  leaveCompany: (companyId: string) =>
+    api.delete<{ detail: string }>(`/companies/${companyId}/leave/`),
 };

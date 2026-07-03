@@ -34,6 +34,7 @@ export interface InvoiceItem {
   product_unit: string;
   pkwiu: string;
   quantity: string | number;
+  is_removed?: boolean;
   unit_price_net: string | number;
   vat_rate: string | number;
   line_net: string | number;
@@ -78,15 +79,19 @@ export interface Invoice {
   items: InvoiceItem[];
 }
 
+/** One item entry in a correction payload. */
+export type CorrectionItemEntry =
+  | { item_id: string; remove: true }
+  | { item_id: string; quantity?: string; unit_price_net?: string; vat_rate?: string }
+  | { product_name: string; quantity: string; unit_price_net: string; vat_rate: string; product_unit?: string };
+
 /** Body for `POST /api/invoices/:id/create-correction/`. */
 export interface CreateCorrectionBody {
   correction_reason: string;
   issue_date?: string;
-  items?: Array<{
-    item_id: string;
-    quantity?: string | number;
-    unit_price_net?: string | number;
-  }>;
+  due_date?: string;
+  payment_method?: string;
+  items?: CorrectionItemEntry[];
 }
 
 /** `POST /api/invoices/` — writable fields (`status` is server / action controlled). */

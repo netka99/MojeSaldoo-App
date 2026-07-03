@@ -172,6 +172,19 @@ describe('InvoiceDetailPage — "Utwórz korektę FV" button visibility', () => 
     expect(screen.getByRole('button', { name: 'Utwórz korektę FV' })).toBeInTheDocument();
   });
 
+  it('shows button for sent (KSeF) invoice', () => {
+    mockUseInvoiceQuery.mockReturnValue({
+      data: makeInvoice({ status: 'sent' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.getByRole('button', { name: 'Utwórz korektę FV' })).toBeInTheDocument();
+  });
+
   it('hides button for draft invoice', () => {
     mockUseInvoiceQuery.mockReturnValue({
       data: makeInvoice({ status: 'draft' }),

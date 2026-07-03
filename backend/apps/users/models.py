@@ -56,6 +56,7 @@ class Company(models.Model):
     onboarding_completed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
 
 class CompanyRole(models.Model):

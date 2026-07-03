@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .certificate_views import KSeFCertificateStatusView, KSeFCertificateUploadView
+from .deletion_views import CompanyDeleteView, CompanyLeaveView
 from .views import (
     CompanyCreateView,
     CompanyDetailView,
@@ -65,5 +66,7 @@ urlpatterns = [
         CompanyMembersListView.as_view(),
         name="company-members-list",
     ),
+    path("<uuid:company_id>/delete/", CompanyDeleteView.as_view(), name="company-delete"),
+    path("<uuid:company_id>/leave/", CompanyLeaveView.as_view(), name="company-leave"),
     path("<uuid:pk>/", CompanyDetailView.as_view(), name="company-detail"),
 ]

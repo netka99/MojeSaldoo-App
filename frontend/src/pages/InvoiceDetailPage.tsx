@@ -273,7 +273,7 @@ export function InvoiceDetailPage() {
   const showKsefRefresh = invoice?.ksef_status === 'pending';
   const showCreateCorrection =
     !invoice?.is_correction &&
-    (invoice?.status === 'issued' || invoice?.status === 'paid');
+    (invoice?.status === 'issued' || invoice?.status === 'sent' || invoice?.status === 'paid');
 
   const numberLabel = invoice?.invoice_number ?? preview?.invoice.invoice_number ?? id.slice(0, 8);
 

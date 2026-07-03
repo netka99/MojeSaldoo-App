@@ -75,6 +75,7 @@ class CompanyDetailView(generics.RetrieveUpdateAPIView):
             Company.objects.filter(
                 memberships__user=self.request.user,
                 memberships__is_active=True,
+                deleted_at__isnull=True,
             )
             .distinct()
         )
@@ -118,6 +119,7 @@ class CompanyMeListView(generics.ListAPIView):
             Company.objects.filter(
                 memberships__user=self.request.user,
                 memberships__is_active=True,
+                deleted_at__isnull=True,
             )
             .distinct()
             .order_by("name")

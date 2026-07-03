@@ -70,6 +70,7 @@ function makeInvoice(over: Partial<Invoice> = {}): Invoice {
     items: [
       {
         id: 'item-1',
+        order_item: null,
         product: null,
         product_name: 'Chleb razowy',
         product_unit: 'szt',
@@ -80,6 +81,7 @@ function makeInvoice(over: Partial<Invoice> = {}): Invoice {
         line_net: '40.70',
         line_vat: '9.36',
         line_gross: '50.06',
+        created_at: '2026-05-15T10:00:00Z',
       },
     ],
     ...over,
@@ -196,8 +198,116 @@ describe('CorrectionInvoiceCreatePage', () => {
     });
     renderPage();
     expect(
-      screen.getByText(/Korektę można wystawić tylko do faktury wystawionej lub opłaconej/),
+      screen.getByText(/Korektę można wystawić tylko do faktury wystawionej, wysłanej lub opłaconej/),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Utwórz korektę FV/ })).not.toBeInTheDocument();
+  });
+
+  it('remove line — toggles strikethrough and sends remove: true in payload', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValue({ id: 'kor-1', corrects_invoice_id: 'inv-1' });
+    renderPage();
+
+    // Click "Usuń" button for the item row
+    await user.click(screen.getByRole('button', { name: /Usuń/i }));
+    // Product name should have line-through class (row marked removed)
+    expect(screen.getByText('Chleb razowy').closest('td')).toHaveClass('line-through');
+
+    await user.type(screen.getByPlaceholderText(/Wpisz powód korekty/i), 'Usunięcie pozycji');
+    await user.click(screen.getByRole('button', { name: /Utwórz korektę FV/ }));
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        id: 'inv-1',
+        body: expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ item_id: 'item-1', remove: true }),
+          ]),
+        }),
+      });
+    });
+  });
+
+  it('restore line — clicking Przywróć removes strikethrough', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: /Usuń/i }));
+    expect(screen.getByText('Chleb razowy').closest('td')).toHaveClass('line-through');
+
+    await user.click(screen.getByRole('button', { name: /Przywróć/i }));
+    expect(screen.getByText('Chleb razowy').closest('td')).not.toHaveClass('line-through');
+  });
+
+  it('add new line — row appears after clicking Dodaj pozycję', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValue({ id: 'kor-1', corrects_invoice_id: 'inv-1' });
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: /Dodaj pozycję/i }));
+    expect(screen.getByTestId('new-line-row')).toBeInTheDocument();
+
+    // Fill in the new line
+    const nameInput = screen.getByPlaceholderText(/Nazwa produktu/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Nowy produkt');
+
+    await user.type(screen.getByPlaceholderText(/Wpisz powód korekty/i), 'Dodanie produktu');
+    await user.click(screen.getByRole('button', { name: /Utwórz korektę FV/ }));
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        id: 'inv-1',
+        body: expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ product_name: 'Nowy produkt' }),
+          ]),
+        }),
+      });
+    });
+  });
+
+  it('VAT rate change — sends vat_rate in payload', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValue({ id: 'kor-1', corrects_invoice_id: 'inv-1' });
+    renderPage();
+
+    // Change VAT select for the existing item (labeled "Stawka VAT")
+    const vatSelects = screen.getAllByRole('combobox', { name: /Stawka VAT/i });
+    await user.selectOptions(vatSelects[0], '8');
+
+    await user.type(screen.getByPlaceholderText(/Wpisz powód korekty/i), 'Zmiana VAT');
+    await user.click(screen.getByRole('button', { name: /Utwórz korektę FV/ }));
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        id: 'inv-1',
+        body: expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ item_id: 'item-1', vat_rate: '8' }),
+          ]),
+        }),
+      });
+    });
+  });
+
+  it('header due_date override — sends due_date in payload when changed', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValue({ id: 'kor-1', corrects_invoice_id: 'inv-1' });
+    renderPage();
+
+    // The due_date field is a <input type="date"> — query by type to avoid ambiguity
+    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    await user.type(dateInput, '2026-12-31');
+
+    await user.type(screen.getByPlaceholderText(/Wpisz powód korekty/i), 'Korekta terminu');
+    await user.click(screen.getByRole('button', { name: /Utwórz korektę FV/ }));
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        id: 'inv-1',
+        body: expect.objectContaining({ due_date: '2026-12-31' }),
+      });
+    });
   });
 });

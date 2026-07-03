@@ -245,6 +245,10 @@ class InvoiceItem(models.Model):
         decimal_places=2,
         validators=[MinValueValidator(Decimal("0.01"))],
     )
+    is_removed = models.BooleanField(
+        default=False,
+        help_text="True for correction lines that remove the original line entirely.",
+    )
     unit_price_net = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -278,6 +282,11 @@ class InvoiceItem(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def _recompute_line_amounts(self) -> None:
+        if self.is_removed:
+            self.line_net = Decimal("0.00")
+            self.line_vat = Decimal("0.00")
+            self.line_gross = Decimal("0.00")
+            return
         net = (self.quantity * self.unit_price_net).quantize(Decimal("0.01"))
         self.line_net = net
         self.line_vat = (net * (self.vat_rate / Decimal("100"))).quantize(Decimal("0.01"))

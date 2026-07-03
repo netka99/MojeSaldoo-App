@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useInvoiceQuery } from '@/query/use-invoices';
 import { useCreateCorrectionMutation } from '@/query/use-invoices';
-import type { CreateCorrectionBody } from '@/types';
+import type { CorrectionItemEntry, InvoicePaymentMethod } from '@/types';
 
 const fmt = (v: string | number) =>
   typeof v === 'number' ? v.toFixed(2) : parseFloat(String(v)).toFixed(2);
@@ -24,7 +24,25 @@ type ItemOverride = {
   itemId: string;
   quantity: string;
   unitPriceNet: string;
+  vatRate: string;
+  removed: boolean;
 };
+
+type NewLine = {
+  key: number;
+  productName: string;
+  productUnit: string;
+  quantity: string;
+  unitPriceNet: string;
+  vatRate: string;
+};
+
+const VAT_OPTIONS = ['23', '8', '5', '0'];
+const PAYMENT_METHODS: { value: InvoicePaymentMethod; label: string }[] = [
+  { value: 'transfer', label: 'Przelew' },
+  { value: 'cash', label: 'Gotówka' },
+  { value: 'card', label: 'Karta' },
+];
 
 export function CorrectionInvoiceCreatePage() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +53,13 @@ export function CorrectionInvoiceCreatePage() {
 
   const [correctionReason, setCorrectionReason] = useState('');
   const [overrides, setOverrides] = useState<Record<string, ItemOverride>>({});
+  const [newLines, setNewLines] = useState<NewLine[]>([]);
+  const [newLineKey, setNewLineKey] = useState(0);
+
+  // Header overrides (only sent when changed from original)
+  const [dueDate, setDueDate] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<InvoicePaymentMethod | ''>('');
+
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   if (!id) {
@@ -50,11 +75,11 @@ export function CorrectionInvoiceCreatePage() {
     return <div className="p-6 text-destructive">Nie znaleziono faktury.</div>;
   }
 
-  if (invoice.is_correction || (invoice.status !== 'issued' && invoice.status !== 'paid')) {
+  if (invoice.is_correction || (invoice.status !== 'issued' && invoice.status !== 'sent' && invoice.status !== 'paid')) {
     return (
       <div className="mx-auto max-w-2xl p-6">
         <p className="text-destructive">
-          Korektę można wystawić tylko do faktury wystawionej lub opłaconej.
+          Korektę można wystawić tylko do faktury wystawionej, wysłanej lub opłaconej.
         </p>
         <Button variant="outline" className="mt-4" onClick={() => navigate(`/invoices/${id}`)}>
           ← Wróć
@@ -63,25 +88,53 @@ export function CorrectionInvoiceCreatePage() {
     );
   }
 
-  const getOverride = (itemId: string, field: 'quantity' | 'unitPriceNet', fallback: string) =>
-    overrides[itemId]?.[field] ?? fallback;
+  const getOverride = (itemId: string): ItemOverride | undefined => overrides[itemId];
 
-  const setOverride = (itemId: string, field: 'quantity' | 'unitPriceNet', value: string) => {
-    setOverrides((prev) => ({
-      ...prev,
-      [itemId]: {
+  const updateOverride = (itemId: string, patch: Partial<Omit<ItemOverride, 'itemId'>>) => {
+    setOverrides((prev) => {
+      const existing = prev[itemId];
+      const item = invoice.items.find((i) => i.id === itemId);
+      const base: ItemOverride = existing ?? {
         itemId,
-        quantity: getOverride(itemId, 'quantity', fmt(invoice.items.find((i) => i.id === itemId)?.quantity ?? '0')),
-        unitPriceNet: getOverride(itemId, 'unitPriceNet', fmt(invoice.items.find((i) => i.id === itemId)?.unit_price_net ?? '0')),
-        [field]: value,
-      },
-    }));
+        quantity: '',
+        unitPriceNet: '',
+        vatRate: fmt(item?.vat_rate ?? '23'),
+        removed: false,
+      };
+      return { ...prev, [itemId]: { ...base, ...patch } };
+    });
   };
 
+  const toggleRemoved = (itemId: string) => {
+    const removed = !getOverride(itemId)?.removed;
+    updateOverride(itemId, { removed });
+  };
+
+  const addNewLine = () => {
+    setNewLines((prev) => [
+      ...prev,
+      { key: newLineKey, productName: '', productUnit: 'szt', quantity: '1', unitPriceNet: '0.00', vatRate: '23' },
+    ]);
+    setNewLineKey((k) => k + 1);
+  };
+
+  const removeNewLine = (key: number) => setNewLines((prev) => prev.filter((l) => l.key !== key));
+
+  const updateNewLine = (key: number, patch: Partial<NewLine>) =>
+    setNewLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  // Compute totals for preview
   const correctionTotal = invoice.items.reduce((sum, item) => {
-    const qty = parseFloat(getOverride(item.id, 'quantity', fmt(item.quantity)));
-    const price = parseFloat(getOverride(item.id, 'unitPriceNet', fmt(item.unit_price_net)));
-    const vat = parseFloat(String(item.vat_rate)) / 100;
+    const ov = getOverride(item.id);
+    if (ov?.removed) return sum;
+    const qty = parseFloat(ov?.quantity || fmt(item.quantity));
+    const price = parseFloat(ov?.unitPriceNet || fmt(item.unit_price_net));
+    const vat = parseFloat(ov?.vatRate ?? fmt(item.vat_rate)) / 100;
+    return sum + qty * price * (1 + vat);
+  }, 0) + newLines.reduce((sum, l) => {
+    const qty = parseFloat(l.quantity || '0');
+    const price = parseFloat(l.unitPriceNet || '0');
+    const vat = parseFloat(l.vatRate || '0') / 100;
     return sum + qty * price * (1 + vat);
   }, 0);
 
@@ -95,18 +148,49 @@ export function CorrectionInvoiceCreatePage() {
     }
     setSubmitError(null);
 
-    const items: CreateCorrectionBody['items'] = Object.values(overrides)
-      .filter((o) => o.quantity !== '' || o.unitPriceNet !== '')
-      .map((o) => ({
-        item_id: o.itemId,
-        quantity: o.quantity,
-        unit_price_net: o.unitPriceNet,
-      }));
+    const items: CorrectionItemEntry[] = [];
+
+    // Existing item overrides
+    for (const item of invoice.items) {
+      const ov = getOverride(item.id);
+      if (!ov) continue;
+      if (ov.removed) {
+        items.push({ item_id: item.id, remove: true });
+      } else {
+        const entry: { item_id: string; quantity?: string; unit_price_net?: string; vat_rate?: string } = {
+          item_id: item.id,
+        };
+        if (ov.quantity) entry.quantity = ov.quantity;
+        if (ov.unitPriceNet) entry.unit_price_net = ov.unitPriceNet;
+        const originalVat = fmt(item.vat_rate);
+        if (ov.vatRate && ov.vatRate !== originalVat) entry.vat_rate = ov.vatRate;
+        if (entry.quantity || entry.unit_price_net || entry.vat_rate) {
+          items.push(entry);
+        }
+      }
+    }
+
+    // New lines
+    for (const l of newLines) {
+      if (!l.productName.trim()) continue;
+      items.push({
+        product_name: l.productName.trim(),
+        quantity: l.quantity,
+        unit_price_net: l.unitPriceNet,
+        vat_rate: l.vatRate,
+        product_unit: l.productUnit,
+      });
+    }
 
     try {
       const correction = await createM.mutateAsync({
         id,
-        body: { correction_reason: correctionReason.trim(), items },
+        body: {
+          correction_reason: correctionReason.trim(),
+          items,
+          ...(dueDate ? { due_date: dueDate } : {}),
+          ...(paymentMethod ? { payment_method: paymentMethod } : {}),
+        },
       });
       navigate(`/invoices/${correction.id}`);
     } catch (e) {
@@ -153,50 +237,154 @@ export function CorrectionInvoiceCreatePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="pb-2 pr-4">Produkt</th>
-                  <th className="pb-2 pr-4 text-right">Ilość oryg.</th>
-                  <th className="pb-2 pr-4">Ilość po kor.</th>
-                  <th className="pb-2 pr-4 text-right">Cena netto oryg.</th>
-                  <th className="pb-2">Cena netto po kor.</th>
+                  <th className="pb-2 pr-2">Produkt</th>
+                  <th className="pb-2 pr-2 text-right">Ilość oryg.</th>
+                  <th className="pb-2 pr-2">Ilość po kor.</th>
+                  <th className="pb-2 pr-2 text-right">Cena netto oryg.</th>
+                  <th className="pb-2 pr-2">Cena netto po kor.</th>
+                  <th className="pb-2 pr-2">VAT %</th>
+                  <th className="pb-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {invoice.items.map((item) => (
-                  <tr key={item.id} className="border-b last:border-0">
-                    <td className="py-2 pr-4 font-medium">{item.product_name}</td>
-                    <td className="py-2 pr-4 text-right text-muted-foreground">
-                      {fmt(item.quantity)} {item.product_unit}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        className="w-24 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder={fmt(item.quantity)}
-                        value={overrides[item.id]?.quantity ?? ''}
-                        onChange={(e) => setOverride(item.id, 'quantity', e.target.value)}
-                      />
-                    </td>
-                    <td className="py-2 pr-4 text-right text-muted-foreground">
-                      {fmt(item.unit_price_net)} PLN
-                    </td>
-                    <td className="py-2">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        className="w-28 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder={fmt(item.unit_price_net)}
-                        value={overrides[item.id]?.unitPriceNet ?? ''}
-                        onChange={(e) => setOverride(item.id, 'unitPriceNet', e.target.value)}
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {invoice.items.map((item) => {
+                  const ov = getOverride(item.id);
+                  const removed = ov?.removed ?? false;
+                  return (
+                    <tr
+                      key={item.id}
+                      className={`border-b last:border-0 ${removed ? 'opacity-50' : ''}`}
+                      data-removed={removed || undefined}
+                    >
+                      <td className={`py-2 pr-2 font-medium ${removed ? 'line-through' : ''}`}>
+                        {item.product_name}
+                      </td>
+                      <td className="py-2 pr-2 text-right text-muted-foreground">
+                        {fmt(item.quantity)} {item.product_unit}
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          disabled={removed}
+                          className="w-24 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40"
+                          placeholder={fmt(item.quantity)}
+                          value={ov?.quantity ?? ''}
+                          onChange={(e) => updateOverride(item.id, { quantity: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-2 pr-2 text-right text-muted-foreground">
+                        {fmt(item.unit_price_net)} PLN
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          disabled={removed}
+                          className="w-28 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40"
+                          placeholder={fmt(item.unit_price_net)}
+                          value={ov?.unitPriceNet ?? ''}
+                          onChange={(e) => updateOverride(item.id, { unitPriceNet: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <select
+                          disabled={removed}
+                          className="rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40"
+                          value={ov?.vatRate ?? fmt(item.vat_rate)}
+                          onChange={(e) => updateOverride(item.id, { vatRate: e.target.value })}
+                          aria-label="Stawka VAT"
+                        >
+                          {VAT_OPTIONS.map((v) => (
+                            <option key={v} value={v}>{v}%</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => toggleRemoved(item.id)}
+                          aria-label={removed ? 'Przywróć pozycję' : 'Usuń pozycję'}
+                        >
+                          {removed ? 'Przywróć' : 'Usuń'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
+          {/* Added lines */}
+          {newLines.length > 0 && (
+            <div className="mt-4 border-t pt-4">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Nowe pozycje:</p>
+              <div className="space-y-2">
+                {newLines.map((l) => (
+                  <div key={l.key} className="flex flex-wrap items-center gap-2" data-testid="new-line-row">
+                    <input
+                      type="text"
+                      className="flex-1 min-w-32 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="Nazwa produktu"
+                      value={l.productName}
+                      onChange={(e) => updateNewLine(l.key, { productName: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="w-16 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="Jedn."
+                      value={l.productUnit}
+                      onChange={(e) => updateNewLine(l.key, { productUnit: e.target.value })}
+                    />
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      className="w-20 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="Ilość"
+                      value={l.quantity}
+                      onChange={(e) => updateNewLine(l.key, { quantity: e.target.value })}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="w-24 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="Cena netto"
+                      value={l.unitPriceNet}
+                      onChange={(e) => updateNewLine(l.key, { unitPriceNet: e.target.value })}
+                    />
+                    <select
+                      className="rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      value={l.vatRate}
+                      onChange={(e) => updateNewLine(l.key, { vatRate: e.target.value })}
+                      aria-label="Stawka VAT"
+                    >
+                      {VAT_OPTIONS.map((v) => (
+                        <option key={v} value={v}>{v}%</option>
+                      ))}
+                    </select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => removeNewLine(l.key)}
+                      aria-label="Usuń nową pozycję"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Button variant="outline" size="sm" className="mt-3" onClick={addNewLine}>
+            + Dodaj pozycję
+          </Button>
 
           <div className="mt-4 space-y-1 border-t pt-4 text-sm">
             <div className="flex justify-between text-muted-foreground">
@@ -215,6 +403,39 @@ export function CorrectionInvoiceCreatePage() {
                 {difference >= 0 ? '+' : ''}
                 {difference.toFixed(2)} PLN
               </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Dane nagłówkowe (opcjonalne)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground">Termin płatności</label>
+              <input
+                type="date"
+                className="rounded border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground">Forma płatności</label>
+              <select
+                className="rounded border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value as InvoicePaymentMethod | '')}
+                aria-label="Forma płatności"
+              >
+                <option value="">— bez zmiany —</option>
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
             </div>
           </div>
         </CardContent>

@@ -83,3 +83,24 @@ export function useUpdateCompanyMutation() {
     },
   });
 }
+
+export function useDeleteCompanyMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ companyId, confirmName }: { companyId: string; confirmName: string }) =>
+      companyService.deleteCompany(companyId, confirmName),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}
+
+export function useLeaveCompanyMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (companyId: string) => companyService.leaveCompany(companyId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}

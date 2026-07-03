@@ -1676,6 +1676,100 @@ class CreateInvoiceCorrectionServiceTests(TestCase):
         )
         self.assertGreater(kor.total_gross, Decimal("0"))
 
+    def test_removed_line_is_marked_is_removed(self):
+        orig_item = self.invoice.items.first()
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Usunięcie pozycji",
+            items_data=[{"item_id": str(orig_item.id), "remove": True}],
+        )
+        kor_item = kor.items.first()
+        self.assertTrue(kor_item.is_removed)
+        # Removed item totals should be zeroed
+        self.assertEqual(kor_item.line_net, Decimal("0.00"))
+        self.assertEqual(kor_item.line_gross, Decimal("0.00"))
+
+    def test_removed_line_emits_only_stan_przed_in_xml(self):
+        from apps.ksef.xml_generator import generate_fa3_xml
+
+        orig_item = self.invoice.items.first()
+        self.invoice.ksef_number = "KSeF/123"
+        self.invoice.save(update_fields=["ksef_number"])
+
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Usunięcie",
+            items_data=[{"item_id": str(orig_item.id), "remove": True}],
+        )
+        xml = generate_fa3_xml(kor)
+        # StanPrzed tag present (original value row)
+        self.assertIn("<StanPrzed>1</StanPrzed>", xml)
+        # Only ONE FaWiersz block (no "after" row for removed item)
+        self.assertEqual(xml.count("<FaWiersz>"), 1)
+
+    def test_added_line_emits_only_after_in_xml(self):
+        from apps.ksef.xml_generator import generate_fa3_xml
+
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Dodanie pozycji",
+            items_data=[
+                {
+                    "product_name": "Nowy chleb",
+                    "quantity": "5",
+                    "unit_price_net": "3.00",
+                    "vat_rate": "5",
+                    "product_unit": "szt",
+                }
+            ],
+        )
+        xml = generate_fa3_xml(kor)
+        # Orig line pair (StanPrzed + after) + 1 added line = 3 FaWiersz blocks
+        self.assertEqual(xml.count("<FaWiersz>"), 3)
+        # New line has no StanPrzed (it has 1 StanPrzed from the orig item pair)
+        self.assertEqual(xml.count("<StanPrzed>1</StanPrzed>"), 1)
+        self.assertIn("Nowy chleb", xml)
+
+    def test_vat_rate_override_applied(self):
+        orig_item = self.invoice.items.first()
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Zmiana stawki VAT",
+            items_data=[{"item_id": str(orig_item.id), "vat_rate": "8"}],
+        )
+        kor_item = kor.items.first()
+        self.assertEqual(kor_item.vat_rate, Decimal("8"))
+
+    def test_header_due_date_override(self):
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Korekta",
+            items_data=[],
+            due_date=date(2026, 12, 31),
+        )
+        self.assertEqual(kor.due_date, date(2026, 12, 31))
+
+    def test_header_payment_method_override(self):
+        kor = self.service(
+            original_invoice=self.invoice,
+            company=self.company,
+            user=self.user,
+            correction_reason="Korekta",
+            items_data=[],
+            payment_method="cash",
+        )
+        self.assertEqual(kor.payment_method, "cash")
+
 
 class InvoiceCorrectionAPITests(TestCase):
     """POST /api/invoices/{id}/create-correction/ endpoint."""

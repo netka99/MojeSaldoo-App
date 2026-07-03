@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useResolvedCompanyId, type CompanyListRow } from '@/hooks/useResolvedCompanyId';
-import { useCompanyModulesQuery, useToggleModuleMutation, useWorkflowSettingsQuery, useUpdateWorkflowSettingsMutation } from '@/query/use-companies';
+import { useCompanyModulesQuery, useToggleModuleMutation, useWorkflowSettingsQuery, useUpdateWorkflowSettingsMutation, useDeleteCompanyMutation, useLeaveCompanyMutation } from '@/query/use-companies';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { CreateCompanyDialog } from '@/components/features/company/CreateCompanyDialog';
@@ -283,8 +283,228 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
   );
 }
 
+// ---------------------------------------------------------------------------
+// Delete Company Dialog
+// ---------------------------------------------------------------------------
+
+function DeleteCompanyDialog({
+  companyId,
+  companyName,
+  onSuccess,
+}: {
+  companyId: string;
+  companyName: string;
+  onSuccess: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const deleteMutation = useDeleteCompanyMutation();
+
+  const confirmed = inputValue === companyName;
+
+  const handleOpen = () => {
+    setInputValue('');
+    setError(null);
+    setOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleConfirm = async () => {
+    if (!confirmed) return;
+    setError(null);
+    try {
+      await deleteMutation.mutateAsync({ companyId, confirmName: inputValue });
+      setOpen(false);
+      onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się usunąć firmy');
+    }
+  };
+
+  if (!open) {
+    return (
+      <Button type="button" variant="destructive" onClick={handleOpen}>
+        Usuń firmę
+      </Button>
+    );
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-dialog-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    >
+      <div className="w-full max-w-md rounded-lg border bg-surface-card p-6 shadow-xl">
+        <h2 id="delete-dialog-title" className="text-lg font-semibold text-destructive">
+          Usuń firmę
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Ta operacja jest <strong>nieodwracalna</strong>. Dane podatkowe (faktury, WZ, PZ) zostaną zachowane zgodnie
+          z wymogami prawa przez 5 lat, ale dostęp do firmy zostanie trwale usunięty.
+        </p>
+        <p className="mt-3 text-sm">
+          Wpisz nazwę firmy, żeby potwierdzić:{' '}
+          <strong className="font-semibold">{companyName}</strong>
+        </p>
+        <input
+          ref={inputRef}
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          placeholder="Wpisz nazwę firmy"
+          className="mt-2 w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-destructive"
+          aria-label="Potwierdź nazwę firmy"
+        />
+        {error && (
+          <p className="mt-2 text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+            disabled={deleteMutation.isPending}
+          >
+            Anuluj
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void handleConfirm()}
+            disabled={!confirmed || deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? 'Usuwanie…' : 'Usuń firmę'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Leave Company Dialog
+// ---------------------------------------------------------------------------
+
+function LeaveCompanyDialog({
+  companyId,
+  onSuccess,
+}: {
+  companyId: string;
+  onSuccess: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const leaveMutation = useLeaveCompanyMutation();
+
+  const handleConfirm = async () => {
+    setError(null);
+    try {
+      await leaveMutation.mutateAsync(companyId);
+      setOpen(false);
+      onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się opuścić firmy');
+    }
+  };
+
+  if (!open) {
+    return (
+      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+        Opuść firmę
+      </Button>
+    );
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="leave-dialog-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    >
+      <div className="w-full max-w-md rounded-lg border bg-surface-card p-6 shadow-xl">
+        <h2 id="leave-dialog-title" className="text-lg font-semibold">
+          Opuść firmę
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Czy na pewno chcesz opuścić tę firmę? Stracisz dostęp do wszystkich jej danych.
+        </p>
+        {error && (
+          <p className="mt-2 text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+            disabled={leaveMutation.isPending}
+          >
+            Anuluj
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void handleConfirm()}
+            disabled={leaveMutation.isPending}
+          >
+            {leaveMutation.isPending ? 'Opuszczanie…' : 'Opuść firmę'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Danger Zone Section
+// ---------------------------------------------------------------------------
+
+function DangerZoneSection({
+  companyId,
+  companyName,
+  isAdmin,
+  onDone,
+}: {
+  companyId: string;
+  companyName: string;
+  isAdmin: boolean;
+  onDone: () => void;
+}) {
+  return (
+    <section aria-labelledby="danger-zone-heading" className="space-y-3">
+      <div>
+        <h2 id="danger-zone-heading" className="text-lg font-semibold text-destructive">
+          Strefa niebezpieczna
+        </h2>
+        <p className="text-sm text-muted-foreground">Poniższe akcje są nieodwracalne.</p>
+      </div>
+      <Card className="border-destructive/40">
+        <CardContent className="flex flex-wrap gap-3 pt-5">
+          <LeaveCompanyDialog companyId={companyId} onSuccess={onDone} />
+          {isAdmin && (
+            <DeleteCompanyDialog
+              companyId={companyId}
+              companyName={companyName}
+              onSuccess={onDone}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 export function CompanySettingsPage() {
   const { user, refreshUser } = useAuth();
+  const navigate = useNavigate();
   const resolved = useResolvedCompanyId();
   const ksefEnabled = useModuleGuard('ksef');
 
@@ -417,6 +637,16 @@ export function CompanySettingsPage() {
       <WorkflowSettingsSection
         companyId={companyId}
         canEdit={user?.is_company_admin === true || user?.permissions?.can_manage_settings === true}
+      />
+
+      <DangerZoneSection
+        companyId={companyId}
+        companyName={currentCompany?.name ?? ''}
+        isAdmin={user?.is_company_admin === true}
+        onDone={async () => {
+          await refreshUser();
+          navigate('/');
+        }}
       />
     </div>
   );

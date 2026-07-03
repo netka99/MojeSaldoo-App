@@ -201,18 +201,23 @@ def create_invoice_correction(
     correction_reason: str,
     items_data: list[dict],
     issue_date: date | None = None,
+    due_date: date | None = None,
+    payment_method: str | None = None,
 ) -> Invoice:
     """
     Create a draft FV-KOR (correction invoice) linked to ``original_invoice``.
 
-    ``items_data`` is a list of dicts:
-        [{"item_id": "<uuid>", "quantity": Decimal, "unit_price_net": Decimal}, ...]
-    Any item not present in the list is copied with its original quantity/price.
-    Quantity and price must be > 0 (they represent the corrected final values).
+    ``items_data`` is a list of dicts with one of these shapes:
+      - Modified line:  {"item_id": "<uuid>", "quantity": ..., "unit_price_net": ..., "vat_rate": ...}
+      - Removed line:   {"item_id": "<uuid>", "remove": True}
+      - Added line:     {"product_name": ..., "quantity": ..., "unit_price_net": ..., "vat_rate": ...,
+                         "product_unit": ""}
+    Any original item not referenced in items_data is copied unchanged.
+    ``due_date`` and ``payment_method`` override the correction header when provided.
     """
-    if original_invoice.status not in (Invoice.STATUS_ISSUED, Invoice.STATUS_PAID):
+    if original_invoice.status not in (Invoice.STATUS_ISSUED, Invoice.STATUS_SENT, Invoice.STATUS_PAID):
         raise ValidationError(
-            {"detail": "Korektę można wystawić tylko do faktury wystawionej lub opłaconej."}
+            {"detail": "Korektę można wystawić tylko do faktury wystawionej, wysłanej lub opłaconej."}
         )
 
     if not correction_reason or not correction_reason.strip():
@@ -220,6 +225,12 @@ def create_invoice_correction(
 
     resolved_issue = issue_date or timezone.localdate()
     pay_days = getattr(original_invoice.customer, "payment_terms", None) or 14
+
+    resolved_due = due_date if due_date is not None else (resolved_issue + timedelta(days=int(pay_days)))
+
+    resolved_pm = payment_method if payment_method not in (None, "") else original_invoice.payment_method
+    if resolved_pm not in dict(Invoice.PAYMENT_METHOD_CHOICES):
+        raise ValidationError({"payment_method": "Invalid payment method."})
 
     correction = Invoice(
         company=company,
@@ -229,8 +240,8 @@ def create_invoice_correction(
         delivery_document=original_invoice.delivery_document,
         issue_date=resolved_issue,
         sale_date=original_invoice.sale_date,
-        due_date=resolved_issue + timedelta(days=int(pay_days)),
-        payment_method=original_invoice.payment_method,
+        due_date=resolved_due,
+        payment_method=resolved_pm,
         status=Invoice.STATUS_DRAFT,
         is_correction=True,
         corrects_invoice=original_invoice,
@@ -238,12 +249,31 @@ def create_invoice_correction(
     )
     correction.save()
 
-    override_map = {str(d["item_id"]): d for d in items_data}
+    # Build lookup by item_id: item_id -> override dict (or {"remove": True})
+    override_map: dict[str, dict] = {}
+    new_lines: list[dict] = []  # entries without item_id → added lines
+    for d in items_data:
+        if "item_id" in d:
+            override_map[str(d["item_id"])] = d
+        else:
+            new_lines.append(d)
 
+    # Copy / modify / remove original lines
     for orig_item in original_invoice.items.all().select_related("product"):
         override = override_map.get(str(orig_item.id), {})
-        qty = Decimal(str(override.get("quantity", orig_item.quantity)))
-        price = Decimal(str(override.get("unit_price_net", orig_item.unit_price_net)))
+        is_removed = bool(override.get("remove", False))
+
+        qty = Decimal(str(orig_item.quantity))
+        price = Decimal(str(orig_item.unit_price_net))
+        vat = orig_item.vat_rate
+
+        if not is_removed:
+            if "quantity" in override and override["quantity"] not in (None, ""):
+                qty = Decimal(str(override["quantity"]))
+            if "unit_price_net" in override and override["unit_price_net"] not in (None, ""):
+                price = Decimal(str(override["unit_price_net"]))
+            if "vat_rate" in override and override["vat_rate"] not in (None, ""):
+                vat = Decimal(str(override["vat_rate"]))
 
         InvoiceItem.objects.create(
             invoice=correction,
@@ -254,7 +284,26 @@ def create_invoice_correction(
             pkwiu=orig_item.pkwiu,
             quantity=qty,
             unit_price_net=price,
-            vat_rate=orig_item.vat_rate,
+            vat_rate=vat,
+            is_removed=is_removed,
+        )
+
+    # Append added lines (no link to original items)
+    for new_line in new_lines:
+        qty = Decimal(str(new_line.get("quantity", "1")))
+        price = Decimal(str(new_line.get("unit_price_net", "0")))
+        vat = Decimal(str(new_line.get("vat_rate", "23")))
+        InvoiceItem.objects.create(
+            invoice=correction,
+            order_item=None,
+            product=None,
+            product_name=str(new_line.get("product_name", "")).strip(),
+            product_unit=str(new_line.get("product_unit", "")).strip(),
+            pkwiu="",
+            quantity=qty,
+            unit_price_net=price,
+            vat_rate=vat,
+            is_removed=False,
         )
 
     recalculate_invoice_totals(correction)

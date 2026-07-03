@@ -63,6 +63,9 @@ vi.mock('@/context/AuthContext', () => ({
   }),
 }));
 
+const deleteCompanyMutateAsync = vi.fn().mockResolvedValue({ detail: 'Firma została usunięta.' });
+const leaveCompanyMutateAsync = vi.fn().mockResolvedValue({ detail: 'Opuściłeś firmę.' });
+
 vi.mock('@/query/use-companies', () => ({
   useMyCompaniesQuery: () => ({
     get data() {
@@ -100,6 +103,14 @@ vi.mock('@/query/use-companies', () => ({
   }),
   useUpdateWorkflowSettingsMutation: () => ({
     mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
+  useDeleteCompanyMutation: () => ({
+    mutateAsync: deleteCompanyMutateAsync,
+    isPending: false,
+  }),
+  useLeaveCompanyMutation: () => ({
+    mutateAsync: leaveCompanyMutateAsync,
     isPending: false,
   }),
 }));
@@ -190,5 +201,59 @@ describe('CompanySettingsPage', () => {
     renderPage();
 
     expect(screen.getByText(/Nie należysz do żadnej firmy/)).toBeInTheDocument();
+  });
+
+  it('shows delete button only for admins', () => {
+    renderPage();
+    expect(screen.getByRole('button', { name: 'Usuń firmę' })).toBeInTheDocument();
+  });
+
+  it('hides delete button for non-admins', () => {
+    authState.user.is_company_admin = false;
+    renderPage();
+    expect(screen.queryByRole('button', { name: 'Usuń firmę' })).not.toBeInTheDocument();
+  });
+
+  it('shows leave button for all members', () => {
+    authState.user.is_company_admin = false;
+    renderPage();
+    expect(screen.getByRole('button', { name: 'Opuść firmę' })).toBeInTheDocument();
+  });
+
+  it('confirm button disabled until name matches', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Usuń firmę' }));
+
+    const confirmBtn = screen.getByRole('button', { name: 'Usuń firmę', hidden: false });
+    expect(confirmBtn).toBeDisabled();
+
+    const input = screen.getByPlaceholderText('Wpisz nazwę firmy');
+    await user.type(input, 'ACME Sp. z o.o.');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Usuń firmę' })).not.toBeDisabled();
+    });
+  });
+
+  it('calls deleteCompany and navigates on successful deletion', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Usuń firmę' }));
+    const input = screen.getByPlaceholderText('Wpisz nazwę firmy');
+    await user.type(input, 'ACME Sp. z o.o.');
+
+    const confirmBtn = await screen.findByRole('button', { name: 'Usuń firmę' });
+    await user.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(deleteCompanyMutateAsync).toHaveBeenCalledWith({
+        companyId: '550e8400-e29b-41d4-a716-446655440000',
+        confirmName: 'ACME Sp. z o.o.',
+      });
+    });
+    expect(refreshUser).toHaveBeenCalled();
   });
 });

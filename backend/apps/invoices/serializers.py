@@ -19,6 +19,7 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
             "product_unit",
             "pkwiu",
             "quantity",
+            "is_removed",
             "unit_price_net",
             "vat_rate",
             "line_net",

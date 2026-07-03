@@ -401,8 +401,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
           {
             "correction_reason": "Błędna ilość",
             "issue_date": "2026-06-23",      // optional
+            "due_date": "2026-07-10",         // optional — overrides default
+            "payment_method": "transfer",     // optional — overrides original
             "items": [                        // optional — omit to copy original
-              {"item_id": "<uuid>", "quantity": "5.00", "unit_price_net": "10.00"}
+              {"item_id": "<uuid>", "quantity": "5.00", "unit_price_net": "10.00", "vat_rate": "23"},
+              {"item_id": "<uuid>", "remove": true},
+              {"product_name": "Nowy produkt", "quantity": "1", "unit_price_net": "10.00", "vat_rate": "23", "product_unit": "szt"}
             ]
           }
         """
@@ -410,6 +414,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         correction_reason = request.data.get("correction_reason", "")
         items_data = request.data.get("items", [])
         issue_date = _optional_iso_date(request.data, "issue_date")
+        due_date = _optional_iso_date(request.data, "due_date")
+        payment_method = request.data.get("payment_method") or None
 
         correction = create_invoice_correction(
             original_invoice=invoice,
@@ -418,6 +424,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             correction_reason=correction_reason,
             items_data=items_data,
             issue_date=issue_date,
+            due_date=due_date,
+            payment_method=payment_method,
         )
         return Response(
             self.get_serializer(correction).data,
