@@ -1,0 +1,7 @@
+# Python control-node requirements for the playbooks under automation/vms/.
+#
+# ansible-core>=2.21 is required because it supports Python 3.14 as the
+# control-node interpreter; ansible-core 2.14.x (the version pulled in by the
+# `ansible` metapackage) uses ast.Str, removed in Python 3.12, and fails
+# conditionals like `when: pool_info.rc != 0` under 3.12+.
+ansible-core>=2.21

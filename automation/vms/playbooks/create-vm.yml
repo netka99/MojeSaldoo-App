@@ -1,65 +1,60 @@
 ---
-# Spins up a local CentOS Stream 10 VM on libvirt (qemu:///system) using
-# virt-install --import against the official cloud image. No provisioning
-# is done — the VM is created and started as-is.
+# Spins up a local Fedora Cloud VM on libvirt (qemu:///system) using
+# virt-install --import against the official Fedora Cloud Base Generic
+# image. No provisioning is done — the VM is created and started as-is.
 #
 # Usage:
-#   ansible-playbook automation/vms/playbooks/create_centos_stream10_vm.yml \
-#     -e vm_name=my-centos-vm
+#   ansible-playbook automation/vms/playbooks/create-vm.yml \
+#     -e vm_name=my-fedora-vm \
+#     -e libvirt_pool_dir=~/libvirt
 #
-# Requires: dnf, qemu-kvm, libvirt, virt-install (installed below via
-# become). The playbook talks to libvirt as the invoking user over
-# qemu:///system, so that user must already be authorized (e.g. member of the
-# `libvirt` group) as is the case for interactive `virsh` use.
+# Requires: dnf, qemu-kvm, libvirt, virt-install, and a running libvirtd —
+# install/enable these yourself first (see playbooks/README.md). The
+# playbook talks to libvirt as the invoking user over qemu:///system, so that
+# user must already be authorized (e.g. member of the `libvirt` group) as is
+# the case for interactive `virsh` use.
+#
+# libvirt_pool_dir defaults to ~/libvirt so the whole playbook runs as the
+# invoking user, with no `become`/sudo at all. Before the VM will boot, the
+# disk at vm_disk_path must be owned by qemu:qemu (see playbooks/README.md
+# for the one-time chown step).
+#
+# fedora_release/fedora_release_respin pin an exact Fedora Cloud build (there
+# is no stable "-latest" filename like CentOS publishes); bump them by hand
+# when a new Fedora release/respin comes out — see
+# https://fedoraproject.org/cloud/download for current values.
 
-- name: Create a local CentOS Stream 10 libvirt VM
+- name: Create a local Fedora Cloud libvirt VM
   hosts: localhost
   connection: local
   gather_facts: false
   become: false
 
   vars:
-    vm_name: "centos-stream10"
+    vm_name: "fedora-cloud-44"
     vm_vcpus: 2
     vm_memory_mb: 4096
     vm_disk_gb: 20
     vm_network: "default"
 
     libvirt_pool_name: "mojesaldoo-vms"
-    libvirt_pool_dir: "/var/lib/libvirt/images/mojesaldoo"
+    libvirt_pool_dir: "{{ lookup('env', 'HOME') }}/libvirt"
 
-    centos_image_filename: "CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2"
-    centos_image_url: "https://cloud.centos.org/centos/10-stream/x86_64/images/{{ centos_image_filename }}"
-    centos_checksum_url: "{{ centos_image_url }}.SHA256SUM"
+    fedora_release: "44"
+    fedora_release_respin: "1.7"
+    fedora_image_filename: "Fedora-Cloud-Base-Generic-{{ fedora_release }}-{{ fedora_release_respin }}.x86_64.qcow2"
+    fedora_image_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{ fedora_release }}/Cloud/x86_64/images/{{ fedora_image_filename }}"
+    fedora_checksum_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{ fedora_release }}/Cloud/x86_64/images/Fedora-Cloud-{{ fedora_release }}-{{ fedora_release_respin }}-x86_64-CHECKSUM"
 
-    base_image_path: "{{ libvirt_pool_dir }}/{{ centos_image_filename }}"
+    cached_images_dir: "{{ libvirt_pool_dir }}/.cached-images"
+    base_image_path: "{{ cached_images_dir }}/{{ fedora_image_filename }}"
     vm_disk_path: "{{ libvirt_pool_dir }}/{{ vm_name }}.qcow2"
 
   tasks:
-    - name: Install required host packages
-      become: true
-      ansible.builtin.dnf:
-        name:
-          - qemu-kvm
-          - libvirt
-          - libvirt-daemon-kvm
-          - virt-install
-        state: present
-
-    - name: Ensure libvirtd is running and enabled
-      become: true
-      ansible.builtin.systemd:
-        name: libvirtd
-        state: started
-        enabled: true
-
     - name: Ensure the libvirt storage pool directory exists
-      become: true
       ansible.builtin.file:
         path: "{{ libvirt_pool_dir }}"
         state: directory
-        owner: root
-        group: root
         mode: "0711"
 
     - name: Check whether the libvirt storage pool is already defined
@@ -84,25 +79,38 @@
       changed_when: true
       failed_when: false
 
-    - name: Fetch the published SHA256SUM for the cloud image
+    - name: Ensure the cached images directory exists
+      ansible.builtin.file:
+        path: "{{ cached_images_dir }}"
+        state: directory
+        mode: "0711"
+
+    - name: Check whether the cloud image is already cached
+      ansible.builtin.stat:
+        path: "{{ base_image_path }}"
+      register: cached_image_stat
+
+    - name: Fetch the published CHECKSUM file for the cloud image
+      when: not cached_image_stat.stat.exists
       ansible.builtin.uri:
-        url: "{{ centos_checksum_url }}"
+        url: "{{ fedora_checksum_url }}"
         return_content: true
-      register: centos_checksum_raw
+      register: fedora_checksum_raw
 
     - name: Extract the SHA256 checksum for the image file
+      when: not cached_image_stat.stat.exists
       ansible.builtin.set_fact:
-        centos_image_sha256: >-
-          {{ centos_checksum_raw.content
-             | regex_search('SHA256 \(' ~ centos_image_filename ~ '\) = ([0-9a-f]{64})', '\1')
+        fedora_image_sha256: >-
+          {{ fedora_checksum_raw.content
+             | regex_search('SHA256 \(' ~ fedora_image_filename ~ '\) = ([0-9a-f]{64})', '\1')
              | first }}
 
-    - name: Download the CentOS Stream 10 GenericCloud image (checksum-verified)
-      become: true
+    - name: Download the Fedora Cloud Base Generic image (checksum-verified)
+      when: not cached_image_stat.stat.exists
       ansible.builtin.get_url:
-        url: "{{ centos_image_url }}"
+        url: "{{ fedora_image_url }}"
         dest: "{{ base_image_path }}"
-        checksum: "sha256:{{ centos_image_sha256 }}"
+        checksum: "sha256:{{ fedora_image_sha256 }}"
         mode: "0644"
         timeout: 600
 
@@ -112,20 +120,11 @@
       register: vm_disk_stat
 
     - name: Create a per-VM qcow2 disk backed by the base cloud image
-      become: true
       when: not vm_disk_stat.stat.exists
       ansible.builtin.command: >
         qemu-img create -f qcow2 -F qcow2
         -b {{ base_image_path }}
         {{ vm_disk_path }} {{ vm_disk_gb }}G
-
-    - name: Set ownership and permissions on the VM disk
-      become: true
-      ansible.builtin.file:
-        path: "{{ vm_disk_path }}"
-        owner: qemu
-        group: qemu
-        mode: "0660"
 
     - name: Check whether the VM is already defined
       ansible.builtin.command: virsh --connect qemu:///system dominfo {{ vm_name }}
