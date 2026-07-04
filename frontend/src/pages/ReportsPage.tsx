@@ -11,6 +11,8 @@ import {
   TOP_LIMIT,
 } from '@/query/use-reports';
 import { authStorage } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
+import { reportingService } from '@/services/reporting.service';
 import { cn } from '@/lib/utils';
 import type { KsefStatusReport } from '@/types/reporting.types';
 
@@ -130,6 +132,27 @@ function ReportsPageContent() {
   const [dateFrom, setDateFrom] = useState(initial.from);
   const [dateTo, setDateTo] = useState(initial.to);
 
+  const { user } = useAuth();
+  const isRyczalt = user?.taxation_form === 'ryczalt';
+
+  const now = new Date();
+  const [ewpYear, setEwpYear] = useState(now.getFullYear());
+  const [ewpMonth, setEwpMonth] = useState(now.getMonth() + 1);
+  const [ewpLoading, setEwpLoading] = useState(false);
+  const [ewpError, setEwpError] = useState<string | null>(null);
+
+  const handleDownloadEwp = async () => {
+    setEwpError(null);
+    setEwpLoading(true);
+    try {
+      await reportingService.downloadJpkEwp(ewpYear, ewpMonth);
+    } catch (e) {
+      setEwpError(e instanceof Error ? e.message : 'Błąd pobierania JPK_EWP');
+    } finally {
+      setEwpLoading(false);
+    }
+  };
+
   const sales = useSalesSummaryReportQuery(dateFrom, dateTo);
   const products = useTopProductsReportQuery(dateFrom, dateTo);
   const customers = useTopCustomersReportQuery(dateFrom, dateTo);
@@ -147,13 +170,52 @@ function ReportsPageContent() {
             Podsumowanie sprzedaży, rankingi i status KSeF dla aktywnej firmy.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="no-print shrink-0 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
-        >
-          Drukuj PDF
-        </button>
+        <div className="no-print flex shrink-0 items-center gap-2">
+          {isRyczalt && (
+            <div className="flex items-center gap-2">
+              <select
+                aria-label="Rok JPK_EWP"
+                value={ewpYear}
+                onChange={(e) => setEwpYear(Number(e.target.value))}
+                className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+              >
+                {[now.getFullYear() - 1, now.getFullYear()].map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Miesiąc JPK_EWP"
+                value={ewpMonth}
+                onChange={(e) => setEwpMonth(Number(e.target.value))}
+                className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {new Date(2000, m - 1).toLocaleString('pl-PL', { month: 'long' })}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={ewpLoading}
+                onClick={() => void handleDownloadEwp()}
+                className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+              >
+                {ewpLoading ? 'Pobieranie…' : 'Pobierz JPK_EWP'}
+              </button>
+              {ewpError && (
+                <span className="text-xs text-destructive">{ewpError}</span>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          >
+            Drukuj PDF
+          </button>
+        </div>
       </div>
 
       <div className="space-y-6">

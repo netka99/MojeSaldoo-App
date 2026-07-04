@@ -36,6 +36,32 @@ class Company(models.Model):
         (COMPANY_TYPE_MIXED,      "Mieszany"),
     ]
 
+    TAXATION_KPIR = "kpir"
+    TAXATION_RYCZALT = "ryczalt"
+    TAXATION_FORM_CHOICES = [
+        (TAXATION_KPIR,    "KPiR (Podatkowa Księga Przychodów i Rozchodów)"),
+        (TAXATION_RYCZALT, "Ryczałt ewidencjonowany"),
+    ]
+
+    RYCZALT_ROLNICZE   = "rolnicze"
+    RYCZALT_HANDEL     = "handel"
+    RYCZALT_BUDOWNICTWO = "budownictwo"
+    RYCZALT_USLUGI     = "uslugi"
+    RYCZALT_IT         = "it"
+    RYCZALT_MEDYCZNE   = "medyczne"
+    RYCZALT_FINANSOWE  = "finansowe"
+    RYCZALT_WOLNE_ZAWODY = "wolne_zawody"
+    RYCZALT_CATEGORY_CHOICES = [
+        (RYCZALT_ROLNICZE,     "2% — Sprzedaż produktów rolnych"),
+        (RYCZALT_HANDEL,       "3% — Handel (zakup i odsprzedaż)"),
+        (RYCZALT_BUDOWNICTWO,  "5,5% — Budownictwo"),
+        (RYCZALT_USLUGI,       "8,5% — Usługi"),
+        (RYCZALT_IT,           "12% — Usługi IT i pośrednictwo finansowe"),
+        (RYCZALT_MEDYCZNE,     "14% — Usługi medyczne, architektoniczne, inżynieryjne"),
+        (RYCZALT_FINANSOWE,    "15% — Doradztwo finansowe i rachunkowość"),
+        (RYCZALT_WOLNE_ZAWODY, "17% — Wolne zawody (prawnicy, lekarze itp.)"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     nip = models.CharField(max_length=10, unique=True, blank=True, null=True)
@@ -45,6 +71,20 @@ class Company(models.Model):
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
     is_active = models.BooleanField(default=True)
+    # Income tax form — determines which JPK reports are needed.
+    taxation_form = models.CharField(
+        max_length=10,
+        choices=TAXATION_FORM_CHOICES,
+        default=TAXATION_KPIR,
+        blank=True,
+    )
+    # Ryczałt rate category — required when taxation_form='ryczalt'.
+    ryczalt_category = models.CharField(
+        max_length=20,
+        choices=RYCZALT_CATEGORY_CHOICES,
+        blank=True,
+        null=True,
+    )
     # Set during onboarding tile selection; used for analytics and UI hints.
     company_type = models.CharField(
         max_length=20,

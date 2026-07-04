@@ -90,4 +90,24 @@ export const reportingService = {
   /** Per-customer margin report. */
   fetchCustomerMargin: (params?: ReportDateRangeParams & { limit?: number }) =>
     api.get<CustomerMarginReport>(`${basePath}customer-margin/`, { params }),
+
+  /** Download JPK_EWP(3) XML for a ryczałt company. */
+  downloadJpkEwp: async (year: number, month: number): Promise<void> => {
+    const { authStorage } = await import('./api');
+    const token = authStorage.getAccessToken();
+    const resp = await fetch(`/api/v1/reporting/jpk-ewp/?year=${year}&month=${month}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error((body as { detail?: string }).detail ?? `HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `JPK_EWP_${year}_${String(month).padStart(2, '0')}.xml`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };

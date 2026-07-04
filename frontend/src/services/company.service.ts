@@ -31,6 +31,8 @@ function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
   if (data.postalCode !== undefined) body.postal_code = data.postalCode;
   if (data.phone !== undefined) body.phone = data.phone;
   if (data.email !== undefined) body.email = data.email;
+  if (data.taxation_form !== undefined) body.taxation_form = data.taxation_form;
+  if (data.ryczalt_category !== undefined) body.ryczalt_category = data.ryczalt_category;
   return body;
 }
 

@@ -35,6 +35,7 @@ from apps.users.permissions import IsCompanyMember
 from apps.van_routes.models import VanRoute
 
 from .serializers import ReportingInvoiceSerializer, ReportingRejectedInvoiceSerializer
+from .jpk_ewp_generator import generate_jpk_ewp
 
 _MONEY = DecimalField(max_digits=14, decimal_places=2)
 
@@ -1498,3 +1499,64 @@ class CustomerMarginView(APIView):
         ]
 
         return Response({"rows": out, "productsMissingCost": products_missing})
+
+
+class JpkEwpExportView(APIView):
+    """
+    GET /api/v1/reporting/jpk-ewp/?year=2026&month=6
+
+    Returns a JPK_EWP(3) XML file for the given month.
+    Only available when company.taxation_form == 'ryczalt'.
+    """
+
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        company = request.user.current_company
+        if not company:
+            return Response({"detail": "Brak aktywnej firmy."}, status=400)
+
+        if company.taxation_form != "ryczalt":
+            return Response(
+                {"detail": "Eksport JPK_EWP jest dostępny tylko dla firm na ryczałcie."},
+                status=400,
+            )
+
+        if not company.ryczalt_category:
+            return Response(
+                {"detail": "Ustaw stawkę ryczałtu w ustawieniach firmy przed eksportem."},
+                status=400,
+            )
+
+        try:
+            year = int(request.query_params.get("year", 0))
+            month = int(request.query_params.get("month", 0))
+        except (TypeError, ValueError):
+            return Response({"detail": "Nieprawidłowy rok lub miesiąc."}, status=400)
+
+        if not (1 <= month <= 12) or year < 2000:
+            return Response({"detail": "Podaj prawidłowy rok i miesiąc."}, status=400)
+
+        invoices = list(
+            Invoice.objects.filter(
+                company=company,
+                issue_date__year=year,
+                issue_date__month=month,
+                status__in=[
+                    Invoice.STATUS_ISSUED,
+                    Invoice.STATUS_SENT,
+                    Invoice.STATUS_PAID,
+                    Invoice.STATUS_OVERDUE,
+                ],
+                is_correction=False,
+            )
+            .select_related("customer")
+            .order_by("issue_date", "invoice_number")
+        )
+
+        xml_content = generate_jpk_ewp(company, invoices, year, month)
+
+        filename = f"JPK_EWP_{year}_{month:02d}.xml"
+        response = HttpResponse(xml_content, content_type="application/xml; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response

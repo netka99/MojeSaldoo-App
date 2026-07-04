@@ -23,4 +23,5 @@ urlpatterns = [
     path("supplier-costs/detail/", views.SupplierCostsDetailView.as_view(), name="report-supplier-costs-detail"),
     path("expiry-alerts/", views.ExpiryAlertsView.as_view(), name="report-expiry-alerts"),
     path("customer-margin/", views.CustomerMarginView.as_view(), name="report-customer-margin"),
+    path("jpk-ewp/", views.JpkEwpExportView.as_view(), name="report-jpk-ewp"),
 ]

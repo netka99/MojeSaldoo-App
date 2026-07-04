@@ -12,6 +12,15 @@ from rest_framework.views import APIView
 
 from .models import Company, CompanyModule
 
+# Ryczałt categories that are pure-service: no warehouse/van/production needed.
+RYCZALT_SERVICE_CATEGORIES = {
+    Company.RYCZALT_USLUGI,
+    Company.RYCZALT_IT,
+    Company.RYCZALT_MEDYCZNE,
+    Company.RYCZALT_FINANSOWE,
+    Company.RYCZALT_WOLNE_ZAWODY,
+}
+
 # ---------------------------------------------------------------------------
 # Tile → module mapping
 # ---------------------------------------------------------------------------
@@ -58,6 +67,8 @@ class OnboardingCompleteView(APIView):
 
         activity_tiles: list[str] = request.data.get("activity_tiles", [])
         delivery_method: str | None = request.data.get("delivery_method")
+        taxation_form: str = request.data.get("taxation_form", Company.TAXATION_KPIR)
+        ryczalt_category: str | None = request.data.get("ryczalt_category")
 
         valid_tiles = set(TILE_MODULE_MAP.keys())
         invalid = [t for t in activity_tiles if t not in valid_tiles]
@@ -74,12 +85,33 @@ class OnboardingCompleteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        valid_taxation = {Company.TAXATION_KPIR, Company.TAXATION_RYCZALT}
+        if taxation_form not in valid_taxation:
+            return Response(
+                {"detail": f"Nieznana forma opodatkowania: {taxation_form}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        valid_categories = {c for c, _ in Company.RYCZALT_CATEGORY_CHOICES}
+        if taxation_form == Company.TAXATION_RYCZALT and ryczalt_category not in valid_categories:
+            return Response(
+                {"detail": "Wybierz stawkę ryczałtu."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Build set of modules to enable.
         to_enable: set[str] = set(CORE_MODULES)
         for tile in activity_tiles:
             to_enable.update(TILE_MODULE_MAP.get(tile, []))
         if delivery_method:
             to_enable.update(DELIVERY_MODULE_MAP.get(delivery_method, []))
+
+        # Pure-service ryczałt companies don't need warehouse/van/production modules.
+        if (
+            taxation_form == Company.TAXATION_RYCZALT
+            and ryczalt_category in RYCZALT_SERVICE_CATEGORIES
+        ):
+            to_enable -= {"warehouses", "van_routes", "production", "delivery", "purchasing"}
 
         # Enable selected modules, disable the rest.
         now = timezone.now()
@@ -96,8 +128,10 @@ class OnboardingCompleteView(APIView):
 
         # Update company metadata.
         company.company_type = _infer_company_type(to_enable)
+        company.taxation_form = taxation_form
+        company.ryczalt_category = ryczalt_category if taxation_form == Company.TAXATION_RYCZALT else None
         company.onboarding_completed = True
-        company.save(update_fields=["company_type", "onboarding_completed"])
+        company.save(update_fields=["company_type", "taxation_form", "ryczalt_category", "onboarding_completed"])
 
         modules_response = {
             row.module: row.is_enabled

@@ -3,13 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useResolvedCompanyId, type CompanyListRow } from '@/hooks/useResolvedCompanyId';
-import { useCompanyModulesQuery, useToggleModuleMutation, useWorkflowSettingsQuery, useUpdateWorkflowSettingsMutation, useDeleteCompanyMutation, useLeaveCompanyMutation } from '@/query/use-companies';
+import { useCompanyModulesQuery, useToggleModuleMutation, useWorkflowSettingsQuery, useUpdateWorkflowSettingsMutation, useDeleteCompanyMutation, useLeaveCompanyMutation, useUpdateCompanyMutation } from '@/query/use-companies';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { CreateCompanyDialog } from '@/components/features/company/CreateCompanyDialog';
 import { MODULE_CARD_COPY, MODULE_DISPLAY_ORDER } from '@/constants/companyModuleLabels';
 import { cn } from '@/lib/utils';
 import type { Company, ModuleName } from '@/types';
+import type { RyczaltCategory, TaxationForm } from '@/types/onboarding.types';
 
 type CompanyRow = Company & {
   postal_code?: string;
@@ -464,6 +465,153 @@ function LeaveCompanyDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Taxation Settings Section
+// ---------------------------------------------------------------------------
+
+const RYCZALT_CATEGORY_LABELS: Record<RyczaltCategory, string> = {
+  rolnicze:     '2% — Sprzedaż produktów rolnych',
+  handel:       '3% — Handel (zakup i odsprzedaż)',
+  budownictwo:  '5,5% — Budownictwo',
+  uslugi:       '8,5% — Usługi',
+  it:           '12% — Usługi IT i pośrednictwo finansowe',
+  medyczne:     '14% — Usługi medyczne, architektoniczne, inżynieryjne',
+  finansowe:    '15% — Doradztwo finansowe i rachunkowość',
+  wolne_zawody: '17% — Wolne zawody (prawnicy, lekarze itp.)',
+};
+
+function TaxationSettingsSection({
+  companyId,
+  currentTaxationForm,
+  currentRyczaltCategory,
+  canEdit,
+  onSaved,
+}: {
+  companyId: string;
+  currentTaxationForm: string | null | undefined;
+  currentRyczaltCategory: string | null | undefined;
+  canEdit: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const updateMutation = useUpdateCompanyMutation();
+  const [taxationForm, setTaxationForm] = useState<TaxationForm>(
+    (currentTaxationForm as TaxationForm) ?? 'kpir',
+  );
+  const [ryczaltCategory, setRyczaltCategory] = useState<RyczaltCategory | null>(
+    (currentRyczaltCategory as RyczaltCategory) ?? null,
+  );
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const canSave =
+    taxationForm === 'kpir' || (taxationForm === 'ryczalt' && ryczaltCategory !== null);
+
+  const handleSave = async () => {
+    if (!canEdit || !canSave) return;
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await updateMutation.mutateAsync({
+        companyId,
+        data: {
+          name: '',  // required by type but backend accepts partial patch
+          taxation_form: taxationForm,
+          ryczalt_category: taxationForm === 'ryczalt' ? ryczaltCategory : null,
+        },
+      });
+      await onSaved();
+      setSaved(true);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Nie udało się zapisać');
+    }
+  };
+
+  return (
+    <section aria-labelledby="taxation-heading" className="space-y-3">
+      <div>
+        <h2 id="taxation-heading" className="text-lg font-semibold">
+          Forma opodatkowania
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {canEdit
+            ? 'Wpływa na dostępne raporty JPK.'
+            : 'Tylko administrator może zmieniać ustawienia opodatkowania.'}
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="space-y-4 pt-5">
+          {/* KPiR / Ryczałt */}
+          <div className="grid grid-cols-2 gap-3">
+            {(['kpir', 'ryczalt'] as TaxationForm[]).map((form) => (
+              <button
+                key={form}
+                type="button"
+                disabled={!canEdit}
+                onClick={() => { setTaxationForm(form); if (form === 'kpir') setRyczaltCategory(null); setSaved(false); }}
+                aria-pressed={taxationForm === form}
+                className={cn(
+                  'flex flex-col items-start gap-1.5 rounded-xl border-2 p-4 text-left transition-all',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  taxationForm === form
+                    ? 'border-primary bg-primary/5 shadow-sm'
+                    : 'border-border bg-background hover:border-primary/40 hover:bg-muted/40',
+                  !canEdit && 'cursor-not-allowed opacity-60',
+                )}
+              >
+                <span className="text-2xl leading-none">{form === 'kpir' ? '📒' : '🧾'}</span>
+                <p className="text-sm font-semibold text-foreground">
+                  {form === 'kpir' ? 'KPiR' : 'Ryczałt'}
+                </p>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {form === 'kpir'
+                    ? 'Podatkowa Księga Przychodów i Rozchodów'
+                    : 'Ryczałt ewidencjonowany'}
+                </p>
+              </button>
+            ))}
+          </div>
+
+          {/* Ryczałt rate */}
+          {taxationForm === 'ryczalt' && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Stawka ryczałtu</p>
+              <select
+                value={ryczaltCategory ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => { setRyczaltCategory(e.target.value as RyczaltCategory); setSaved(false); }}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="" disabled>Wybierz stawkę…</option>
+                {(Object.keys(RYCZALT_CATEGORY_LABELS) as RyczaltCategory[]).map((cat) => (
+                  <option key={cat} value={cat}>{RYCZALT_CATEGORY_LABELS[cat]}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {saveError && (
+            <p className="text-sm text-destructive" role="alert">{saveError}</p>
+          )}
+          {saved && (
+            <p className="text-sm text-green-600" role="status">Zapisano.</p>
+          )}
+
+          {canEdit && (
+            <Button
+              type="button"
+              disabled={!canSave || updateMutation.isPending}
+              onClick={() => void handleSave()}
+            >
+              {updateMutation.isPending ? 'Zapisywanie…' : 'Zapisz'}
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Danger Zone Section
 // ---------------------------------------------------------------------------
 
@@ -637,6 +785,14 @@ export function CompanySettingsPage() {
       <WorkflowSettingsSection
         companyId={companyId}
         canEdit={user?.is_company_admin === true || user?.permissions?.can_manage_settings === true}
+      />
+
+      <TaxationSettingsSection
+        companyId={companyId}
+        currentTaxationForm={user?.taxation_form}
+        currentRyczaltCategory={user?.ryczalt_category}
+        canEdit={user?.is_company_admin === true}
+        onSaved={refreshUser}
       />
 
       <DangerZoneSection

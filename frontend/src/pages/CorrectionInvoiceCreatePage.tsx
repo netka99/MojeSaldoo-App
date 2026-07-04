@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -56,9 +56,16 @@ export function CorrectionInvoiceCreatePage() {
   const [newLines, setNewLines] = useState<NewLine[]>([]);
   const [newLineKey, setNewLineKey] = useState(0);
 
-  // Header overrides (only sent when changed from original)
+  // Header overrides — pre-filled from original invoice
   const [dueDate, setDueDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<InvoicePaymentMethod | ''>('');
+
+  // Pre-fill due date once invoice loads
+  useEffect(() => {
+    if (invoice?.due_date) {
+      setDueDate(invoice.due_date);
+    }
+  }, [invoice?.due_date]);
 
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -108,6 +115,32 @@ export function CorrectionInvoiceCreatePage() {
   const toggleRemoved = (itemId: string) => {
     const removed = !getOverride(itemId)?.removed;
     updateOverride(itemId, { removed });
+  };
+
+  const allRemoved = invoice?.items.every((item) => getOverride(item.id)?.removed === true) ?? false;
+
+  const cancelAllItems = () => {
+    setOverrides((prev) => {
+      const next = { ...prev };
+      for (const item of invoice?.items ?? []) {
+        const existing = next[item.id];
+        next[item.id] = existing
+          ? { ...existing, removed: true }
+          : { itemId: item.id, quantity: '', unitPriceNet: '', vatRate: fmt(item.vat_rate), removed: true };
+      }
+      return next;
+    });
+    setNewLines([]);
+  };
+
+  const restoreAllItems = () => {
+    setOverrides((prev) => {
+      const next = { ...prev };
+      for (const item of invoice?.items ?? []) {
+        if (next[item.id]) next[item.id] = { ...next[item.id], removed: false };
+      }
+      return next;
+    });
   };
 
   const addNewLine = () => {
@@ -226,7 +259,28 @@ export function CorrectionInvoiceCreatePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Pozycje korekty</CardTitle>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle>Pozycje korekty</CardTitle>
+            {allRemoved ? (
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-destructive/10 px-2.5 py-0.5 text-xs font-medium text-destructive">
+                  Anulowanie — wszystkie pozycje usunięte
+                </span>
+                <Button variant="outline" size="sm" onClick={restoreAllItems}>
+                  Cofnij
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-destructive/40 text-destructive hover:bg-destructive/5"
+                onClick={cancelAllItems}
+              >
+                Anuluj całą fakturę
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <p className="mb-3 text-xs text-muted-foreground">

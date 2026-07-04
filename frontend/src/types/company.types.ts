@@ -141,4 +141,6 @@ export interface CompanyWrite {
   postalCode?: string
   phone?: string
   email?: string
+  taxation_form?: string
+  ryczalt_category?: string | null
 }

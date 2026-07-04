@@ -72,6 +72,7 @@ export interface Invoice {
   corrects_invoice_id: string | null;
   corrects_invoice_number: string | null;
   correction_reason: string;
+  corrections: { id: string; invoice_number: string | null }[];
   paid_at: string | null;
   notes: string;
   created_at: string;

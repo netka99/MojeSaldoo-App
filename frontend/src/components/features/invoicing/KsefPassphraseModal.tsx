@@ -58,6 +58,8 @@ export function KsefPassphraseModal({
         </p>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          {/* Hidden fields prevent Chrome from matching this form to the app login */}
+          <input type="text" name="username" autoComplete="username" className="hidden" readOnly value="ksef-cert" />
           <div>
             <label
               htmlFor="ksef-passphrase"
@@ -72,7 +74,7 @@ export function KsefPassphraseModal({
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
               disabled={loading}
-              autoComplete="current-password"
+              autoComplete="new-password"
               className={cn(
                 'w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground',
                 'focus:outline-none focus:ring-2 focus:ring-primary',

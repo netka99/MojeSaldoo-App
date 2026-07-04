@@ -104,4 +104,9 @@ class InvoiceSerializer(serializers.ModelSerializer):
             if instance.corrects_invoice_id
             else None
         )
+        # List of corrections issued against this invoice (prefetched by view)
+        data["corrections"] = [
+            {"id": str(c.id), "invoice_number": c.invoice_number}
+            for c in instance.corrections.all()
+        ]
         return data

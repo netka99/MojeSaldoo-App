@@ -98,6 +98,10 @@ export interface AuthUser {
   onboarding_completed?: boolean;
   /** Inferred company type from tile selection. */
   company_type?: string | null;
+  /** Income tax form: 'kpir' | 'ryczalt'. */
+  taxation_form?: string | null;
+  /** Ryczałt rate category, null when taxation_form !== 'ryczalt'. */
+  ryczalt_category?: string | null;
   /** Dict of module_key → is_enabled for the current company. */
   modules?: Record<string, boolean>;
 }

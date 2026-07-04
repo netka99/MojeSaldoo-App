@@ -2,9 +2,28 @@ export type ActivityTile = 'purchasing' | 'production' | 'warehouses' | 'cost_al
 
 export type DeliveryMethod = 'van_routes' | 'delivery' | 'docs_only';
 
+export type TaxationForm = 'kpir' | 'ryczalt';
+
+export type RyczaltCategory =
+  | 'rolnicze'
+  | 'handel'
+  | 'budownictwo'
+  | 'uslugi'
+  | 'it'
+  | 'medyczne'
+  | 'finansowe'
+  | 'wolne_zawody';
+
+/** Ryczałt categories that are pure-service — no warehouse/van/production needed. */
+export const RYCZALT_SERVICE_CATEGORIES: RyczaltCategory[] = [
+  'uslugi', 'it', 'medyczne', 'finansowe', 'wolne_zawody',
+];
+
 export interface OnboardingPayload {
   activity_tiles: ActivityTile[];
   delivery_method: DeliveryMethod | null;
+  taxation_form: TaxationForm;
+  ryczalt_category: RyczaltCategory | null;
 }
 
 export interface OnboardingCompleteResponse {

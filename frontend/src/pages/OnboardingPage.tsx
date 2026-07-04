@@ -11,7 +11,9 @@ import { authStorage } from '@/services/api';
 import { ActivityTilesStep } from '@/components/onboarding/ActivityTilesStep';
 import { DeliveryMethodStep } from '@/components/onboarding/DeliveryMethodStep';
 import { ModuleSummaryStep } from '@/components/onboarding/ModuleSummaryStep';
-import type { ActivityTile, DeliveryMethod } from '@/types/onboarding.types';
+import { TaxationFormStep } from '@/components/onboarding/TaxationFormStep';
+import type { ActivityTile, DeliveryMethod, RyczaltCategory, TaxationForm } from '@/types/onboarding.types';
+import { RYCZALT_SERVICE_CATEGORIES } from '@/types/onboarding.types';
 
 // ── Client-side module preview (mirrors backend logic) ──────────────────────
 
@@ -40,11 +42,17 @@ const ALL_MODULES = [
 function computeModulePreview(
   tiles: ActivityTile[],
   deliveryMethod: DeliveryMethod | null,
+  taxationForm: TaxationForm,
+  ryczaltCategory: RyczaltCategory | null,
 ): Record<string, boolean> {
   const enabled = new Set<string>(CORE_MODULES);
   tiles.forEach((t) => TILE_MODULE_MAP[t]?.forEach((m) => enabled.add(m)));
   if (deliveryMethod) {
     DELIVERY_MODULE_MAP[deliveryMethod]?.forEach((m) => enabled.add(m));
+  }
+  // Pure-service ryczałt companies don't need warehouse/van/production modules.
+  if (taxationForm === 'ryczalt' && ryczaltCategory && RYCZALT_SERVICE_CATEGORIES.includes(ryczaltCategory)) {
+    ['warehouses', 'van_routes', 'production', 'delivery', 'purchasing'].forEach((m) => enabled.delete(m));
   }
   return Object.fromEntries(ALL_MODULES.map((m) => [m, enabled.has(m)]));
 }
@@ -130,7 +138,7 @@ function CompanyNameStep({ onNext, loading, error }: CompanyNameStepProps) {
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
-type OnboardingStep = 'company_name' | 'activity' | 'delivery' | 'summary';
+type OnboardingStep = 'company_name' | 'taxation' | 'activity' | 'delivery' | 'summary';
 
 const NEEDS_DELIVERY: ActivityTile[] = ['purchasing', 'production', 'warehouses'];
 
@@ -153,7 +161,14 @@ export function OnboardingPage() {
   const [companyCreateError, setCompanyCreateError] = useState<string | null>(null);
   const [tiles, setTiles] = useState<ActivityTile[]>([]);
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod | null>(null);
+  const [taxationForm, setTaxationForm] = useState<TaxationForm>('kpir');
+  const [ryczaltCategory, setRyczaltCategory] = useState<RyczaltCategory | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const isServiceRyczalt =
+    taxationForm === 'ryczalt' &&
+    ryczaltCategory !== null &&
+    RYCZALT_SERVICE_CATEGORIES.includes(ryczaltCategory);
 
   const createCompany = useCreateCompanyMutation();
   const switchCompany = useSwitchCompanyMutation();
@@ -175,13 +190,11 @@ export function OnboardingPage() {
     return <Navigate to="/" replace />;
   }
 
-  const TOTAL_STEPS = 4;
-  const STEP_INDEX: Record<OnboardingStep, number> = {
-    company_name: 0,
-    activity:     1,
-    delivery:     2,
-    summary:      3,
-  };
+  // Service ryczałt skips activity + delivery steps.
+  const TOTAL_STEPS = isServiceRyczalt ? 3 : 5;
+  const STEP_INDEX: Record<OnboardingStep, number> = isServiceRyczalt
+    ? { company_name: 0, taxation: 1, activity: 1, delivery: 1, summary: 2 }
+    : { company_name: 0, taxation: 1, activity: 2, delivery: 3, summary: 4 };
 
   async function handleCompanyCreated(name: string) {
     setCompanyCreateError(null);
@@ -189,9 +202,19 @@ export function OnboardingPage() {
       const company = await createCompany.mutateAsync({ name });
       await switchCompany.mutateAsync(company.id);
       await refreshUser();
-      setStep('activity');
+      setStep('taxation');
     } catch (e) {
       setCompanyCreateError(e instanceof Error ? e.message : 'Nie udało się utworzyć firmy');
+    }
+  }
+
+  function handleTaxationNext() {
+    if (isServiceRyczalt) {
+      setTiles([]);
+      setDeliveryMethod(null);
+      setStep('summary');
+    } else {
+      setStep('activity');
     }
   }
 
@@ -216,6 +239,8 @@ export function OnboardingPage() {
       await completeOnboarding.mutateAsync({
         activity_tiles: tiles,
         delivery_method: deliveryMethod,
+        taxation_form: taxationForm,
+        ryczalt_category: ryczaltCategory,
       });
       await refreshUser();
       navigate('/', { replace: true });
@@ -224,7 +249,7 @@ export function OnboardingPage() {
     }
   }
 
-  const modulePreview = computeModulePreview(tiles, deliveryMethod);
+  const modulePreview = computeModulePreview(tiles, deliveryMethod, taxationForm, ryczaltCategory);
   const currentStepIndex = STEP_INDEX[step];
 
   return (
@@ -246,6 +271,16 @@ export function OnboardingPage() {
               onNext={(name) => void handleCompanyCreated(name)}
               loading={createCompany.isPending || switchCompany.isPending}
               error={companyCreateError}
+            />
+          )}
+
+          {step === 'taxation' && (
+            <TaxationFormStep
+              taxationForm={taxationForm}
+              ryczaltCategory={ryczaltCategory}
+              onChange={(form, cat) => { setTaxationForm(form); setRyczaltCategory(cat); }}
+              onNext={handleTaxationNext}
+              onBack={() => setStep('company_name')}
             />
           )}
 
@@ -274,7 +309,10 @@ export function OnboardingPage() {
               <ModuleSummaryStep
                 modules={modulePreview}
                 onConfirm={() => void handleConfirm()}
-                onBack={() => setStep(deliveryMethod !== null ? 'delivery' : 'activity')}
+                onBack={() => setStep(
+                  isServiceRyczalt ? 'taxation' :
+                  deliveryMethod !== null ? 'delivery' : 'activity'
+                )}
                 loading={completeOnboarding.isPending}
               />
             </>

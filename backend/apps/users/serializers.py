@@ -12,6 +12,8 @@ class UserSerializer(serializers.ModelSerializer):
     permissions = serializers.SerializerMethodField()
     onboarding_completed = serializers.SerializerMethodField()
     company_type = serializers.SerializerMethodField()
+    taxation_form = serializers.SerializerMethodField()
+    ryczalt_category = serializers.SerializerMethodField()
     modules = serializers.SerializerMethodField()
 
     class Meta:
@@ -30,6 +32,8 @@ class UserSerializer(serializers.ModelSerializer):
             "permissions",
             "onboarding_completed",
             "company_type",
+            "taxation_form",
+            "ryczalt_category",
             "modules",
         ]
         extra_kwargs = {"password": {"write_only": True}}
@@ -74,6 +78,16 @@ class UserSerializer(serializers.ModelSerializer):
             return None
         return obj.current_company.company_type
 
+    def get_taxation_form(self, obj) -> str | None:
+        if not obj.current_company_id:
+            return None
+        return obj.current_company.taxation_form
+
+    def get_ryczalt_category(self, obj) -> str | None:
+        if not obj.current_company_id:
+            return None
+        return obj.current_company.ryczalt_category
+
     def get_modules(self, obj) -> dict:
         if not obj.current_company_id:
             return {}
@@ -96,6 +110,8 @@ class CompanySerializer(serializers.ModelSerializer):
             "email",
             "phone",
             "is_active",
+            "taxation_form",
+            "ryczalt_category",
             "created_at",
             "updated_at",
         ]

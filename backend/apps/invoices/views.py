@@ -59,7 +59,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 "user",
                 "delivery_document",
             )
-            .prefetch_related("items", "items__product", "items__order_item")
+            .prefetch_related("items", "items__product", "items__order_item", "corrections")
             .order_by("-created_at")
         )
         return filter_queryset_for_current_company(qs, self.request.user)

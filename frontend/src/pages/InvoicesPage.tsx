@@ -335,6 +335,15 @@ function InvoicesPageContent() {
                             Koryguje: {row.corrects_invoice_number ?? row.corrects_invoice_id.slice(0, 8)}
                           </Link>
                         )}
+                        {!row.is_correction && row.corrections?.length > 0 && row.corrections.map((c) => (
+                          <Link
+                            key={c.id}
+                            to={`/invoices/${c.id}`}
+                            className="text-xs text-amber-700 hover:text-amber-900 hover:underline"
+                          >
+                            Korekta: {c.invoice_number ?? c.id.slice(0, 8)}
+                          </Link>
+                        ))}
                       </div>
                       <span
                         className={cn(
@@ -422,6 +431,16 @@ function InvoicesPageContent() {
                               Koryguje: {row.corrects_invoice_number ?? row.corrects_invoice_id.slice(0, 8)}
                             </Link>
                           )}
+                          {!row.is_correction && row.corrections?.length > 0 && row.corrections.map((c) => (
+                            <Link
+                              key={c.id}
+                              to={`/invoices/${c.id}`}
+                              className="text-xs font-normal text-amber-700 hover:text-amber-900 hover:underline"
+                              title="Przejdź do korekty"
+                            >
+                              Korekta: {c.invoice_number ?? c.id.slice(0, 8)}
+                            </Link>
+                          ))}
                           <Link
                             to={`/orders/${row.order.id}`}
                             className="text-xs font-normal text-primary hover:underline"

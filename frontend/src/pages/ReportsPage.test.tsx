@@ -19,6 +19,8 @@ const hoisted = vi.hoisted(() => ({
   useTopProductsReportQuery: vi.fn(),
   useTopCustomersReportQuery: vi.fn(),
   useKsefStatusReportQuery: vi.fn(),
+  useAuth: vi.fn(),
+  downloadJpkEwp: vi.fn(),
 }));
 
 vi.mock('@/query/use-reports', () => ({
@@ -27,6 +29,14 @@ vi.mock('@/query/use-reports', () => ({
   useTopCustomersReportQuery: hoisted.useTopCustomersReportQuery,
   useKsefStatusReportQuery: hoisted.useKsefStatusReportQuery,
   TOP_LIMIT: 10,
+}));
+
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: hoisted.useAuth,
+}));
+
+vi.mock('@/services/reporting.service', () => ({
+  reportingService: { downloadJpkEwp: hoisted.downloadJpkEwp },
 }));
 
 function okQuery<T>(data: T) {
@@ -97,6 +107,7 @@ describe('ReportsPage', () => {
 
   beforeEach(() => {
     getToken.mockReturnValue('jwt');
+    hoisted.useAuth.mockReturnValue({ user: { taxation_form: 'kpir' } });
     hoisted.useSalesSummaryReportQuery.mockReturnValue(
       okQuery<SalesSummaryReport>({
         totalOrders: 3,
@@ -191,5 +202,27 @@ describe('ReportsPage', () => {
     expect(salesArgs![0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(salesArgs![1]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(salesArgs![0] <= salesArgs![1]).toBe(true);
+  });
+
+  it('does NOT show JPK_EWP button for KPiR company', () => {
+    hoisted.useAuth.mockReturnValue({ user: { taxation_form: 'kpir' } });
+    renderReportsRoute();
+    expect(screen.queryByRole('button', { name: /JPK_EWP/i })).not.toBeInTheDocument();
+  });
+
+  it('shows JPK_EWP download button for ryczałt company', () => {
+    hoisted.useAuth.mockReturnValue({ user: { taxation_form: 'ryczalt', ryczalt_category: 'uslugi' } });
+    renderReportsRoute();
+    expect(screen.getByRole('button', { name: /JPK_EWP/i })).toBeInTheDocument();
+  });
+
+  it('calls downloadJpkEwp with selected year and month on click', async () => {
+    const { userEvent } = await import('@testing-library/user-event');
+    hoisted.useAuth.mockReturnValue({ user: { taxation_form: 'ryczalt', ryczalt_category: 'handel' } });
+    hoisted.downloadJpkEwp.mockResolvedValue(undefined);
+    renderReportsRoute();
+    const btn = screen.getByRole('button', { name: /Pobierz JPK_EWP/i });
+    await userEvent.setup().click(btn);
+    expect(hoisted.downloadJpkEwp).toHaveBeenCalledTimes(1);
   });
 });
