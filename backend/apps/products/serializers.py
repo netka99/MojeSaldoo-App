@@ -37,6 +37,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "track_batches",
             "min_stock_alert",
             "shelf_life_days",
+            "is_service",
             "is_resalable",
             "markup_percent",
             "avg_cost",
@@ -55,7 +56,24 @@ class ProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Koszt własny nie może być ujemny.")
         return value
 
+    def _apply_service_defaults(self, validated_data: dict) -> dict:
+        """When is_service=True, force track_batches=False and is_resalable=True."""
+        if validated_data.get("is_service", False):
+            validated_data["track_batches"] = False
+            validated_data.setdefault("is_resalable", True)
+        return validated_data
+
+    def create(self, validated_data):
+        self._apply_service_defaults(validated_data)
+        return super().create(validated_data)
+
     def update(self, instance, validated_data):
+        # Propagate is_service flag even when not explicitly set in this PATCH
+        is_service = validated_data.get("is_service", instance.is_service)
+        if is_service:
+            validated_data["track_batches"] = False
+            validated_data.setdefault("is_resalable", True)
+
         # If avg_cost is being manually set, force source = manual
         # unless a higher-priority source is already set (pz or production)
         if "avg_cost" in validated_data:

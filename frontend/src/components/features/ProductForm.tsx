@@ -33,6 +33,7 @@ const optionalCostStr = z
   });
 
 export const productFormSchema = z.object({
+  is_service: z.boolean(),
   name: z.string().min(1, 'Nazwa jest wymagana').max(255),
   description: z.string().max(5000),
   unit: z.string().min(1, 'Jednostka jest wymagana').max(20),
@@ -58,6 +59,7 @@ export const productFormSchema = z.object({
 export type ProductFormValues = z.infer<typeof productFormSchema>;
 
 const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
+  is_service: false,
   name: '',
   description: '',
   unit: 'szt',
@@ -76,10 +78,20 @@ const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
   is_active: true,
 };
 
+const EMPTY_SERVICE_DEFAULTS: ProductFormValues = {
+  ...EMPTY_PRODUCT_DEFAULTS,
+  is_service: true,
+  unit: 'godz',
+  track_batches: false,
+  min_stock_alert: '0',
+  shelf_life_days: '',
+};
+
 const VAT_PRESETS = ['0', '5', '8', '23'] as const;
 
 function productToFormDefaults(product: Product): ProductFormValues {
   return {
+    is_service: product.is_service ?? false,
     name: product.name,
     description: product.description ?? '',
     unit: product.unit,
@@ -112,6 +124,7 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
   const markup = values.markup_percent.trim();
   return {
     ...(id ? { id } : {}),
+    is_service: values.is_service,
     name: values.name,
     description: values.description.trim() ? values.description.trim() : null,
     unit: values.unit,
@@ -119,12 +132,12 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
     price_gross: values.price_gross,
     vat_rate: values.vat_rate,
     sku: values.sku.trim() ? values.sku.trim() : null,
-    barcode: values.barcode.trim() ? values.barcode.trim() : null,
+    barcode: values.is_service ? null : (values.barcode.trim() ? values.barcode.trim() : null),
     pkwiu: values.pkwiu.trim(),
-    track_batches: values.track_batches,
-    min_stock_alert: values.min_stock_alert,
-    shelf_life_days: shelf ? Number.parseInt(shelf, 10) : null,
-    is_resalable: values.is_resalable,
+    track_batches: values.is_service ? false : values.track_batches,
+    min_stock_alert: values.is_service ? '0' : values.min_stock_alert,
+    shelf_life_days: values.is_service ? null : (shelf ? Number.parseInt(shelf, 10) : null),
+    is_resalable: values.is_service ? true : values.is_resalable,
     markup_percent: markup ? markup : null,
     avg_cost: values.avg_cost_manual.trim() ? values.avg_cost_manual.trim() : null,
     avg_cost_source: null,
@@ -254,6 +267,7 @@ export function ProductForm({
     formState: { errors },
   } = form;
 
+  const isService = useWatch({ control, name: 'is_service' });
   const priceNet = useWatch({ control, name: 'price_net' });
   const vatRate = useWatch({ control, name: 'vat_rate' });
   const isResalable = useWatch({ control, name: 'is_resalable' });
@@ -307,11 +321,46 @@ export function ProductForm({
 
   return (
     <form noValidate onSubmit={submit} className="space-y-4 pb-4">
+      {/* Service / Product toggle — shown only when creating a new item */}
+      {!product && (
+        <Controller
+          name="is_service"
+          control={control}
+          render={({ field }) => (
+            <div className="grid grid-cols-2 gap-2">
+              {([false, true] as const).map((val) => (
+                <button
+                  key={String(val)}
+                  type="button"
+                  aria-pressed={field.value === val}
+                  onClick={() => {
+                    field.onChange(val);
+                    // Switch unit default when toggling type on an empty form
+                    setValue('unit', val ? 'godz' : 'szt');
+                    setValue('track_batches', !val);
+                  }}
+                  className={cn(
+                    'flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-all',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                    field.value === val
+                      ? 'border-primary bg-primary/5 shadow-sm text-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:border-primary/40',
+                  )}
+                >
+                  <span>{val ? '🛎️' : '📦'}</span>
+                  {val ? 'Usługa' : 'Produkt fizyczny'}
+                </button>
+              ))}
+            </div>
+          )}
+        />
+      )}
+
       <div className="space-y-4">
-        <FormSection title="Dane podstawowe" Icon={IconPackage}>
+        <FormSection title={isService ? 'Dane usługi' : 'Dane podstawowe'} Icon={IconPackage}>
           <Input
             label="Nazwa"
-            placeholder="np. Kartacze"
+            placeholder={isService ? 'np. Naprawa zmywarki' : 'np. Kartacze'}
             required
             {...register('name')}
             error={errors.name?.message}
@@ -323,7 +372,7 @@ export function ProductForm({
             </label>
             <textarea
               id="product-description"
-              placeholder="Opcjonalny opis produktu"
+              placeholder={isService ? 'Co obejmuje usługa' : 'Opcjonalny opis produktu'}
               className={cn(ksefTextareaClass, errors.description && 'ring-2 ring-destructive/40')}
               {...register('description')}
             />
@@ -331,24 +380,26 @@ export function ProductForm({
               <p className="text-xs text-destructive">{errors.description.message}</p>
             )}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className={cn('grid gap-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
             <Input
               label="Jednostka"
-              placeholder="szt"
+              placeholder={isService ? 'godz / usługa / projekt' : 'szt'}
               required
               {...register('unit')}
               error={errors.unit?.message}
               className={inField('unit')}
             />
-            <Input
-              label="Termin przydatności (dni)"
-              type="number"
-              min={0}
-              placeholder="np. 30"
-              {...register('shelf_life_days')}
-              error={errors.shelf_life_days?.message}
-              className={inField('shelf_life_days')}
-            />
+            {!isService && (
+              <Input
+                label="Termin przydatności (dni)"
+                type="number"
+                min={0}
+                placeholder="np. 30"
+                {...register('shelf_life_days')}
+                error={errors.shelf_life_days?.message}
+                className={inField('shelf_life_days')}
+              />
+            )}
           </div>
         </FormSection>
 
@@ -484,7 +535,7 @@ export function ProductForm({
           </div>
         </FormSection>
 
-        <FormSection title="Magazyn i kody" Icon={IconBox}>
+        <FormSection title={isService ? 'Klasyfikacja i kody' : 'Magazyn i kody'} Icon={IconBox}>
           <Input
             label="Kod PKWiU"
             type="text"
@@ -494,57 +545,65 @@ export function ProductForm({
             error={errors.pkwiu?.message}
             className={inField('pkwiu')}
           />
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className={cn('grid gap-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
             <Input
-              label="SKU"
+              label="SKU / kod wewnętrzny"
               {...register('sku')}
               error={errors.sku?.message}
               className={inField('sku')}
             />
-            <Input
-              label="Kod kreskowy"
-              {...register('barcode')}
-              error={errors.barcode?.message}
-              className={inField('barcode')}
-            />
+            {!isService && (
+              <Input
+                label="Kod kreskowy"
+                {...register('barcode')}
+                error={errors.barcode?.message}
+                className={inField('barcode')}
+              />
+            )}
           </div>
-          <Input
-            label="Alert minimalnego stanu"
-            inputMode="decimal"
-            {...register('min_stock_alert')}
-            error={errors.min_stock_alert?.message}
-            className={inField('min_stock_alert')}
-          />
+          {!isService && (
+            <Input
+              label="Alert minimalnego stanu"
+              inputMode="decimal"
+              {...register('min_stock_alert')}
+              error={errors.min_stock_alert?.message}
+              className={inField('min_stock_alert')}
+            />
+          )}
         </FormSection>
       </div>
 
       <div className="space-y-3">
-        <Controller
-          name="is_resalable"
-          control={control}
-          render={({ field }) => (
-            <IosToggle
-              checked={field.value}
-              onChange={field.onChange}
-              label="Produkt do sprzedaży"
-              description="Pojawia się na fakturach i zamówieniach klientów. Wyłącz dla surowców używanych tylko w produkcji."
-              disabled={isLoading}
-            />
-          )}
-        />
-        <Controller
-          name="track_batches"
-          control={control}
-          render={({ field }) => (
-            <IosToggle
-              checked={field.value}
-              onChange={field.onChange}
-              label="Śledzenie partii (FIFO)"
-              description="Rejestruj partie towaru przy przyjęciu"
-              disabled={isLoading}
-            />
-          )}
-        />
+        {!isService && (
+          <Controller
+            name="is_resalable"
+            control={control}
+            render={({ field }) => (
+              <IosToggle
+                checked={field.value}
+                onChange={field.onChange}
+                label="Produkt do sprzedaży"
+                description="Pojawia się na fakturach i zamówieniach klientów. Wyłącz dla surowców używanych tylko w produkcji."
+                disabled={isLoading}
+              />
+            )}
+          />
+        )}
+        {!isService && (
+          <Controller
+            name="track_batches"
+            control={control}
+            render={({ field }) => (
+              <IosToggle
+                checked={field.value}
+                onChange={field.onChange}
+                label="Śledzenie partii (FIFO)"
+                description="Rejestruj partie towaru przy przyjęciu"
+                disabled={isLoading}
+              />
+            )}
+          />
+        )}
         <Controller
           name="is_active"
           control={control}
@@ -552,7 +611,7 @@ export function ProductForm({
             <IosToggle
               checked={field.value}
               onChange={field.onChange}
-              label="Aktywny w katalogu"
+              label={isService ? 'Aktywna w katalogu' : 'Aktywny w katalogu'}
               description="Widoczny przy zamówieniach i fakturach"
               disabled={isLoading}
             />
@@ -563,7 +622,9 @@ export function ProductForm({
       <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Button type="submit" className="w-full sm:flex-1" loading={isLoading}>
-            {submitLabel ?? (product ? 'Zapisz zmiany' : 'Zapisz produkt')}
+            {submitLabel ?? (product
+              ? 'Zapisz zmiany'
+              : isService ? 'Zapisz usługę' : 'Zapisz produkt')}
           </Button>
           {onCancel && (
             <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={onCancel} disabled={isLoading}>

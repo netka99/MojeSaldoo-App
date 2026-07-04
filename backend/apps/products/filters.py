@@ -12,7 +12,8 @@ class ProductFilter(django_filters.FilterSet):
     barcode = django_filters.CharFilter(field_name="barcode", lookup_expr="icontains")
     is_active = django_filters.BooleanFilter()
     track_batches = django_filters.BooleanFilter()
+    is_service = django_filters.BooleanFilter()
 
     class Meta:
         model = Product
-        fields = ["name", "unit", "sku", "barcode", "is_active", "track_batches"]
+        fields = ["name", "unit", "sku", "barcode", "is_active", "track_batches", "is_service"]

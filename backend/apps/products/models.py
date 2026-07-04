@@ -64,6 +64,13 @@ class Product(models.Model):
         help_text="Unit cost from the most recent PZ receipt.",
     )
     avg_cost_updated_at = models.DateTimeField(null=True, blank=True)
+    is_service = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, this is a service (not a physical product). "
+            "Services skip warehouse/batch/stock tracking."
+        ),
+    )
     is_resalable = models.BooleanField(
         default=True,
         help_text="If True, the product can be sold to customers (appears in invoice/order pickers).",

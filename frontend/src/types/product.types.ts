@@ -18,6 +18,8 @@ export interface Product {
   track_batches: boolean;
   min_stock_alert: string | number;
   shelf_life_days: number | null;
+  /** True when this entry is a service (not a physical product). */
+  is_service: boolean;
   is_resalable: boolean;
   markup_percent: string | number | null;
   avg_cost: string | number | null;

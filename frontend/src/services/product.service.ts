@@ -20,6 +20,7 @@ export type ProductListParams = {
   barcode?: string;
   is_active?: boolean;
   track_batches?: boolean;
+  is_service?: boolean;
 };
 
 export type StockMovementType =

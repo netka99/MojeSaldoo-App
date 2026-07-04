@@ -3,14 +3,15 @@ import { productService, type StockUpdatePayload } from '@/services/product.serv
 import type { ProductWrite } from '@/types';
 import { productKeys, stockMovementKeys, stockSnapshotKeys, type StockMovementParams } from './keys';
 
-export function useProductListQuery(page: number, sku: string) {
+export function useProductListQuery(page: number, sku: string, isService?: boolean) {
   return useQuery({
-    queryKey: productKeys.list({ page, sku }),
+    queryKey: productKeys.list({ page, sku, isService }),
     queryFn: () =>
       productService.fetchList({
         page,
         sku: sku || undefined,
         ordering: '-created_at',
+        is_service: isService,
       }),
   });
 }

@@ -24,7 +24,16 @@ function formatTotalStock(value: string | number | undefined): string {
   return n.toLocaleString('pl-PL', { maximumFractionDigits: 3 });
 }
 
-function productCountLabel(count: number): string {
+type TypeFilter = 'all' | 'products' | 'services';
+
+function itemCountLabel(count: number, filter: TypeFilter): string {
+  if (filter === 'services') {
+    if (count === 1) return '1 usługa';
+    const n = count % 10;
+    const n100 = count % 100;
+    if (n >= 2 && n <= 4 && (n100 < 10 || n100 >= 20)) return `${count} usługi`;
+    return `${count} usług`;
+  }
   if (count === 1) return '1 produkt';
   const n = count % 10;
   const n100 = count % 100;
@@ -57,10 +66,17 @@ function queryErrorMessage(err: unknown): string {
   return 'Nie udało się wczytać produktów';
 }
 
+const TYPE_FILTER_LABELS: Record<TypeFilter, string> = {
+  all: 'Wszystkie',
+  products: 'Produkty',
+  services: 'Usługi',
+};
+
 export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) {
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [skuFilter, setSkuFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -70,7 +86,10 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
     return () => window.clearTimeout(handle);
   }, [searchInput]);
 
-  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, skuFilter);
+  const isServiceParam =
+    typeFilter === 'services' ? true : typeFilter === 'products' ? false : undefined;
+
+  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, skuFilter, isServiceParam);
   const items = data?.results ?? [];
   const count = data?.count ?? 0;
 
@@ -78,13 +97,21 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
   const hasPrev = page > 1;
   const hasNext = page < totalPages;
 
+  const cardTitle =
+    typeFilter === 'services' ? 'Usługi' : typeFilter === 'products' ? 'Produkty' : 'Produkty i usługi';
+
+  function handleTypeFilter(f: TypeFilter) {
+    setTypeFilter(f);
+    setPage(1);
+  }
+
   return (
     <Card className="mx-auto w-full max-w-6xl shadow-sm">
       <CardHeader className="flex flex-col gap-4 pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <CardTitle className="text-xl sm:text-[1.5rem]">Produkty</CardTitle>
+          <CardTitle className="text-xl sm:text-[1.5rem]">{cardTitle}</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isFetching ? 'Ładowanie…' : productCountLabel(count)}
+            {isFetching ? 'Ładowanie…' : itemCountLabel(count, typeFilter)}
           </p>
         </div>
         <div className="w-full min-w-0 sm:max-w-xs">
@@ -97,6 +124,23 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
           />
         </div>
       </CardHeader>
+      <div className="flex gap-1 border-b border-border px-6 pb-0">
+        {(['all', 'products', 'services'] as TypeFilter[]).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => handleTypeFilter(f)}
+            className={cn(
+              'rounded-t-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+              typeFilter === f
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {TYPE_FILTER_LABELS[f]}
+          </button>
+        ))}
+      </div>
       <CardContent className="pt-6">
         {isError && (
           <div
@@ -135,7 +179,16 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
               >
                 <div className="min-w-0 flex-1 flex flex-col gap-2">
                   <div className="flex items-start justify-between gap-3">
-                    <span className="font-medium text-foreground">{p.name}</span>
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <span className="font-medium text-foreground">{p.name}</span>
+                      {typeFilter === 'all' && (
+                        <span className={`self-start rounded-full px-2 py-0.5 text-xs font-medium ${
+                          p.is_service ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {p.is_service ? 'Usługa' : 'Produkt'}
+                        </span>
+                      )}
+                    </div>
                     <span
                       className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
                         p.is_active ? 'bg-emerald-100 text-emerald-900' : 'bg-muted text-muted-foreground'
@@ -232,7 +285,18 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                   )}
                   onClick={() => onRowClick?.(p)}
                 >
-                  <td className="max-w-[200px] truncate px-4 py-4 font-medium text-foreground">{p.name}</td>
+                  <td className="max-w-[200px] px-4 py-4">
+                    <div className="flex flex-col gap-1">
+                      <span className="truncate font-medium text-foreground">{p.name}</span>
+                      {typeFilter === 'all' && (
+                        <span className={`self-start rounded-full px-2 py-0.5 text-xs font-medium ${
+                          p.is_service ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {p.is_service ? 'Usługa' : 'Produkt'}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">{p.unit}</td>
                   <td className="max-w-[120px] truncate px-4 py-4 text-muted-foreground">{p.sku ?? '—'}</td>
                   <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums text-muted-foreground">
@@ -278,7 +342,9 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
 
         {!isFetching && items.length === 0 && !isError && (
           <p className="py-12 text-center text-sm text-muted-foreground">
-            Brak produktów spełniających ten filtr.
+            {typeFilter === 'services'
+              ? 'Brak usług spełniających ten filtr.'
+              : 'Brak produktów spełniających ten filtr.'}
           </p>
         )}
 

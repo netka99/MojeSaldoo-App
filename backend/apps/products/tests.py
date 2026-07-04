@@ -990,3 +990,147 @@ class CustomerProductPriceAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class IsServiceFieldTests(TestCase):
+    """Tests for the is_service flag — serializer enforcement and API filter."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="service-test-user",
+            email="service@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        self.client.force_authenticate(user=self.user)
+
+    def _create_product(self, **kwargs):
+        return Product.objects.create(
+            user=self.user,
+            company=self.company,
+            name="Physical product",
+            unit="szt",
+            price_net=Decimal("10.00"),
+            price_gross=Decimal("12.30"),
+            **kwargs,
+        )
+
+    # --- Serializer enforcement ---
+
+    def test_create_service_forces_track_batches_false(self):
+        response = self.client.post(
+            reverse("product-list"),
+            {
+                "name": "Naprawa zmywarki",
+                "unit": "godz",
+                "price_net": "150.00",
+                "price_gross": "184.50",
+                "is_service": True,
+                "track_batches": True,  # should be forced to False
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(response.data["track_batches"])
+        product = Product.objects.get(id=response.data["id"])
+        self.assertFalse(product.track_batches)
+
+    def test_create_service_forces_is_resalable_true(self):
+        response = self.client.post(
+            reverse("product-list"),
+            {
+                "name": "Konsultacja IT",
+                "unit": "godz",
+                "price_net": "200.00",
+                "price_gross": "246.00",
+                "is_service": True,
+                "is_resalable": False,  # should be forced to True
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["is_resalable"])
+
+    def test_update_service_still_enforces_track_batches_false(self):
+        product = self._create_product(is_service=True, track_batches=False)
+        response = self.client.patch(
+            reverse("product-detail", args=[str(product.id)]),
+            {"track_batches": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        product.refresh_from_db()
+        self.assertFalse(product.track_batches)
+
+    def test_physical_product_keeps_track_batches(self):
+        response = self.client.post(
+            reverse("product-list"),
+            {
+                "name": "Fizyczny towar",
+                "unit": "szt",
+                "price_net": "5.00",
+                "price_gross": "6.15",
+                "is_service": False,
+                "track_batches": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["track_batches"])
+
+    # --- Filter ---
+
+    def test_filter_is_service_true_returns_only_services(self):
+        self._create_product(name="Produkt fizyczny", is_service=False)
+        Product.objects.create(
+            user=self.user,
+            company=self.company,
+            name="Usługa serwisowa",
+            unit="godz",
+            price_net=Decimal("100.00"),
+            price_gross=Decimal("123.00"),
+            is_service=True,
+        )
+        response = self.client.get(reverse("product-list"), {"is_service": "true"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = [r["name"] for r in response.data["results"]]
+        self.assertIn("Usługa serwisowa", names)
+        self.assertNotIn("Produkt fizyczny", names)
+
+    def test_filter_is_service_false_returns_only_physical(self):
+        self._create_product(name="Mąka pszenna", is_service=False)
+        Product.objects.create(
+            user=self.user,
+            company=self.company,
+            name="Strona internetowa",
+            unit="usługa",
+            price_net=Decimal("500.00"),
+            price_gross=Decimal("615.00"),
+            is_service=True,
+        )
+        response = self.client.get(reverse("product-list"), {"is_service": "false"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = [r["name"] for r in response.data["results"]]
+        self.assertIn("Mąka pszenna", names)
+        self.assertNotIn("Strona internetowa", names)
+
+    def test_no_filter_returns_both_types(self):
+        self._create_product(name="Towar", is_service=False)
+        Product.objects.create(
+            user=self.user,
+            company=self.company,
+            name="Usługa",
+            unit="godz",
+            price_net=Decimal("80.00"),
+            price_gross=Decimal("98.40"),
+            is_service=True,
+        )
+        response = self.client.get(reverse("product-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = [r["name"] for r in response.data["results"]]
+        self.assertIn("Towar", names)
+        self.assertIn("Usługa", names)

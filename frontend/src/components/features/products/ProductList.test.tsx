@@ -36,6 +36,7 @@ function product(over: Partial<Product> = {}): Product {
     track_batches: false,
     min_stock_alert: '0',
     shelf_life_days: null,
+    is_service: false,
     is_resalable: true,
     markup_percent: null,
     avg_cost: null,
@@ -78,6 +79,7 @@ describe('ProductList', () => {
         page: 1,
         sku: undefined,
         ordering: '-created_at',
+        is_service: undefined,
       });
     });
 
@@ -158,6 +160,7 @@ describe('ProductList', () => {
         page: 2,
         sku: undefined,
         ordering: '-created_at',
+        is_service: undefined,
       });
     });
 
@@ -180,6 +183,7 @@ describe('ProductList', () => {
           page: 1,
           sku: 'abc',
           ordering: '-created_at',
+          is_service: undefined,
         });
       },
       { timeout: 4000 },
@@ -210,5 +214,60 @@ describe('ProductList', () => {
     await userEvent.click(row!);
 
     expect(onRowClick).toHaveBeenCalledWith(expect.objectContaining({ name: 'Mleko' }));
+  });
+
+  it('renders Wszystkie / Produkty / Usługi filter tabs', async () => {
+    renderList(<ProductList />);
+    expect(screen.getByRole('button', { name: 'Wszystkie' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Produkty' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Usługi' })).toBeInTheDocument();
+  });
+
+  it('clicking Usługi tab passes is_service=true to fetchList', async () => {
+    renderList(<ProductList />);
+    await waitFor(() => expect(mocks.fetchList).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Usługi' }));
+
+    await waitFor(() => {
+      expect(mocks.fetchList).toHaveBeenLastCalledWith(
+        expect.objectContaining({ is_service: true }),
+      );
+    });
+  });
+
+  it('clicking Produkty tab passes is_service=false to fetchList', async () => {
+    renderList(<ProductList />);
+    await waitFor(() => expect(mocks.fetchList).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Produkty' }));
+
+    await waitFor(() => {
+      expect(mocks.fetchList).toHaveBeenLastCalledWith(
+        expect.objectContaining({ is_service: false }),
+      );
+    });
+  });
+
+  it('Usługi tab shows correct count label and empty state', async () => {
+    mocks.fetchList.mockResolvedValue({ count: 0, next: null, previous: null, results: [] });
+    renderList(<ProductList />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Usługi' }));
+
+    expect(await screen.findByText(/brak usług spełniających ten filtr/i)).toBeInTheDocument();
+  });
+
+  it('shows type badge in All view when product is a service', async () => {
+    mocks.fetchList.mockResolvedValue({
+      count: 1,
+      next: null,
+      previous: null,
+      results: [product({ name: 'Usługa testowa', is_service: true })],
+    });
+    renderList(<ProductList />);
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Usługa')).toBeInTheDocument();
   });
 });
