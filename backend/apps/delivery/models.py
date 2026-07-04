@@ -52,7 +52,7 @@ class DeliveryDocument(models.Model):
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -234,7 +234,7 @@ class DeliveryDocument(models.Model):
 class DeliveryItem(models.Model):
     """Line on a delivery document: planned vs actual quantities and returns."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     delivery_document = models.ForeignKey(
         DeliveryDocument,
         on_delete=models.CASCADE,

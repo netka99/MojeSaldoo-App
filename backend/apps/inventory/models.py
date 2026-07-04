@@ -25,7 +25,7 @@ class InventoryCount(models.Model):
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         Company,
         on_delete=models.CASCADE,
@@ -112,7 +112,7 @@ class InventoryCount(models.Model):
 class InventoryCountItem(models.Model):
     """Line item on an inventory count document."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     inventory_count = models.ForeignKey(
         InventoryCount,
         on_delete=models.CASCADE,

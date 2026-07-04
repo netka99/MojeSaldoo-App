@@ -191,7 +191,7 @@ class CostProjectDetailView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
 
     def _get_project(self, company, pk):
-        return CostProject.objects.filter(id=pk, company=company).first()
+        return CostProject.objects.filter(uuid=pk, company=company).first()
 
     def patch(self, request, pk):
         company = request.user.current_company
@@ -276,9 +276,10 @@ class InvoiceAnnotationView(APIView):
         line_annotations = request.data.get("lineAnnotations") or {}
         if line_annotations:
             lines_by_position = {str(ln.position): ln for ln in invoice.lines.all()}
-            valid_project_ids = set(
-                CostProject.objects.filter(company=company, is_active=True).values_list("id", flat=True)
-            )
+            projects_by_uuid = {
+                str(p.uuid): p
+                for p in CostProject.objects.filter(company=company, is_active=True)
+            }
 
             for pos_str, la_data in line_annotations.items():
                 line = lines_by_position.get(str(pos_str))
@@ -296,8 +297,9 @@ class InvoiceAnnotationView(APIView):
                 if "splits" in la_data:
                     la.splits.all().delete()
                     for split in la_data["splits"]:
-                        project_id = split.get("project")
-                        if project_id and str(project_id) not in {str(p) for p in valid_project_ids}:
+                        project_uuid = split.get("project")
+                        project = projects_by_uuid.get(str(project_uuid)) if project_uuid else None
+                        if project_uuid and project is None:
                             continue
                         try:
                             pct = Decimal(str(split.get("percentage", 100)))
@@ -310,7 +312,7 @@ class InvoiceAnnotationView(APIView):
                             qty = None
                         InvoiceLineAnnotationSplit.objects.create(
                             line_annotation=la,
-                            project_id=project_id or None,
+                            project=project,
                             percentage=pct,
                             quantity=qty,
                             note=split.get("note", ""),

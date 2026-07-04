@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
-from apps.users.models import Company, User
+from apps.users.models import Company, CompanyMembership, User
 
 from .models import InventoryCount, InventoryCountItem
 from .services import complete_inventory_count
@@ -26,6 +26,7 @@ def _make_user(company, username="testuser"):
     )
     user.current_company = company
     user.save()
+    CompanyMembership.objects.create(user=user, company=company, role="admin", is_active=True)
     return user
 
 
@@ -260,7 +261,7 @@ class InventoryCountStockMovementTest(TestCase):
         self.assertEqual(movement.quantity_before, Decimal("10.00"))
         self.assertEqual(movement.quantity_after, Decimal("12.00"))
         self.assertEqual(movement.reference_type, "inventory_count")
-        self.assertEqual(movement.reference_id, count.id)
+        self.assertEqual(movement.reference_id, count.uuid)
 
 
 class InventoryCountCancelTest(TestCase):
@@ -316,7 +317,7 @@ class InventoryCountAPITest(APITestCase):
         response = self.client.post(
             "/api/inventory/",
             {
-                "warehouse": str(self.warehouse.id),
+                "warehouse": str(self.warehouse.uuid),
                 "count_date": str(timezone.localdate()),
                 "notes": "API test count",
             },
@@ -350,10 +351,10 @@ class InventoryCountAPITest(APITestCase):
         )
 
         response = self.client.post(
-            f"/api/inventory/{count.id}/update-items/",
+            f"/api/inventory/{count.uuid}/update-items/",
             {
                 "items": [
-                    {"id": str(item.id), "quantity_actual": 25.0, "notes": "Checked"}
+                    {"id": str(item.uuid), "quantity_actual": 25.0, "notes": "Checked"}
                 ]
             },
             format="json",
@@ -380,7 +381,7 @@ class InventoryCountAPITest(APITestCase):
             quantity_actual=Decimal("28.000"),
         )
 
-        response = self.client.post(f"/api/inventory/{count.id}/complete/", format="json")
+        response = self.client.post(f"/api/inventory/{count.uuid}/complete/", format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["status"], "completed")
@@ -396,7 +397,7 @@ class InventoryCountAPITest(APITestCase):
             count_date=timezone.localdate(),
             created_by=self.user,
         )
-        response = self.client.post(f"/api/inventory/{count.id}/cancel/", format="json")
+        response = self.client.post(f"/api/inventory/{count.uuid}/cancel/", format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["status"], "cancelled")
@@ -410,5 +411,5 @@ class InventoryCountAPITest(APITestCase):
             status=InventoryCount.STATUS_COMPLETED,
             created_by=self.user,
         )
-        response = self.client.post(f"/api/inventory/{count.id}/complete/", format="json")
+        response = self.client.post(f"/api/inventory/{count.uuid}/complete/", format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

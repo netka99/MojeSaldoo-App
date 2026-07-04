@@ -42,7 +42,7 @@ class Invoice(models.Model):
         ("rejected", "Odrzucona"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -217,7 +217,7 @@ class InvoiceItem(models.Model):
     Invoice line: optional link to order line / product, snapshots, and computed net/VAT/gross.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     invoice = models.ForeignKey(
         Invoice,
         on_delete=models.CASCADE,

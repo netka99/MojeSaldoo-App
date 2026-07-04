@@ -1,0 +1,9 @@
+# Exclude everything, then whitelist only what the backend Containerfile needs.
+*
+
+!backend/pyproject.toml
+!backend/config/
+!backend/config/**
+!backend/manage.py
+!backend/apps/
+!automation/containers/backend/entrypoint.sh

@@ -4,13 +4,15 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
+
 from apps.customers.models import Customer
 from apps.products.models import Product
 
 from .models import Order, OrderChangeLog, OrderItem
 
 
-class OrderChangeLogSerializer(serializers.ModelSerializer):
+class OrderChangeLogSerializer(UUIDModelSerializer):
     changed_by_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -30,13 +32,13 @@ class OrderChangeLogSerializer(serializers.ModelSerializer):
         return u.first_name or u.username
 
 
-class OrderItemSerializer(serializers.ModelSerializer):
+class OrderItemSerializer(UUIDModelSerializer):
     """
     Writable nested line: POST uses product_id, quantity, unit prices, vat, discount.
     line_total_* and product name/unit are set by the model on save.
     """
 
-    product_id = serializers.PrimaryKeyRelatedField(
+    product_id = UUIDRelatedField(
         queryset=Product.objects.all(),
         source="product",
     )
@@ -58,13 +60,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "line_total_net",
             "line_total_gross",
         ]
-        read_only_fields = [
-            "id",
-            "product_name",
-            "product_unit",
-            "line_total_net",
-            "line_total_gross",
-        ]
+        read_only_fields = ["product_name", "product_unit", "line_total_net", "line_total_gross"]
 
     def validate_quantity(self, value):
         if value <= 0:
@@ -84,14 +80,14 @@ class OrderItemSerializer(serializers.ModelSerializer):
             )
 
 
-class OrderSerializer(serializers.ModelSerializer):
+class OrderSerializer(UUIDModelSerializer):
     """
     POST /api/orders/ with customer_id, delivery_date, items: [
       { product_id, quantity, unit_price_net, unit_price_gross, vat_rate, discount_percent }
     ]
     """
 
-    customer_id = serializers.PrimaryKeyRelatedField(
+    customer_id = UUIDRelatedField(
         queryset=Customer.objects.all(),
         source="customer",
     )
@@ -130,19 +126,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "delivered_at",
             "items",
         ]
-        read_only_fields = [
-            "id",
-            "order_number",
-            "created_at",
-            "updated_at",
-            "subtotal_net",
-            "subtotal_gross",
-            "total_net",
-            "total_gross",
-            "status",
-            "company",
-            "user",
-        ]
+        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

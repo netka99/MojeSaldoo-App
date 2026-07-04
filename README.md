@@ -75,6 +75,8 @@ MojeSaldoo App/
    python manage.py runserver
    ```
 
+###
+
 ### Frontend Setup
 
 1. Navigate to the frontend directory:

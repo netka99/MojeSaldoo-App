@@ -1,9 +1,11 @@
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer
+
 from .models import ProductionOrder, ProductionOrderInput, Recipe, RecipeItem
 
 
-class RecipeItemSerializer(serializers.ModelSerializer):
+class RecipeItemSerializer(UUIDModelSerializer):
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
     ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True)
     ingredient_avg_cost = serializers.DecimalField(
@@ -36,7 +38,7 @@ class RecipeItemSerializer(serializers.ModelSerializer):
         )
 
 
-class RecipeSerializer(serializers.ModelSerializer):
+class RecipeSerializer(UUIDModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     items = RecipeItemSerializer(many=True, read_only=True)
@@ -56,10 +58,10 @@ class RecipeSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
 
 
-class RecipeWriteSerializer(serializers.ModelSerializer):
+class RecipeWriteSerializer(UUIDModelSerializer):
     """Used for create/update — accepts nested items."""
 
     items = RecipeItemSerializer(many=True)
@@ -67,7 +69,7 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Recipe
         fields = ["id", "product", "name", "yield_quantity", "is_active", "notes", "items"]
-        read_only_fields = ["id"]
+        read_only_fields = []
 
     def _save_items(self, recipe, items_data):
         recipe.items.all().delete()
@@ -97,7 +99,7 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         return instance
 
 
-class ProductionOrderInputSerializer(serializers.ModelSerializer):
+class ProductionOrderInputSerializer(UUIDModelSerializer):
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
     ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True)
 
@@ -112,10 +114,10 @@ class ProductionOrderInputSerializer(serializers.ModelSerializer):
             "unit",
             "fifo_cost",
         ]
-        read_only_fields = ["id", "fifo_cost"]
+        read_only_fields = ["fifo_cost"]
 
 
-class ProductionOrderSerializer(serializers.ModelSerializer):
+class ProductionOrderSerializer(UUIDModelSerializer):
     recipe_name = serializers.SerializerMethodField()
     finished_product_name = serializers.CharField(
         source="recipe.product.name", read_only=True
@@ -155,17 +157,7 @@ class ProductionOrderSerializer(serializers.ModelSerializer):
             "completed_at",
             "created_at",
         ]
-        read_only_fields = [
-            "id",
-            "order_number",
-            "total_input_cost",
-            "real_unit_cost",
-            "rw_document",
-            "pw_document",
-            "status",
-            "completed_at",
-            "created_at",
-        ]
+        read_only_fields = ["order_number", "total_input_cost", "real_unit_cost", "rw_document", "pw_document", "status", "completed_at", "created_at"]
 
     def get_recipe_name(self, obj):
         if not obj.recipe_id:
@@ -173,7 +165,7 @@ class ProductionOrderSerializer(serializers.ModelSerializer):
         return obj.recipe.name or (obj.recipe.product.name if obj.recipe.product_id else None)
 
 
-class ProductionOrderCreateSerializer(serializers.ModelSerializer):
+class ProductionOrderCreateSerializer(UUIDModelSerializer):
     """Used for order creation — accepts nested batch inputs."""
 
     inputs = ProductionOrderInputSerializer(many=True, required=False)
@@ -181,7 +173,7 @@ class ProductionOrderCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductionOrder
         fields = ["id", "recipe", "date", "mode", "quantity_produced", "notes", "inputs"]
-        read_only_fields = ["id"]
+        read_only_fields = []
 
     def validate(self, data):
         if data.get("mode") == ProductionOrder.MODE_BATCH:

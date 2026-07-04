@@ -68,7 +68,8 @@ class CompanyDetailView(generics.RetrieveUpdateAPIView):
 
     serializer_class = CompanySerializer
     permission_classes = [permissions.IsAuthenticated]
-    lookup_field = "pk"
+    lookup_field = "uuid"
+    lookup_url_kwarg = "pk"
 
     def get_queryset(self):
         return (
@@ -132,7 +133,7 @@ class CompanyModulesListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         if not CompanyMembership.objects.filter(
             user=request.user,
             company=company,
@@ -150,7 +151,7 @@ class CompanyModuleEnableView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def patch(self, request, company_id, module_key):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         valid_modules = {k for k, _ in CompanyModule.MODULE_CHOICES}
         if module_key not in valid_modules:
             return Response(
@@ -187,7 +188,7 @@ class SwitchCompanyView(APIView):
         ser = SwitchCompanySerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         company_id = ser.validated_data["company"]
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         if not CompanyMembership.objects.filter(
             user=request.user,
             company=company,
@@ -213,7 +214,7 @@ class CompanyWorkflowSettingsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def _get_company_or_403(self, request, company_id, *, require_write=False):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         membership = CompanyMembership.objects.select_related("company_role").filter(
             user=request.user, company=company, is_active=True
         ).first()
@@ -269,7 +270,7 @@ class CompanyRolesListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_membership(request, company)
         if err:
             return err
@@ -277,7 +278,7 @@ class CompanyRolesListView(APIView):
         return Response(CompanyRoleSerializer(roles, many=True).data)
 
     def post(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_admin_membership(request, company)
         if err:
             return err
@@ -298,7 +299,7 @@ class CompanyRoleDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def patch(self, request, company_id, role_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_admin_membership(request, company)
         if err:
             return err
@@ -315,7 +316,7 @@ class CompanyRoleDetailView(APIView):
         return Response(CompanyRoleSerializer(role).data)
 
     def delete(self, request, company_id, role_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_admin_membership(request, company)
         if err:
             return err
@@ -339,7 +340,7 @@ class CompanyMembersListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_admin_membership(request, company)
         if err:
             return err
@@ -351,7 +352,7 @@ class CompanyMembersListView(APIView):
         return Response(TeamMemberSerializer(members, many=True).data)
 
     def post(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_admin_membership(request, company)
         if err:
             return err
@@ -386,13 +387,13 @@ class CompanyMemberDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def patch(self, request, company_id, membership_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         requesting_m, err = _require_admin_membership(request, company)
         if err:
             return err
         membership = get_object_or_404(
             CompanyMembership.objects.select_related("user", "company_role"),
-            pk=membership_id, company=company,
+            uuid=membership_id, company=company,
         )
         # Admin cannot change their own role
         if membership.user == request.user:
@@ -432,11 +433,11 @@ class CompanyMemberDetailView(APIView):
         return Response(TeamMemberSerializer(membership).data)
 
     def delete(self, request, company_id, membership_id):
-        company = get_object_or_404(Company, pk=company_id)
+        company = get_object_or_404(Company, uuid=company_id)
         _, err = _require_admin_membership(request, company)
         if err:
             return err
-        membership = get_object_or_404(CompanyMembership, pk=membership_id, company=company)
+        membership = get_object_or_404(CompanyMembership, uuid=membership_id, company=company)
         if membership.user == request.user:
             return Response({"detail": "Nie możesz usunąć siebie z firmy."}, status=status.HTTP_400_BAD_REQUEST)
         membership.is_active = False

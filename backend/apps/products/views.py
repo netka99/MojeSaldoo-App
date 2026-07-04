@@ -32,6 +32,7 @@ def _stock_owner_user(product, request_user):
 
 class ProductViewSet(viewsets.ModelViewSet):
     """Full CRUD for products in the user's active company."""
+    lookup_field = "uuid"
 
     serializer_class = ProductSerializer
     required_permission = 'can_manage_products'
@@ -81,7 +82,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"], url_path="update-stock")
-    def update_stock(self, request, pk=None):
+    def update_stock(self, request, uuid=None):
         product = self.get_object()
         input_serializer = StockUpdateSerializer(
             data=request.data,
@@ -93,7 +94,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         warehouse = get_object_or_404(
             Warehouse.objects.filter(company_id=product.company_id),
-            pk=data["warehouse_id"],
+            uuid=data["warehouse_id"],
         )
         qty_change: Decimal = data["quantity_change"]
         movement_type = data.get("movement_type", StockMovement.MovementType.ADJUSTMENT)
@@ -200,7 +201,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         if not warehouse_id:
             raise ValidationError({"warehouse_id": "This field is required."})
         wh_qs = filter_queryset_for_current_company(
-            Warehouse.objects.filter(pk=warehouse_id),
+            Warehouse.objects.filter(uuid=warehouse_id),
             request.user,
         )
         warehouse = get_object_or_404(wh_qs)
@@ -217,7 +218,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             p = ps.product
             items.append(
                 {
-                    "product_id": str(p.id),
+                    "product_id": str(p.uuid),
                     "product_name": p.name,
                     "sku": p.sku,
                     "unit": p.unit,
@@ -226,7 +227,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
         return Response(
             {
-                "warehouse_id": str(warehouse.id),
+                "warehouse_id": str(warehouse.uuid),
                 "warehouse_name": warehouse.name,
                 "items": items,
             }
@@ -235,6 +236,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 class WarehouseViewSet(viewsets.ModelViewSet):
     """Full CRUD for warehouses in the user's active company."""
+    lookup_field = "uuid"
 
     serializer_class = WarehouseSerializer
     required_permission = 'can_manage_warehouses'
@@ -281,7 +283,7 @@ class WarehouseViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["get"], url_path="stock")
-    def stock(self, request, pk=None):
+    def stock(self, request, uuid=None):
         """GET /api/warehouses/{id}/stock/ — all ProductStock rows for this warehouse.
 
         Query params:
@@ -322,6 +324,7 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     Filter params: ?product={uuid}, ?warehouse={uuid}, ?type={TYPE},
                    ?date_from=YYYY-MM-DD, ?date_to=YYYY-MM-DD
     """
+    lookup_field = "uuid"
 
     serializer_class = StockMovementListSerializer
     permission_classes = [IsAuthenticated]

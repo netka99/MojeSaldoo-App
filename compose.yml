@@ -1,0 +1,87 @@
+# Podman Compose for the MojeSaldoo backend + PostgreSQL.
+#   podman compose up --build -d
+#   podman compose logs -f backend
+#
+# The backend image is defined by automation/containers/backend/Containerfile and
+# runs gunicorn after applying migrations (see entrypoint.sh). It connects to the
+# `db` service via PG_DATABASE_URL; uploaded media and logs are persisted onto the
+# host under ./data, and the Postgres data into the named `pgdata` volume.
+services:
+  db:
+    image: docker.io/library/postgres:16
+    container_name: mojesaldoo-db
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-mojesaldoo}"
+      POSTGRES_USER: "${POSTGRES_USER:-mojesaldoo}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-mojesaldoo}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mojesaldoo} -d ${POSTGRES_DB:-mojesaldoo}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: automation/containers/backend/Containerfile
+    image: mojesaldoo-backend:latest
+    container_name: mojesaldoo-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # Override these for any real deployment — the defaults are dev-only.
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+      DJANGO_SETTINGS_MODULE: "config.settings_production"
+      DJANGO_ALLOWED_HOSTS: "${DJANGO_ALLOWED_HOSTS:-*}"
+      DJANGO_DEBUG: "${DJANGO_DEBUG:-False}"
+      # Points at the db service above; settings.py falls back to SQLite if unset/invalid.
+      PG_DATABASE_URL: "postgres://${POSTGRES_USER:-mojesaldoo}:${POSTGRES_PASSWORD:-mojesaldoo}@db:5432/${POSTGRES_DB:-mojesaldoo}"
+    volumes:
+      # Uploaded media and logs (see config/settings.py); the database now lives
+      # in Postgres. :Z relabels for SELinux; :U chowns the host dir to the
+      # container's appuser (uid 1001) so it can write. Both are podman options.
+      - ./data/media:/app/media:Z,U
+      - ./data/logs:/app/logs:Z,U
+    restart: unless-stopped
+    healthcheck:
+      # Hits the unauthenticated /healthz/ endpoint (config/urls.py).
+      test: ["CMD", "python3.12", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz/', timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+
+  # One-shot test runner: builds/reuses the backend image and runs the suite
+  # against the `db` Postgres service instead of serving. Gated behind the
+  # `test` profile so `podman compose up` never starts it. Run with:
+  #   podman compose --profile test run --rm backend-test
+  # pytest-django creates/tears down a `test_<db>` database (the compose
+  # superuser has CREATEDB), so the real `mojesaldoo` database is untouched.
+  backend-test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: automation/containers/backend/Containerfile
+    image: mojesaldoo-backend:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY:-test-secret}"
+      DJANGO_SETTINGS_MODULE: "config.settings_production"
+      DJANGO_ALLOWED_HOSTS: "*"
+      DJANGO_DEBUG: "False"
+      PG_DATABASE_URL: "postgres://${POSTGRES_USER:-mojesaldoo}:${POSTGRES_PASSWORD:-mojesaldoo}@db:5432/${POSTGRES_DB:-mojesaldoo}"
+    # --ds wins over the pytest ini's config.settings (SQLite), so the suite runs
+    # against Postgres. Extra args here are forwarded to pytest by entrypoint.sh.
+    command: ["--test", "--ds=config.settings_production"]
+
+volumes:
+  pgdata:

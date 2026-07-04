@@ -47,7 +47,7 @@ class CustomerModelTests(TestCase):
             is_active=True,
         )
 
-        self.assertIsInstance(customer.id, uuid.UUID)
+        self.assertIsInstance(customer.uuid, uuid.UUID)
         self.assertEqual(customer.user, self.user)
         self.assertEqual(customer.credit_limit, Decimal("5000.00"))
         self.assertEqual(customer.country, "PL")
@@ -156,5 +156,5 @@ class CustomerViewSetAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        row = Customer.objects.get(id=response.data["id"])
+        row = Customer.objects.get(uuid=response.data["id"])
         self.assertEqual(row.user, self.user)

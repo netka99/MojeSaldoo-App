@@ -40,7 +40,7 @@ class CompanyDeleteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id, deleted_at__isnull=True)
+        company = get_object_or_404(Company, uuid=company_id, deleted_at__isnull=True)
 
         membership = (
             CompanyMembership.objects.select_related("company_role")
@@ -69,7 +69,7 @@ class CompanyDeleteView(APIView):
             # 1. Soft-delete the company — anonymize PII fields
             company.deleted_at = timezone.now()
             company.is_active = False
-            company.name = f"Firma usunięta [{company.nip or str(company.id)[:8]}]"
+            company.name = f"Firma usunięta [{company.nip or str(company.uuid)[:8]}]"
             company.email = ""
             company.phone = ""
             company.address = ""
@@ -118,7 +118,7 @@ class CompanyLeaveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, company_id):
-        company = get_object_or_404(Company, pk=company_id, deleted_at__isnull=True)
+        company = get_object_or_404(Company, uuid=company_id, deleted_at__isnull=True)
 
         membership = (
             CompanyMembership.objects.select_related("company_role")

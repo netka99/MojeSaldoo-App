@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mojesaldoo-backend"
+version = "0.1.0"
+description = "MojeSaldoo backend — Django REST API for invoicing, inventory, production, and KSeF workflows."
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Rigel Di Scala", email = "rigeld@gmail.com" }]
+
+dependencies = [
+    "Django==4.2.7",
+    "djangorestframework==3.14.0",
+    "djangorestframework-simplejwt==5.3.1",
+    "django-filter==24.3",
+    "django-cors-headers==4.3.1",
+    # 10.1.0 often fails to build on Windows + newer Python (no wheel → broken sdist). Use a release with wheels.
+    "Pillow>=10.4.0,<12",
+    "python-decouple==3.8",
+    "python-dotenv==1.0.0",
+    "requests==2.31.0",
+    "cryptography>=41.0.7",
+    "signxml>=3.2.0",
+    "lxml>=4.9.0",
+    "PyJWT==2.8.0",
+    "gunicorn==21.2.0",
+    "whitenoise==6.6.0",
+    "openpyxl==3.1.5",
+    # OCR for paper invoice scanner (requires system Tesseract: apt install tesseract-ocr tesseract-ocr-pol)
+    "pytesseract>=0.3.10",
+]
+
+[project.optional-dependencies]
+# Postgres in production. 2.9.9 has no cp313 Windows wheel → builds from source and needs pg_config; 2.9.10+ ships wheels.
+postgres = ["psycopg2-binary>=2.9.10"]
+dev = [
+    "pytest>=8.0",
+    "pytest-django>=4.8",
+    "ruff>=0.6",
+    "ty>=0.0.1a1",
+]
+
+[tool.setuptools]
+packages = ["config", "apps"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = ["venv", "migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "DJ"]

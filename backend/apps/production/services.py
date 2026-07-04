@@ -194,7 +194,7 @@ def complete_production_order(order: ProductionOrder, user) -> ProductionOrder:
                 warehouse=warehouse,
                 quantity=qty,
                 user=user,
-                reference_id=order.id,
+                reference_id=order.uuid,
                 notes=f"Produkcja {order.order_number}",
             )
             total_cost += line_cost
@@ -276,7 +276,7 @@ def complete_production_order(order: ProductionOrder, user) -> ProductionOrder:
             quantity_before=qty_before,
             quantity_after=stock.quantity_available,
             reference_type="production_order",
-            reference_id=order.id,
+            reference_id=order.uuid,
             notes=f"Produkcja {order.order_number}",
             created_by=user,
         )
@@ -355,7 +355,7 @@ def get_production_planning(company, date_from=None, date_to=None):
     product_demand: dict = {}
     for order in orders_qs:
         for item in order.items.all():
-            pid = str(item.product_id)
+            pid = str(item.product.uuid)
             remaining = item.quantity - (item.quantity_delivered or Decimal("0"))
             if remaining <= 0:
                 continue
@@ -369,7 +369,7 @@ def get_production_planning(company, date_from=None, date_to=None):
             product_demand[pid]["total_ordered"] += remaining
             product_demand[pid]["orders"].append(
                 {
-                    "order_id": str(order.id),
+                    "order_id": str(order.uuid),
                     "order_number": order.order_number,
                     "customer_name": order.customer.name if order.customer_id else "",
                     "quantity": remaining,
@@ -386,7 +386,7 @@ def get_production_planning(company, date_from=None, date_to=None):
     recipes = (
         Recipe.objects.filter(
             company=company,
-            product_id__in=product_demand.keys(),
+            product__uuid__in=product_demand.keys(),
             is_active=True,
         )
         .select_related("product")
@@ -400,7 +400,7 @@ def get_production_planning(company, date_from=None, date_to=None):
 
     result = []
     for recipe in recipes:
-        pid = str(recipe.product_id)
+        pid = str(recipe.product.uuid)
         if pid not in product_demand:
             continue
 
@@ -439,7 +439,7 @@ def get_production_planning(company, date_from=None, date_to=None):
 
             ingredients.append(
                 {
-                    "ingredient_id": str(ing.id),
+                    "ingredient_id": str(ing.uuid),
                     "ingredient_name": ing.name,
                     "ingredient_unit": ing.unit,
                     "quantity_per_batch": qty_per_batch,
@@ -463,7 +463,7 @@ def get_production_planning(company, date_from=None, date_to=None):
                 "product_id": pid,
                 "product_name": demand["product_name"],
                 "product_unit": recipe.product.unit,
-                "recipe_id": str(recipe.id),
+                "recipe_id": str(recipe.uuid),
                 "recipe_name": recipe.name or recipe.product.name,
                 "recipe_yield_quantity": yield_qty,
                 "total_ordered": total_ordered,

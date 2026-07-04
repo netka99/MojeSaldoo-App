@@ -12,6 +12,7 @@ from apps.users.tenant import filter_queryset_for_current_company
 
 class CustomerViewSet(viewsets.ModelViewSet):
     """Full CRUD for customers in the user's active company."""
+    lookup_field = "uuid"
 
     serializer_class = CustomerSerializer
     required_permission = 'can_manage_customers'

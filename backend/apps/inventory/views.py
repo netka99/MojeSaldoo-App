@@ -23,6 +23,7 @@ from .services import complete_inventory_count
 
 class InventoryCountViewSet(viewsets.ModelViewSet):
     """CRUD for inventory count documents, scoped to request.user.current_company."""
+    lookup_field = "uuid"
 
     serializer_class = InventoryCountSerializer
     required_permission = 'can_manage_inventory'
@@ -85,7 +86,7 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         return Response(out_serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="complete")
-    def complete(self, request, pk=None):
+    def complete(self, request, uuid=None):
         """POST :id/complete/ — apply inventory corrections and mark as completed."""
         count = self.get_object()
 
@@ -100,7 +101,7 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=["post"], url_path="cancel")
-    def cancel(self, request, pk=None):
+    def cancel(self, request, uuid=None):
         """POST :id/cancel/ — cancel a draft inventory count."""
         count = self.get_object()
 
@@ -116,7 +117,7 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=["post"], url_path="update-items")
-    def update_items(self, request, pk=None):
+    def update_items(self, request, uuid=None):
         """
         POST :id/update-items/ — bulk update quantity_actual for items.
 
@@ -134,7 +135,7 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
             raise ValidationError({"items": "Expected a list."})
 
         # Build lookup of existing items
-        existing_items = {str(item.id): item for item in count.items.all()}
+        existing_items = {str(item.uuid): item for item in count.items.all()}
 
         updated = []
         for row in items_payload:

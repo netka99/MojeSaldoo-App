@@ -8,6 +8,7 @@ from .serializers import SupplierListSerializer, SupplierSerializer
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
+    lookup_field = "uuid"
     module_required = 'purchasing'
     required_permission = 'can_manage_purchasing'
     permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]

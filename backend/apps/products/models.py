@@ -5,7 +5,7 @@ from django.db import models, transaction
 
 
 class Product(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -108,7 +108,7 @@ class Warehouse(models.Model):
         CUSTOMER = "customer", "Customer"
         EXTERNAL = "external", "External"
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -149,7 +149,7 @@ class Warehouse(models.Model):
 class ProductStock(models.Model):
     """Per-warehouse inventory quantities for a product."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
@@ -221,7 +221,7 @@ class ProductStock(models.Model):
 class StockBatch(models.Model):
     """FIFO lot / batch line for a product in a warehouse."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
@@ -272,7 +272,7 @@ class StockMovement(models.Model):
         RESERVATION = "reservation", "Reservation"
         UNRESERVATION = "unreservation", "Unreservation"
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,

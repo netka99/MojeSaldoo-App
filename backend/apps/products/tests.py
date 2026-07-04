@@ -47,7 +47,7 @@ class ProductModelTests(TestCase):
             is_active=True,
         )
 
-        self.assertIsInstance(product.id, uuid.UUID)
+        self.assertIsInstance(product.uuid, uuid.UUID)
         self.assertEqual(product.user, self.user)
         self.assertEqual(product.price_net, Decimal("10.00"))
         self.assertEqual(product.price_gross, Decimal("12.30"))
@@ -108,7 +108,7 @@ class WarehouseModelTests(TestCase):
             fifo_enabled=False,
         )
 
-        self.assertIsInstance(warehouse.id, uuid.UUID)
+        self.assertIsInstance(warehouse.uuid, uuid.UUID)
         self.assertEqual(warehouse.user, self.user)
         self.assertEqual(warehouse.code, "MG")
         self.assertEqual(warehouse.name, "Magazyn główny")
@@ -222,7 +222,7 @@ class ProductStockModelTests(TestCase):
             quantity_total=Decimal("12.50"),
         )
 
-        self.assertIsInstance(row.id, uuid.UUID)
+        self.assertIsInstance(row.uuid, uuid.UUID)
         self.assertEqual(row.product, self.product)
         self.assertEqual(row.warehouse, self.warehouse_a)
         self.assertEqual(row.quantity_available, Decimal("10.50"))
@@ -384,7 +384,7 @@ class StockBatchModelTests(TestCase):
             unit_cost=Decimal("12.34"),
         )
 
-        self.assertIsInstance(batch.id, uuid.UUID)
+        self.assertIsInstance(batch.uuid, uuid.UUID)
         self.assertEqual(batch.product, self.product)
         self.assertEqual(batch.warehouse, self.warehouse)
         self.assertEqual(batch.batch_number, "LOT-2026-01")
@@ -628,7 +628,7 @@ class ProductViewSetAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["name"], "New via API")
-        created = Product.objects.get(id=response.data["id"])
+        created = Product.objects.get(uuid=response.data["id"])
         self.assertEqual(created.user, self.user)
 
     def test_create_accepts_pkwiu(self):
@@ -646,7 +646,7 @@ class ProductViewSetAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["pkwiu"], "62.01.11.0")
-        created = Product.objects.get(id=response.data["id"])
+        created = Product.objects.get(uuid=response.data["id"])
         self.assertEqual(created.pkwiu, "62.01.11.0")
 
     def test_list_includes_pkwiu(self):
@@ -656,14 +656,14 @@ class ProductViewSetAPITests(TestCase):
         p.save(update_fields=["pkwiu"])
         response = self.client.get(reverse("product-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        row = next(r for r in response.data["results"] if r["id"] == str(p.id))
+        row = next(r for r in response.data["results"] if r["id"] == str(p.uuid))
         self.assertEqual(row["pkwiu"], "10.20.30")
 
     def test_patch_updates_pkwiu(self):
         self.client.force_authenticate(user=self.user)
         p = Product.objects.get(name="My catalog item")
         response = self.client.patch(
-            reverse("product-detail", kwargs={"pk": p.id}),
+            reverse("product-detail", kwargs={"uuid": p.uuid}),
             {"pkwiu": "44.55.66"},
             format="json",
         )
@@ -699,13 +699,13 @@ class ProductViewSetAPITests(TestCase):
             quantity_total=Decimal("5.25"),
         )
         response = self.client.get(
-            reverse("product-stock-snapshot"), {"warehouse_id": str(wh.id)}
+            reverse("product-stock-snapshot"), {"warehouse_id": str(wh.uuid)}
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["warehouse_id"], str(wh.id))
+        self.assertEqual(response.data["warehouse_id"], str(wh.uuid))
         self.assertEqual(response.data["warehouse_name"], "Main snap")
         self.assertEqual(len(response.data["items"]), 1)
-        self.assertEqual(response.data["items"][0]["product_id"], str(p.id))
+        self.assertEqual(response.data["items"][0]["product_id"], str(p.uuid))
         self.assertEqual(response.data["items"][0]["quantity_available"], "5.250")
 
 
@@ -761,7 +761,7 @@ class WarehouseViewSetAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        wh = Warehouse.objects.get(id=response.data["id"])
+        wh = Warehouse.objects.get(uuid=response.data["id"])
         self.assertEqual(wh.user, self.user)
 
 
@@ -800,10 +800,10 @@ class ProductUpdateStockAPITests(TestCase):
 
     def test_update_stock_creates_movement_and_product_stock(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
+        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
         response = self.client.post(
             url,
-            {"warehouse_id": str(self.warehouse.id), "quantity_change": "7.50"},
+            {"warehouse_id": str(self.warehouse.uuid), "quantity_change": "7.50"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -817,10 +817,10 @@ class ProductUpdateStockAPITests(TestCase):
 
     def test_update_stock_amends_existing_movement(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
+        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
         first = self.client.post(
             url,
-            {"warehouse_id": str(self.warehouse.id), "quantity_change": "10.00"},
+            {"warehouse_id": str(self.warehouse.uuid), "quantity_change": "10.00"},
             format="json",
         )
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
@@ -833,16 +833,16 @@ class ProductUpdateStockAPITests(TestCase):
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         stock = ProductStock.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(stock.quantity_available, Decimal("3.00"))
-        movement = StockMovement.objects.get(pk=movement_id)
+        movement = StockMovement.objects.get(uuid=movement_id)
         self.assertEqual(movement.quantity, Decimal("3.00"))
         self.assertEqual(StockMovement.objects.count(), 1)
 
     def test_negative_available_rejected_without_allow_negative(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
+        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
         response = self.client.post(
             url,
-            {"warehouse_id": str(self.warehouse.id), "quantity_change": "-1.00"},
+            {"warehouse_id": str(self.warehouse.uuid), "quantity_change": "-1.00"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -861,17 +861,17 @@ class ProductUpdateStockAPITests(TestCase):
             name="Foreign",
         )
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
+        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
         response = self.client.post(
             url,
-            {"warehouse_id": str(foreign_wh.id), "quantity_change": "1.00"},
+            {"warehouse_id": str(foreign_wh.uuid), "quantity_change": "1.00"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_update_stock_accepts_warehouse_code_instead_of_id(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
+        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
         response = self.client.post(
             url,
             {"warehouse_code": "us1", "quantity_change": "2.00", "movement_type": "purchase"},
@@ -922,7 +922,7 @@ class CustomerProductPriceAPITests(TestCase):
         )
         response = self.client.get(self.base_url, {"customer": str(self.customer.id)})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        results = response.data.get("results", response.data)
+        results = response.data
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["price_net"], "2.80")
         self.assertEqual(results[0]["product_name"], "Chleb Zwykly")
@@ -1009,10 +1009,10 @@ class IsServiceFieldTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _create_product(self, **kwargs):
+        kwargs.setdefault("name", "Physical product")
         return Product.objects.create(
             user=self.user,
             company=self.company,
-            name="Physical product",
             unit="szt",
             price_net=Decimal("10.00"),
             price_gross=Decimal("12.30"),
@@ -1036,7 +1036,7 @@ class IsServiceFieldTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertFalse(response.data["track_batches"])
-        product = Product.objects.get(id=response.data["id"])
+        product = Product.objects.get(uuid=response.data["id"])
         self.assertFalse(product.track_batches)
 
     def test_create_service_forces_is_resalable_true(self):
@@ -1058,7 +1058,7 @@ class IsServiceFieldTests(TestCase):
     def test_update_service_still_enforces_track_batches_false(self):
         product = self._create_product(is_service=True, track_batches=False)
         response = self.client.patch(
-            reverse("product-detail", args=[str(product.id)]),
+            reverse("product-detail", args=[str(product.uuid)]),
             {"track_batches": True},
             format="json",
         )

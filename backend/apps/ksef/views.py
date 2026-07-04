@@ -747,7 +747,7 @@ class KSeFProductMappingView(APIView):
             if not name or not product_id:
                 continue
             try:
-                product = Product.objects.get(id=product_id, company=company)
+                product = Product.objects.get(uuid=product_id, company=company)
             except (Product.DoesNotExist, Exception):
                 continue
             KSeFProductMapping.objects.update_or_create(

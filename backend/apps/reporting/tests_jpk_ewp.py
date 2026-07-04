@@ -1,5 +1,4 @@
 """Tests for JPK_EWP generator and export endpoint."""
-import uuid
 from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock
@@ -116,7 +115,6 @@ class JpkEwpEndpointTests(TestCase):
         User = get_user_model()
 
         self.company = Company.objects.create(
-            id=uuid.uuid4(),
             name="Ryczałt Test",
             nip="9999999999",
             taxation_form=Company.TAXATION_RYCZALT,

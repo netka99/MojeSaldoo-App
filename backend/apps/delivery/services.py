@@ -217,7 +217,7 @@ def apply_pz_receipt(pz_document: "DeliveryDocument", user) -> None:
                 quantity_before=qty_before,
                 quantity_after=stock.quantity_available,
                 reference_type="delivery_document",
-                reference_id=pz_document.id,
+                reference_id=pz_document.uuid,
                 notes=", ".join(notes_parts),
                 created_by=user,
             )
@@ -246,10 +246,10 @@ def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
         raise ValueError("Order must be confirmed to generate a delivery document.")
 
     with transaction.atomic():
-        # For order-based WZ, default to the main warehouse — stock was reserved there
-        # when the order was confirmed. Van users load via MM first and the WZ
-        # from_warehouse gets updated at that point.
-        from_wh = active_main_warehouse_for_company(order.company_id)
+        # Prefer the active van/mobile warehouse so WZ completion deducts from the
+        # van after loading; fall back to the main MG warehouse. Mirrors the
+        # generate-for-order API view's resolution.
+        from_wh = default_from_warehouse_for_delivery(order.company_id)
         doc = DeliveryDocument.objects.create(
             company=order.company,
             order=order,
@@ -342,8 +342,8 @@ def create_van_loading_mm(
 
     with transaction.atomic():
         products = {
-            str(p.id): p
-            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
+            str(p.uuid): p
+            for p in Product.objects.filter(company_id=company_id, uuid__in=product_ids)
         }
         missing = [str(pid) for pid in product_ids if str(pid) not in products]
         if missing:
@@ -357,7 +357,7 @@ def create_van_loading_mm(
                 ProductStock.objects.select_for_update()
                 .get_or_create(
                     company_id=company_id,
-                    product_id=pid,
+                    product=products[str(pid)],
                     warehouse_id=from_warehouse.id,
                     defaults={
                         "quantity_available": Decimal("0"),
@@ -374,7 +374,7 @@ def create_van_loading_mm(
                 ProductStock.objects.select_for_update()
                 .get_or_create(
                     company_id=company_id,
-                    product_id=pid,
+                    product=products[str(pid)],
                     warehouse_id=to_warehouse.id,
                     defaults={
                         "quantity_available": Decimal("0"),
@@ -434,7 +434,7 @@ def create_van_loading_mm(
             )
             StockMovement.objects.create(
                 company_id=company_id,
-                product_id=product.id,
+                product=product,
                 warehouse_id=from_warehouse.id,
                 user=user,
                 movement_type=StockMovement.MovementType.TRANSFER,
@@ -442,7 +442,7 @@ def create_van_loading_mm(
                 quantity_before=qty_before_total,
                 quantity_after=qty_after_total,
                 reference_type="delivery",
-                reference_id=doc.id,
+                reference_id=doc.uuid,
                 notes="Załadunek MM — wydanie z magazynu",
                 created_by=user,
             )
@@ -453,7 +453,7 @@ def create_van_loading_mm(
             st_in.save(update_fields=["quantity_available"])
             StockMovement.objects.create(
                 company_id=company_id,
-                product_id=product.id,
+                product=product,
                 warehouse_id=to_warehouse.id,
                 user=user,
                 movement_type=StockMovement.MovementType.TRANSFER,
@@ -461,7 +461,7 @@ def create_van_loading_mm(
                 quantity_before=qty_before_in,
                 quantity_after=st_in.quantity_available,
                 reference_type="delivery",
-                reference_id=doc.id,
+                reference_id=doc.uuid,
                 notes="Załadunek MM — przyjęcie na van",
                 created_by=user,
             )
@@ -503,7 +503,7 @@ def apply_van_reconciliation(
 
     if not items:
         return {
-            "van_warehouse_id": str(van_warehouse.id),
+            "van_warehouse_id": str(van_warehouse.uuid),
             "reconciliation_id": None,
             "mm_return_number": None,
             "reconciled_at": timezone.now().isoformat(),
@@ -531,8 +531,8 @@ def apply_van_reconciliation(
 
     with transaction.atomic():
         products = {
-            str(p.id): p
-            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
+            str(p.uuid): p
+            for p in Product.objects.filter(company_id=company_id, uuid__in=product_ids)
         }
         missing = [str(pid) for pid in product_ids if str(pid) not in products]
         if missing:
@@ -546,7 +546,7 @@ def apply_van_reconciliation(
             pid = str(row["product_id"])
             st, _ = ProductStock.objects.select_for_update().get_or_create(
                 company_id=company_id,
-                product_id=row["product_id"],
+                product_id=products[pid].id,
                 warehouse_id=van_warehouse.id,
                 defaults={
                     "quantity_available": Decimal("0"),
@@ -562,7 +562,7 @@ def apply_van_reconciliation(
             if row["quantity_actual_remaining"] > Decimal("0")
         ]
 
-        route_note = f" (trasa {route.id})" if route else ""
+        route_note = f" (trasa {route.uuid})" if route else ""
         mm_return_doc = DeliveryDocument.objects.create(
             company_id=company_id,
             user=user,
@@ -580,7 +580,7 @@ def apply_van_reconciliation(
             pid = str(row["product_id"])
             DeliveryItem.objects.create(
                 delivery_document=mm_return_doc,
-                product_id=row["product_id"],
+                product=products[pid],
                 quantity_planned=row["quantity_actual_remaining"],
                 quantity_actual=row["quantity_actual_remaining"],
             )
@@ -605,9 +605,10 @@ def apply_van_reconciliation(
                 van_route=route,
             )
             for row in writeoff_lines:
+                pid_wo = str(row["product_id"])
                 DeliveryItem.objects.create(
                     delivery_document=rw_doc,
-                    product_id=row["product_id"],
+                    product=products[pid_wo],
                     quantity_planned=row["quantity_writeoff"],
                     quantity_actual=row["quantity_writeoff"],
                 )
@@ -629,7 +630,7 @@ def apply_van_reconciliation(
             if P > Decimal("0"):
                 summary_items.append({
                     "action": "returned",
-                    "product_id": str(product.id),
+                    "product_id": str(product.uuid),
                     "product_name": product.name,
                     "quantity": str(P),
                     "unit": product.unit,
@@ -637,7 +638,7 @@ def apply_van_reconciliation(
             if W > Decimal("0"):
                 summary_items.append({
                     "action": "written_off",
-                    "product_id": str(product.id),
+                    "product_id": str(product.uuid),
                     "product_name": product.name,
                     "quantity": str(W),
                     "unit": product.unit,
@@ -645,7 +646,7 @@ def apply_van_reconciliation(
             if kept > Decimal("0"):
                 summary_items.append({
                     "action": "kept",
-                    "product_id": str(product.id),
+                    "product_id": str(product.uuid),
                     "product_name": product.name,
                     "quantity": str(kept),
                     "unit": product.unit,
@@ -666,7 +667,7 @@ def apply_van_reconciliation(
                     quantity_before=qty_before_van,
                     quantity_after=st.quantity_available,
                     reference_type="mm_return",
-                    reference_id=mm_return_doc.id,
+                    reference_id=mm_return_doc.uuid,
                     notes="MM-P — zwrot z vana do magazynu",
                     created_by=user,
                 )
@@ -694,7 +695,7 @@ def apply_van_reconciliation(
                     quantity_before=qty_before_main,
                     quantity_after=st_main.quantity_available,
                     reference_type="mm_return",
-                    reference_id=mm_return_doc.id,
+                    reference_id=mm_return_doc.uuid,
                     notes="MM-P — zwrot z vana do magazynu",
                     created_by=user,
                 )
@@ -716,7 +717,7 @@ def apply_van_reconciliation(
                         quantity_before=qty_before_van,
                         quantity_after=st.quantity_available,
                         reference_type="rw_writeoff",
-                        reference_id=rw_doc.id if rw_doc else run_id,
+                        reference_id=rw_doc.uuid if rw_doc else run_id,
                         notes=f"Odpisanie towaru z vana{route_note}",
                         created_by=user,
                     )
@@ -727,7 +728,7 @@ def apply_van_reconciliation(
                     over = total_removed - T
                     discrepancies.append(
                         {
-                            "product_id": str(product.id),
+                            "product_id": str(product.uuid),
                             "product_name": product.name,
                             "quantity_expected": _fmt_decimal(T),
                             "quantity_actual": _fmt_decimal(T - over),
@@ -761,7 +762,7 @@ def apply_van_reconciliation(
                     )
                     discrepancies.append(
                         {
-                            "product_id": str(product.id),
+                            "product_id": str(product.uuid),
                             "product_name": product.name,
                             "quantity_expected": _fmt_decimal(T),
                             "quantity_actual": _fmt_decimal(P),
@@ -777,7 +778,7 @@ def apply_van_reconciliation(
                         st.save(update_fields=["quantity_available", "quantity_reserved"])
 
     return {
-        "van_warehouse_id": str(van_warehouse.id),
+        "van_warehouse_id": str(van_warehouse.uuid),
         "reconciliation_id": str(run_id),
         "mm_return_number": mm_return_doc.document_number if mm_return_doc else None,
         "rw_writeoff_number": rw_doc.document_number if rw_doc else None,
@@ -864,7 +865,7 @@ def cancel_pz(pz_document: "DeliveryDocument", user) -> dict:
                                 quantity_before=qty_before,
                                 quantity_after=stock.quantity_available,
                                 reference_type="pz_cancellation",
-                                reference_id=pz_document.id,
+                                reference_id=pz_document.uuid,
                                 notes=f"Anulowanie PZ {doc_label}",
                                 created_by=user,
                             )
@@ -903,7 +904,7 @@ def cancel_pz(pz_document: "DeliveryDocument", user) -> dict:
                             quantity_before=qty_before,
                             quantity_after=stock.quantity_available,
                             reference_type="pz_cancellation",
-                            reference_id=pz_document.id,
+                            reference_id=pz_document.uuid,
                             notes=f"Anulowanie PZ {doc_label}"
                             + (f" (partia {batch_number}, {already_used} szt. już zużyte)" if already_used > 0 else ""),
                             created_by=user,
@@ -960,7 +961,7 @@ def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user)
         orig_items = list(
             original_pz.items.select_related("product").order_by("created_at")
         )
-        orig_item_map = {str(it.id): (idx + 1, it) for idx, it in enumerate(orig_items)}
+        orig_item_map = {str(it.uuid): (idx + 1, it) for idx, it in enumerate(orig_items)}
 
         # Build list of actual changes before creating any DB records
         changes = []
@@ -1069,7 +1070,7 @@ def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user)
                         quantity_before=stock.quantity_available,
                         quantity_after=stock.quantity_available,
                         reference_type="pz_correction",
-                        reference_id=kor_doc.id,
+                        reference_id=kor_doc.uuid,
                         notes=f"Korekta ceny {doc_label}: {ch['original_cost']} → {ch['new_cost']} zł/jm ({item.product.name})",
                         created_by=user,
                     )
@@ -1098,7 +1099,7 @@ def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user)
                         quantity_before=qty_before,
                         quantity_after=stock.quantity_available,
                         reference_type="pz_correction",
-                        reference_id=kor_doc.id,
+                        reference_id=kor_doc.uuid,
                         notes=f"Korekta ilości {doc_label}: {ch['original_qty']} → {ch['new_qty']} ({item.product.name})",
                         created_by=user,
                     )
@@ -1123,8 +1124,8 @@ def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user)
     return kor_doc
 
 
-def _fk_uuid(value) -> str | None:
-    return str(value) if value is not None else None
+def _fk_uuid(obj) -> str | None:
+    return str(obj.uuid) if obj is not None else None
 
 
 def _fmt_decimal(value: Decimal) -> str:
@@ -1134,16 +1135,16 @@ def _fmt_decimal(value: Decimal) -> str:
 def _serialize_delivery_document_full(doc: DeliveryDocument) -> dict:
     """All `DeliveryDocument` DB fields as JSON-friendly scalars."""
     return {
-        "id": str(doc.id),
-        "company": str(doc.company_id),
-        "order": _fk_uuid(doc.order_id),
-        "user": _fk_uuid(doc.user_id),
+        "id": str(doc.uuid),
+        "company": str(doc.company.uuid),
+        "order": _fk_uuid(doc.order if doc.order_id else None),
+        "user": _fk_uuid(doc.user if doc.user_id else None),
         "document_type": doc.document_type,
         "document_number": doc.document_number or "",
         "issue_date": doc.issue_date.isoformat(),
-        "from_warehouse": _fk_uuid(doc.from_warehouse_id),
-        "to_warehouse": _fk_uuid(doc.to_warehouse_id),
-        "to_customer": _fk_uuid(doc.to_customer_id),
+        "from_warehouse": _fk_uuid(doc.from_warehouse if doc.from_warehouse_id else None),
+        "to_warehouse": _fk_uuid(doc.to_warehouse if doc.to_warehouse_id else None),
+        "to_customer": _fk_uuid(doc.to_customer if doc.to_customer_id else None),
         "status": doc.status,
         "has_returns": doc.has_returns,
         "returns_notes": doc.returns_notes or "",
@@ -1215,7 +1216,7 @@ def create_wz_correction(
 
     # Pre-fetch original items
     orig_items = list(original_wz.items.select_related("product").order_by("created_at"))
-    orig_item_map = {str(it.id): it for it in orig_items}
+    orig_item_map = {str(it.uuid): it for it in orig_items}
 
     changes = []
     for row in correction_items:
@@ -1404,8 +1405,8 @@ def create_zw_from_pending_returns(
 
     with transaction.atomic():
         products = {
-            str(p.id): p
-            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
+            str(p.uuid): p
+            for p in Product.objects.filter(company_id=company_id, uuid__in=product_ids)
         }
         missing = [pid for pid in product_ids if pid not in products]
         if missing:
@@ -1416,8 +1417,8 @@ def create_zw_from_pending_returns(
         # Build lookup of source WZ items so we can: (a) copy order_item FK onto each
         # ZW line, (b) enforce Level 3 guard — can't return more than was deliverable.
         wz_items_by_product = {
-            str(item.product_id): item
-            for item in wz_doc.items.select_related("order_item").all()
+            str(item.product.uuid): item
+            for item in wz_doc.items.select_related("order_item", "product").all()
         }
 
         # Sum quantities already returned via existing ZW documents linked to this WZ.
@@ -1427,10 +1428,10 @@ def create_zw_from_pending_returns(
                 delivery_document__linked_wz=wz_doc,
                 delivery_document__document_type=DeliveryDocument.DOC_TYPE_ZW,
             )
-            .values("product_id")
+            .values("product__uuid")
             .annotate(total=Sum("quantity_actual"))
         ):
-            existing_zw_by_product[str(row["product_id"])] = row["total"] or Decimal("0")
+            existing_zw_by_product[str(row["product__uuid"])] = row["total"] or Decimal("0")
 
         # Level 3 guard: validate all quantities before creating anything.
         for row in return_items:
@@ -1462,7 +1463,7 @@ def create_zw_from_pending_returns(
             van_route=wz_doc.van_route,
             status=DeliveryDocument.STATUS_SAVED,
             driver_name=wz_doc.driver_name or "",
-            notes=f"Zwrot do WZ {wz_doc.document_number or wz_doc.id}",
+            notes=f"Zwrot do WZ {wz_doc.document_number or wz_doc.uuid}",
         )
 
         for row in return_items:
@@ -1485,7 +1486,7 @@ def create_zw_from_pending_returns(
             if van_warehouse is not None:
                 st, _ = ProductStock.objects.select_for_update().get_or_create(
                     company_id=company_id,
-                    product_id=pid,
+                    product=products[pid],
                     warehouse_id=van_warehouse.id,
                     defaults={
                         "quantity_available": Decimal("0"),
@@ -1498,7 +1499,7 @@ def create_zw_from_pending_returns(
                 st.save(update_fields=["quantity_available"])
                 StockMovement.objects.create(
                     company_id=company_id,
-                    product_id=pid,
+                    product=products[pid],
                     warehouse_id=van_warehouse.id,
                     user=user,
                     movement_type=StockMovement.MovementType.RETURN,
@@ -1506,8 +1507,8 @@ def create_zw_from_pending_returns(
                     quantity_before=qty_before,
                     quantity_after=st.quantity_available,
                     reference_type="delivery_return",
-                    reference_id=zw_doc.id,
-                    notes=f"Zwrot od klienta (ZW do WZ {wz_doc.document_number or wz_doc.id})",
+                    reference_id=zw_doc.uuid,
+                    notes=f"Zwrot od klienta (ZW do WZ {wz_doc.document_number or wz_doc.uuid})",
                     created_by=user,
                 )
 
@@ -1520,7 +1521,7 @@ def create_zw_from_pending_returns(
                         company_id=company_id,
                         product=product_obj,
                         warehouse=van_warehouse,
-                        batch_number=f"ZW/{zw_doc.document_number or str(zw_doc.id)[:8]}",
+                        batch_number=f"ZW/{zw_doc.document_number or str(zw_doc.uuid)[:8]}",
                         received_date=timezone.localdate(),
                         expiry_date=wz_item.expiry_date if wz_item else None,
                         quantity_initial=qty,
@@ -1674,7 +1675,7 @@ def apply_delivery_document_line_updates(
 
     items_now = list(doc.items.select_related("order_item", "product"))
 
-    valid_ids = {str(i.id) for i in items_now}
+    valid_ids = {str(i.uuid) for i in items_now}
     extra = set(payload_by_id) - valid_ids
     if extra:
         raise ValidationError(
@@ -1682,7 +1683,7 @@ def apply_delivery_document_line_updates(
         )
 
     for item in items_now:
-        row = payload_by_id.get(str(item.id))
+        row = payload_by_id.get(str(item.uuid))
         if not row:
             continue
 

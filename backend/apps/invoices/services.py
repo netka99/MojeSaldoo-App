@@ -317,19 +317,19 @@ def _fmt_money(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):.2f}"
 
 
-def _fk_uuid(value) -> str | None:
-    return str(value) if value is not None else None
+def _fk_uuid(obj) -> str | None:
+    return str(obj.uuid) if obj is not None else None
 
 
 def _serialize_invoice_full(invoice: Invoice) -> dict:
     """All `Invoice` DB fields as JSON-friendly scalars (amounts as formatted strings)."""
     return {
-        "id": str(invoice.id),
-        "company": str(invoice.company_id),
-        "user": _fk_uuid(invoice.user_id),
-        "order": str(invoice.order_id),
-        "customer": str(invoice.customer_id),
-        "delivery_document": _fk_uuid(invoice.delivery_document_id),
+        "id": str(invoice.uuid),
+        "company": str(invoice.company.uuid),
+        "user": _fk_uuid(invoice.user if invoice.user_id else None),
+        "order": str(invoice.order.uuid),
+        "customer": str(invoice.customer.uuid),
+        "delivery_document": _fk_uuid(invoice.delivery_document if invoice.delivery_document_id else None),
         "invoice_number": invoice.invoice_number or "",
         "issue_date": invoice.issue_date.isoformat(),
         "sale_date": invoice.sale_date.isoformat(),

@@ -1,7 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx vitest:*)"
+      "Bash(npx vitest:*)",
+      "Bash(git status *)",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(awk '{print $1}')",
+      "Bash(python manage.py test)",
+      "Bash(cd *)",
+      "Bash(python3 -)",
+      "Bash(git rebase *)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(git *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

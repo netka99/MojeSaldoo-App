@@ -181,7 +181,7 @@ class ProductionPlanningEndpointTest(TestCase):
         data = resp.json()
         self.assertEqual(len(data), 1)
         item = data[0]
-        self.assertEqual(item["product_id"], str(self.bread.id))
+        self.assertEqual(item["product_id"], str(self.bread.uuid))
         self.assertEqual(Decimal(str(item["total_ordered"])), Decimal("30"))
         self.assertEqual(Decimal(str(item["stock_available"])), Decimal("10"))
         self.assertEqual(Decimal(str(item["shortfall"])), Decimal("20"))
@@ -229,7 +229,7 @@ class ProductionPlanningEndpointTest(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         # Only bread (which has a recipe) appears
         product_ids = [i["product_id"] for i in resp.json()]
-        self.assertNotIn(str(other.id), product_ids)
+        self.assertNotIn(str(other.uuid), product_ids)
 
     def test_planning_no_shortfall_when_stock_covers_demand(self):
         # Stock is 10, order is also 10 → shortfall = 0

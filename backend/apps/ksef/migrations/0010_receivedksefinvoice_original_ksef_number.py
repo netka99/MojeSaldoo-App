@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("ksef", "0009_ksefsentiinvoice_upo"),
+        ("ksef", "0002_initial"),
     ]
 
     operations = [

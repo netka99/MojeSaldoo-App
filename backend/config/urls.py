@@ -2,8 +2,16 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import JsonResponse
+
+
+def healthz(request):
+    """Liveness probe for the container HEALTHCHECK — no auth, no DB access."""
+    return JsonResponse({'status': 'ok'})
+
 
 urlpatterns = [
+    path('healthz/', healthz),
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.urls')),
     path('api/companies/', include('apps.users.company_urls')),

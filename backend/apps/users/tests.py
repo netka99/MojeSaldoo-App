@@ -38,7 +38,7 @@ class CompanyCreateAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         cid = response.data["id"]
-        co = Company.objects.get(pk=cid)
+        co = Company.objects.get(uuid=cid)
         self.assertEqual(co.name, "NewCo")
         self.assertEqual(co.city, "Warszawa")
         self.assertEqual(co.postal_code, "00-001")
@@ -125,7 +125,7 @@ class CompanyDetailAPITests(TestCase):
         )
 
     def _url(self, pk=None):
-        return reverse("company-detail", kwargs={"pk": pk or self.company.pk})
+        return reverse("company-detail", kwargs={"pk": pk or self.company.uuid})
 
     def test_get_member_200(self):
         self.client.force_authenticate(user=self.user)
@@ -210,13 +210,13 @@ class CompanyModulesAPITests(TestCase):
     def _modules_url(self):
         return reverse(
             "company-modules-list",
-            kwargs={"company_id": self.company.pk},
+            kwargs={"company_id": self.company.uuid},
         )
 
     def _module_patch_url(self, module_key: str):
         return reverse(
             "company-module-enable",
-            kwargs={"company_id": self.company.pk, "module_key": module_key},
+            kwargs={"company_id": self.company.uuid, "module_key": module_key},
         )
 
     def test_list_seeds_modules(self):
@@ -297,7 +297,7 @@ class CompanyModulesAPITests(TestCase):
             reverse(
                 "company-module-enable",
                 kwargs={
-                    "company_id": self.company.pk,
+                    "company_id": self.company.uuid,
                     "module_key": "not-a-module",
                 },
             ),
@@ -345,11 +345,11 @@ class SwitchCompanyViewTests(TestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.post(
             reverse("company-switch"),
-            {"company": str(self.co_b.pk)},
+            {"company": str(self.co_b.uuid)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["user"]["current_company"], str(self.co_b.pk))
+        self.assertEqual(response.data["user"]["current_company"], str(self.co_b.uuid))
         self.user.refresh_from_db()
         self.assertEqual(self.user.current_company_id, self.co_b.pk)
 
@@ -358,7 +358,7 @@ class SwitchCompanyViewTests(TestCase):
         foreign = Company.objects.create(name="Foreign")
         response = self.client.post(
             reverse("company-switch"),
-            {"company": str(foreign.pk)},
+            {"company": str(foreign.uuid)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -396,7 +396,7 @@ class CurrentUserIncludesCurrentCompanyTests(TestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(reverse("current_user"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["user"]["current_company"], str(self.co.pk))
+        self.assertEqual(response.data["user"]["current_company"], str(self.co.uuid))
         self.assertEqual(response.data["user"]["current_company_role"], "admin")
 
     def test_me_returns_null_current_company_role_without_current_company(self):
@@ -607,11 +607,11 @@ class WebPushSubscriptionAPITests(TestCase):
 # Team management: CompanyRole + Members
 # ---------------------------------------------------------------------------
 
-def _make_company_with_admin(username, email="admin@test.com"):
+def _make_company_with_admin(username, email="admin@test.com", company_name=None, nip=None):
     """Create a company with an admin user and the Administrator role."""
     User = get_user_model()
     admin = User.objects.create_user(username=username, email=email, password="test12345")
-    company = Company.objects.create(name=f"{username}_co")
+    company = Company.objects.create(name=company_name or f"{username}_co", nip=nip)
     admin_role = CompanyRole.objects.create(company=company, name="Administrator", is_admin=True)
     CompanyMembership.objects.create(
         user=admin, company=company, role="admin", company_role=admin_role, is_active=True
@@ -642,10 +642,10 @@ class CompanyRolesAPITests(TestCase):
         self.viewer_user.save(update_fields=["current_company"])
 
     def _list_url(self):
-        return reverse("company-roles-list", kwargs={"company_id": self.company.pk})
+        return reverse("company-roles-list", kwargs={"company_id": self.company.uuid})
 
     def _detail_url(self, role_id):
-        return reverse("company-role-detail", kwargs={"company_id": self.company.pk, "role_id": role_id})
+        return reverse("company-role-detail", kwargs={"company_id": self.company.uuid, "role_id": role_id})
 
     def test_list_returns_all_roles(self):
         self.client.force_authenticate(user=self.admin)
@@ -733,10 +733,10 @@ class CompanyMembersAPITests(TestCase):
         )
 
     def _list_url(self):
-        return reverse("company-members-list", kwargs={"company_id": self.company.pk})
+        return reverse("company-members-list", kwargs={"company_id": self.company.uuid})
 
     def _detail_url(self, m_id):
-        return reverse("company-member-detail", kwargs={"company_id": self.company.pk, "membership_id": m_id})
+        return reverse("company-member-detail", kwargs={"company_id": self.company.uuid, "membership_id": m_id})
 
     def test_list_members_by_admin(self):
         self.client.force_authenticate(user=self.admin)
@@ -800,7 +800,7 @@ class CompanyMembersAPITests(TestCase):
         new_role = CompanyRole.objects.create(company=self.company, name="Magazynier", can_manage_products=True)
         self.client.force_authenticate(user=self.admin)
         r = self.client.patch(
-            self._detail_url(m.pk),
+            self._detail_url(m.uuid),
             {"company_role_id": str(new_role.pk)},
             format="json",
         )
@@ -814,7 +814,7 @@ class CompanyMembersAPITests(TestCase):
             user=worker, company=self.company, role="viewer", company_role=self.worker_role, is_active=True
         )
         self.client.force_authenticate(user=self.admin)
-        r = self.client.delete(self._detail_url(m.pk))
+        r = self.client.delete(self._detail_url(m.uuid))
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
         m.refresh_from_db()
         self.assertFalse(m.is_active)
@@ -822,7 +822,7 @@ class CompanyMembersAPITests(TestCase):
     def test_cannot_remove_self(self):
         admin_m = CompanyMembership.objects.get(user=self.admin, company=self.company)
         self.client.force_authenticate(user=self.admin)
-        r = self.client.delete(self._detail_url(admin_m.pk))
+        r = self.client.delete(self._detail_url(admin_m.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
 
@@ -872,7 +872,7 @@ class UserPermissionsInSerializerTests(TestCase):
         r = self.client.post(reverse("company-create"), {"name": "NewCo2"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
         cid = r.data["id"]
-        self.assertTrue(CompanyRole.objects.filter(company_id=cid, is_admin=True, name="Administrator").exists())
+        self.assertTrue(CompanyRole.objects.filter(company__uuid=cid, is_admin=True, name="Administrator").exists())
 
     def test_new_permission_flags_present_in_serializer(self):
         """can_access_ksef_inbox and can_manage_stock_moves appear in permissions dict."""
@@ -902,16 +902,6 @@ class UserPermissionsInSerializerTests(TestCase):
 User = get_user_model()
 
 
-def _make_company_with_admin(username, email, company_name="TestCo", nip="1234567890"):
-    user = User.objects.create_user(username=username, email=email, password="pass1234")
-    company = Company.objects.create(name=company_name, nip=nip)
-    admin_role = CompanyRole.objects.create(company=company, name="Administrator", is_admin=True)
-    CompanyMembership.objects.create(
-        user=user, company=company, role="admin", company_role=admin_role, is_active=True
-    )
-    return user, company, admin_role
-
-
 class CompanyDeleteAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -930,7 +920,7 @@ class CompanyDeleteAPITests(TestCase):
         )
 
     def _url(self):
-        return reverse("company-delete", kwargs={"company_id": self.company.pk})
+        return reverse("company-delete", kwargs={"company_id": self.company.uuid})
 
     def test_admin_can_delete_with_correct_name(self):
         self.client.force_authenticate(user=self.admin)
@@ -999,8 +989,8 @@ class CompanyDeleteAPITests(TestCase):
         self.client.force_authenticate(user=user2)
         r = self.client.get(reverse("company-me-list"))
         ids = [str(c["id"]) for c in r.data]
-        self.assertNotIn(str(self.company.pk), ids)
-        self.assertIn(str(company2.pk), ids)
+        self.assertNotIn(str(self.company.uuid), ids)
+        self.assertIn(str(company2.uuid), ids)
 
 
 class CompanyLeaveAPITests(TestCase):
@@ -1021,7 +1011,7 @@ class CompanyLeaveAPITests(TestCase):
         )
 
     def _url(self):
-        return reverse("company-leave", kwargs={"company_id": self.company.pk})
+        return reverse("company-leave", kwargs={"company_id": self.company.uuid})
 
     def test_member_can_leave(self):
         self.client.force_authenticate(user=self.member)
