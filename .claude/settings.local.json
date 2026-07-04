@@ -10,11 +10,18 @@
       "Bash(python manage.py test)",
       "Bash(cd *)",
       "Bash(python3 -)",
+      "Bash(python3 *)",
       "Bash(git rebase *)",
       "Bash(echo \"exit code: $?\")",
       "Bash(git *)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(sed -i 's/get_object_or_404\\(Company, pk=company_id, deleted_at__isnull=True\\)/get_object_or_404\\(Company, uuid=company_id, deleted_at__isnull=True\\)/g' apps/users/deletion_views.py)",
+      "Bash(sed -i 's/get_object_or_404\\(Company, pk=company_id\\)/get_object_or_404\\(Company, uuid=company_id\\)/g' apps/users/certificate_views.py)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(git log *)",
+      "Bash(git worktree *)"
     ]
   }
 }

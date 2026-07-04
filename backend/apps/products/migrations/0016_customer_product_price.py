@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('customers', '0002_initial'),
-        ('users', '0001_initial'),
+        ('users', '0002_user_uuid'),
         ('products', '0002_initial'),
     ]
 

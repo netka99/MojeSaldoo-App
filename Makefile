@@ -1,6 +1,7 @@
 .PHONY: images
 
-default: images
+default:
+	@echo Choose a target: images test container-test
 
 images:
 	podman build \
@@ -13,6 +14,9 @@ images:
 		.
 
 test:
+	@cd backend && make test
+
+container-test:
 	 @DJANGO_SECRET_KEY=test-secret podman compose --profile test run --rm --build backend-test
 
 
