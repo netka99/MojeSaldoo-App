@@ -18,7 +18,7 @@ class OrderIdsFilter(django_filters.CharFilter):
         if not ids:
             return qs
         return qs.filter(
-            Q(order__in=ids) | Q(linked_wz__order__in=ids)
+            Q(order__uuid__in=ids) | Q(linked_wz__order__uuid__in=ids)
         ).distinct()
 
 
@@ -44,10 +44,13 @@ class DeliveryDocumentFilter(django_filters.FilterSet):
         field_name="issue_date",
         lookup_expr="lte",
     )
+    order = django_filters.UUIDFilter(field_name="order__uuid")
+    to_customer = django_filters.UUIDFilter(field_name="to_customer__uuid")
+    van_route = django_filters.UUIDFilter(field_name="van_route__uuid")
+    from_supplier = django_filters.UUIDFilter(field_name="from_supplier__uuid")
     order_ids = OrderIdsFilter()
     ksef_unlinked = KsefUnlinkedFilter()
-    from_supplier = django_filters.UUIDFilter(field_name="from_supplier__id")
 
     class Meta:
         model = DeliveryDocument
-        fields = ["order", "status", "document_type", "to_customer", "van_route"]
+        fields = ["status", "document_type"]

@@ -21,7 +21,7 @@ from django.db import models
 class Recipe(models.Model):
     """Bill of materials for a finished product."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -60,7 +60,7 @@ class Recipe(models.Model):
 class RecipeItem(models.Model):
     """One ingredient line inside a Recipe."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     recipe = models.ForeignKey(Recipe, on_delete=models.CASCADE, related_name="items")
     ingredient = models.ForeignKey(
         "products.Product",
@@ -100,7 +100,7 @@ class ProductionOrder(models.Model):
         (STATUS_COMPLETED, "Zakończone"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -190,7 +190,7 @@ class ProductionOrderInput(models.Model):
     In simple mode, inputs are computed from the recipe at completion time.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     order = models.ForeignKey(ProductionOrder, on_delete=models.CASCADE, related_name="inputs")
     ingredient = models.ForeignKey(
         "products.Product",

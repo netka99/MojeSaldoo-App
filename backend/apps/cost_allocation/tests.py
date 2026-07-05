@@ -137,13 +137,13 @@ class CostProjectAPITest(TestCase):
 
     def test_patch_project(self):
         project = CostProject.objects.create(company=self.company, name="Stary")
-        resp = self.client.patch(f"/api/cost-allocation/projects/{project.id}/", {"name": "Nowy"}, format="json")
+        resp = self.client.patch(f"/api/cost-allocation/projects/{project.uuid}/", {"name": "Nowy"}, format="json")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["name"], "Nowy")
 
     def test_delete_project_soft(self):
         project = CostProject.objects.create(company=self.company, name="DoUsunięcia")
-        resp = self.client.delete(f"/api/cost-allocation/projects/{project.id}/")
+        resp = self.client.delete(f"/api/cost-allocation/projects/{project.uuid}/")
         self.assertEqual(resp.status_code, 204)
         project.refresh_from_db()
         self.assertFalse(project.is_active)
@@ -156,7 +156,7 @@ class CostProjectAPITest(TestCase):
     def test_cannot_access_other_company_project(self):
         other_company = _make_company(name="Other", nip="0000000001")
         other_project = CostProject.objects.create(company=other_company, name="OtherProject")
-        resp = self.client.patch(f"/api/cost-allocation/projects/{other_project.id}/", {"name": "Hacked"}, format="json")
+        resp = self.client.patch(f"/api/cost-allocation/projects/{other_project.uuid}/", {"name": "Hacked"}, format="json")
         self.assertEqual(resp.status_code, 404)
 
 
@@ -191,41 +191,52 @@ class InvoiceAnnotationAPITest(TestCase):
         resp = self.client.patch(self.url, {
             "accountingStatus": "annotated",
             "lineAnnotations": {
-                "0": {"project": str(project.id), "isPrivate": False, "note": "Materiały"},
+                "0": {
+                    "isPrivate": False,
+                    "note": "Materiały",
+                    "splits": [{"project": str(project.uuid), "percentage": 100}],
+                },
                 "1": {"isPrivate": True, "note": "Prywatne"},
             },
         }, format="json")
         self.assertEqual(resp.status_code, 200)
 
         la0 = InvoiceLineAnnotation.objects.get(line=self.line0)
-        self.assertEqual(la0.project, project)
+        split0 = la0.splits.get()
+        self.assertEqual(split0.project, project)
         self.assertFalse(la0.is_private)
         self.assertEqual(la0.note, "Materiały")
 
         la1 = InvoiceLineAnnotation.objects.get(line=self.line1)
-        self.assertIsNone(la1.project)
+        self.assertEqual(la1.splits.count(), 0)
         self.assertTrue(la1.is_private)
 
     def test_get_after_patch_includes_line_annotations(self):
         project = CostProject.objects.create(company=self.company, name="Projekt Y")
         self.client.patch(self.url, {
-            "lineAnnotations": {"0": {"project": str(project.id)}},
+            "lineAnnotations": {
+                "0": {"splits": [{"project": str(project.uuid), "percentage": 100}]},
+            },
         }, format="json")
 
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)
         line_anns = resp.data["line_annotations"]
-        self.assertEqual(line_anns["0"]["projectName"], "Projekt Y")
+        self.assertEqual(line_anns["0"]["splits"][0]["projectName"], "Projekt Y")
 
     def test_patch_ignores_project_from_other_company(self):
         other_company = _make_company(name="Other", nip="0000000002")
         other_project = CostProject.objects.create(company=other_company, name="Foreign")
         resp = self.client.patch(self.url, {
-            "lineAnnotations": {"0": {"project": str(other_project.id)}},
+            "lineAnnotations": {
+                "0": {"splits": [{"project": str(other_project.uuid), "percentage": 100}]},
+            },
         }, format="json")
-        # Should succeed but silently skip the foreign project
+        # Should succeed but silently skip the split referencing the foreign project.
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(InvoiceLineAnnotation.objects.filter(line=self.line0).exists())
+        la = InvoiceLineAnnotation.objects.filter(line=self.line0).first()
+        self.assertIsNotNone(la)
+        self.assertEqual(la.splits.count(), 0)
 
     def test_get_returns_404_for_unknown_invoice(self):
         resp = self.client.get("/api/cost-allocation/invoices/NONEXISTENT/annotation/")
@@ -243,12 +254,12 @@ class CostAllocationExportTest(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def test_export_returns_csv(self):
-        resp = self.client.get("/api/cost-allocation/export/")
+        resp = self.client.get("/api/cost-allocation/export/?fmt=csv")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/csv", resp["Content-Type"])
 
     def test_export_contains_invoice_data(self):
-        resp = self.client.get("/api/cost-allocation/export/")
+        resp = self.client.get("/api/cost-allocation/export/?fmt=csv")
         content = b"".join(resp.streaming_content).decode("utf-8-sig") if hasattr(resp, "streaming_content") else resp.content.decode("utf-8-sig")
         self.assertIn("FV/2026/001", content)
         self.assertIn("Dostawca Sp. z o.o.", content)

@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0009_track_supplier_payments'),
+        ('users', '0002_user_uuid'),
     ]
 
     operations = [

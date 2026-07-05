@@ -105,18 +105,18 @@ class OrderApiTests(TestCase):
         r = self.client.get(reverse("order-list"), {"without_invoice": "true"})
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         ids = {row["id"] for row in r.data["results"]}
-        self.assertIn(str(o_delivered.id), ids)
-        self.assertIn(str(o_confirmed.id), ids)
-        self.assertNotIn(str(o_invoiced.id), ids)
+        self.assertIn(str(o_delivered.uuid), ids)
+        self.assertIn(str(o_confirmed.uuid), ids)
+        self.assertNotIn(str(o_invoiced.uuid), ids)
 
     def test_create_order_accepts_customer_id_and_items(self):
         self.client.force_authenticate(user=self.user)
         body = {
-            "customer_id": str(self.customer.id),
+            "customer_id": str(self.customer.uuid),
             "delivery_date": "2026-04-20",
             "items": [
                 {
-                    "product_id": str(self.product.id),
+                    "product_id": str(self.product.uuid),
                     "quantity": "2.00",
                     "unit_price_net": "5.00",
                     "unit_price_gross": "6.00",
@@ -144,13 +144,13 @@ class OrderApiTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _url_items(self, order_id):
-        return reverse("order-items", kwargs={"pk": str(order_id)})
+        return reverse("order-items", kwargs={"uuid": str(order_id)})
 
     def _url_confirm(self, order_id):
-        return reverse("order-confirm", kwargs={"pk": str(order_id)})
+        return reverse("order-confirm", kwargs={"uuid": str(order_id)})
 
     def _url_cancel(self, order_id):
-        return reverse("order-cancel", kwargs={"pk": str(order_id)})
+        return reverse("order-cancel", kwargs={"uuid": str(order_id)})
 
     def test_list_forbidden_without_current_company(self):
         User = get_user_model()
@@ -188,7 +188,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.get(self._url_items(o.id))
+        r = self.client.get(self._url_items(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertIsInstance(r.data, list)
         self.assertEqual(len(r.data), 1)
@@ -197,7 +197,7 @@ class OrderApiTests(TestCase):
     def test_post_confirm_draft_to_confirmed(self):
         self._auth()
         o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertEqual(r.data["status"], Order.STATUS_CONFIRMED)
         o.refresh_from_db()
@@ -208,7 +208,7 @@ class OrderApiTests(TestCase):
         o = Order.objects.get(company=self.co, status=Order.STATUS_DRAFT)
         o.status = Order.STATUS_CONFIRMED
         o.save(update_fields=["status"])
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", r.data)
 
@@ -224,7 +224,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("warehouse", r.data)
 
@@ -255,7 +255,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
         o.refresh_from_db()
@@ -263,7 +263,7 @@ class OrderApiTests(TestCase):
         stock = ProductStock.objects.get(product=self.product, warehouse=wh)
         self.assertEqual(stock.quantity_available, Decimal("2"))
         self.assertEqual(stock.quantity_reserved, Decimal("0"))
-        self.assertEqual(StockMovement.objects.filter(reference_id=o.id).count(), 0)
+        self.assertEqual(StockMovement.objects.filter(reference_id=o.uuid).count(), 0)
 
     def test_post_confirm_reserves_stock_and_writes_movements(self):
         wh = Warehouse.objects.create(
@@ -292,14 +292,14 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertEqual(r.data["status"], Order.STATUS_CONFIRMED)
         stock = ProductStock.objects.get(product=self.product, warehouse=wh)
         self.assertEqual(stock.quantity_available, Decimal("7"))
         self.assertEqual(stock.quantity_reserved, Decimal("3"))
         self.assertEqual(stock.quantity_total, Decimal("10"))
-        mov = StockMovement.objects.get(reference_id=o.id)
+        mov = StockMovement.objects.get(reference_id=o.uuid)
         self.assertEqual(mov.movement_type, StockMovement.MovementType.RESERVATION)
         self.assertEqual(mov.quantity, Decimal("-3"))
         self.assertEqual(mov.reference_type, "order")
@@ -336,12 +336,12 @@ class OrderApiTests(TestCase):
                 vat_rate=Decimal("0.00"),
                 discount_percent=Decimal("0.00"),
             )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         stock = ProductStock.objects.get(product=self.product, warehouse=wh)
         self.assertEqual(stock.quantity_available, Decimal("5"))
         self.assertEqual(stock.quantity_reserved, Decimal("5"))
-        movements = StockMovement.objects.filter(reference_id=o.id).order_by(
+        movements = StockMovement.objects.filter(reference_id=o.uuid).order_by(
             "quantity_after"
         )
         self.assertEqual(movements.count(), 2)
@@ -402,7 +402,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
         o.refresh_from_db()
@@ -411,7 +411,7 @@ class OrderApiTests(TestCase):
         s2 = ProductStock.objects.get(product=p2, warehouse=wh)
         self.assertEqual(s1.quantity_available, Decimal("100"))
         self.assertEqual(s2.quantity_available, Decimal("1"))
-        self.assertEqual(StockMovement.objects.filter(reference_id=o.id).count(), 0)
+        self.assertEqual(StockMovement.objects.filter(reference_id=o.uuid).count(), 0)
 
     def test_post_confirm_without_productstock_row_shortfall_uses_zero_available(self):
         wh = Warehouse.objects.create(
@@ -432,7 +432,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
         self.assertFalse(
@@ -461,7 +461,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_confirm(o.id))
+        r = self.client.post(self._url_confirm(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("warehouse", r.data)
 
@@ -475,7 +475,7 @@ class OrderApiTests(TestCase):
             delivery_date=date(2026, 3, 20),
             status=Order.STATUS_DRAFT,
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["status"], Order.STATUS_CANCELLED)
 
@@ -489,7 +489,7 @@ class OrderApiTests(TestCase):
             delivery_date=date(2026, 3, 20),
             status=Order.STATUS_CONFIRMED,
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["status"], Order.STATUS_CANCELLED)
 
@@ -528,13 +528,13 @@ class OrderApiTests(TestCase):
             discount_percent=Decimal("0.00"),
         )
         self.assertEqual(
-            self.client.post(self._url_confirm(o.id)).status_code,
+            self.client.post(self._url_confirm(o.uuid)).status_code,
             status.HTTP_200_OK,
         )
         stock = ProductStock.objects.get(product=self.product, warehouse=wh)
         self.assertEqual(stock.quantity_available, Decimal("6"))
         self.assertEqual(stock.quantity_reserved, Decimal("4"))
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertEqual(r.data["status"], Order.STATUS_CANCELLED)
         stock.refresh_from_db()
@@ -542,7 +542,7 @@ class OrderApiTests(TestCase):
         self.assertEqual(stock.quantity_reserved, Decimal("0"))
         self.assertEqual(stock.quantity_total, Decimal("10"))
         unres = StockMovement.objects.filter(
-            reference_id=o.id,
+            reference_id=o.uuid,
             movement_type=StockMovement.MovementType.UNRESERVATION,
         )
         self.assertEqual(unres.count(), 1)
@@ -570,7 +570,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("warehouse", r.data)
         o.refresh_from_db()
@@ -610,7 +610,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
         o.refresh_from_db()
@@ -650,13 +650,13 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         stock = ProductStock.objects.get(product=self.product, warehouse=wh)
         self.assertEqual(stock.quantity_available, Decimal("10"))
         self.assertEqual(stock.quantity_reserved, Decimal("0"))
         self.assertFalse(
-            StockMovement.objects.filter(reference_id=o.id).exists()
+            StockMovement.objects.filter(reference_id=o.uuid).exists()
         )
 
     def test_post_cancel_after_confirm_two_lines_same_product_two_unreservations(
@@ -697,16 +697,16 @@ class OrderApiTests(TestCase):
                 discount_percent=Decimal("0.00"),
             )
         self.assertEqual(
-            self.client.post(self._url_confirm(o.id)).status_code,
+            self.client.post(self._url_confirm(o.uuid)).status_code,
             status.HTTP_200_OK,
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         stock = ProductStock.objects.get(product=self.product, warehouse=wh)
         self.assertEqual(stock.quantity_available, Decimal("10"))
         self.assertEqual(stock.quantity_reserved, Decimal("0"))
         unres = StockMovement.objects.filter(
-            reference_id=o.id,
+            reference_id=o.uuid,
             movement_type=StockMovement.MovementType.UNRESERVATION,
         )
         self.assertEqual(unres.count(), 2)
@@ -741,7 +741,7 @@ class OrderApiTests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
         o.refresh_from_db()
@@ -757,7 +757,7 @@ class OrderApiTests(TestCase):
             delivery_date=date(2026, 3, 20),
             status=Order.STATUS_IN_PREPARATION,
         )
-        r = self.client.post(self._url_cancel(o.id))
+        r = self.client.post(self._url_cancel(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", r.data)
 
@@ -796,9 +796,9 @@ class OrderApiTests(TestCase):
         )
         self.assertEqual(r.status_code, 200)
         ids = {row["id"] for row in r.data["results"]}
-        self.assertIn(str(o_mid.id), ids)
-        self.assertNotIn(str(o_early.id), ids)
-        self.assertNotIn(str(o_late.id), ids)
+        self.assertIn(str(o_mid.uuid), ids)
+        self.assertNotIn(str(o_early.uuid), ids)
+        self.assertNotIn(str(o_late.uuid), ids)
 
     def test_filter_by_status(self):
         self._auth()
@@ -813,9 +813,9 @@ class OrderApiTests(TestCase):
         )
         r = self.client.get(reverse("order-list"), {"status": Order.STATUS_CONFIRMED})
         ids = {row["id"] for row in r.data["results"]}
-        self.assertIn(str(o_conf.id), ids)
+        self.assertIn(str(o_conf.uuid), ids)
         if o_draft and o_draft.status != Order.STATUS_CONFIRMED:
-            self.assertNotIn(str(o_draft.id), ids)
+            self.assertNotIn(str(o_draft.uuid), ids)
 
     def test_filter_by_customer(self):
         self._auth()
@@ -829,10 +829,10 @@ class OrderApiTests(TestCase):
             delivery_date=date(2026, 6, 1),
             status=Order.STATUS_DRAFT,
         )
-        r = self.client.get(reverse("order-list"), {"customer": str(c2.id)})
+        r = self.client.get(reverse("order-list"), {"customer": str(c2.uuid)})
         ids = {row["id"] for row in r.data["results"]}
-        self.assertIn(str(o2.id), ids)
-        self.assertNotIn(str(o1.id), ids)
+        self.assertIn(str(o2.uuid), ids)
+        self.assertNotIn(str(o1.uuid), ids)
 
     def test_ordering_by_total_gross(self):
         self._auth()
@@ -862,8 +862,8 @@ class OrderApiTests(TestCase):
         )
         r = self.client.get(reverse("order-list"), {"ordering": "total_gross"})
         ids = [row["id"] for row in r.data["results"]]
-        pos_low = ids.index(str(o_low.id)) if str(o_low.id) in ids else -1
-        pos_high = ids.index(str(o_high.id)) if str(o_high.id) in ids else -1
+        pos_low = ids.index(str(o_low.uuid)) if str(o_low.uuid) in ids else -1
+        pos_high = ids.index(str(o_high.uuid)) if str(o_high.uuid) in ids else -1
         self.assertNotEqual(pos_low, -1)
         self.assertNotEqual(pos_high, -1)
         self.assertLess(pos_low, pos_high)
@@ -881,7 +881,7 @@ class OrderApiTests(TestCase):
             status=Order.STATUS_DRAFT,
         )
         r = self.client.get(
-            reverse("order-detail", kwargs={"pk": str(foreign_o.id)})
+            reverse("order-detail", kwargs={"uuid": str(foreign_o.uuid)})
         )
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -905,8 +905,8 @@ class OrderApiTests(TestCase):
         )
         r = self.client.get(reverse("order-list"), {"ordering": "created_at"})
         ids = [row["id"] for row in r.data["results"]]
-        pos_a = ids.index(str(o_a.id))
-        pos_b = ids.index(str(o_b.id))
+        pos_a = ids.index(str(o_a.uuid))
+        pos_b = ids.index(str(o_b.uuid))
         self.assertLess(pos_a, pos_b)
 
     def test_items_action_404_for_other_company_order(self):
@@ -921,7 +921,7 @@ class OrderApiTests(TestCase):
             delivery_date=date(2026, 8, 1),
             status=Order.STATUS_DRAFT,
         )
-        r = self.client.get(self._url_items(foreign_o.id))
+        r = self.client.get(self._url_items(foreign_o.uuid))
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
 
@@ -1072,7 +1072,7 @@ class OrderModelTests(TestCase):
 
     def test_id_is_uuid(self):
         o = self._make_order()
-        self.assertEqual(len(str(o.id)), 36)
+        self.assertEqual(len(str(o.uuid)), 36)
 
     def test_can_be_modified_draft_and_confirmed_only(self):
         o = self._make_order()
@@ -1089,7 +1089,7 @@ class OrderModelTests(TestCase):
     def test_order_item_id_is_uuid(self):
         o = self._make_order()
         line = self._line(o)
-        self.assertEqual(len(str(line.id)), 36)
+        self.assertEqual(len(str(line.uuid)), 36)
 
     def test_order_item_snapshots_product_name_and_unit(self):
         self.product.name = "Renamed product"

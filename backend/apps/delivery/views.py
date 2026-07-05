@@ -83,6 +83,7 @@ class DeliveryDocumentPagination(PageNumberPagination):
 
 class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     """CRUD for delivery documents, scoped to ``request.user.current_company``."""
+    lookup_field = "uuid"
 
     serializer_class = DeliveryDocumentSerializer
     pagination_class = DeliveryDocumentPagination
@@ -232,7 +233,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         if to_customer_id:
             from apps.customers.models import Customer
             try:
-                customer = Customer.objects.get(pk=to_customer_id, company_id=company_id)
+                customer = Customer.objects.get(uuid=to_customer_id, company_id=company_id)
             except Customer.DoesNotExist:
                 return Response({"error": "Customer not found."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -247,7 +248,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         from_warehouse = default_from_warehouse_for_delivery(company_id)
         if from_warehouse_id:
             try:
-                override_wh = Warehouse.objects.get(pk=from_warehouse_id, company_id=company_id)
+                override_wh = Warehouse.objects.get(uuid=from_warehouse_id, company_id=company_id)
                 if override_wh.warehouse_type == Warehouse.WarehouseType.MOBILE and override_wh.is_active:
                     from_warehouse = override_wh
             except Warehouse.DoesNotExist:
@@ -265,8 +266,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
         products_by_id = {
-            str(p.pk): p
-            for p in ProductModel.objects.filter(pk__in=product_ids, company_id=company_id)
+            str(p.uuid): p
+            for p in ProductModel.objects.filter(uuid__in=product_ids, company_id=company_id)
         }
 
         with transaction.atomic():
@@ -313,7 +314,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="update-lines")
-    def update_lines(self, request, pk=None):
+    def update_lines(self, request, uuid=None):
         """Bulk update line fields; reconciles order + stock after ``delivered``."""
         doc = self.get_object()
         if doc.is_locked_by_invoice():
@@ -336,12 +337,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["get"], url_path="preview")
-    def preview(self, request, pk=None):
+    def preview(self, request, uuid=None):
         doc = self.get_object()
         return Response(build_delivery_document_preview_data(doc))
 
     @action(detail=True, methods=["post"], url_path="save")
-    def save(self, request, pk=None):
+    def save(self, request, uuid=None):
         """draft → saved.
 
         Optional body: ``{"return_items": [{"product_id": "...", "quantity": "2.00",
@@ -375,7 +376,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             doc = (
-                DeliveryDocument.objects.select_for_update()
+                DeliveryDocument.objects.select_for_update(of=("self",))
                 .select_related("company", "from_warehouse", "to_customer")
                 .get(pk=doc.pk)
             )
@@ -407,7 +408,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="start-delivery")
-    def start_delivery(self, request, pk=None):
+    def start_delivery(self, request, uuid=None):
         """saved → in_transit."""
         doc = self.get_object()
         if doc.is_locked_by_invoice():
@@ -476,14 +477,14 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            to_warehouse = Warehouse.objects.get(pk=to_warehouse_id, company_id=company_id)
+            to_warehouse = Warehouse.objects.get(uuid=to_warehouse_id, company_id=company_id)
         except Warehouse.DoesNotExist:
             return Response({"error": "Warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
 
         from_supplier = None
         if from_supplier_id:
             try:
-                from_supplier = Supplier.objects.get(pk=from_supplier_id, company_id=company_id)
+                from_supplier = Supplier.objects.get(uuid=from_supplier_id, company_id=company_id)
             except Supplier.DoesNotExist:
                 return Response({"error": "Supplier not found."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -519,8 +520,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
         products_by_id = {
-            str(p.pk): p
-            for p in ProductModel.objects.filter(pk__in=product_ids, company_id=company_id)
+            str(p.uuid): p
+            for p in ProductModel.objects.filter(uuid__in=product_ids, company_id=company_id)
         }
 
         with transaction.atomic():
@@ -617,7 +618,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            from_warehouse = Warehouse.objects.get(pk=from_warehouse_id, company_id=company_id)
+            from_warehouse = Warehouse.objects.get(uuid=from_warehouse_id, company_id=company_id)
         except Warehouse.DoesNotExist:
             return Response({"error": "Warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -630,8 +631,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
         products_by_id = {
-            str(p.pk): p
-            for p in ProductModel.objects.filter(pk__in=product_ids, company_id=company_id)
+            str(p.uuid): p
+            for p in ProductModel.objects.filter(uuid__in=product_ids, company_id=company_id)
         }
 
         with transaction.atomic():
@@ -690,7 +691,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     quantity_before=qty_before,
                     quantity_after=stock.quantity_available,
                     reference_type="rw_manual",
-                    reference_id=doc.id,
+                    reference_id=doc.uuid,
                     notes=f"RW — {reason}",
                     created_by=request.user,
                 )
@@ -699,7 +700,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="complete")
-    def complete(self, request, pk=None):
+    def complete(self, request, uuid=None):
         """in_transit → delivered (WZ/MM); draft/saved/in_transit → delivered (PZ).
 
         For PZ documents: applies stock receipt via apply_pz_receipt().
@@ -736,7 +737,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
             with transaction.atomic():
                 doc = (
-                    DeliveryDocument.objects.select_for_update()
+                    DeliveryDocument.objects.select_for_update(of=("self",))
                     .select_related("to_warehouse", "from_supplier", "company")
                     .prefetch_related("items__product")
                     .get(pk=doc.pk)
@@ -748,7 +749,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     )
 
                 for item in doc.items.all():
-                    row = payload_by_id.get(str(item.id))
+                    row = payload_by_id.get(str(item.uuid))
                     if not row:
                         continue
                     changed = []
@@ -789,7 +790,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         doc_items_preview = list(
             doc.items.select_related("order_item")
         )
-        valid_ids = {str(i.id) for i in doc_items_preview}
+        valid_ids = {str(i.uuid) for i in doc_items_preview}
         extra = set(payload_by_id) - valid_ids
         if extra:
             return Response(
@@ -799,7 +800,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             doc = (
-                DeliveryDocument.objects.select_for_update()
+                DeliveryDocument.objects.select_for_update(of=("self",))
                 .select_related("from_warehouse", "company", "order", "user")
                 .prefetch_related("items__product", "items__order_item")
                 .get(pk=doc.pk)
@@ -815,7 +816,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             any_return = False
 
             for item in doc_items:
-                row = payload_by_id.get(str(item.id))
+                row = payload_by_id.get(str(item.uuid))
                 if row:
                     actual = row.get("quantity_actual")
                     ret = row.get("quantity_returned")
@@ -993,7 +994,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         quantity_before=qty_before_avail,
                         quantity_after=stock.quantity_available,
                         reference_type="delivery",
-                        reference_id=doc.id,
+                        reference_id=doc.uuid,
                         created_by=request.user,
                     )
                     # Decrement FIFO batches on the source warehouse so that
@@ -1060,7 +1061,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                                 quantity_before=qty_res_before,
                                 quantity_after=main_st.quantity_reserved,
                                 reference_type="delivery",
-                                reference_id=doc.id,
+                                reference_id=doc.uuid,
                                 notes="Zwolnienie rezerwacji MG po wydaniu z vana",
                                 created_by=request.user,
                             )
@@ -1082,7 +1083,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         quantity_before=qty_before_avail,
                         quantity_after=stock.quantity_available,
                         reference_type="delivery",
-                        reference_id=doc.id,
+                        reference_id=doc.uuid,
                         created_by=request.user,
                     )
 
@@ -1128,7 +1129,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="add-returns")
-    def add_returns(self, request, pk=None):
+    def add_returns(self, request, uuid=None):
         """POST /{id}/add-returns/ — create a ZW document from return items without
         changing the WZ status.  Works for any WZ in draft/saved/in_transit/delivered
         that is not invoice-locked or cancelled.
@@ -1176,7 +1177,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="cancel-pz")
-    def cancel_pz_action(self, request, pk=None):
+    def cancel_pz_action(self, request, uuid=None):
         """POST /{id}/cancel-pz/ — cancel a PZ document and reverse its stock impact.
 
         Only PZ documents can be cancelled this way.
@@ -1212,7 +1213,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="create-kor")
-    def create_kor_action(self, request, pk=None):
+    def create_kor_action(self, request, uuid=None):
         """POST /{id}/create-kor/ — create a PZ-KOR correction for a delivered PZ.
 
         Body: { items: [{ delivery_item_id, new_unit_cost?, new_quantity_actual? }], notes? }
@@ -1259,7 +1260,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(kor_doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="create-wz-correction")
-    def create_wz_correction_action(self, request, pk=None):
+    def create_wz_correction_action(self, request, uuid=None):
         """
         POST /api/delivery/{id}/create-wz-correction/
         Create a WZ-KOR (correction) for a delivered WZ document.
@@ -1328,11 +1329,11 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         data = ser.validated_data
         from_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            pk=data["from_warehouse_id"],
+            uuid=data["from_warehouse_id"],
         )
         to_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            pk=data["to_warehouse_id"],
+            uuid=data["to_warehouse_id"],
         )
         items = [
             {"product_id": row["product_id"], "quantity": row["quantity"]}
@@ -1370,7 +1371,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         company_id = request.user.current_company_id
         van_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            pk=van_warehouse_id,
+            uuid=van_warehouse_id,
         )
 
         # Resolve optional route
@@ -1498,7 +1499,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         company_id = request.user.current_company_id
         order = get_object_or_404(
             Order.objects.filter(company_id=company_id),
-            pk=order_id,
+            uuid=order_id,
         )
         if order.status not in (Order.STATUS_CONFIRMED, Order.STATUS_PARTIALLY_DELIVERED):
             return Response(
@@ -1518,7 +1519,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         van_warehouse_id = request.query_params.get("van_warehouse_id")
         if van_warehouse_id:
             try:
-                override_wh = Warehouse.objects.get(pk=van_warehouse_id, company_id=company_id)
+                override_wh = Warehouse.objects.get(uuid=van_warehouse_id, company_id=company_id)
                 if override_wh.warehouse_type == Warehouse.WarehouseType.MOBILE and override_wh.is_active:
                     from_warehouse = override_wh
             except Warehouse.DoesNotExist:
@@ -1579,7 +1580,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="sync-from-order")
-    def sync_from_order(self, request, pk=None):
+    def sync_from_order(self, request, uuid=None):
         """POST /{id}/sync-from-order/ — sync a draft/saved WZ's items to match the
         current order quantities. Updates existing lines, adds missing ones, removes
         lines whose order item was deleted (no WZ quantity can be negative).
@@ -1685,7 +1686,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         company_id = request.user.current_company_id
         orders = list(
-            Order.objects.filter(company_id=company_id, pk__in=id_list)
+            Order.objects.filter(company_id=company_id, uuid__in=id_list)
             .select_related("company", "customer")
             .prefetch_related(
                 Prefetch(
@@ -1694,7 +1695,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 ),
             ),
         )
-        by_id = {str(o.id): o for o in orders}
+        by_id = {str(o.uuid): o for o in orders}
         missing = [oid for oid in id_list if oid not in by_id]
         if missing:
             return Response(

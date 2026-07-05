@@ -1,12 +1,14 @@
 from rest_framework import serializers
+
+from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import Company, CompanyMembership, CompanyModule, CompanyRole, CompanyWorkflowSettings, PERMISSION_FLAGS, User
 
 
-class UserSerializer(serializers.ModelSerializer):
-    current_company = serializers.UUIDField(source="current_company_id", allow_null=True, read_only=True)
+class UserSerializer(UUIDModelSerializer):
+    current_company = serializers.UUIDField(source="current_company.uuid", allow_null=True, read_only=True)
     current_company_role = serializers.SerializerMethodField()
     is_company_admin = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
@@ -95,7 +97,7 @@ class UserSerializer(serializers.ModelSerializer):
         return {row.module: row.is_enabled for row in rows}
 
 
-class CompanySerializer(serializers.ModelSerializer):
+class CompanySerializer(UUIDModelSerializer):
     """Aligns with onboarding `CompanyWrite` (snake_case) and the `Company` model."""
 
     class Meta:
@@ -115,7 +117,7 @@ class CompanySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["is_active", "created_at", "updated_at"]
 
     def validate_nip(self, value):
         if value in (None, ""):
@@ -123,23 +125,23 @@ class CompanySerializer(serializers.ModelSerializer):
         return str(value).strip()
 
 
-class CompanyMembershipSerializer(serializers.ModelSerializer):
+class CompanyMembershipSerializer(UUIDModelSerializer):
     user = UserSerializer(read_only=True)
-    company = serializers.PrimaryKeyRelatedField(read_only=True)
+    company = UUIDRelatedField(read_only=True)
 
     class Meta:
         model = CompanyMembership
         fields = ["id", "user", "company", "role", "is_active", "joined_at"]
-        read_only_fields = ["id", "user", "company", "role", "is_active", "joined_at"]
+        read_only_fields = ["user", "company", "role", "is_active", "joined_at"]
 
 
-class CompanyModuleSerializer(serializers.ModelSerializer):
+class CompanyModuleSerializer(UUIDModelSerializer):
     class Meta:
         model = CompanyModule
         fields = ["id", "company", "module", "is_enabled", "enabled_at"]
-        read_only_fields = ["id", "company", "module", "enabled_at"]
+        read_only_fields = ["company", "module", "enabled_at"]
 
-class UserRegistrationSerializer(serializers.ModelSerializer):
+class UserRegistrationSerializer(UUIDModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, required=True)
 
@@ -184,7 +186,7 @@ class SwitchCompanySerializer(serializers.Serializer):
     company = serializers.UUIDField()
 
 
-class CompanyWorkflowSettingsSerializer(serializers.ModelSerializer):
+class CompanyWorkflowSettingsSerializer(UUIDModelSerializer):
     class Meta:
         model = CompanyWorkflowSettings
         fields = ["orders_required", "wz_required_before_invoice"]

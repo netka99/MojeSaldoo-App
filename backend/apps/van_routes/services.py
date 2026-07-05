@@ -18,7 +18,7 @@ def get_van_route_for_document(company_id, van_route_id) -> VanRoute | None:
     if not van_route_id:
         return None
     try:
-        return VanRoute.objects.get(pk=van_route_id, company_id=company_id)
+        return VanRoute.objects.get(uuid=van_route_id, company_id=company_id)
     except VanRoute.DoesNotExist:
         raise ValidationError({"van_route_id": "Van route not found or not accessible."})
 

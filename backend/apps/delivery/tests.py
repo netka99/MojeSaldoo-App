@@ -112,7 +112,7 @@ class DeliveryDocumentModelTests(TestCase):
 
     def test_id_is_uuid(self):
         d = self._make_doc()
-        self.assertEqual(len(str(d.id)), 36)
+        self.assertEqual(len(str(d.uuid)), 36)
 
     def test_default_status_is_draft(self):
         d = self._make_doc()
@@ -184,7 +184,7 @@ class DeliveryItemModelTests(TestCase):
         self.assertEqual(line.quantity_returned, Decimal("0"))
         self.assertEqual(line.return_reason, "")
         self.assertFalse(line.is_damaged)
-        self.assertEqual(len(str(line.id)), 36)
+        self.assertEqual(len(str(line.uuid)), 36)
 
     def test_delete_delivery_document_cascades_to_items(self):
         line = DeliveryItem.objects.create(
@@ -243,7 +243,7 @@ class DeliveryDocumentSerializerTests(TestCase):
     def test_valid_minimal_payload(self):
         ser = DeliveryDocumentSerializer(
             data={
-                "order_id": str(self.order.id),
+                "order_id": str(self.order.uuid),
                 "document_type": DeliveryDocument.DOC_TYPE_WZ,
                 "issue_date": "2026-04-20",
             },
@@ -264,7 +264,7 @@ class DeliveryDocumentSerializerTests(TestCase):
         )
         ser = DeliveryDocumentSerializer(
             data={
-                "order_id": str(foreign_o.id),
+                "order_id": str(foreign_o.uuid),
                 "document_type": DeliveryDocument.DOC_TYPE_WZ,
                 "issue_date": "2026-04-20",
             },
@@ -334,7 +334,7 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.get(
             reverse(
                 "delivery-document-preview",
-                kwargs={"pk": str(uuid.uuid4())},
+                kwargs={"uuid": str(uuid.uuid4())},
             )
         )
         self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -394,10 +394,10 @@ class DeliveryDocumentAPITests(TestCase):
     def test_create_sets_company_user_and_document_number(self):
         self.client.force_authenticate(user=self.user)
         body = {
-            "order_id": str(self.order.id),
+            "order_id": str(self.order.uuid),
             "document_type": DeliveryDocument.DOC_TYPE_WZ,
             "issue_date": "2026-04-18",
-            "from_warehouse_id": str(self.wh.id),
+            "from_warehouse_id": str(self.wh.uuid),
         }
         r = self.client.post(
             reverse("delivery-document-list"),
@@ -407,9 +407,9 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["document_number"], "WZ/2026/0001")
         self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DRAFT)
-        self.assertEqual(str(r.data["company"]), str(self.co.id))
-        self.assertEqual(str(r.data["user"]), str(self.user.id))
-        row = DeliveryDocument.objects.get(id=r.data["id"])
+        self.assertEqual(str(r.data["company"]), str(self.co.uuid))
+        self.assertEqual(str(r.data["user"]), str(self.user.uuid))
+        row = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertEqual(row.company_id, self.co.id)
         self.assertEqual(row.user_id, self.user.id)
 
@@ -433,7 +433,7 @@ class DeliveryDocumentAPITests(TestCase):
             issue_date=date(2026, 5, 1),
         )
         r = self.client.get(
-            reverse("delivery-document-detail", kwargs={"pk": str(foreign_doc.id)})
+            reverse("delivery-document-detail", kwargs={"uuid": str(foreign_doc.uuid)})
         )
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -459,7 +459,7 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.get(
             reverse(
                 "delivery-document-preview",
-                kwargs={"pk": str(foreign_doc.id)},
+                kwargs={"uuid": str(foreign_doc.uuid)},
             )
         )
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
@@ -479,7 +479,7 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-list"),
             data={
-                "order_id": str(foreign_o.id),
+                "order_id": str(foreign_o.uuid),
                 "document_type": DeliveryDocument.DOC_TYPE_WZ,
                 "issue_date": "2026-04-01",
             },
@@ -509,7 +509,7 @@ class DeliveryDocumentAPITests(TestCase):
         other.save(update_fields=["current_company"])
         self.client.force_authenticate(user=other)
         r = self.client.patch(
-            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(d.uuid)}),
             data={"driver_name": "Jan K."},
             format="json",
         )
@@ -532,7 +532,7 @@ class DeliveryDocumentAPITests(TestCase):
             issue_date=date(2026, 4, 1),
         )
         r0 = self.client.get(
-            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(d.uuid)}),
         )
         self.assertEqual(r0.status_code, status.HTTP_200_OK)
         self.assertFalse(r0.data["locked_for_edit"])
@@ -549,11 +549,11 @@ class DeliveryDocumentAPITests(TestCase):
             status=Invoice.STATUS_DRAFT,
         )
         r1 = self.client.get(
-            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(d.uuid)}),
         )
         self.assertTrue(r1.data["locked_for_edit"])
         self.assertEqual(len(r1.data["linked_invoices"]), 1)
-        self.assertEqual(r1.data["linked_invoices"][0]["id"], str(inv.id))
+        self.assertEqual(r1.data["linked_invoices"][0]["id"], str(inv.uuid))
         self.assertTrue(r1.data["linked_invoices"][0]["invoice_number"])
 
     def test_mutations_reject_when_locked_by_invoice(self):
@@ -599,24 +599,24 @@ class DeliveryDocumentAPITests(TestCase):
         self.client.force_authenticate(user=self.user)
 
         patch_r = self.client.patch(
-            reverse("delivery-document-detail", kwargs={"pk": str(doc.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(doc.uuid)}),
             data={"driver_name": "X"},
             format="json",
         )
         self.assertEqual(patch_r.status_code, status.HTTP_400_BAD_REQUEST)
 
         sv = self.client.post(
-            reverse("delivery-document-save", kwargs={"pk": str(doc.id)}),
+            reverse("delivery-document-save", kwargs={"uuid": str(doc.uuid)}),
             data={},
             format="json",
         )
         self.assertEqual(sv.status_code, status.HTTP_400_BAD_REQUEST)
 
         ul = self.client.post(
-            reverse("delivery-document-update-lines", kwargs={"pk": str(doc.id)}),
+            reverse("delivery-document-update-lines", kwargs={"uuid": str(doc.uuid)}),
             data={
                 "items": [
-                    {"id": str(line.id), "quantity_planned": "3.00"},
+                    {"id": str(line.uuid), "quantity_planned": "3.00"},
                 ]
             },
             format="json",
@@ -624,7 +624,7 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(ul.status_code, status.HTTP_400_BAD_REQUEST)
 
         del_r = self.client.delete(
-            reverse("delivery-document-detail", kwargs={"pk": str(doc.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(doc.uuid)}),
         )
         self.assertEqual(del_r.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -653,7 +653,7 @@ class DeliveryDocumentAPITests(TestCase):
         )
 
         blocked = self.client.patch(
-            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(d.uuid)}),
             data={"driver_name": "Locked"},
             format="json",
         )
@@ -662,7 +662,7 @@ class DeliveryDocumentAPITests(TestCase):
         inv.delete()
 
         freed = self.client.patch(
-            reverse("delivery-document-detail", kwargs={"pk": str(d.id)}),
+            reverse("delivery-document-detail", kwargs={"uuid": str(d.uuid)}),
             data={"driver_name": "Unlocked"},
             format="json",
         )
@@ -698,7 +698,7 @@ class DeliveryDocumentAPITests(TestCase):
         self.client.force_authenticate(user=self.user)
 
         rs = self.client.post(
-            reverse("delivery-document-start-delivery", kwargs={"pk": str(saved_doc.id)}),
+            reverse("delivery-document-start-delivery", kwargs={"uuid": str(saved_doc.uuid)}),
             data={},
             format="json",
         )
@@ -726,7 +726,7 @@ class DeliveryDocumentAPITests(TestCase):
         )
 
         rc = self.client.post(
-            reverse("delivery-document-complete", kwargs={"pk": str(transit_doc.id)}),
+            reverse("delivery-document-complete", kwargs={"uuid": str(transit_doc.uuid)}),
             data={},
             format="json",
         )
@@ -737,7 +737,7 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-list"),
             data={
-                "order_id": str(self.order.id),
+                "order_id": str(self.order.uuid),
                 "document_type": DeliveryDocument.DOC_TYPE_WZ,
                 "issue_date": "2025-12-01",
             },
@@ -747,13 +747,13 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r.data["document_number"], "WZ/2025/0001")
 
     def _url_save(self, doc_id):
-        return reverse("delivery-document-save", kwargs={"pk": str(doc_id)})
+        return reverse("delivery-document-save", kwargs={"uuid": str(doc_id)})
 
     def _url_start_delivery(self, doc_id):
-        return reverse("delivery-document-start-delivery", kwargs={"pk": str(doc_id)})
+        return reverse("delivery-document-start-delivery", kwargs={"uuid": str(doc_id)})
 
     def _url_complete(self, doc_id):
-        return reverse("delivery-document-complete", kwargs={"pk": str(doc_id)})
+        return reverse("delivery-document-complete", kwargs={"uuid": str(doc_id)})
 
     def _url_generate(self, order_id):
         return reverse(
@@ -874,7 +874,7 @@ class DeliveryDocumentAPITests(TestCase):
         r = self.client.get(
             reverse("delivery-document-list"),
             {
-                "order": str(self.order.id),
+                "order": str(self.order.uuid),
                 "status": DeliveryDocument.STATUS_DRAFT,
                 "document_type": DeliveryDocument.DOC_TYPE_WZ,
                 "issue_date_after": "2026-05-01",
@@ -883,7 +883,7 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         ids = {row["id"] for row in r.data["results"]}
-        self.assertEqual(ids, {str(d1.id)})
+        self.assertEqual(ids, {str(d1.uuid)})
 
     def test_post_save_and_start_delivery_transitions(self):
         self.client.force_authenticate(user=self.user)
@@ -895,10 +895,10 @@ class DeliveryDocumentAPITests(TestCase):
             issue_date=date(2026, 4, 1),
             status=DeliveryDocument.STATUS_DRAFT,
         )
-        r1 = self.client.post(self._url_save(d.id))
+        r1 = self.client.post(self._url_save(d.uuid))
         self.assertEqual(r1.status_code, status.HTTP_200_OK)
         self.assertEqual(r1.data["status"], DeliveryDocument.STATUS_SAVED)
-        r2 = self.client.post(self._url_start_delivery(d.id))
+        r2 = self.client.post(self._url_start_delivery(d.uuid))
         self.assertEqual(r2.status_code, status.HTTP_200_OK)
         self.assertEqual(r2.data["status"], DeliveryDocument.STATUS_IN_TRANSIT)
 
@@ -912,20 +912,20 @@ class DeliveryDocumentAPITests(TestCase):
             issue_date=date(2026, 4, 1),
             status=DeliveryDocument.STATUS_SAVED,
         )
-        r = self.client.post(self._url_save(d.id))
+        r = self.client.post(self._url_save(d.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_get_generate_for_order_creates_wz_with_lines(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        r = self.client.get(self._url_generate(o.id))
+        r = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["document_type"], DeliveryDocument.DOC_TYPE_WZ)
         self.assertEqual(r.data["status"], DeliveryDocument.STATUS_SAVED)
-        self.assertEqual(str(r.data["from_warehouse_id"]), str(self.wh.id))
+        self.assertEqual(str(r.data["from_warehouse_id"]), str(self.wh.uuid))
         self.assertEqual(len(r.data["items"]), 1)
         self.assertEqual(r.data["items"][0]["quantity_planned"], "4.00")
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertEqual(doc.order_id, o.id)
         self.assertEqual(doc.to_customer_id, o.customer_id)
 
@@ -940,9 +940,9 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        r = self.client.get(self._url_generate(o.id))
+        r = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        self.assertEqual(str(r.data["from_warehouse_id"]), str(wh_mobile.id))
+        self.assertEqual(str(r.data["from_warehouse_id"]), str(wh_mobile.uuid))
 
     def test_generate_for_order_requires_confirmed(self):
         self.client.force_authenticate(user=self.user)
@@ -957,13 +957,13 @@ class DeliveryDocumentAPITests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.get(self._url_generate(self.order.id))
+        r = self.client.get(self._url_generate(self.order.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_generate_for_order_uses_remaining_quantity(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line(qty_delivered=Decimal("1.50"))
-        r = self.client.get(self._url_generate(o.id))
+        r = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["items"][0]["quantity_planned"], "2.50")
 
@@ -976,7 +976,7 @@ class DeliveryDocumentAPITests(TestCase):
         o2 = self._confirmed_order_with_line()
         r = self.client.post(
             self._url_generate_batch(),
-            data={"order_ids": [str(o2.id), str(o1.id)]},
+            data={"order_ids": [str(o2.uuid), str(o1.uuid)]},
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
@@ -986,7 +986,7 @@ class DeliveryDocumentAPITests(TestCase):
         ids = {row["id"] for row in r.data["documents"]}
         self.assertEqual(len(nums), 2)
         self.assertEqual(len(ids), 2)
-        self.assertEqual(DeliveryDocument.objects.filter(pk__in=ids).count(), 2)
+        self.assertEqual(DeliveryDocument.objects.filter(uuid__in=ids).count(), 2)
 
     def test_post_generate_for_orders_not_confirmed_returns_400_with_ids(self):
         self.client.force_authenticate(user=self.user)
@@ -1010,11 +1010,11 @@ class DeliveryDocumentAPITests(TestCase):
         )
         r = self.client.post(
             self._url_generate_batch(),
-            data={"order_ids": [str(ok.id), str(bad.id)]},
+            data={"order_ids": [str(ok.uuid), str(bad.uuid)]},
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
-        self.assertEqual(r.data["not_confirmed_order_ids"], [str(bad.id)])
+        self.assertEqual(r.data["not_confirmed_order_ids"], [str(bad.uuid)])
 
     def test_post_generate_for_orders_other_company_order_returns_404(self):
         co_other = Company.objects.create(name="Foreign Co")
@@ -1047,16 +1047,16 @@ class DeliveryDocumentAPITests(TestCase):
         o_local = self._confirmed_order_with_line()
         r = self.client.post(
             self._url_generate_batch(),
-            data={"order_ids": [str(o_local.id), str(o_foreign.id)]},
+            data={"order_ids": [str(o_local.uuid), str(o_foreign.uuid)]},
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND, r.data)
-        self.assertIn(str(o_foreign.id), r.data["missing_order_ids"])
+        self.assertIn(str(o_foreign.uuid), r.data["missing_order_ids"])
 
     def test_post_complete_updates_lines_and_order(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(gen.status_code, status.HTTP_201_CREATED)
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
@@ -1080,7 +1080,7 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DELIVERED)
         self.assertTrue(r.data["has_returns"])
-        item = DeliveryItem.objects.get(pk=line_id)
+        item = DeliveryItem.objects.get(uuid=line_id)
         self.assertEqual(item.quantity_actual, Decimal("3.00"))
         self.assertEqual(item.quantity_returned, Decimal("1.00"))
         oi = OrderItem.objects.get(order=o)
@@ -1110,7 +1110,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_marks_order_delivered_when_fully_delivered(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(gen.status_code, status.HTTP_201_CREATED, gen.data)
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
@@ -1143,7 +1143,7 @@ class DeliveryDocumentAPITests(TestCase):
             issue_date=date(2026, 4, 1),
             status=DeliveryDocument.STATUS_DRAFT,
         )
-        r = self.client.post(self._url_start_delivery(d.id))
+        r = self.client.post(self._url_start_delivery(d.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_post_complete_wrong_status_returns_400(self):
@@ -1156,13 +1156,13 @@ class DeliveryDocumentAPITests(TestCase):
             issue_date=date(2026, 4, 1),
             status=DeliveryDocument.STATUS_DRAFT,
         )
-        r = self.client.post(self._url_complete(d.id), data={}, format="json")
+        r = self.client.post(self._url_complete(d.uuid), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_post_complete_twice_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         self.client.post(self._url_save(doc_id))
@@ -1178,7 +1178,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_unknown_item_id_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         self.client.post(self._url_save(doc_id))
         self.client.post(self._url_start_delivery(doc_id))
@@ -1193,7 +1193,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_returns_exceed_actual_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         self.client.post(self._url_save(doc_id))
@@ -1212,7 +1212,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_exceeds_ordered_quantity_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         self.client.post(self._url_save(doc_id))
@@ -1232,7 +1232,7 @@ class DeliveryDocumentAPITests(TestCase):
         ProductStock.objects.filter(
             product=self.product, warehouse=self.wh
         ).update(quantity_reserved=Decimal("1.00"), quantity_available=Decimal("99.00"))
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         self.client.post(self._url_save(doc_id))
@@ -1252,13 +1252,13 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
-        doc = DeliveryDocument.objects.get(pk=doc_id)
+        doc = DeliveryDocument.objects.get(uuid=doc_id)
         self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
 
     def test_post_complete_sale_only_one_sale_movement_and_stock(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         self.client.post(self._url_save(doc_id))
@@ -1292,7 +1292,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_missing_productstock_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         self.client.post(self._url_save(doc_id))
@@ -1315,16 +1315,16 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
-        doc = DeliveryDocument.objects.get(pk=doc_id)
+        doc = DeliveryDocument.objects.get(uuid=doc_id)
         self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
 
     def test_post_complete_without_from_warehouse_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
-        DeliveryDocument.objects.filter(pk=doc_id).update(from_warehouse=None)
+        DeliveryDocument.objects.filter(uuid=doc_id).update(from_warehouse=None)
         self.client.post(self._url_save(doc_id))
         self.client.post(self._url_start_delivery(doc_id))
         r = self.client.post(
@@ -1342,13 +1342,13 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("from_warehouse", r.data)
-        doc = DeliveryDocument.objects.get(pk=doc_id)
+        doc = DeliveryDocument.objects.get(uuid=doc_id)
         self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
 
     def test_post_complete_two_lines_same_product_two_sale_movements(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_two_lines_same_product()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(gen.status_code, status.HTTP_201_CREATED, gen.data)
         self.assertEqual(len(gen.data["items"]), 2)
         doc_id = gen.data["id"]
@@ -1382,7 +1382,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_two_distinct_products_updates_both_stocks(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_two_products()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_by_product = {
             str(row["product_id"]): row["id"] for row in gen.data["items"]
@@ -1394,12 +1394,12 @@ class DeliveryDocumentAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "id": line_by_product[str(self.product.id)],
+                        "id": line_by_product[str(self.product.uuid)],
                         "quantity_actual": "2.00",
                         "quantity_returned": "0",
                     },
                     {
-                        "id": line_by_product[str(self.product_b.id)],
+                        "id": line_by_product[str(self.product_b.uuid)],
                         "quantity_actual": "3.00",
                         "quantity_returned": "0",
                     },
@@ -1429,7 +1429,7 @@ class DeliveryDocumentAPITests(TestCase):
             quantity_reserved=Decimal("1.00"),
             quantity_available=Decimal("99.00"),
         )
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_by_product = {
             str(row["product_id"]): row["id"] for row in gen.data["items"]
@@ -1441,12 +1441,12 @@ class DeliveryDocumentAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "id": line_by_product[str(self.product.id)],
+                        "id": line_by_product[str(self.product.uuid)],
                         "quantity_actual": "2.00",
                         "quantity_returned": "0",
                     },
                     {
-                        "id": line_by_product[str(self.product_b.id)],
+                        "id": line_by_product[str(self.product_b.uuid)],
                         "quantity_actual": "3.00",
                         "quantity_returned": "0",
                     },
@@ -1456,7 +1456,7 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
-        doc = DeliveryDocument.objects.get(pk=doc_id)
+        doc = DeliveryDocument.objects.get(uuid=doc_id)
         self.assertEqual(doc.status, DeliveryDocument.STATUS_IN_TRANSIT)
         sa = ProductStock.objects.get(product=self.product, warehouse=self.wh)
         sb = ProductStock.objects.get(product=self.product_b, warehouse=self.wh)
@@ -1469,7 +1469,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_post_complete_second_wz_consumes_remaining_reserved(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen1 = self.client.get(self._url_generate(o.id))
+        gen1 = self.client.get(self._url_generate(o.uuid))
         d1 = gen1.data["id"]
         l1 = gen1.data["items"][0]["id"]
         self.client.post(self._url_save(d1))
@@ -1482,7 +1482,7 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r1.status_code, status.HTTP_200_OK, r1.data)
         stock_mid = ProductStock.objects.get(product=self.product, warehouse=self.wh)
         self.assertEqual(stock_mid.quantity_reserved, Decimal("2.00"))
-        gen2 = self.client.get(self._url_generate(o.id))
+        gen2 = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(gen2.status_code, status.HTTP_201_CREATED, gen2.data)
         d2 = gen2.data["id"]
         l2 = gen2.data["items"][0]["id"]
@@ -1507,7 +1507,7 @@ class DeliveryDocumentAPITests(TestCase):
             quantity_reserved=Decimal("2.00"),
             quantity_available=Decimal("98.00"),
         )
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         ids = [row["id"] for row in gen.data["items"]]
         self.client.post(self._url_save(doc_id))
@@ -1525,14 +1525,14 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("stock", r.data)
         self.assertEqual(
-            DeliveryDocument.objects.get(pk=doc_id).status,
+            DeliveryDocument.objects.get(uuid=doc_id).status,
             DeliveryDocument.STATUS_IN_TRANSIT,
         )
 
     def test_post_complete_empty_items_uses_planned_quantities_for_stock(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         self.client.post(self._url_save(doc_id))
         self.client.post(self._url_start_delivery(doc_id))
@@ -1552,7 +1552,7 @@ class DeliveryDocumentAPITests(TestCase):
     def test_generate_no_remaining_quantity_returns_400(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line(qty_delivered=Decimal("4.00"))
-        r = self.client.get(self._url_generate(o.id))
+        r = self.client.get(self._url_generate(o.uuid))
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_generate_for_foreign_order_returns_404(self):
@@ -1582,16 +1582,16 @@ class DeliveryDocumentAPITests(TestCase):
             vat_rate=Decimal("0.00"),
             discount_percent=Decimal("0.00"),
         )
-        r = self.client.get(self._url_generate(foreign_o.id))
+        r = self.client.get(self._url_generate(foreign_o.uuid))
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_retrieve_includes_nested_items(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         r = self.client.get(
-            reverse("delivery-document-detail", kwargs={"pk": str(doc_id)})
+            reverse("delivery-document-detail", kwargs={"uuid": str(doc_id)})
         )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(len(r.data["items"]), 1)
@@ -1602,14 +1602,14 @@ class DeliveryDocumentAPITests(TestCase):
     def test_delete_document_allowed_and_removes_items(self):
         self.client.force_authenticate(user=self.user)
         o = self._confirmed_order_with_line()
-        gen = self.client.get(self._url_generate(o.id))
+        gen = self.client.get(self._url_generate(o.uuid))
         doc_id = gen.data["id"]
         line_id = gen.data["items"][0]["id"]
         r = self.client.delete(
-            reverse("delivery-document-detail", kwargs={"pk": str(doc_id)})
+            reverse("delivery-document-detail", kwargs={"uuid": str(doc_id)})
         )
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(DeliveryItem.objects.filter(pk=line_id).exists())
+        self.assertFalse(DeliveryItem.objects.filter(uuid=line_id).exists())
 
     def test_preview_returns_print_payload(self):
         self.client.force_authenticate(user=self.user)
@@ -1640,7 +1640,7 @@ class DeliveryDocumentAPITests(TestCase):
             quantity_returned=Decimal("0"),
         )
         r = self.client.get(
-            reverse("delivery-document-preview", kwargs={"pk": str(doc.id)})
+            reverse("delivery-document-preview", kwargs={"uuid": str(doc.uuid)})
         )
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertIn("document", r.data)
@@ -1660,10 +1660,10 @@ class DeliveryDocumentAPITests(TestCase):
         self.assertEqual(row["quantity_returned"], "0.00")
         self.assertEqual(row["unit"], "op.")
         d = r.data["document"]
-        self.assertEqual(d["id"], str(doc.id))
+        self.assertEqual(d["id"], str(doc.uuid))
         self.assertEqual(d["document_type"], "WZ")
         self.assertEqual(d["notes"], "Bring ID")
-        self.assertEqual(d["from_warehouse"], str(self.wh.id))
+        self.assertEqual(d["from_warehouse"], str(self.wh.uuid))
 
 
 class BuildDeliveryDocumentPreviewDataTests(TestCase):
@@ -1752,9 +1752,9 @@ class BuildDeliveryDocumentPreviewDataTests(TestCase):
         }
         data = build_delivery_document_preview_data(doc)
         self.assertTrue(expected_keys.issubset(data["document"].keys()))
-        self.assertEqual(data["document"]["company"], str(self.co.id))
-        self.assertEqual(data["document"]["order"], str(self.order.id))
-        self.assertEqual(data["document"]["from_warehouse"], str(self.wh.id))
+        self.assertEqual(data["document"]["company"], str(self.co.uuid))
+        self.assertEqual(data["document"]["order"], str(self.order.uuid))
+        self.assertEqual(data["document"]["from_warehouse"], str(self.wh.uuid))
         self.assertEqual(data["document"]["driver_name"], "Kierowca")
         self.assertIsNone(data["document"]["to_warehouse"])
         self.assertIsNone(data["document"]["delivered_at"])
@@ -2120,10 +2120,10 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             url,
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
                 "items": [
-                    {"product_id": str(self.product.id), "quantity": "4.50"},
+                    {"product_id": str(self.product.uuid), "quantity": "4.50"},
                 ],
             },
             format="json",
@@ -2136,7 +2136,7 @@ class VanLoadingAPITests(TestCase):
             msg="Van-loading response must include assigned MM document_number for the client success screen.",
         )
         self.assertIsNone(r.data["order_id"])
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertEqual(doc.items.count(), 1)
         line = doc.items.first()
         self.assertIsNone(line.order_item_id)
@@ -2152,7 +2152,7 @@ class VanLoadingAPITests(TestCase):
         self.assertEqual(main.quantity_available, Decimal("95.50"))
         self.assertEqual(van.quantity_available, Decimal("4.50"))
 
-        moves = StockMovement.objects.filter(reference_id=doc.id).order_by("created_at")
+        moves = StockMovement.objects.filter(reference_id=doc.uuid).order_by("created_at")
         self.assertEqual(moves.count(), 2)
         self.assertEqual(moves[0].movement_type, StockMovement.MovementType.TRANSFER)
         self.assertEqual(moves[0].quantity, Decimal("-4.50"))
@@ -2168,9 +2168,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "90"}],
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "90"}],
             },
             format="json",
         )
@@ -2181,9 +2181,9 @@ class VanLoadingAPITests(TestCase):
         self.assertEqual(main.quantity_reserved, Decimal("10.00"))
         self.assertEqual(van.quantity_available, Decimal("90.00"))
 
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         mv_out = StockMovement.objects.filter(
-            warehouse=self.wh_main, reference_id=doc.id
+            warehouse=self.wh_main, reference_id=doc.uuid
         ).get()
         self.assertEqual(mv_out.quantity_before, Decimal("100.00"))
         self.assertEqual(mv_out.quantity_after, Decimal("10.00"))
@@ -2200,9 +2200,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(wh_other.id),
-                "to_warehouse_id": str(self.wh_van.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+                "from_warehouse_id": str(wh_other.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "1"}],
             },
             format="json",
         )
@@ -2230,9 +2230,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "1"}],
             },
             format="json",
         )
@@ -2250,9 +2250,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(wh_main2.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(wh_main2.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "1"}],
             },
             format="json",
         )
@@ -2264,9 +2264,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_main.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_main.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "1"}],
             },
             format="json",
         )
@@ -2282,9 +2282,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "5"}],
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "5"}],
             },
             format="json",
         )
@@ -2299,11 +2299,11 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
                 "items": [
-                    {"product_id": str(self.product.id), "quantity": "1"},
-                    {"product_id": str(self.product.id), "quantity": "2"},
+                    {"product_id": str(self.product.uuid), "quantity": "1"},
+                    {"product_id": str(self.product.uuid), "quantity": "2"},
                 ],
             },
             format="json",
@@ -2316,8 +2316,8 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
                 "items": [{"product_id": str(uuid.uuid4()), "quantity": "1"}],
             },
             format="json",
@@ -2330,8 +2330,8 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(self.wh_main.id),
-                "to_warehouse_id": str(self.wh_van.id),
+                "from_warehouse_id": str(self.wh_main.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
                 "items": [],
             },
             format="json",
@@ -2352,9 +2352,9 @@ class VanLoadingAPITests(TestCase):
         r = self.client.post(
             reverse("delivery-document-van-loading"),
             data={
-                "from_warehouse_id": str(foreign_wh.id),
-                "to_warehouse_id": str(self.wh_van.id),
-                "items": [{"product_id": str(self.product.id), "quantity": "1"}],
+                "from_warehouse_id": str(foreign_wh.uuid),
+                "to_warehouse_id": str(self.wh_van.uuid),
+                "items": [{"product_id": str(self.product.uuid), "quantity": "1"}],
             },
             format="json",
         )
@@ -2411,7 +2411,7 @@ class VanReconciliationAPITests(TestCase):
     def _url(self):
         return reverse(
             "delivery-document-van-reconciliation",
-            kwargs={"van_warehouse_id": str(self.wh_van.id)},
+            kwargs={"van_warehouse_id": str(self.wh_van.uuid)},
         )
 
     def test_reconciliation_shrinkage_records_damage(self):
@@ -2428,7 +2428,7 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "8.00",
                     }
                 ]
@@ -2471,7 +2471,7 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "7.50",
                     }
                 ]
@@ -2506,7 +2506,7 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "4.00",
                     }
                 ]
@@ -2537,14 +2537,14 @@ class VanReconciliationAPITests(TestCase):
         self.client.force_authenticate(user=self.user)
         url = reverse(
             "delivery-document-van-reconciliation",
-            kwargs={"van_warehouse_id": str(wh_main.id)},
+            kwargs={"van_warehouse_id": str(wh_main.uuid)},
         )
         r = self.client.post(
             url,
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "1",
                     }
                 ]
@@ -2577,11 +2577,11 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "1",
                     },
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "2",
                     },
                 ]
@@ -2620,14 +2620,14 @@ class VanReconciliationAPITests(TestCase):
         self.client.force_authenticate(user=self.user)
         url = reverse(
             "delivery-document-van-reconciliation",
-            kwargs={"van_warehouse_id": str(foreign_van.id)},
+            kwargs={"van_warehouse_id": str(foreign_van.uuid)},
         )
         r = self.client.post(
             url,
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "1",
                     }
                 ]
@@ -2651,7 +2651,7 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "0",
                     }
                 ]
@@ -2681,11 +2681,11 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "8.00",
                     },
                     {
-                        "product_id": str(self.p2.id),
+                        "product_id": str(self.p2.uuid),
                         "quantity_actual_remaining": "3.00",
                     },
                 ]
@@ -2695,7 +2695,7 @@ class VanReconciliationAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["items_processed"], 2)
         self.assertEqual(len(r.data["discrepancies"]), 1)
-        self.assertEqual(r.data["discrepancies"][0]["product_id"], str(self.p1.id))
+        self.assertEqual(r.data["discrepancies"][0]["product_id"], str(self.p1.uuid))
         self.assertEqual(r.data["discrepancies"][0]["discrepancy_type"], "damage")
 
         rid = r.data["reconciliation_id"]
@@ -2714,7 +2714,7 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "5.25",
                     }
                 ]
@@ -2746,7 +2746,7 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "8.00",
                     }
                 ]
@@ -2783,11 +2783,11 @@ class VanReconciliationAPITests(TestCase):
             data={
                 "items": [
                     {
-                        "product_id": str(self.p1.id),
+                        "product_id": str(self.p1.uuid),
                         "quantity_actual_remaining": "9.00",
                     },
                     {
-                        "product_id": str(self.p2.id),
+                        "product_id": str(self.p2.uuid),
                         "quantity_actual_remaining": "3.00",
                     },
                 ]
@@ -2850,11 +2850,11 @@ class PZFlowAPITests(TestCase):
 
     def test_create_pz_returns_201_with_draft_document(self):
         r = self.client.post("/api/delivery/create-pz/", {
-            "to_warehouse_id": str(self.wh.id),
-            "from_supplier_id": str(self.supplier.id),
+            "to_warehouse_id": str(self.wh.uuid),
+            "from_supplier_id": str(self.supplier.uuid),
             "issue_date": "2026-05-29",
             "items": [
-                {"product_id": str(self.product.id), "quantity_planned": "10.00", "unit_cost": "5.50"},
+                {"product_id": str(self.product.uuid), "quantity_planned": "10.00", "unit_cost": "5.50"},
             ],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
@@ -2867,30 +2867,30 @@ class PZFlowAPITests(TestCase):
 
     def test_create_pz_without_supplier_is_allowed(self):
         r = self.client.post("/api/delivery/create-pz/", {
-            "to_warehouse_id": str(self.wh.id),
-            "items": [{"product_id": str(self.product.id), "quantity_planned": "5.00"}],
+            "to_warehouse_id": str(self.wh.uuid),
+            "items": [{"product_id": str(self.product.uuid), "quantity_planned": "5.00"}],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertIsNone(r.data["from_supplier_id"])
 
     def test_create_pz_requires_to_warehouse(self):
         r = self.client.post("/api/delivery/create-pz/", {
-            "items": [{"product_id": str(self.product.id), "quantity_planned": "5.00"}],
+            "items": [{"product_id": str(self.product.uuid), "quantity_planned": "5.00"}],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_pz_requires_items(self):
         r = self.client.post("/api/delivery/create-pz/", {
-            "to_warehouse_id": str(self.wh.id),
+            "to_warehouse_id": str(self.wh.uuid),
             "items": [],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_pz_supplier_name_visible_in_response(self):
         r = self.client.post("/api/delivery/create-pz/", {
-            "to_warehouse_id": str(self.wh.id),
-            "from_supplier_id": str(self.supplier.id),
-            "items": [{"product_id": str(self.product.id), "quantity_planned": "3.00"}],
+            "to_warehouse_id": str(self.wh.uuid),
+            "from_supplier_id": str(self.supplier.uuid),
+            "items": [{"product_id": str(self.product.uuid), "quantity_planned": "3.00"}],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["supplier_name"], self.supplier.name)
@@ -2900,10 +2900,10 @@ class PZFlowAPITests(TestCase):
     def _create_pz(self, qty="10.00", unit_cost="5.50"):
         """Helper: create a draft PZ and return its id."""
         r = self.client.post("/api/delivery/create-pz/", {
-            "to_warehouse_id": str(self.wh.id),
-            "from_supplier_id": str(self.supplier.id),
+            "to_warehouse_id": str(self.wh.uuid),
+            "from_supplier_id": str(self.supplier.uuid),
             "items": [
-                {"product_id": str(self.product.id), "quantity_planned": qty, "unit_cost": unit_cost},
+                {"product_id": str(self.product.uuid), "quantity_planned": qty, "unit_cost": unit_cost},
             ],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
@@ -2954,10 +2954,10 @@ class PZFlowAPITests(TestCase):
     def test_complete_pz_with_quantity_actual_override(self):
         """Caller supplies quantity_actual for items; stock reflects actual not planned."""
         pz_id = self._create_pz(qty="10.00")
-        doc = DeliveryDocument.objects.get(pk=pz_id)
+        doc = DeliveryDocument.objects.get(uuid=pz_id)
         item = doc.items.first()
         r = self.client.post(f"/api/delivery/{pz_id}/complete/", {
-            "items": [{"id": str(item.id), "quantity_actual": "8.00"}],
+            "items": [{"id": str(item.uuid), "quantity_actual": "8.00"}],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
 
@@ -3057,7 +3057,7 @@ class CreateZwFromPendingReturnsGuardTests(TestCase):
     def _zw(self, qty):
         return self._service(
             wz_doc=self.wz,
-            return_items=[{"product_id": str(self.product.id), "quantity": str(qty)}],
+            return_items=[{"product_id": str(self.product.uuid), "quantity": str(qty)}],
             user=self.user,
         )
 
@@ -3159,7 +3159,7 @@ class GenerateForOrderVanRouteAutoTests(TestCase):
     def _url(self):
         return reverse(
             "delivery-document-generate-for-order",
-            kwargs={"order_id": str(self.order.id)},
+            kwargs={"order_id": str(self.order.uuid)},
         )
 
     def test_auto_links_van_route_when_order_on_one_active_route(self):
@@ -3167,14 +3167,14 @@ class GenerateForOrderVanRouteAutoTests(TestCase):
         route.orders.add(self.order)
         r = self.client.get(self._url())
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertEqual(doc.van_route_id, route.id)
         self.assertEqual(doc.from_warehouse_id, self.wh_van.id)
 
     def test_no_van_route_when_order_not_on_any_route(self):
         r = self.client.get(self._url())
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertIsNone(doc.van_route_id)
 
     def test_no_auto_link_when_order_on_two_active_routes(self):
@@ -3184,7 +3184,7 @@ class GenerateForOrderVanRouteAutoTests(TestCase):
         route2.orders.add(self.order)
         r = self.client.get(self._url())
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertIsNone(doc.van_route_id)
 
     def test_no_auto_link_when_route_is_closed(self):
@@ -3193,7 +3193,7 @@ class GenerateForOrderVanRouteAutoTests(TestCase):
         route.orders.add(self.order)
         r = self.client.get(self._url())
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        doc = DeliveryDocument.objects.get(id=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertIsNone(doc.van_route_id)
 
 
@@ -3275,7 +3275,7 @@ class FifoStockBatchDeductionOnWZTests(TestCase):
         return doc
 
     def _url_complete(self, doc_id):
-        return reverse("delivery-document-complete", kwargs={"pk": str(doc_id)})
+        return reverse("delivery-document-complete", kwargs={"uuid": str(doc_id)})
 
     def test_wz_complete_decrements_single_batch(self):
         """Completing a WZ reduces StockBatch.quantity_remaining by the sold qty."""
@@ -3286,8 +3286,8 @@ class FifoStockBatchDeductionOnWZTests(TestCase):
 
         self.client.force_authenticate(user=self.user)
         r = self.client.post(
-            self._url_complete(doc.id),
-            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "4.00"}]},
+            self._url_complete(doc.uuid),
+            data={"items": [{"id": str(doc.items.first().uuid), "quantity_actual": "4.00"}]},
             format="json",
         )
         self.assertEqual(r.status_code, 200, r.data)
@@ -3304,8 +3304,8 @@ class FifoStockBatchDeductionOnWZTests(TestCase):
 
         self.client.force_authenticate(user=self.user)
         r = self.client.post(
-            self._url_complete(doc.id),
-            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "5.00"}]},
+            self._url_complete(doc.uuid),
+            data={"items": [{"id": str(doc.items.first().uuid), "quantity_actual": "5.00"}]},
             format="json",
         )
         self.assertEqual(r.status_code, 200, r.data)
@@ -3323,8 +3323,8 @@ class FifoStockBatchDeductionOnWZTests(TestCase):
 
         self.client.force_authenticate(user=self.user)
         r = self.client.post(
-            self._url_complete(doc.id),
-            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "5.00"}]},
+            self._url_complete(doc.uuid),
+            data={"items": [{"id": str(doc.items.first().uuid), "quantity_actual": "5.00"}]},
             format="json",
         )
         self.assertEqual(r.status_code, 200, r.data)
@@ -3364,8 +3364,8 @@ class FifoStockBatchDeductionOnWZTests(TestCase):
         )
         self.client.force_authenticate(user=self.user)
         r = self.client.post(
-            self._url_complete(doc.id),
-            data={"items": [{"id": str(doc.items.first().id), "quantity_actual": "3.00"}]},
+            self._url_complete(doc.uuid),
+            data={"items": [{"id": str(doc.items.first().uuid), "quantity_actual": "3.00"}]},
             format="json",
         )
         self.assertEqual(r.status_code, 200, r.data)
@@ -3411,7 +3411,7 @@ class ExpiryDateOnPZTests(TestCase):
         return reverse("delivery-document-create-pz")
 
     def _url_complete(self, doc_id):
-        return reverse("delivery-document-complete", kwargs={"pk": str(doc_id)})
+        return reverse("delivery-document-complete", kwargs={"uuid": str(doc_id)})
 
     def test_expiry_date_stored_on_delivery_item(self):
         """expiry_date sent in create-pz payload is persisted on DeliveryItem."""
@@ -3419,10 +3419,10 @@ class ExpiryDateOnPZTests(TestCase):
         r = self.client.post(
             self._url_create_pz(),
             data={
-                "to_warehouse_id": str(self.wh.id),
+                "to_warehouse_id": str(self.wh.uuid),
                 "items": [
                     {
-                        "product_id": str(self.product.id),
+                        "product_id": str(self.product.uuid),
                         "quantity_planned": "50.00",
                         "unit_cost": "1.80",
                         "expiry_date": "2026-12-31",
@@ -3432,7 +3432,7 @@ class ExpiryDateOnPZTests(TestCase):
             format="json",
         )
         self.assertEqual(r.status_code, 201, r.data)
-        item = DeliveryItem.objects.get(delivery_document_id=r.data["id"])
+        item = DeliveryItem.objects.get(delivery_document__uuid=r.data["id"])
         self.assertEqual(str(item.expiry_date), "2026-12-31")
 
     def test_expiry_date_propagates_to_stock_batch_on_complete(self):
@@ -3442,10 +3442,10 @@ class ExpiryDateOnPZTests(TestCase):
         r = self.client.post(
             self._url_create_pz(),
             data={
-                "to_warehouse_id": str(self.wh.id),
+                "to_warehouse_id": str(self.wh.uuid),
                 "items": [
                     {
-                        "product_id": str(self.product.id),
+                        "product_id": str(self.product.uuid),
                         "quantity_planned": "50.00",
                         "unit_cost": "1.80",
                         "expiry_date": "2026-12-31",
@@ -3470,10 +3470,10 @@ class ExpiryDateOnPZTests(TestCase):
         r = self.client.post(
             self._url_create_pz(),
             data={
-                "to_warehouse_id": str(self.wh.id),
+                "to_warehouse_id": str(self.wh.uuid),
                 "items": [
                     {
-                        "product_id": str(self.product.id),
+                        "product_id": str(self.product.uuid),
                         "quantity_planned": "10.00",
                         "unit_cost": "2.00",
                     }
@@ -3494,10 +3494,10 @@ class ExpiryDateOnPZTests(TestCase):
         r = self.client.post(
             self._url_create_pz(),
             data={
-                "to_warehouse_id": str(self.wh.id),
+                "to_warehouse_id": str(self.wh.uuid),
                 "items": [
                     {
-                        "product_id": str(self.product.id),
+                        "product_id": str(self.product.uuid),
                         "quantity_planned": "5.00",
                         "expiry_date": "2027-06-30",
                     }
@@ -3555,10 +3555,10 @@ class CreateRWAPITests(TestCase):
 
     def _payload(self, **overrides):
         base = {
-            "from_warehouse_id": str(self.wh.id),
+            "from_warehouse_id": str(self.wh.uuid),
             "reason": "Strata",
             "issue_date": "2026-06-16",
-            "items": [{"product_id": str(self.product.id), "quantity": "3.000"}],
+            "items": [{"product_id": str(self.product.uuid), "quantity": "3.000"}],
         }
         base.update(overrides)
         return base
@@ -3591,7 +3591,7 @@ class CreateRWAPITests(TestCase):
     def test_reason_embedded_in_notes(self):
         r = self.client.post(self.URL, self._payload(reason="Próbka", notes="do degustacji"), format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        doc = DeliveryDocument.objects.get(pk=r.data["id"])
+        doc = DeliveryDocument.objects.get(uuid=r.data["id"])
         self.assertIn("Próbka", doc.notes)
         self.assertIn("do degustacji", doc.notes)
 
@@ -3605,11 +3605,11 @@ class CreateRWAPITests(TestCase):
             quantity_available=Decimal("10.000"), quantity_reserved=Decimal("0.000"),
         )
         r = self.client.post(self.URL, {
-            "from_warehouse_id": str(self.wh.id),
+            "from_warehouse_id": str(self.wh.uuid),
             "reason": "Uszkodzenie",
             "items": [
-                {"product_id": str(self.product.id), "quantity": "2.000"},
-                {"product_id": str(product2.id), "quantity": "5.000"},
+                {"product_id": str(self.product.uuid), "quantity": "2.000"},
+                {"product_id": str(product2.uuid), "quantity": "5.000"},
             ],
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
@@ -3642,7 +3642,7 @@ class CreateRWAPITests(TestCase):
             user=self.user, company=other_co, code="MG-OTHER", name="Other WH",
             warehouse_type=Warehouse.WarehouseType.MAIN,
         )
-        r = self.client.post(self.URL, self._payload(from_warehouse_id=str(other_wh.id)), format="json")
+        r = self.client.post(self.URL, self._payload(from_warehouse_id=str(other_wh.uuid)), format="json")
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_requires_authentication(self):
@@ -3701,7 +3701,7 @@ class ZWReturnBatchTests(TestCase):
         return self.create_zw(
             wz_doc=self.wz,
             return_items=[{
-                "product_id": str(self.product.id),
+                "product_id": str(self.product.uuid),
                 "quantity": qty,
                 "return_reason": "Zwrot z poprzedniego dnia",
             }],
@@ -3835,7 +3835,7 @@ class WzKorServiceTests(TestCase):
         kor = self.service(
             original_wz=self.wz,
             correction_items=[{
-                "delivery_item_id": str(self.wz_item.id),
+                "delivery_item_id": str(self.wz_item.uuid),
                 "quantity_returned": Decimal("3"),
             }],
             user=self.user,
@@ -3850,7 +3850,7 @@ class WzKorServiceTests(TestCase):
         self.service(
             original_wz=self.wz,
             correction_items=[{
-                "delivery_item_id": str(self.wz_item.id),
+                "delivery_item_id": str(self.wz_item.uuid),
                 "quantity_returned": Decimal("4"),
             }],
             user=self.user,
@@ -3862,7 +3862,7 @@ class WzKorServiceTests(TestCase):
         self.service(
             original_wz=self.wz,
             correction_items=[{
-                "delivery_item_id": str(self.wz_item.id),
+                "delivery_item_id": str(self.wz_item.uuid),
                 "quantity_returned": Decimal("2"),
             }],
             user=self.user,
@@ -3887,7 +3887,7 @@ class WzKorServiceTests(TestCase):
             self.service(
                 original_wz=pz,
                 correction_items=[{
-                    "delivery_item_id": str(self.wz_item.id),
+                    "delivery_item_id": str(self.wz_item.uuid),
                     "quantity_returned": Decimal("1"),
                 }],
                 user=self.user,
@@ -3900,7 +3900,7 @@ class WzKorServiceTests(TestCase):
             self.service(
                 original_wz=self.wz,
                 correction_items=[{
-                    "delivery_item_id": str(self.wz_item.id),
+                    "delivery_item_id": str(self.wz_item.uuid),
                     "quantity_returned": Decimal("99"),
                 }],
                 user=self.user,
@@ -3915,7 +3915,7 @@ class WzKorServiceTests(TestCase):
             self.service(
                 original_wz=self.wz,
                 correction_items=[{
-                    "delivery_item_id": str(self.wz_item.id),
+                    "delivery_item_id": str(self.wz_item.uuid),
                     "quantity_returned": Decimal("1"),
                 }],
                 user=self.user,
@@ -3991,14 +3991,14 @@ class WzKorAPITests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _url(self, doc_id):
-        return reverse("delivery-document-create-wz-correction-action", kwargs={"pk": str(doc_id)})
+        return reverse("delivery-document-create-wz-correction-action", kwargs={"uuid": str(doc_id)})
 
     def test_returns_201_with_wz_kor(self):
         r = self.client.post(
-            self._url(self.wz.id),
+            self._url(self.wz.uuid),
             data={
                 "correction_reason": "Zwrot",
-                "items": [{"delivery_item_id": str(self.wz_item.id), "quantity_returned": "5.000"}],
+                "items": [{"delivery_item_id": str(self.wz_item.uuid), "quantity_returned": "5.000"}],
             },
             format="json",
         )
@@ -4009,15 +4009,15 @@ class WzKorAPITests(TestCase):
         self.wz.status = DeliveryDocument.STATUS_SAVED
         self.wz.save(update_fields=["status"])
         r = self.client.post(
-            self._url(self.wz.id),
-            data={"items": [{"delivery_item_id": str(self.wz_item.id), "quantity_returned": "1"}]},
+            self._url(self.wz.uuid),
+            data={"items": [{"delivery_item_id": str(self.wz_item.uuid), "quantity_returned": "1"}]},
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_returns_400_when_items_empty(self):
         r = self.client.post(
-            self._url(self.wz.id),
+            self._url(self.wz.uuid),
             data={"items": []},
             format="json",
         )

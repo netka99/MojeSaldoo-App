@@ -127,7 +127,7 @@ class InvoiceModelTests(TestCase):
 
     def test_id_is_uuid(self):
         inv = self._make_invoice()
-        self.assertEqual(len(str(inv.id)), 36)
+        self.assertEqual(len(str(inv.uuid)), 36)
 
     def test_defaults_status_ksef_and_payment(self):
         inv = self._make_invoice()
@@ -200,7 +200,7 @@ class InvoiceApiTests(TestCase):
 
     def test_invoice_preview_requires_authentication(self):
         r = self.client.get(
-            reverse("invoice-preview", kwargs={"pk": str(uuid.uuid4())}),
+            reverse("invoice-preview", kwargs={"uuid": str(uuid.uuid4())}),
         )
         self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -268,12 +268,12 @@ class InvoiceViewSetAPITests(TestCase):
         r = self.client.get(reverse("invoice-list"))
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["count"], 1)
-        self.assertEqual(r.data["results"][0]["id"], str(mine.id))
+        self.assertEqual(r.data["results"][0]["id"], str(mine.uuid))
 
     def test_create_sets_invoice_number_company_user_and_customer_from_order(self):
         self.client.force_authenticate(user=self.user)
         body = {
-            "order_id": str(self.order.id),
+            "order_id": str(self.order.uuid),
             "issue_date": "2026-04-18",
             "sale_date": "2026-04-18",
             "due_date": "2026-05-02",
@@ -286,10 +286,10 @@ class InvoiceViewSetAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["invoice_number"], "FV/2026/0001")
         self.assertEqual(r.data["status"], "draft")
-        self.assertEqual(str(r.data["company"]), str(self.co.id))
-        self.assertEqual(str(r.data["user"]), str(self.user.id))
-        self.assertEqual(str(r.data["order"]["id"]), str(self.order.id))
-        row = Invoice.objects.get(id=r.data["id"])
+        self.assertEqual(str(r.data["company"]), str(self.co.uuid))
+        self.assertEqual(str(r.data["user"]), str(self.user.uuid))
+        self.assertEqual(str(r.data["order"]["id"]), str(self.order.uuid))
+        row = Invoice.objects.get(uuid=r.data["id"])
         self.assertEqual(row.customer_id, self.customer.id)
         self.assertEqual(row.company_id, self.co.id)
 
@@ -297,15 +297,15 @@ class InvoiceViewSetAPITests(TestCase):
         second_customer = Customer.objects.create(name="Alt buyer", company=self.co)
         self.client.force_authenticate(user=self.user)
         body = {
-            "order_id": str(self.order.id),
-            "customer_id": str(second_customer.id),
+            "order_id": str(self.order.uuid),
+            "customer_id": str(second_customer.uuid),
             "issue_date": "2026-04-20",
             "sale_date": "2026-04-20",
             "due_date": "2026-05-04",
         }
         r = self.client.post(reverse("invoice-list"), data=body, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        row = Invoice.objects.get(id=r.data["id"])
+        row = Invoice.objects.get(uuid=r.data["id"])
         self.assertEqual(row.customer_id, second_customer.id)
 
 
@@ -373,7 +373,7 @@ class InvoiceActionsAPITests(TestCase):
     def _gen_url(self):
         return reverse(
             "invoice-generate-from-order",
-            kwargs={"order_id": str(self.order.id)},
+            kwargs={"order_id": str(self.order.uuid)},
         )
 
     def test_generate_from_order_creates_draft_with_lines_and_totals(self):
@@ -381,7 +381,7 @@ class InvoiceActionsAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
         self.assertEqual(r.data["status"], Invoice.STATUS_DRAFT)
         self.assertEqual(len(r.data["items"]), 1)
-        inv = Invoice.objects.get(id=r.data["id"])
+        inv = Invoice.objects.get(uuid=r.data["id"])
         self.assertEqual(inv.subtotal_net, Decimal("200.00"))
         self.assertEqual(inv.vat_amount, Decimal("46.00"))
         self.assertEqual(inv.total_gross, Decimal("246.00"))
@@ -411,7 +411,7 @@ class InvoiceActionsAPITests(TestCase):
         self.assertEqual(self.customer.payment_terms, 7)
         r = self.client.post(self._gen_url(), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        inv = Invoice.objects.get(id=r.data["id"])
+        inv = Invoice.objects.get(uuid=r.data["id"])
         self.assertEqual(
             inv.due_date - inv.issue_date,
             timedelta(days=7),
@@ -426,7 +426,7 @@ class InvoiceActionsAPITests(TestCase):
         }
         r = self.client.post(self._gen_url(), data=body, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        inv = Invoice.objects.get(id=r.data["id"])
+        inv = Invoice.objects.get(uuid=r.data["id"])
         self.assertEqual(inv.issue_date, date(2026, 4, 15))
         self.assertEqual(inv.sale_date, date(2026, 4, 12))
         self.assertEqual(inv.due_date, date(2026, 5, 1))
@@ -461,7 +461,7 @@ class InvoiceActionsAPITests(TestCase):
         )
         url = reverse(
             "invoice-generate-from-order",
-            kwargs={"order_id": str(foreign.id)},
+            kwargs={"order_id": str(foreign.uuid)},
         )
         r = self.client.post(url, data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
@@ -478,7 +478,7 @@ class InvoiceActionsAPITests(TestCase):
         )
         r = self.client.post(self._gen_url(), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        inv = Invoice.objects.get(id=r.data["id"])
+        inv = Invoice.objects.get(uuid=r.data["id"])
         self.assertIsNotNone(inv.delivery_document_id)
         self.assertEqual(inv.delivery_document.document_number, "WZ/2026/0099")
 
@@ -486,25 +486,25 @@ class InvoiceActionsAPITests(TestCase):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
         r2 = self.client.post(
-            reverse("invoice-issue", kwargs={"pk": inv_id}),
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
         self.assertEqual(r2.status_code, status.HTTP_200_OK, r2.data)
         self.assertEqual(r2.data["status"], Invoice.STATUS_ISSUED)
-        row = Invoice.objects.get(id=inv_id)
+        row = Invoice.objects.get(uuid=inv_id)
         self.assertEqual(row.status, Invoice.STATUS_ISSUED)
 
     def test_issue_fails_when_not_draft(self):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
         self.client.post(
-            reverse("invoice-issue", kwargs={"pk": inv_id}),
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
         r2 = self.client.post(
-            reverse("invoice-issue", kwargs={"pk": inv_id}),
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
@@ -514,25 +514,25 @@ class InvoiceActionsAPITests(TestCase):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
         self.client.post(
-            reverse("invoice-issue", kwargs={"pk": inv_id}),
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
         r3 = self.client.post(
-            reverse("invoice-mark-paid", kwargs={"pk": inv_id}),
+            reverse("invoice-mark-paid", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
         self.assertEqual(r3.status_code, status.HTTP_200_OK, r3.data)
         self.assertEqual(r3.data["status"], Invoice.STATUS_PAID)
-        row = Invoice.objects.get(id=inv_id)
+        row = Invoice.objects.get(uuid=inv_id)
         self.assertIsNotNone(row.paid_at)
 
     def test_mark_paid_fails_from_draft(self):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
         r2 = self.client.post(
-            reverse("invoice-mark-paid", kwargs={"pk": inv_id}),
+            reverse("invoice-mark-paid", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
@@ -550,7 +550,7 @@ class InvoiceActionsAPITests(TestCase):
             status=Invoice.STATUS_SENT,
         )
         r = self.client.post(
-            reverse("invoice-mark-paid", kwargs={"pk": str(inv.id)}),
+            reverse("invoice-mark-paid", kwargs={"uuid": str(inv.uuid)}),
             data={},
             format="json",
         )
@@ -560,7 +560,7 @@ class InvoiceActionsAPITests(TestCase):
     def test_preview_returns_html_ready_payload(self):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
-        r2 = self.client.get(reverse("invoice-preview", kwargs={"pk": inv_id}))
+        r2 = self.client.get(reverse("invoice-preview", kwargs={"uuid": inv_id}))
         self.assertEqual(r2.status_code, status.HTTP_200_OK)
         self.assertIn("seller", r2.data)
         self.assertIn("buyer", r2.data)
@@ -602,7 +602,7 @@ class InvoiceActionsAPITests(TestCase):
             due_date=date(2026, 4, 24),
         )
         r = self.client.get(
-            reverse("invoice-preview", kwargs={"pk": str(foreign_inv.id)}),
+            reverse("invoice-preview", kwargs={"uuid": str(foreign_inv.uuid)}),
         )
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -610,12 +610,12 @@ class InvoiceActionsAPITests(TestCase):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
         self.client.post(
-            reverse("invoice-issue", kwargs={"pk": inv_id}),
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
         r2 = self.client.patch(
-            reverse("invoice-detail", kwargs={"pk": inv_id}),
+            reverse("invoice-detail", kwargs={"uuid": inv_id}),
             data={"notes": "x"},
             format="json",
         )
@@ -625,11 +625,11 @@ class InvoiceActionsAPITests(TestCase):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]
         self.client.post(
-            reverse("invoice-issue", kwargs={"pk": inv_id}),
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
             data={},
             format="json",
         )
-        r2 = self.client.delete(reverse("invoice-detail", kwargs={"pk": inv_id}))
+        r2 = self.client.delete(reverse("invoice-detail", kwargs={"uuid": inv_id}))
         self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_list_query_filters_status_customer_issue_date_ksef(self):
@@ -667,25 +667,25 @@ class InvoiceActionsAPITests(TestCase):
         r = self.client.get(reverse("invoice-list"), {"status": Invoice.STATUS_DRAFT})
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         ids = {row["id"] for row in r.data["results"]}
-        self.assertIn(str(inv_draft.id), ids)
-        self.assertNotIn(str(inv_issued.id), ids)
+        self.assertIn(str(inv_draft.uuid), ids)
+        self.assertNotIn(str(inv_issued.uuid), ids)
 
-        r2 = self.client.get(reverse("invoice-list"), {"customer": str(other_c.id)})
+        r2 = self.client.get(reverse("invoice-list"), {"customer": str(other_c.uuid)})
         ids2 = {row["id"] for row in r2.data["results"]}
-        self.assertNotIn(str(inv_draft.id), ids2)
-        self.assertIn(str(inv_issued.id), ids2)
+        self.assertNotIn(str(inv_draft.uuid), ids2)
+        self.assertIn(str(inv_issued.uuid), ids2)
 
         r3 = self.client.get(
             reverse("invoice-list"),
             {"issue_date_after": "2026-04-15", "issue_date_before": "2026-05-15"},
         )
         ids3 = {row["id"] for row in r3.data["results"]}
-        self.assertNotIn(str(inv_draft.id), ids3)
-        self.assertIn(str(inv_issued.id), ids3)
+        self.assertNotIn(str(inv_draft.uuid), ids3)
+        self.assertIn(str(inv_issued.uuid), ids3)
 
         r4 = self.client.get(reverse("invoice-list"), {"ksef_status": "pending"})
         ids4 = {row["id"] for row in r4.data["results"]}
-        self.assertIn(str(inv_issued.id), ids4)
+        self.assertIn(str(inv_issued.uuid), ids4)
 
 
 class BuildInvoicePreviewDataTests(TestCase):
@@ -850,9 +850,9 @@ class BuildInvoicePreviewDataTests(TestCase):
         self.assertIn("order_number", inv)
         self.assertIn("payment_method_label", inv)
         self.assertIn("delivery_document_number", inv)
-        self.assertEqual(inv["company"], str(self.co.id))
-        self.assertEqual(inv["order"], str(self.order.id))
-        self.assertEqual(inv["customer"], str(self.customer.id))
+        self.assertEqual(inv["company"], str(self.co.uuid))
+        self.assertEqual(inv["order"], str(self.order.uuid))
+        self.assertEqual(inv["customer"], str(self.customer.uuid))
         self.assertIsNone(inv["delivery_document"])
         self.assertEqual(inv["payment_method_label"], "Przelew")
         self.assertEqual(inv["ksef_status"], "pending")
@@ -969,7 +969,7 @@ class BuildInvoicePreviewDataTests(TestCase):
             ]
         )
         data = build_invoice_preview_data(self.invoice)
-        self.assertEqual(data["invoice"]["delivery_document"], str(doc.id))
+        self.assertEqual(data["invoice"]["delivery_document"], str(doc.uuid))
         self.assertEqual(data["invoice"]["delivery_document_number"], "WZ/2026/0007")
 
     def test_seller_buyer_meta_present_for_legacy_layout(self):
@@ -1316,7 +1316,7 @@ class InvoiceItemModelTests(TestCase):
 
     def test_id_is_uuid(self):
         line = self._make_line(product=self.product)
-        self.assertEqual(len(str(line.id)), 36)
+        self.assertEqual(len(str(line.uuid)), 36)
 
     def test_default_ordering_is_created_at_ascending(self):
         first = self._make_line(product=self.product, quantity=Decimal("1.00"))
@@ -1414,16 +1414,16 @@ class InvoiceIssueLevel2GuardTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _gen_url(self):
-        return reverse("invoice-generate-from-order", kwargs={"order_id": str(self.order.id)})
+        return reverse("invoice-generate-from-order", kwargs={"order_id": str(self.order.uuid)})
 
     def _issue_url(self, inv_id):
-        return reverse("invoice-issue", kwargs={"pk": str(inv_id)})
+        return reverse("invoice-issue", kwargs={"uuid": str(inv_id)})
 
     def _create_invoice_with_qty(self, qty):
         """Generate a draft invoice, then override the item quantity to test the guard."""
         r = self.client.post(self._gen_url(), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        inv = Invoice.objects.get(id=r.data["id"])
+        inv = Invoice.objects.get(uuid=r.data["id"])
         item = inv.items.first()
         item.quantity = qty
         item.save(update_fields=["quantity"])
@@ -1431,19 +1431,19 @@ class InvoiceIssueLevel2GuardTests(TestCase):
 
     def test_issue_blocked_when_invoice_qty_exceeds_delivered(self):
         inv = self._create_invoice_with_qty(Decimal("4.00"))  # delivered=3, trying 4
-        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        r = self.client.post(self._issue_url(inv.uuid), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST, r.data)
         self.assertIn("przekracza", r.data["detail"])
 
     def test_issue_allowed_when_invoice_qty_equals_delivered(self):
         inv = self._create_invoice_with_qty(Decimal("3.00"))
-        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        r = self.client.post(self._issue_url(inv.uuid), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertEqual(r.data["status"], Invoice.STATUS_ISSUED)
 
     def test_issue_allowed_when_invoice_qty_below_delivered(self):
         inv = self._create_invoice_with_qty(Decimal("2.00"))
-        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        r = self.client.post(self._issue_url(inv.uuid), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
 
     def test_level2_guard_skipped_when_wz_not_required(self):
@@ -1453,7 +1453,7 @@ class InvoiceIssueLevel2GuardTests(TestCase):
             wz_required_before_invoice=False
         )
         inv = self._create_invoice_with_qty(Decimal("10.00"))  # far exceeds delivered
-        r = self.client.post(self._issue_url(inv.id), data={}, format="json")
+        r = self.client.post(self._issue_url(inv.uuid), data={}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
 
 
@@ -1833,11 +1833,11 @@ class InvoiceCorrectionAPITests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _url(self, invoice_id):
-        return reverse("invoice-create-correction", kwargs={"pk": str(invoice_id)})
+        return reverse("invoice-create-correction", kwargs={"uuid": str(invoice_id)})
 
     def test_returns_201_with_correction_data(self):
         r = self.client.post(
-            self._url(self.invoice.id),
+            self._url(self.invoice.uuid),
             data={"correction_reason": "Błędna ilość"},
             format="json",
         )
@@ -1849,7 +1849,7 @@ class InvoiceCorrectionAPITests(TestCase):
         self.invoice.status = Invoice.STATUS_DRAFT
         self.invoice.save(update_fields=["status"])
         r = self.client.post(
-            self._url(self.invoice.id),
+            self._url(self.invoice.uuid),
             data={"correction_reason": "Test"},
             format="json",
         )
@@ -1857,7 +1857,7 @@ class InvoiceCorrectionAPITests(TestCase):
 
     def test_returns_400_when_reason_missing(self):
         r = self.client.post(
-            self._url(self.invoice.id),
+            self._url(self.invoice.uuid),
             data={},
             format="json",
         )
@@ -1925,19 +1925,19 @@ class InvoiceCorrectionFilterTests(TestCase):
         r = self.client.get(self._list_url(is_correction="true"))
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         ids = [item["id"] for item in r.data["results"]]
-        self.assertIn(str(self.correction.id), ids)
-        self.assertNotIn(str(self.invoice.id), ids)
+        self.assertIn(str(self.correction.uuid), ids)
+        self.assertNotIn(str(self.invoice.uuid), ids)
 
     def test_filter_is_correction_false_returns_only_regular_invoices(self):
         r = self.client.get(self._list_url(is_correction="false"))
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         ids = [item["id"] for item in r.data["results"]]
-        self.assertIn(str(self.invoice.id), ids)
-        self.assertNotIn(str(self.correction.id), ids)
+        self.assertIn(str(self.invoice.uuid), ids)
+        self.assertNotIn(str(self.correction.uuid), ids)
 
     def test_no_filter_returns_both(self):
         r = self.client.get(self._list_url())
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         ids = [item["id"] for item in r.data["results"]]
-        self.assertIn(str(self.invoice.id), ids)
-        self.assertIn(str(self.correction.id), ids)
+        self.assertIn(str(self.invoice.uuid), ids)
+        self.assertIn(str(self.correction.uuid), ids)

@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer
+
 from apps.delivery.models import DeliveryDocument
 from apps.orders.models import Order
 from apps.products.models import Warehouse
@@ -13,7 +15,7 @@ from .models import VanRoute
 
 # ── Nested read-only representations ──────────────────────────────────────────
 
-class RouteOrderSerializer(serializers.ModelSerializer):
+class RouteOrderSerializer(UUIDModelSerializer):
     """Minimal order info for route stops list."""
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     item_count = serializers.SerializerMethodField()
@@ -34,7 +36,7 @@ class RouteOrderSerializer(serializers.ModelSerializer):
         return obj.items.count()
 
 
-class RouteMmDocSerializer(serializers.ModelSerializer):
+class RouteMmDocSerializer(UUIDModelSerializer):
     """Minimal MM doc info — just enough for the dashboard header."""
 
     class Meta:
@@ -44,7 +46,7 @@ class RouteMmDocSerializer(serializers.ModelSerializer):
 
 # ── Main serializers ───────────────────────────────────────────────────────────
 
-class VanRouteListSerializer(serializers.ModelSerializer):
+class VanRouteListSerializer(UUIDModelSerializer):
     """Lightweight serializer for the routes list (no nested orders)."""
 
     van_warehouse_code = serializers.CharField(source="van_warehouse.code", read_only=True)
@@ -85,12 +87,12 @@ class VanRouteListSerializer(serializers.ModelSerializer):
         return obj.orders.count()
 
 
-class VanRouteDetailSerializer(serializers.ModelSerializer):
+class VanRouteDetailSerializer(UUIDModelSerializer):
     """Full detail with nested orders and MM doc."""
 
-    van_warehouse_id = serializers.UUIDField(source="van_warehouse.id", read_only=True)
+    van_warehouse_id = serializers.UUIDField(source="van_warehouse.uuid", read_only=True)
     van_warehouse_code = serializers.CharField(source="van_warehouse.code", read_only=True)
-    main_warehouse_id = serializers.UUIDField(source="main_warehouse.id", read_only=True)
+    main_warehouse_id = serializers.UUIDField(source="main_warehouse.uuid", read_only=True)
     main_warehouse_code = serializers.CharField(source="main_warehouse.code", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     orders = RouteOrderSerializer(many=True, read_only=True)
@@ -134,7 +136,7 @@ class VanRouteCreateSerializer(serializers.Serializer):
     )
 
 
-class VanRoutePatchSerializer(serializers.ModelSerializer):
+class VanRoutePatchSerializer(UUIDModelSerializer):
     """Partial update — only while route is still planned."""
 
     class Meta:

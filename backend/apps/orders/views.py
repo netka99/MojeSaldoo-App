@@ -37,6 +37,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     """
     CRUD for orders, scoped to ``request.user.current_company``.
     """
+    lookup_field = "uuid"
 
     serializer_class = OrderSerializer
     required_permission = 'can_manage_orders'
@@ -70,7 +71,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["get"], url_path="items")
-    def items(self, request, pk=None):
+    def items(self, request, uuid=None):
         """GET /{id}/items/ — list line items for this order."""
         order = self.get_object()
         data = OrderItemSerializer(
@@ -81,7 +82,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(data)
 
     @action(detail=True, methods=["post"], url_path="confirm")
-    def confirm(self, request, pk=None):
+    def confirm(self, request, uuid=None):
         """POST /{id}/confirm/ — draft → confirmed."""
         order = self.get_object()
         if order.status != Order.STATUS_DRAFT:
@@ -187,7 +188,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                     quantity_before=qty_before_avail,
                     quantity_after=stock.quantity_available,
                     reference_type="order",
-                    reference_id=order.id,
+                    reference_id=order.uuid,
                     created_by=request.user,
                 )
 
@@ -199,7 +200,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="cancel")
-    def cancel(self, request, pk=None):
+    def cancel(self, request, uuid=None):
         """POST /{id}/cancel/ — cancel (only when draft or confirmed)."""
         order = self.get_object()
         if order.status not in (Order.STATUS_DRAFT, Order.STATUS_CONFIRMED):
@@ -325,7 +326,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                         quantity_before=qty_before_avail,
                         quantity_after=stock.quantity_available,
                         reference_type="order",
-                        reference_id=order.id,
+                        reference_id=order.uuid,
                         created_by=request.user,
                     )
 
@@ -335,7 +336,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"], url_path="changelog")
-    def changelog(self, request, pk=None):
+    def changelog(self, request, uuid=None):
         """GET /{id}/changelog/ — change history for this order, newest first."""
         order = self.get_object()
         qs = order.changelog.select_related("changed_by").order_by("-changed_at")

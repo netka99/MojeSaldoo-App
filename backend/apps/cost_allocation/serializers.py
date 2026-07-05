@@ -1,16 +1,18 @@
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer
+
 from .models import CostProject, InvoiceAnnotation, InvoiceLineAnnotation, InvoiceLineAnnotationSplit
 
 
-class CostProjectSerializer(serializers.ModelSerializer):
+class CostProjectSerializer(UUIDModelSerializer):
     class Meta:
         model = CostProject
         fields = ["id", "name", "code", "color", "is_active", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
 
 
-class InvoiceAnnotationSerializer(serializers.ModelSerializer):
+class InvoiceAnnotationSerializer(UUIDModelSerializer):
     """Full invoice annotation including per-line annotations keyed by line position."""
 
     line_annotations = serializers.SerializerMethodField()
@@ -25,7 +27,7 @@ class InvoiceAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
             "line_annotations",
         ]
-        read_only_fields = ["id", "exported_at", "updated_at"]
+        read_only_fields = ["exported_at", "updated_at"]
 
     def get_line_annotations(self, obj) -> dict:
         """Return {position: {isPrivate, note, splits: [{id, project, projectName, percentage, note}]}}"""

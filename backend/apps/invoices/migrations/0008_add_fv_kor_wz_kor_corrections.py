@@ -7,7 +7,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('invoices', '0007_unique_active_invoice_per_order'),
+        ('invoices', '0004_initial'),
     ]
 
     operations = [

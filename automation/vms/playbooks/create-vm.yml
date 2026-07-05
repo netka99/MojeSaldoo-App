@@ -1,0 +1,156 @@
+---
+# Spins up a local Fedora Cloud VM on libvirt (qemu:///system) using
+# virt-install --import against the official Fedora Cloud Base Generic
+# image. No provisioning is done — the VM is created and started as-is.
+#
+# Usage:
+#   ansible-playbook automation/vms/playbooks/create-vm.yml \
+#     -e vm_name=my-fedora-vm \
+#     -e libvirt_pool_dir=~/libvirt
+#
+# Requires: dnf, qemu-kvm, libvirt, virt-install, and a running libvirtd —
+# install/enable these yourself first (see playbooks/README.md). The
+# playbook talks to libvirt as the invoking user over qemu:///system, so that
+# user must already be authorized (e.g. member of the `libvirt` group) as is
+# the case for interactive `virsh` use.
+#
+# libvirt_pool_dir defaults to ~/libvirt so the whole playbook runs as the
+# invoking user, with no `become`/sudo at all. Before the VM will boot, the
+# disk at vm_disk_path must be owned by qemu:qemu (see playbooks/README.md
+# for the one-time chown step).
+#
+# fedora_release/fedora_release_respin pin an exact Fedora Cloud build (there
+# is no stable "-latest" filename like CentOS publishes); bump them by hand
+# when a new Fedora release/respin comes out — see
+# https://fedoraproject.org/cloud/download for current values.
+
+- name: Create a local Fedora Cloud libvirt VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    vm_name: "fedora-cloud-44"
+    vm_vcpus: 2
+    vm_memory_mb: 4096
+    vm_disk_gb: 20
+    vm_network: "default"
+
+    libvirt_pool_name: "mojesaldoo-vms"
+    libvirt_pool_dir: "{{ lookup('env', 'HOME') }}/libvirt"
+
+    fedora_release: "44"
+    fedora_release_respin: "1.7"
+    fedora_image_filename: "Fedora-Cloud-Base-Generic-{{ fedora_release }}-{{ fedora_release_respin }}.x86_64.qcow2"
+    fedora_image_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{ fedora_release }}/Cloud/x86_64/images/{{ fedora_image_filename }}"
+    fedora_checksum_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{ fedora_release }}/Cloud/x86_64/images/Fedora-Cloud-{{ fedora_release }}-{{ fedora_release_respin }}-x86_64-CHECKSUM"
+
+    cached_images_dir: "{{ libvirt_pool_dir }}/.cached-images"
+    base_image_path: "{{ cached_images_dir }}/{{ fedora_image_filename }}"
+    vm_disk_path: "{{ libvirt_pool_dir }}/{{ vm_name }}.qcow2"
+
+  tasks:
+    - name: Ensure the libvirt storage pool directory exists
+      ansible.builtin.file:
+        path: "{{ libvirt_pool_dir }}"
+        state: directory
+        mode: "0711"
+
+    - name: Check whether the libvirt storage pool is already defined
+      ansible.builtin.command: virsh --connect qemu:///system pool-info {{ libvirt_pool_name }}
+      register: pool_info
+      changed_when: false
+      failed_when: false
+
+    - name: Define the libvirt storage pool
+      when: pool_info.rc != 0
+      ansible.builtin.command: >
+        virsh --connect qemu:///system pool-define-as {{ libvirt_pool_name }}
+        dir --target {{ libvirt_pool_dir }}
+
+    - name: Build and start the storage pool, and enable autostart
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "virsh --connect qemu:///system pool-build {{ libvirt_pool_name }} --build"
+        - "virsh --connect qemu:///system pool-start {{ libvirt_pool_name }}"
+        - "virsh --connect qemu:///system pool-autostart {{ libvirt_pool_name }}"
+      when: pool_info.rc != 0
+      changed_when: true
+      failed_when: false
+
+    - name: Ensure the cached images directory exists
+      ansible.builtin.file:
+        path: "{{ cached_images_dir }}"
+        state: directory
+        mode: "0711"
+
+    - name: Check whether the cloud image is already cached
+      ansible.builtin.stat:
+        path: "{{ base_image_path }}"
+      register: cached_image_stat
+
+    - name: Fetch the published CHECKSUM file for the cloud image
+      when: not cached_image_stat.stat.exists
+      ansible.builtin.uri:
+        url: "{{ fedora_checksum_url }}"
+        return_content: true
+      register: fedora_checksum_raw
+
+    - name: Extract the SHA256 checksum for the image file
+      when: not cached_image_stat.stat.exists
+      ansible.builtin.set_fact:
+        fedora_image_sha256: >-
+          {{ fedora_checksum_raw.content
+             | regex_search('SHA256 \(' ~ fedora_image_filename ~ '\) = ([0-9a-f]{64})', '\1')
+             | first }}
+
+    - name: Download the Fedora Cloud Base Generic image (checksum-verified)
+      when: not cached_image_stat.stat.exists
+      ansible.builtin.get_url:
+        url: "{{ fedora_image_url }}"
+        dest: "{{ base_image_path }}"
+        checksum: "sha256:{{ fedora_image_sha256 }}"
+        mode: "0644"
+        timeout: 600
+
+    - name: Check whether the VM disk already exists
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}"
+      register: vm_disk_stat
+
+    - name: Create a per-VM qcow2 disk backed by the base cloud image
+      when: not vm_disk_stat.stat.exists
+      ansible.builtin.command: >
+        qemu-img create -f qcow2 -F qcow2
+        -b {{ base_image_path }}
+        {{ vm_disk_path }} {{ vm_disk_gb }}G
+
+    - name: Check whether the VM is already defined
+      ansible.builtin.command: virsh --connect qemu:///system dominfo {{ vm_name }}
+      register: vm_info
+      changed_when: false
+      failed_when: false
+
+    - name: Define and start the VM with virt-install
+      when: vm_info.rc != 0
+      ansible.builtin.command: >
+        virt-install
+        --connect qemu:///system
+        --name {{ vm_name }}
+        --memory {{ vm_memory_mb }}
+        --vcpus {{ vm_vcpus }}
+        --osinfo detect=on,require=off
+        --import
+        --disk path={{ vm_disk_path }},format=qcow2,bus=virtio
+        --network network={{ vm_network }},model=virtio
+        --graphics none
+        --console pty,target_type=serial
+        --noautoconsole
+
+    - name: Ensure the VM is running
+      ansible.builtin.command: virsh --connect qemu:///system start {{ vm_name }}
+      register: vm_start
+      changed_when: "'error' not in vm_start.stderr"
+      failed_when: >
+        vm_start.rc != 0 and 'already active' not in vm_start.stderr

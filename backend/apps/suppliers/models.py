@@ -4,7 +4,7 @@ from django.db import models
 
 
 class Supplier(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         'users.Company', on_delete=models.CASCADE, related_name='suppliers'
     )

@@ -7,7 +7,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('delivery', '0013_add_expiry_date_to_delivery_item'),
+        ('delivery', '0004_initial'),
     ]
 
     operations = [

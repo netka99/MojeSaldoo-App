@@ -6,7 +6,7 @@ from django.db import models
 class CostProject(models.Model):
     """User-defined project/cost-centre that invoice lines can be tagged with."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -44,7 +44,7 @@ class InvoiceAnnotation(models.Model):
         (STATUS_BOOKED, "Zaksięgowana"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     invoice = models.OneToOneField(
         "ksef.ReceivedKSeFInvoice",
         on_delete=models.CASCADE,
@@ -70,7 +70,7 @@ class InvoiceAnnotation(models.Model):
 class InvoiceLineAnnotation(models.Model):
     """Per-line cost allocation — one per ReceivedKSeFInvoiceLine."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     line = models.OneToOneField(
         "ksef.ReceivedKSeFInvoiceLine",
         on_delete=models.CASCADE,
@@ -102,7 +102,7 @@ class InvoiceLineAnnotationSplit(models.Model):
     All splits for a line should sum to 100%.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     line_annotation = models.ForeignKey(
         InvoiceLineAnnotation,
         on_delete=models.CASCADE,

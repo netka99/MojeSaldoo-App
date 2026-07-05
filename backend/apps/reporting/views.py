@@ -877,7 +877,7 @@ class ProductMarginDetailView(APIView):
 
         # Current product avg/last cost
         try:
-            product = Product.objects.get(pk=product_id, company=company)
+            product = Product.objects.get(uuid=product_id, company=company)
             current_avg_cost = product.avg_cost
             current_last_cost = product.last_cost
             avg_cost_updated_at = product.avg_cost_updated_at.isoformat() if product.avg_cost_updated_at else None
@@ -1341,8 +1341,8 @@ class ExpiryAlertsView(APIView):
 
         out = [
             {
-                "batchId": str(b.id),
-                "productId": str(b.product_id),
+                "batchId": str(b.uuid),
+                "productId": str(b.product.uuid),
                 "productName": b.product.name,
                 "warehouseCode": b.warehouse.code if b.warehouse_id else "",
                 "batchNumber": b.batch_number or "",

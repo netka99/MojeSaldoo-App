@@ -29,6 +29,7 @@ def _parse_date(raw: str | None) -> _date | None:
 
 
 class RecipeViewSet(viewsets.ModelViewSet):
+    lookup_field = "uuid"
     required_permission = 'can_manage_production'
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     pagination_class = None
@@ -55,6 +56,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
 
 
 class ProductionOrderViewSet(viewsets.ModelViewSet):
+    lookup_field = "uuid"
     required_permission = 'can_manage_production'
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
@@ -101,7 +103,7 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
         return Response(items)
 
     @action(detail=True, methods=["post"], url_path="complete")
-    def complete(self, request, pk=None):
+    def complete(self, request, uuid=None):
         """
         POST /api/production/orders/{id}/complete/
         Finalize the production order: consume FIFO stock, create RW+PW, update avg_cost.

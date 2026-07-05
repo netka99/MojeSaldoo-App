@@ -16,6 +16,8 @@ class InvoiceFilter(django_filters.FilterSet):
     )
     is_correction = django_filters.BooleanFilter(field_name="is_correction")
 
+    customer = django_filters.UUIDFilter(field_name="customer__uuid")
+
     class Meta:
         model = Invoice
         fields = ["status", "ksef_status", "customer", "is_correction"]

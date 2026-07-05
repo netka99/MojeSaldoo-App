@@ -1,6 +1,8 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+
+from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
 from rest_framework.exceptions import ValidationError
 
 from apps.customers.models import Customer
@@ -66,7 +68,8 @@ class VanReconciliationSerializer(serializers.Serializer):
     items = VanReconciliationItemSerializer(many=True, allow_empty=True)
 
 
-class DeliveryItemSerializer(serializers.ModelSerializer):
+class DeliveryItemSerializer(UUIDModelSerializer):
+    product_id = serializers.UUIDField(source="product.uuid", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_unit = serializers.CharField(source="product.unit", read_only=True)
 
@@ -188,7 +191,7 @@ class WzKorSerializer(serializers.Serializer):
     issue_date = serializers.DateField(required=False)
 
 
-class LinkedZWItemSerializer(serializers.ModelSerializer):
+class LinkedZWItemSerializer(UUIDModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
 
     class Meta:
@@ -197,7 +200,7 @@ class LinkedZWItemSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class LinkedZWSerializer(serializers.ModelSerializer):
+class LinkedZWSerializer(UUIDModelSerializer):
     """Minimal nested representation of ZW documents attached to a WZ."""
     items = LinkedZWItemSerializer(many=True, read_only=True)
 
@@ -230,20 +233,20 @@ class SaveWithReturnsSerializer(serializers.Serializer):
     return_items = PendingReturnItemSerializer(many=True, required=False, allow_empty=True)
 
 
-class DeliveryDocumentListSerializer(serializers.ModelSerializer):
+class DeliveryDocumentListSerializer(UUIDModelSerializer):
     """Slim serializer for list endpoints — no items, return_documents, or invoice data.
 
     Used when ``?include_items`` is not set, so the list endpoint stays fast even
     for large page sizes (e.g. the "Wg sklepu" date-range fetch).
     """
 
-    order_id = serializers.PrimaryKeyRelatedField(source="order", read_only=True)
-    to_customer_id = serializers.PrimaryKeyRelatedField(source="to_customer", read_only=True)
-    from_warehouse_id = serializers.PrimaryKeyRelatedField(source="from_warehouse", read_only=True)
-    to_warehouse_id = serializers.PrimaryKeyRelatedField(source="to_warehouse", read_only=True)
-    linked_wz_id = serializers.PrimaryKeyRelatedField(source="linked_wz", read_only=True)
-    van_route_id = serializers.PrimaryKeyRelatedField(source="van_route", read_only=True)
-    from_supplier_id = serializers.PrimaryKeyRelatedField(source="from_supplier", read_only=True)
+    order_id = UUIDRelatedField(source="order", read_only=True)
+    to_customer_id = UUIDRelatedField(source="to_customer", read_only=True)
+    from_warehouse_id = UUIDRelatedField(source="from_warehouse", read_only=True)
+    to_warehouse_id = UUIDRelatedField(source="to_warehouse", read_only=True)
+    linked_wz_id = UUIDRelatedField(source="linked_wz", read_only=True)
+    van_route_id = UUIDRelatedField(source="van_route", read_only=True)
+    from_supplier_id = UUIDRelatedField(source="from_supplier", read_only=True)
     order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     supplier_name = serializers.SerializerMethodField()
@@ -319,32 +322,32 @@ class DeliveryDocumentListSerializer(serializers.ModelSerializer):
         return None
 
 
-class DeliveryDocumentSerializer(serializers.ModelSerializer):
-    order_id = serializers.PrimaryKeyRelatedField(
+class DeliveryDocumentSerializer(UUIDModelSerializer):
+    order_id = UUIDRelatedField(
         queryset=Order.objects.all(),
         source="order",
         required=False,
         allow_null=True,
     )
-    from_warehouse_id = serializers.PrimaryKeyRelatedField(
+    from_warehouse_id = UUIDRelatedField(
         queryset=Warehouse.objects.all(),
         source="from_warehouse",
         required=False,
         allow_null=True,
     )
-    to_warehouse_id = serializers.PrimaryKeyRelatedField(
+    to_warehouse_id = UUIDRelatedField(
         queryset=Warehouse.objects.all(),
         source="to_warehouse",
         required=False,
         allow_null=True,
     )
-    to_customer_id = serializers.PrimaryKeyRelatedField(
+    to_customer_id = UUIDRelatedField(
         queryset=Customer.objects.all(),
         source="to_customer",
         required=False,
         allow_null=True,
     )
-    from_supplier_id = serializers.PrimaryKeyRelatedField(
+    from_supplier_id = UUIDRelatedField(
         queryset=Supplier.objects.all(),
         source="from_supplier",
         required=False,
@@ -359,11 +362,11 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     to_warehouse_name = serializers.SerializerMethodField()
     locked_for_edit = serializers.SerializerMethodField()
     linked_invoices = serializers.SerializerMethodField()
-    linked_wz_id = serializers.PrimaryKeyRelatedField(
+    linked_wz_id = UUIDRelatedField(
         source="linked_wz",
         read_only=True,
     )
-    van_route_id = serializers.PrimaryKeyRelatedField(
+    van_route_id = UUIDRelatedField(
         queryset=VanRoute.objects.all(),
         source="van_route",
         required=False,
@@ -373,10 +376,10 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     van_route_date = serializers.SerializerMethodField()
     supplier_nip = serializers.SerializerMethodField()
     ksef_invoice_ref = serializers.SerializerMethodField()
-    corrects_pz_id = serializers.PrimaryKeyRelatedField(source="corrects_pz", read_only=True)
+    corrects_pz_id = UUIDRelatedField(source="corrects_pz", read_only=True)
     corrects_pz_number = serializers.SerializerMethodField()
     corrections = serializers.SerializerMethodField()
-    ksef_invoice_id = serializers.PrimaryKeyRelatedField(
+    ksef_invoice_id = UUIDRelatedField(
         queryset=ReceivedKSeFInvoice.objects.all(),
         source="ksef_invoice",
         required=False,
@@ -427,30 +430,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
             "items",
             "return_documents",
         ]
-        read_only_fields = [
-            "id",
-            "document_number",
-            "company",
-            "user",
-            "status",
-            "linked_wz_id",
-            "created_at",
-            "updated_at",
-            "items",
-            "return_documents",
-            "order_number",
-            "customer_name",
-            "supplier_name",
-            "supplier_nip",
-            "from_warehouse_name",
-            "to_warehouse_name",
-            "locked_for_edit",
-            "linked_invoices",
-            "ksef_invoice_ref",
-            "corrects_pz_id",
-            "corrects_pz_number",
-            "corrections",
-        ]
+        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrections"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -523,7 +503,7 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
 
     def get_linked_invoices(self, obj):
         return [
-            {"id": str(inv.id), "invoice_number": inv.invoice_number or ""}
+            {"id": str(inv.uuid), "invoice_number": inv.invoice_number or ""}
             for inv in obj.invoices.all().order_by("created_at")
         ]
 
@@ -540,13 +520,13 @@ class DeliveryDocumentSerializer(serializers.ModelSerializer):
     def get_corrections(self, obj):
         """Minimal list of PZ-KOR / WZ-KOR documents that correct this document."""
         pz_kor = list(
-            obj.pz_corrections.only("id", "document_number", "issue_date").order_by("created_at")
+            obj.pz_corrections.only("id", "uuid", "document_number", "issue_date").order_by("created_at")
         )
         wz_kor = list(
-            obj.wz_corrections.only("id", "document_number", "issue_date").order_by("created_at")
+            obj.wz_corrections.only("id", "uuid", "document_number", "issue_date").order_by("created_at")
         )
         return [
-            {"id": str(c.id), "document_number": c.document_number, "issue_date": str(c.issue_date)}
+            {"id": str(c.uuid), "document_number": c.document_number, "issue_date": str(c.issue_date)}
             for c in pz_kor + wz_kor
         ]
 

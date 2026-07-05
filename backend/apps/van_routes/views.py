@@ -22,6 +22,7 @@ from .services import _validate_orders_for_route, close_route, confirm_loading, 
 
 
 class VanRouteViewSet(viewsets.ModelViewSet):
+    lookup_field = "uuid"
     required_permission = 'can_access_routes'
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -58,11 +59,11 @@ class VanRouteViewSet(viewsets.ModelViewSet):
 
         van_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            pk=data["van_warehouse_id"],
+            uuid=data["van_warehouse_id"],
         )
         main_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            pk=data["main_warehouse_id"],
+            uuid=data["main_warehouse_id"],
         )
 
         route = create_van_route(
@@ -99,7 +100,7 @@ class VanRouteViewSet(viewsets.ModelViewSet):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     @action(detail=True, methods=["post"], url_path="start-loading")
-    def start_loading_action(self, request, pk=None):
+    def start_loading_action(self, request, uuid=None):
         """Create MM document and transition route to 'loading'."""
         route = self.get_object()
         ser = VanRouteStartLoadingSerializer(data=request.data)
@@ -113,14 +114,14 @@ class VanRouteViewSet(viewsets.ModelViewSet):
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="confirm-loading")
-    def confirm_loading_action(self, request, pk=None):
+    def confirm_loading_action(self, request, uuid=None):
         """Driver confirms van is loaded; route goes in_progress."""
         route = self.get_object()
         route = confirm_loading(route)
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="add-orders")
-    def add_orders_action(self, request, pk=None):
+    def add_orders_action(self, request, uuid=None):
         """Add orders to a planned route. Only allowed while status is 'planned'."""
         route = self.get_object()
         if route.status != VanRoute.STATUS_PLANNED:
@@ -162,7 +163,7 @@ class VanRouteViewSet(viewsets.ModelViewSet):
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="remove-orders")
-    def remove_orders_action(self, request, pk=None):
+    def remove_orders_action(self, request, uuid=None):
         """Remove orders from a planned route. Only allowed while status is 'planned'."""
         route = self.get_object()
         if route.status != VanRoute.STATUS_PLANNED:
@@ -185,7 +186,7 @@ class VanRouteViewSet(viewsets.ModelViewSet):
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="close")
-    def close_action(self, request, pk=None):
+    def close_action(self, request, uuid=None):
         """Mark route closed after reconciliation."""
         route = self.get_object()
         route = close_route(route)

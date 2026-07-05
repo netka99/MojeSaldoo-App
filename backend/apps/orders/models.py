@@ -38,7 +38,7 @@ class Order(models.Model):
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -228,7 +228,7 @@ class OrderItem(models.Model):
     Order line: product snapshot, pricing, and computed line totals.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     order = models.ForeignKey(
         Order,
         related_name="items",
@@ -351,7 +351,7 @@ class OrderChangeLog(models.Model):
         (CHANGE_PRICE, "Price changed"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,

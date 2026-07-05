@@ -279,7 +279,7 @@ class ReportingScopedApiTests(TestCase):
         self.assertIn("results", r.data)
         self.assertEqual(r.data["count"], 1)
         row = r.data["results"][0]
-        self.assertEqual(row["id"], str(self.invoice_mine_draft.id))
+        self.assertEqual(row["id"], str(self.invoice_mine_draft.uuid))
         self.assertEqual(row["ksef_status"], "not_sent")
         self.assertEqual(row["customer_name"], "Alice")
 
@@ -288,8 +288,8 @@ class ReportingScopedApiTests(TestCase):
         r = self.client.get(reverse("report-invoices"))
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         ids = {x["id"] for x in r.data["results"]}
-        self.assertIn(str(self.invoice_mine_draft.id), ids)
-        self.assertNotIn(str(self.invoice_other.id), ids)
+        self.assertIn(str(self.invoice_mine_draft.uuid), ids)
+        self.assertNotIn(str(self.invoice_other.uuid), ids)
 
     def test_top_products_tenant_and_ordering(self):
         self._auth()
@@ -327,7 +327,7 @@ class ReportingScopedApiTests(TestCase):
         self.assertEqual(r.data["accepted"], 0)
         rej = r.data["rejectedInvoices"]
         self.assertEqual(len(rej), 1)
-        self.assertEqual(rej[0]["id"], str(self.invoice_mine_rejected.id))
+        self.assertEqual(rej[0]["id"], str(self.invoice_mine_rejected.uuid))
         self.assertEqual(rej[0]["ksef_error_message"], "KSeF test rejection")
 
     def test_sales_summary_avg_matches_orm_avg(self):
@@ -793,8 +793,8 @@ class ExpiryAlertsViewTests(TestCase):
         self.assertIsInstance(r.data, list)
         self.assertGreaterEqual(len(r.data), 1)
         batch_ids = [item["batchId"] for item in r.data]
-        self.assertIn(str(self.batch_soon.id), batch_ids)
-        row = next(item for item in r.data if item["batchId"] == str(self.batch_soon.id))
+        self.assertIn(str(self.batch_soon.uuid), batch_ids)
+        row = next(item for item in r.data if item["batchId"] == str(self.batch_soon.uuid))
         for key in ("batchId", "productName", "expiryDate", "daysUntilExpiry", "expired"):
             self.assertIn(key, row, f"Missing key '{key}' in expiry alert row")
         self.assertEqual(row["productName"], "EA Product")
@@ -804,12 +804,12 @@ class ExpiryAlertsViewTests(TestCase):
         r = self._get({"days": "90"})
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         batch_ids = [item["batchId"] for item in r.data]
-        self.assertIn(str(self.batch_expired.id), batch_ids)
-        expired_row = next(item for item in r.data if item["batchId"] == str(self.batch_expired.id))
+        self.assertIn(str(self.batch_expired.uuid), batch_ids)
+        expired_row = next(item for item in r.data if item["batchId"] == str(self.batch_expired.uuid))
         self.assertTrue(expired_row["expired"])
         self.assertLess(expired_row["daysUntilExpiry"], 0)
         # Other-company batch must not appear
-        self.assertNotIn(str(self.batch_other.id), batch_ids)
+        self.assertNotIn(str(self.batch_other.uuid), batch_ids)
 
     def test_expiry_days_param(self):
         # ?days=7 — only the soon-expiring batch (20 days out) should NOT appear;
@@ -819,6 +819,6 @@ class ExpiryAlertsViewTests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         batch_ids = [item["batchId"] for item in r.data]
         # Batch expiring in 20 days should not appear with days=7
-        self.assertNotIn(str(self.batch_soon.id), batch_ids)
+        self.assertNotIn(str(self.batch_soon.uuid), batch_ids)
         # Expired batch (already past) has expiry_date <= today+7, so it appears
-        self.assertIn(str(self.batch_expired.id), batch_ids)
+        self.assertIn(str(self.batch_expired.uuid), batch_ids)

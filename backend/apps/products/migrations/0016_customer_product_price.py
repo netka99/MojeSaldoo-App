@@ -8,9 +8,9 @@ import uuid
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('customers', '0004_company_fk_required'),
-        ('users', '0009_track_supplier_payments'),
-        ('products', '0015_avg_cost_source'),
+        ('customers', '0002_initial'),
+        ('users', '0002_user_uuid'),
+        ('products', '0002_initial'),
     ]
 
     operations = [

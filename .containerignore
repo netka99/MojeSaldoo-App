@@ -1,0 +1,24 @@
+# Exclude everything, then whitelist only what the Containerfiles need.
+*
+
+!backend/pyproject.toml
+!backend/config/
+!backend/config/**
+!backend/manage.py
+!backend/apps/
+!automation/containers/backend/entrypoint.sh
+
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.ts
+!frontend/tsconfig.json
+!frontend/tsconfig.app.json
+!frontend/tsconfig.node.json
+!frontend/postcss.config.js
+!frontend/tailwind.config.js
+!frontend/eslint.config.js
+!frontend/src/
+!frontend/src/**
+!frontend/public/
+!frontend/public/**

@@ -1,9 +1,11 @@
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer
+
 from .models import InventoryCount, InventoryCountItem
 
 
-class InventoryCountItemSerializer(serializers.ModelSerializer):
+class InventoryCountItemSerializer(UUIDModelSerializer):
     difference = serializers.SerializerMethodField()
 
     class Meta:
@@ -20,14 +22,7 @@ class InventoryCountItemSerializer(serializers.ModelSerializer):
             "created_at",
             "difference",
         ]
-        read_only_fields = [
-            "id",
-            "inventory_count",
-            "product_name",
-            "product_unit",
-            "quantity_system",
-            "created_at",
-        ]
+        read_only_fields = ["inventory_count", "product_name", "product_unit", "quantity_system", "created_at"]
 
     def get_difference(self, obj):
         diff = obj.difference
@@ -36,7 +31,7 @@ class InventoryCountItemSerializer(serializers.ModelSerializer):
         return float(diff)
 
 
-class InventoryCountSerializer(serializers.ModelSerializer):
+class InventoryCountSerializer(UUIDModelSerializer):
     items = InventoryCountItemSerializer(many=True, read_only=True)
     warehouse_name = serializers.SerializerMethodField()
 
@@ -57,16 +52,7 @@ class InventoryCountSerializer(serializers.ModelSerializer):
             "updated_at",
             "items",
         ]
-        read_only_fields = [
-            "id",
-            "company",
-            "document_number",
-            "status",
-            "created_by",
-            "completed_at",
-            "created_at",
-            "updated_at",
-        ]
+        read_only_fields = ["company", "document_number", "status", "created_by", "completed_at", "created_at", "updated_at"]
 
     def get_warehouse_name(self, obj):
         if obj.warehouse_id:
@@ -74,7 +60,7 @@ class InventoryCountSerializer(serializers.ModelSerializer):
         return None
 
 
-class InventoryCountCreateSerializer(serializers.ModelSerializer):
+class InventoryCountCreateSerializer(UUIDModelSerializer):
     class Meta:
         model = InventoryCount
         fields = [

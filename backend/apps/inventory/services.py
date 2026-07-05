@@ -103,7 +103,7 @@ def complete_inventory_count(count, user) -> None:
             quantity_before=qty_before,
             quantity_after=qty_after,
             reference_type="inventory_count",
-            reference_id=count.id,
+            reference_id=count.uuid,
             notes=f"Inwentaryzacja {doc_label}",
             created_by=user,
         )

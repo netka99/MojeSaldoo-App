@@ -2,10 +2,12 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer
+
 from .models import Customer
 
 
-class CustomerSerializer(serializers.ModelSerializer):
+class CustomerSerializer(UUIDModelSerializer):
     """Full Customer API shape; monetary amounts use DecimalField (no floats)."""
 
     credit_limit = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
@@ -33,7 +35,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "company", "created_at", "updated_at"]
+        read_only_fields = ["user", "company", "created_at", "updated_at"]
 
     def validate_nip(self, value):
         if value and not self.validate_nip_format(value):

@@ -21,7 +21,7 @@ _PL = ZoneInfo("Europe/Warsaw")
 
 
 def _company_for_user(company_id, user) -> Company:
-    return get_object_or_404(Company, pk=company_id)
+    return get_object_or_404(Company, uuid=company_id)
 
 
 def _is_member(company: Company, user) -> bool:

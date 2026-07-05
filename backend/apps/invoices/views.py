@@ -42,8 +42,10 @@ def _optional_iso_date(data, key: str):
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
+    lookup_field = "uuid"
     serializer_class = InvoiceSerializer
     required_permission = 'can_manage_invoices'
+    read_permission = None  # any company member may list/read invoices
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = InvoiceFilter
@@ -95,12 +97,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     )
     def generate_from_order(self, request, order_id=None):
         company = request.user.current_company
-        order = get_object_or_404(Order, pk=order_id, company_id=company.id)
+        order = get_object_or_404(Order, uuid=order_id, company_id=company.id)
         doc = None
         raw_doc = request.data.get("delivery_document_id")
         if raw_doc:
             doc = get_object_or_404(
-                DeliveryDocument, pk=raw_doc, company_id=company.id
+                DeliveryDocument, uuid=raw_doc, company_id=company.id
             )
         issue_date = _optional_iso_date(request.data, "issue_date")
         sale_date = _optional_iso_date(request.data, "sale_date")
@@ -121,7 +123,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response(out.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="issue")
-    def issue(self, request, pk=None):
+    def issue(self, request, uuid=None):
         from apps.users.models import get_workflow_settings
 
         invoice = self.get_object()
@@ -187,7 +189,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(invoice).data)
 
     @action(detail=True, methods=["post"], url_path="mark-paid")
-    def mark_paid(self, request, pk=None):
+    def mark_paid(self, request, uuid=None):
         invoice = self.get_object()
         payable_statuses = (
             Invoice.STATUS_ISSUED,
@@ -207,12 +209,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(invoice).data)
 
     @action(detail=True, methods=["get"], url_path="preview")
-    def preview(self, request, pk=None):
+    def preview(self, request, uuid=None):
         invoice = self.get_object()
         return Response(build_invoice_preview_data(invoice))
 
     @action(detail=True, methods=["get"], url_path="xml")
-    def xml(self, request, pk=None):
+    def xml(self, request, uuid=None):
         """Download FA-3 KSeF XML for this invoice."""
         invoice = self.get_object()
         try:
@@ -230,7 +232,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"], url_path="send-to-ksef")
-    def send_to_ksef(self, request, pk=None):
+    def send_to_ksef(self, request, uuid=None):
         """
         Submit an issued invoice to KSeF via SSAPI.
         Requires active KSeF session for the company (authenticate via POST /api/ksef/session/).
@@ -328,7 +330,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(invoice).data)
 
     @action(detail=True, methods=["get"], url_path="ksef-status")
-    def ksef_status(self, request, pk=None):
+    def ksef_status(self, request, uuid=None):
         """
         Poll SSAPI for KSeF processing status and update invoice fields.
         Returns updated invoice.
@@ -392,7 +394,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response({**self.get_serializer(invoice).data, "_ssapi_raw": data})
 
     @action(detail=True, methods=["post"], url_path="create-correction")
-    def create_correction(self, request, pk=None):
+    def create_correction(self, request, uuid=None):
         """
         POST /api/invoices/{id}/create-correction/
         Create a draft FV-KOR correction invoice for an issued or paid invoice.
@@ -433,7 +435,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["get"], url_path="upo")
-    def upo(self, request, pk=None):
+    def upo(self, request, uuid=None):
         """
         GET /api/invoices/{id}/upo/
         Download the UPO (Urzędowe Potwierdzenie Odbioru) XML for an accepted invoice.

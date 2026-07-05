@@ -5,6 +5,7 @@ from django.db import models
 
 
 class User(AbstractUser):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     email = models.EmailField(unique=True, null=True, blank=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     is_active = models.BooleanField(default=True)
@@ -62,7 +63,7 @@ class Company(models.Model):
         (RYCZALT_WOLNE_ZAWODY, "17% — Wolne zawody (prawnicy, lekarze itp.)"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
     nip = models.CharField(max_length=10, unique=True, blank=True, null=True)
     address = models.TextField(blank=True)
@@ -168,7 +169,7 @@ class CompanyMembership(models.Model):
         ("driver", "Driver"),
         ("viewer", "Viewer"),
     ]
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="memberships")
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="memberships")
     # Legacy role field — kept for backwards compat; new code uses company_role
@@ -211,6 +212,7 @@ class CompanyMembership(models.Model):
 class CompanyWorkflowSettings(models.Model):
     """Per-company document flow configuration — enforced by the backend."""
 
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.OneToOneField(
         Company,
         on_delete=models.CASCADE,
@@ -255,6 +257,7 @@ def get_workflow_settings(company) -> "CompanyWorkflowSettings":
 
 
 class CompanyModule(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     MODULE_CHOICES = [
         # --- Core (always enabled) ---
         ("products",        "Products & Inventory"),
@@ -328,7 +331,7 @@ class FCMDeviceToken(models.Model):
 
 
 class KSeFCertificate(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.OneToOneField(
         Company,
         on_delete=models.CASCADE,

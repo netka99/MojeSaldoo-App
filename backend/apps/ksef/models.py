@@ -12,7 +12,7 @@ class KSeFSession(models.Model):
     One session per company (OneToOne). Replaced on each new authentication.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.OneToOneField(
         "users.Company",
         on_delete=models.CASCADE,
@@ -56,7 +56,7 @@ class KSeFSentInvoice(models.Model):
     Replaces SSAPI's SQLite invoice table.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -98,7 +98,7 @@ class ReceivedKSeFInvoice(models.Model):
     Populated by syncing with KSeF API; never deleted automatically.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -256,7 +256,7 @@ class KSeFProductMapping(models.Model):
     Used to auto-fill product suggestions on repeated imports from the same supplier.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
         "users.Company",
         on_delete=models.CASCADE,
@@ -281,6 +281,7 @@ class KSeFProductMapping(models.Model):
 
 
 class ReceivedKSeFInvoiceLine(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     """Parsed line items from a received KSeF invoice XML — cached in DB after first download."""
 
     invoice = models.ForeignKey(

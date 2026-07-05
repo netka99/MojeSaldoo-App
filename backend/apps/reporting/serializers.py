@@ -1,9 +1,11 @@
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer
+
 from apps.invoices.models import Invoice
 
 
-class ReportingInvoiceSerializer(serializers.ModelSerializer):
+class ReportingInvoiceSerializer(UUIDModelSerializer):
     """Slim invoice row for reporting lists (includes KSeF status)."""
 
     customer_name = serializers.CharField(source="customer.name", read_only=True)
@@ -26,7 +28,7 @@ class ReportingInvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class ReportingRejectedInvoiceSerializer(serializers.ModelSerializer):
+class ReportingRejectedInvoiceSerializer(UUIDModelSerializer):
     customer_name = serializers.CharField(source="customer.name", read_only=True)
 
     class Meta:

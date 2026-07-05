@@ -1,0 +1,116 @@
+---
+# Provisions a blank CentOS Stream 10 cloud VM (as created by create-vm.yml)
+# with the software and configuration needed to run the MojeSaldoo application
+# in rootless Podman containers (see compose.yml).
+#
+# Bootstrap: the cloud image ships with no user, password, or SSH key, so this
+# playbook must connect as root over SSH the first time. Inject a temporary
+# root SSH key or password via `virsh console` before running this, then point
+# an inventory (or -e ansible_host=... -e ansible_user=root) at the VM.
+#
+# On first run this creates user `zedr` (member of wheel) with a strong random
+# password printed via a `debug` task, installs the SSH public key named by
+# zedr_ssh_pubkey_file into zedr's authorized_keys, and disables root SSH
+# login as the LAST task. Re-runs are idempotent and connect as `zedr` with
+# `become` instead of as root.
+#
+# Usage (first run, bootstrapping as root):
+#   ansible-playbook automation/vms/playbooks/provision-vm.yml \
+#     -i <inventory-with-vm> \
+#     -e ansible_user=root
+#
+# Requires the ansible.posix collection (for authorized_key):
+#   ansible-galaxy collection install ansible.posix
+
+- name: Provision the MojeSaldoo VM for rootless Podman
+  hosts: mojesaldoo_vms
+  become: true
+  gather_facts: true
+
+  vars:
+    app_user: "zedr"
+    zedr_ssh_pubkey_file: "~/.ssh/id_ed25519.pub"
+
+    provision_packages:
+      - podman
+      - podman-plugins
+      - containers-common
+      - container-selinux
+      - slirp4netns
+      - fuse-overlayfs
+      - git
+      - python3
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.dnf:
+        name: "{{ provision_packages }}"
+        state: present
+
+    - name: Check whether the app user already exists
+      ansible.builtin.command: "getent passwd {{ app_user }}"
+      register: zedr_getent
+      changed_when: false
+      failed_when: false
+
+    - name: Generate a strong random password for the app user (first run only)
+      when: zedr_getent.rc != 0
+      ansible.builtin.set_fact:
+        zedr_password: "{{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+    - name: Create the app user
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        groups: wheel
+        append: true
+        shell: /bin/bash
+        create_home: true
+        password: "{{ (zedr_password | password_hash('sha512')) if zedr_getent.rc != 0 else omit }}"
+
+    - name: Install the app user's SSH public key
+      ansible.posix.authorized_key:
+        user: "{{ app_user }}"
+        key: "{{ lookup('file', zedr_ssh_pubkey_file) }}"
+        state: present
+
+    - name: Ensure subuid range for rootless Podman
+      ansible.builtin.command: "usermod --add-subuids 200000-265535 {{ app_user }}"
+      register: subuid_result
+      changed_when: subuid_result.rc == 0
+      failed_when: >
+        subuid_result.rc != 0 and 'is already set' not in subuid_result.stderr
+        and 'already in use' not in subuid_result.stderr
+
+    - name: Ensure subgid range for rootless Podman
+      ansible.builtin.command: "usermod --add-subgids 200000-265535 {{ app_user }}"
+      register: subgid_result
+      changed_when: subgid_result.rc == 0
+      failed_when: >
+        subgid_result.rc != 0 and 'is already set' not in subgid_result.stderr
+        and 'already in use' not in subgid_result.stderr
+
+    - name: Enable systemd lingering for the app user
+      ansible.builtin.command: "loginctl enable-linger {{ app_user }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ app_user }}"
+
+    - name: Print the generated password (first run only)
+      when: zedr_getent.rc != 0
+      ansible.builtin.debug:
+        msg: "Generated password for {{ app_user }}: {{ zedr_password }}"
+
+    - name: Disable root SSH login
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/50-provision-hardening.conf
+        content: |
+          PermitRootLogin no
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart sshd
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

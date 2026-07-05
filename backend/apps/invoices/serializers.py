@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
+
 from apps.customers.models import Customer
 from apps.delivery.models import DeliveryDocument
 from apps.orders.models import Order
@@ -8,7 +10,7 @@ from apps.orders.serializers import OrderSerializer
 from .models import Invoice, InvoiceItem
 
 
-class InvoiceItemSerializer(serializers.ModelSerializer):
+class InvoiceItemSerializer(UUIDModelSerializer):
     class Meta:
         model = InvoiceItem
         fields = [
@@ -30,23 +32,23 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class InvoiceSerializer(serializers.ModelSerializer):
+class InvoiceSerializer(UUIDModelSerializer):
     order = OrderSerializer(read_only=True)
     items = InvoiceItemSerializer(many=True, read_only=True)
-    order_id = serializers.PrimaryKeyRelatedField(
+    order_id = UUIDRelatedField(
         queryset=Order.objects.all(),
         source="order",
         write_only=True,
         required=True,
     )
-    customer_id = serializers.PrimaryKeyRelatedField(
+    customer_id = UUIDRelatedField(
         queryset=Customer.objects.all(),
         source="customer",
         write_only=True,
         required=False,
         allow_null=True,
     )
-    delivery_document_id = serializers.PrimaryKeyRelatedField(
+    delivery_document_id = UUIDRelatedField(
         queryset=DeliveryDocument.objects.all(),
         source="delivery_document",
         write_only=True,
@@ -57,17 +59,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = "__all__"
-        read_only_fields = [
-            "id",
-            "invoice_number",
-            "company",
-            "user",
-            "customer",
-            "status",
-            "paid_at",
-            "created_at",
-            "updated_at",
-        ]
+        read_only_fields = ["invoice_number", "company", "user", "customer", "status", "paid_at", "created_at", "updated_at"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

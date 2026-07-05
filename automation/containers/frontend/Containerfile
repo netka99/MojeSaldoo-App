@@ -1,0 +1,40 @@
+FROM quay.io/centos/centos:stream10
+
+LABEL org.opencontainers.image.title="MojeSaldoo Frontend" \
+      org.opencontainers.image.description="Vite + React dev server on CentOS Stream 10"
+
+# CentOS Stream 10 AppStream provides Node.js 22 directly (matches the toolchain
+# used in development) — no extra repos or module streams needed.
+RUN dnf install -y nodejs \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+RUN useradd --uid 1001 --no-create-home --shell /sbin/nologin appuser \
+    && mkdir -p /app \
+    && chown -R appuser:appuser /app
+
+WORKDIR /app
+
+# Dependencies are declared in package.json/package-lock.json. Installing them
+# before copying the rest of the source keeps this layer cached across source
+# changes that don't touch the lockfile.
+COPY frontend/package.json      /app/package.json
+COPY frontend/package-lock.json /app/package-lock.json
+RUN npm ci
+
+COPY frontend/ /app/
+
+RUN chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 3000
+
+# VITE_PROXY_TARGET overrides vite.config.ts's default proxy target (localhost:8000)
+# so the dev server can reach the `backend` compose service instead.
+#   -e VITE_PROXY_TARGET=http://backend:8000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]

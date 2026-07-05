@@ -26,7 +26,7 @@ class VanRoute(models.Model):
     # Active statuses — used by the exclude_routed filter on orders
     ACTIVE_STATUSES = [STATUS_PLANNED, STATUS_LOADING, STATUS_IN_PROGRESS, STATUS_SETTLING]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
 
     route_number = models.CharField(
         max_length=20,
