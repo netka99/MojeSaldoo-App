@@ -1772,7 +1772,7 @@ GET    /api/reports/inventory/      # Raport magazynowy
 
 ---
 
-**Ostatnia aktualizacja**: 2026-06-20
+**Ostatnia aktualizacja**: 2026-07-05
 **Wersja dokumentu**: 1.0
 
 

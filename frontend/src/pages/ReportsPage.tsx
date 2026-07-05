@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { INVOICE_KSEF_STATUS_LABELS_PL } from '@/constants/invoiceKsefStatusPl';
 import {
   useKsefStatusReportQuery,
+  useProfitLossQuery,
   useSalesSummaryReportQuery,
   useTopCustomersReportQuery,
   useTopProductsReportQuery,
@@ -15,6 +16,29 @@ import { useAuth } from '@/context/AuthContext';
 import { reportingService } from '@/services/reporting.service';
 import { cn } from '@/lib/utils';
 import type { KsefStatusReport } from '@/types/reporting.types';
+
+/** Flat-rate tax rates by ryczałt category. */
+const RYCZALT_RATES: Record<string, number> = {
+  rolnicze:     0.02,
+  handel:       0.03,
+  budownictwo:  0.055,
+  uslugi:       0.085,
+  it:           0.12,
+  medyczne:     0.14,
+  finansowe:    0.15,
+  wolne_zawody: 0.17,
+};
+
+const RYCZALT_RATE_LABELS: Record<string, string> = {
+  rolnicze:     '2%',
+  handel:       '3%',
+  budownictwo:  '5,5%',
+  uslugi:       '8,5%',
+  it:           '12%',
+  medyczne:     '14%',
+  finansowe:    '15%',
+  wolne_zawody: '17%',
+};
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
@@ -134,6 +158,10 @@ function ReportsPageContent() {
 
   const { user } = useAuth();
   const isRyczalt = user?.taxation_form === 'ryczalt';
+  const ryczaltCategory = user?.ryczalt_category ?? null;
+  const hasCostAllocation = user?.modules?.['cost_allocation'] === true;
+  const ryczaltRate = ryczaltCategory ? (RYCZALT_RATES[ryczaltCategory] ?? null) : null;
+  const ryczaltRateLabel = ryczaltCategory ? (RYCZALT_RATE_LABELS[ryczaltCategory] ?? null) : null;
 
   const now = new Date();
   const [ewpYear, setEwpYear] = useState(now.getFullYear());
@@ -157,9 +185,28 @@ function ReportsPageContent() {
   const products = useTopProductsReportQuery(dateFrom, dateTo);
   const customers = useTopCustomersReportQuery(dateFrom, dateTo);
   const ksef = useKsefStatusReportQuery();
+  const pl = useProfitLossQuery(dateFrom, dateTo);
 
   const ksefData = ksef.data;
   const legendRows = ksefData ? buildKsefLegendRows(ksefData) : [];
+
+  // Ryczałt profitability numbers derived from sales + P&L queries.
+  const ryczaltRevenue = sales.data
+    ? Number.parseFloat(String(sales.data.totalGross))
+    : null;
+  const ryczaltOpex = pl.data?.totals
+    ? Number.parseFloat(String(pl.data.totals.opex))
+    : null;
+  const ryczaltProfit =
+    ryczaltRevenue !== null && ryczaltOpex !== null
+      ? ryczaltRevenue - ryczaltOpex
+      : ryczaltRevenue !== null
+      ? ryczaltRevenue
+      : null;
+  const estimatedTax =
+    ryczaltRevenue !== null && ryczaltRate !== null
+      ? ryczaltRevenue * ryczaltRate
+      : null;
 
   return (
     <div className="p-6">
@@ -171,43 +218,6 @@ function ReportsPageContent() {
           </p>
         </div>
         <div className="no-print flex shrink-0 items-center gap-2">
-          {isRyczalt && (
-            <div className="flex items-center gap-2">
-              <select
-                aria-label="Rok JPK_EWP"
-                value={ewpYear}
-                onChange={(e) => setEwpYear(Number(e.target.value))}
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              >
-                {[now.getFullYear() - 1, now.getFullYear()].map((y) => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-              <select
-                aria-label="Miesiąc JPK_EWP"
-                value={ewpMonth}
-                onChange={(e) => setEwpMonth(Number(e.target.value))}
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {new Date(2000, m - 1).toLocaleString('pl-PL', { month: 'long' })}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={ewpLoading}
-                onClick={() => void handleDownloadEwp()}
-                className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
-              >
-                {ewpLoading ? 'Pobieranie…' : 'Pobierz JPK_EWP'}
-              </button>
-              {ewpError && (
-                <span className="text-xs text-destructive">{ewpError}</span>
-              )}
-            </div>
-          )}
           <button
             type="button"
             onClick={() => window.print()}
@@ -219,6 +229,110 @@ function ReportsPageContent() {
       </div>
 
       <div className="space-y-6">
+
+        {/* ── Ryczałt profitability card ─────────────────────────────────── */}
+        {isRyczalt && (
+          <Card className="border-primary/20 bg-primary/3">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="text-lg">Rentowność ryczałtowa</CardTitle>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Wybrany okres: {dateFrom} — {dateTo}
+                    {ryczaltRateLabel && (
+                      <span className="ml-2 rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium">
+                        stawka {ryczaltRateLabel}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <Link
+                  to="/reports/profit-loss"
+                  className="shrink-0 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+                >
+                  Szczegółowy P&L →
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(sales.isFetching && !sales.data) || (pl.isFetching && !pl.data) ? (
+                <p className="text-sm text-muted-foreground">Ładowanie…</p>
+              ) : (
+                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Przychody brutto
+                    </dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {ryczaltRevenue !== null ? formatMoney(ryczaltRevenue) : '—'}
+                    </dd>
+                  </div>
+
+                  {hasCostAllocation ? (
+                    <div>
+                      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Koszty OPEX
+                      </dt>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums text-destructive">
+                        {ryczaltOpex !== null && ryczaltOpex > 0
+                          ? `− ${formatMoney(ryczaltOpex)}`
+                          : ryczaltOpex === 0
+                          ? formatMoney(0)
+                          : '—'}
+                      </dd>
+                    </div>
+                  ) : (
+                    <div>
+                      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Koszty OPEX
+                      </dt>
+                      <dd className="mt-1 text-sm text-muted-foreground">
+                        <Link
+                          to="/settings/company"
+                          className="underline underline-offset-2 hover:text-foreground"
+                        >
+                          Włącz moduł Kosztów
+                        </Link>
+                      </dd>
+                    </div>
+                  )}
+
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Wynik rzeczywisty
+                    </dt>
+                    <dd
+                      className={cn(
+                        'mt-1 text-xl font-semibold tabular-nums',
+                        ryczaltProfit !== null && ryczaltProfit < 0 ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400',
+                      )}
+                    >
+                      {ryczaltProfit !== null ? formatMoney(ryczaltProfit) : '—'}
+                    </dd>
+                  </div>
+
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Szacowany podatek
+                      {ryczaltRateLabel && ` (${ryczaltRateLabel})`}
+                    </dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                      {estimatedTax !== null ? formatMoney(estimatedTax) : '—'}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+              {!hasCostAllocation && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  💡 Na ryczałcie podatek liczony jest od przychodu — nie od zysku. Jeśli masz
+                  koszty firmowe (telefon, internet, leasing), włącz moduł Kosztów aby zobaczyć
+                  realny wynik finansowy po odjęciu wydatków.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -440,6 +554,80 @@ function ReportsPageContent() {
             )}
           </CardContent>
         </Card>
+
+        {/* ── JPK_EWP export card — ryczałt only ────────────────────────── */}
+        {isRyczalt && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="text-lg">Ewidencja Przychodów — JPK_EWP</CardTitle>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Miesięczny plik XML do przekazania biuru rachunkowemu lub wysłania do Krajowej
+                    Administracji Skarbowej.
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  Ryczałt
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Rok
+                  </label>
+                  <select
+                    aria-label="Rok JPK_EWP"
+                    value={ewpYear}
+                    onChange={(e) => setEwpYear(Number(e.target.value))}
+                    className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    {[now.getFullYear() - 1, now.getFullYear()].map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Miesiąc
+                  </label>
+                  <select
+                    aria-label="Miesiąc JPK_EWP"
+                    value={ewpMonth}
+                    onChange={(e) => setEwpMonth(Number(e.target.value))}
+                    className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                      <option key={m} value={m}>
+                        {new Date(2000, m - 1).toLocaleString('pl-PL', { month: 'long' })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  disabled={ewpLoading}
+                  onClick={() => void handleDownloadEwp()}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {ewpLoading ? 'Generowanie…' : '⬇ Pobierz JPK_EWP'}
+                </button>
+              </div>
+              {ewpError && (
+                <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {ewpError}
+                </p>
+              )}
+              <p className="mt-3 text-xs text-muted-foreground">
+                Plik zawiera ewidencję przychodów (JPK_EWP v3) zgodną ze schematem Ministerstwa
+                Finansów. Obejmuje wszystkie wystawione faktury w wybranym miesiącu.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
       </div>
     </div>
   );

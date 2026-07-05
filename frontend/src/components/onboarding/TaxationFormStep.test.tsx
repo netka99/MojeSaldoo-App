@@ -14,6 +14,7 @@ function renderStep(overrides?: Partial<Parameters<typeof TaxationFormStep>[0]>)
     <TaxationFormStep
       taxationForm="kpir"
       ryczaltCategory={null}
+      usesCostTracking={false}
       onChange={onChange}
       onNext={onNext}
       onBack={onBack}
@@ -45,20 +46,20 @@ describe('TaxationFormStep', () => {
   it('calls onChange with ryczalt when ryczałt button clicked', async () => {
     const { onChange } = renderStep({ taxationForm: 'kpir' });
     await userEvent.click(screen.getByRole('button', { name: /Ryczałt/i }));
-    expect(onChange).toHaveBeenCalledWith('ryczalt', null);
+    expect(onChange).toHaveBeenCalledWith('ryczalt', null, false);
   });
 
   it('calls onChange with kpir and null category when KPiR clicked', async () => {
     const { onChange } = renderStep({ taxationForm: 'ryczalt', ryczaltCategory: 'uslugi' });
     await userEvent.click(screen.getByRole('button', { name: /KPiR/i }));
-    expect(onChange).toHaveBeenCalledWith('kpir', null);
+    expect(onChange).toHaveBeenCalledWith('kpir', null, false);
   });
 
   it('calls onChange with selected category when rate clicked', async () => {
     const { onChange } = renderStep({ taxationForm: 'ryczalt', ryczaltCategory: null });
     const handlerBtn = screen.getByRole('button', { name: /Handel/i });
     await userEvent.click(handlerBtn);
-    expect(onChange).toHaveBeenCalledWith('ryczalt', 'handel');
+    expect(onChange).toHaveBeenCalledWith('ryczalt', 'handel', false);
   });
 
   it('Dalej button is disabled when KPiR not confirmed (should not happen) but works for kpir', async () => {

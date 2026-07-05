@@ -23,7 +23,8 @@ const RYCZALT_OPTIONS: RyczaltOption[] = [
 interface TaxationFormStepProps {
   taxationForm: TaxationForm;
   ryczaltCategory: RyczaltCategory | null;
-  onChange: (form: TaxationForm, category: RyczaltCategory | null) => void;
+  usesCostTracking: boolean;
+  onChange: (form: TaxationForm, category: RyczaltCategory | null, usesCostTracking: boolean) => void;
   onNext: () => void;
   onBack: () => void;
 }
@@ -31,6 +32,7 @@ interface TaxationFormStepProps {
 export function TaxationFormStep({
   taxationForm,
   ryczaltCategory,
+  usesCostTracking,
   onChange,
   onNext,
   onBack,
@@ -39,16 +41,20 @@ export function TaxationFormStep({
 
   function selectKpir() {
     setShowRyczalt(false);
-    onChange('kpir', null);
+    onChange('kpir', null, false);
   }
 
   function selectRyczalt() {
     setShowRyczalt(true);
-    onChange('ryczalt', ryczaltCategory);
+    onChange('ryczalt', ryczaltCategory, usesCostTracking);
   }
 
   function selectCategory(cat: RyczaltCategory) {
-    onChange('ryczalt', cat);
+    onChange('ryczalt', cat, usesCostTracking);
+  }
+
+  function toggleCostTracking() {
+    onChange(taxationForm, ryczaltCategory, !usesCostTracking);
   }
 
   const canContinue = taxationForm === 'kpir' || (taxationForm === 'ryczalt' && ryczaltCategory !== null);
@@ -147,6 +153,66 @@ export function TaxationFormStep({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Cost tracking opt-in — shown once a ryczałt category is selected */}
+      {showRyczalt && ryczaltCategory !== null && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-foreground">Śledzenie kosztów firmowych</p>
+          <button
+            type="button"
+            onClick={toggleCostTracking}
+            aria-pressed={usesCostTracking}
+            className={cn(
+              'flex w-full items-start gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              usesCostTracking
+                ? 'border-primary bg-primary/5 shadow-sm'
+                : 'border-border bg-background hover:border-primary/40 hover:bg-muted/40',
+            )}
+          >
+            <span className="mt-0.5 text-xl leading-none">💼</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground">
+                Opisuję koszty dla biura rachunkowego
+              </p>
+              <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                Odbierasz faktury za telefon, internet, czynsz, leasing lub inne wydatki
+                i chcesz je opisywać lub śledzić realną rentowność.
+              </p>
+              {usesCostTracking && (
+                <ul className="mt-2 space-y-1">
+                  {[
+                    'KSeF Inbox — odbieranie faktur kosztowych',
+                    'Adnotacje kosztowe dla biura rachunkowego',
+                    'Raport P&L: przychody minus koszty OPEX',
+                  ].map((item) => (
+                    <li key={item} className="flex items-center gap-1.5 text-xs text-primary">
+                      <span aria-hidden>✓</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <span
+              className={cn(
+                'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 text-xs font-bold transition-colors',
+                usesCostTracking
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-muted-foreground/40',
+              )}
+            >
+              {usesCostTracking ? '✓' : ''}
+            </span>
+          </button>
+          {!usesCostTracking && (
+            <p className="px-1 text-xs text-muted-foreground">
+              Na ryczałcie płacisz podatek od przychodu — bez śledzenia kosztów nie zobaczysz
+              realnego zysku. Możesz włączyć to później w Ustawienia → Moduły.
+            </p>
+          )}
         </div>
       )}
 

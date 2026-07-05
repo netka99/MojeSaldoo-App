@@ -19,6 +19,7 @@ const hoisted = vi.hoisted(() => ({
   useTopProductsReportQuery: vi.fn(),
   useTopCustomersReportQuery: vi.fn(),
   useKsefStatusReportQuery: vi.fn(),
+  useProfitLossQuery: vi.fn(),
   useAuth: vi.fn(),
   downloadJpkEwp: vi.fn(),
 }));
@@ -28,6 +29,7 @@ vi.mock('@/query/use-reports', () => ({
   useTopProductsReportQuery: hoisted.useTopProductsReportQuery,
   useTopCustomersReportQuery: hoisted.useTopCustomersReportQuery,
   useKsefStatusReportQuery: hoisted.useKsefStatusReportQuery,
+  useProfitLossQuery: hoisted.useProfitLossQuery,
   TOP_LIMIT: 10,
 }));
 
@@ -63,6 +65,8 @@ function renderReportsRoute() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/login" element={<div>Logowanie</div>} />
           <Route path="/invoices/:id" element={<div>Faktura</div>} />
+          <Route path="/settings/company" element={<div>Ustawienia</div>} />
+          <Route path="/reports/profit-loss" element={<div>P&amp;L</div>} />
         </Routes>
       </MemoryRouter>
     </TestQueryProvider>,
@@ -119,6 +123,9 @@ describe('ReportsPage', () => {
     hoisted.useTopProductsReportQuery.mockReturnValue(okQuery([]));
     hoisted.useTopCustomersReportQuery.mockReturnValue(okQuery([]));
     hoisted.useKsefStatusReportQuery.mockReturnValue(okQuery(makeKsef()));
+    hoisted.useProfitLossQuery.mockReturnValue(
+      okQuery({ rows: [], totals: { revenue: '0', purchaseCosts: '0', grossProfit: '0', opex: '0', operatingProfit: '0', marginPercent: null, operatingMarginPercent: null } }),
+    );
   });
 
   afterEach(() => {

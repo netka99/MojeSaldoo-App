@@ -44,11 +44,16 @@ function computeModulePreview(
   deliveryMethod: DeliveryMethod | null,
   taxationForm: TaxationForm,
   ryczaltCategory: RyczaltCategory | null,
+  usesCostTracking = false,
 ): Record<string, boolean> {
   const enabled = new Set<string>(CORE_MODULES);
   tiles.forEach((t) => TILE_MODULE_MAP[t]?.forEach((m) => enabled.add(m)));
   if (deliveryMethod) {
     DELIVERY_MODULE_MAP[deliveryMethod]?.forEach((m) => enabled.add(m));
+  }
+  // Auto-add cost_allocation for ryczałt companies that opted in for cost tracking.
+  if (usesCostTracking && taxationForm === 'ryczalt') {
+    TILE_MODULE_MAP['cost_allocation']?.forEach((m) => enabled.add(m));
   }
   // Pure-service ryczałt companies don't need warehouse/van/production modules.
   if (taxationForm === 'ryczalt' && ryczaltCategory && RYCZALT_SERVICE_CATEGORIES.includes(ryczaltCategory)) {
@@ -163,6 +168,7 @@ export function OnboardingPage() {
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod | null>(null);
   const [taxationForm, setTaxationForm] = useState<TaxationForm>('kpir');
   const [ryczaltCategory, setRyczaltCategory] = useState<RyczaltCategory | null>(null);
+  const [usesCostTracking, setUsesCostTracking] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const isServiceRyczalt =
@@ -210,6 +216,7 @@ export function OnboardingPage() {
 
   function handleTaxationNext() {
     if (isServiceRyczalt) {
+      // Service ryczałt skips activity + delivery steps; cost_allocation is handled at submit.
       setTiles([]);
       setDeliveryMethod(null);
       setStep('summary');
@@ -236,8 +243,13 @@ export function OnboardingPage() {
   async function handleConfirm() {
     setSubmitError(null);
     try {
+      // Auto-include cost_allocation when user opted in during taxation step.
+      const effectiveTiles: ActivityTile[] = [...tiles];
+      if (usesCostTracking && taxationForm === 'ryczalt' && !effectiveTiles.includes('cost_allocation')) {
+        effectiveTiles.push('cost_allocation');
+      }
       await completeOnboarding.mutateAsync({
-        activity_tiles: tiles,
+        activity_tiles: effectiveTiles,
         delivery_method: deliveryMethod,
         taxation_form: taxationForm,
         ryczalt_category: ryczaltCategory,
@@ -249,7 +261,7 @@ export function OnboardingPage() {
     }
   }
 
-  const modulePreview = computeModulePreview(tiles, deliveryMethod, taxationForm, ryczaltCategory);
+  const modulePreview = computeModulePreview(tiles, deliveryMethod, taxationForm, ryczaltCategory, usesCostTracking);
   const currentStepIndex = STEP_INDEX[step];
 
   return (
@@ -278,7 +290,12 @@ export function OnboardingPage() {
             <TaxationFormStep
               taxationForm={taxationForm}
               ryczaltCategory={ryczaltCategory}
-              onChange={(form, cat) => { setTaxationForm(form); setRyczaltCategory(cat); }}
+              usesCostTracking={usesCostTracking}
+              onChange={(form, cat, costTracking) => {
+                setTaxationForm(form);
+                setRyczaltCategory(cat);
+                setUsesCostTracking(costTracking);
+              }}
               onNext={handleTaxationNext}
               onBack={() => setStep('company_name')}
             />
