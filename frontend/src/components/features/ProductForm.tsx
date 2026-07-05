@@ -431,7 +431,7 @@ export function ProductForm({
               className={inField('price_gross')}
             />
           </div>
-          {(() => {
+          {!isService && (() => {
             const source = product?.avg_cost_source;
             const autoSources: Array<typeof source> = ['pz', 'production'];
             const isAutoSet = autoSources.includes(source ?? null as never);
@@ -477,7 +477,7 @@ export function ProductForm({
               </div>
             );
           })()}
-          {isResalable && (
+          {!isService && isResalable && (
             <div className="space-y-1">
               <Input
                 label="Narzut / marża (%)"
