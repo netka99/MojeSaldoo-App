@@ -776,6 +776,7 @@ export function OrderCreatePage() {
         track_batches: false,
         min_stock_alert: 0,
         shelf_life_days: null,
+        is_service: false,
         is_resalable: true,
         markup_percent: null,
         avg_cost: null,
