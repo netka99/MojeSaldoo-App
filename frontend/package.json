@@ -17,7 +17,7 @@
     "@capacitor/android": "^8.4.0",
     "@capacitor/cli": "^8.4.0",
     "@capacitor/core": "^8.4.0",
-    "@capacitor/push-notifications": "^6.0.2",
+    "@capacitor/push-notifications": "^8.1.1",
     "@hookform/resolvers": "^3.3.2",
     "@react-oauth/google": "^0.13.5",
     "@tanstack/react-query": "^5.62.8",
