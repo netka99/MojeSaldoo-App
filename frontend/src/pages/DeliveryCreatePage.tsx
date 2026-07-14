@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { parseDecimalInput } from '@/lib/order-form-math';
 import { cn } from '@/lib/utils';
 import { useCreateStandaloneWzMutation } from '@/query/use-delivery';
+import { useOfflineStandaloneWzCreate, OfflineQueuedError } from '@/query/use-offline-mutations';
 import { useCustomerQuery, useCustomerListQuery } from '@/query/use-customers';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
@@ -235,7 +236,7 @@ function CheckoutView({ lines, setLines, customerName, issueDate, onBack, onSubm
         animate={{ y: 0, opacity: 1 }}
         className={cn(
           'fixed left-0 right-0 z-40 px-5',
-          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
+          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
         )}
       >
         <div className="mx-auto max-w-3xl rounded-2xl bg-card p-5 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
@@ -397,6 +398,7 @@ export function DeliveryCreatePage() {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   const createWz = useCreateStandaloneWzMutation();
+  const createWzWithOffline = useOfflineStandaloneWzCreate();
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const [issueDate, setIssueDate] = useState(todayIso);
@@ -551,17 +553,24 @@ export function DeliveryCreatePage() {
     if (!selectedCustomer) { setSubmitError('Wybierz klienta'); return; }
     if (lines.length === 0) { setSubmitError('Dodaj co najmniej jeden produkt'); return; }
     setSubmitError(null);
+    const wzBody = {
+      to_customer_id: selectedCustomer.id,
+      issue_date: issueDate,
+      items: lines.map((l) => ({
+        product_id: l.product.id,
+        quantity_planned: l.quantity % 1 === 0 ? String(l.quantity) : l.quantity.toFixed(2),
+      })),
+    };
     try {
-      const doc = await createWz.mutateAsync({
-        to_customer_id: selectedCustomer.id,
-        issue_date: issueDate,
-        items: lines.map((l) => ({
-          product_id: l.product.id,
-          quantity_planned: l.quantity % 1 === 0 ? String(l.quantity) : l.quantity.toFixed(2),
-        })),
+      await createWzWithOffline(wzBody, async (b) => {
+        const doc = await createWz.mutateAsync(b);
+        navigate(`/delivery/${doc.id}`);
       });
-      navigate(`/delivery/${doc.id}`);
     } catch (e) {
+      if (e instanceof OfflineQueuedError) {
+        navigate('/delivery');
+        return;
+      }
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć WZ');
     }
   };
@@ -731,7 +740,7 @@ export function DeliveryCreatePage() {
       <div
         className={cn(
           'fixed left-0 right-0 z-40',
-          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:pb-[max(0px,env(safe-area-inset-bottom))]',
+          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:pb-[max(0px,env(safe-area-inset-bottom))]',
         )}
       >
         <div

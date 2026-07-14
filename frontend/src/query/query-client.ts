@@ -4,9 +4,14 @@ export function createAppQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 1000 * 60 * 5,
+        staleTime: 1000 * 60 * 5,       // data is fresh for 5 min
+        gcTime: 1000 * 60 * 60 * 24,    // keep cache for 24h — available offline
         retry: 1,
         refetchOnWindowFocus: false,
+        networkMode: 'offlineFirst',     // serve cached data immediately, refetch when online
+      },
+      mutations: {
+        networkMode: 'offlineFirst',
       },
     },
   });

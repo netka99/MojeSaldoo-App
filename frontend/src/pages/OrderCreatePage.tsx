@@ -16,6 +16,7 @@ import {
 import { formatDeliveryDate } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import { useCreateOrderMutation, useConfirmOrderMutation, useOrdersByCustomerQuery } from '@/query/use-orders';
+import { useOfflineOrderCreate, OfflineQueuedError } from '@/query/use-offline-mutations';
 import { useCustomerQuery, useCustomerListQuery, useCustomerPricesQuery } from '@/query/use-customers';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
@@ -275,7 +276,7 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
               className={cn(
                 'fixed z-40 left-0 right-0 pointer-events-none',
                 'bottom-[calc(83px+0.75rem+env(safe-area-inset-bottom))]',
-                'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:left-64',
+                'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))]',
               )}
             >
               <div className="mx-auto w-full max-w-3xl px-4 pointer-events-auto">
@@ -612,6 +613,7 @@ export function OrderCreatePage() {
   const companyId = user?.current_company ?? '';
   const create = useCreateOrderMutation();
   const confirm = useConfirmOrderMutation();
+  const createWithOffline = useOfflineOrderCreate();
 
   const draft = loadDraft(urlCustomerId || undefined);
 
@@ -881,12 +883,20 @@ export function OrderCreatePage() {
         };
       });
       const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items };
-      const order = await create.mutateAsync(body);
-      await confirm.mutateAsync(order.id);
+      await createWithOffline(body, async (b) => {
+        const order = await create.mutateAsync(b);
+        await confirm.mutateAsync(order.id);
+      });
       clearDraft(selectedCustomer.id);
       const d = deliveryDate.trim();
       navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
     } catch (e) {
+      if (e instanceof OfflineQueuedError) {
+        clearDraft(selectedCustomer.id);
+        const d = deliveryDate.trim();
+        navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
+        return;
+      }
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć zamówienia');
     }
   };
@@ -1083,7 +1093,7 @@ export function OrderCreatePage() {
                   className={cn(
                     'fixed z-40 left-0 right-0 pointer-events-none',
                     'bottom-[calc(83px+0.75rem+env(safe-area-inset-bottom))]',
-                    'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:left-64',
+                    'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))]',
                   )}
                 >
                   <div className="mx-auto w-full max-w-3xl px-4 pointer-events-auto">
