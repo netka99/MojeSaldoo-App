@@ -383,17 +383,18 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                   <NavGroupTitle>Administracja</NavGroupTitle>
                   <div className="space-y-0.5">
                     <AppNavItemLink to="/reports" end>Raporty</AppNavItemLink>
-                    <AppNavItemLink to="/reports/profit-loss">Wynik (P&amp;L)</AppNavItemLink>
-                    <AppNavItemLink to="/reports/product-margin">Marże na produktach</AppNavItemLink>
-                    <AppNavItemLink to="/reports/payment-aging">Aging należności</AppNavItemLink>
-                    <AppNavItemLink to="/reports/supplier-costs">Koszty zakupów</AppNavItemLink>
-                    <AppNavItemLink to="/reports/inventory">Magazyn</AppNavItemLink>
-                    <AppNavItemLink to="/reports/customer-margin">Marże na klientach</AppNavItemLink>
+                    <AppNavItemLink to="/reports/payment-aging">Niezapłacone faktury</AppNavItemLink>
+                    <AppNavItemLink to="/reports/profit-loss">Zysk i Koszty (P&amp;L)</AppNavItemLink>
+                    {purchasingEnabled && <AppNavItemLink to="/reports/product-margin">Marże na produktach</AppNavItemLink>}
+                    {purchasingEnabled && <AppNavItemLink to="/reports/customer-margin">Marże na klientach</AppNavItemLink>}
+                    {purchasingEnabled && <AppNavItemLink to="/reports/supplier-costs">Koszty zakupów</AppNavItemLink>}
+                    {warehousesEnabled && <AppNavItemLink to="/reports/inventory">Magazyn</AppNavItemLink>}
                   </div>
                 </div>
               )}
 
               <div className="space-y-1 border-t border-border pt-3">
+                <AppNavItemLink to="/activity">Historia aktywności</AppNavItemLink>
                 <AppNavItemLink to="/settings/company" end>Ustawienia</AppNavItemLink>
                 {ksefEnabled && <AppNavItemLink to="/settings/certificate" end>Certyfikat KSeF</AppNavItemLink>}
               </div>

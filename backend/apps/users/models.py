@@ -275,6 +275,7 @@ class CompanyModule(models.Model):
         ("ksef",            "KSeF Integration"),
         ("reporting",       "Reporting & Analytics"),
         ("cost_allocation", "Cost Allocation & Accounting Notes"),
+        ("fixed_costs",     "Fixed Costs & Personnel"),
     ]
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="modules")
     module = models.CharField(max_length=50, choices=MODULE_CHOICES)

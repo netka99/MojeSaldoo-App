@@ -13,6 +13,8 @@ import {
   useUpdateOrderMutation,
 } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
+import { useModuleGuard } from '@/hooks/useModuleGuard';
+import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
 import { openOrderPrintWindow } from '@/lib/openOrderPrintWindow';
 import type { DeliveryDocument, OrderItem } from '@/types';
@@ -491,8 +493,11 @@ export function OrderDetailPage() {
 
   /* ── WZ availability logic (B+C) ──────────────────────────────── */
   const { data: wzDocs } = useDeliveryByOrderQuery(id, order?.status === 'confirmed');
+  const deliveryModuleEnabled = useModuleGuard('delivery');
+  const canManageDelivery = usePermission('can_manage_delivery');
 
   const canGenerateWz = (() => {
+    if (!deliveryModuleEnabled || !canManageDelivery) return false;
     if (order?.status !== 'confirmed') return false;
     if (isEditing) return false;
     const docs = wzDocs ?? [];
@@ -836,11 +841,12 @@ export function OrderDetailPage() {
           initial={{ y: 80, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           className={cn(
-            'fixed left-0 right-0 z-40 px-5',
-            'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
+            'fixed left-0 right-0 z-40',
+            'bottom-[calc(96px+env(safe-area-inset-bottom))] md:bottom-4 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
           )}
         >
-          <div className="mx-auto max-w-3xl rounded-2xl bg-card p-4 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
+          <div className="mx-auto max-w-3xl px-5">
+          <div className="rounded-2xl bg-card p-4 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
             <div className="flex flex-col gap-2">
 
               {/* Save changes (editing + dirty) */}
@@ -951,6 +957,7 @@ export function OrderDetailPage() {
               )}
 
             </div>
+          </div>
           </div>
         </motion.div>
       )}

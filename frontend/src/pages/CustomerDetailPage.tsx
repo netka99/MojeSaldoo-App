@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermission';
+import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
@@ -80,6 +81,8 @@ function OrderRow({
   deliveryDocs: DeliveryDocument[];
   onClick: () => void;
 }) {
+  const deliveryEnabled = useModuleGuard('delivery');
+  const canManageDelivery = usePermission('can_manage_delivery');
   const { wzDocs, zwCount } = getOrderDocs(deliveryDocs, order.id);
   const hasWz = wzDocs.length > 0;
   const showMissingWz = !hasWz && order.status !== 'draft' && order.status !== 'cancelled';
@@ -111,26 +114,28 @@ function OrderRow({
             </span>
           </div>
           {/* WZ status line */}
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            {showMissingWz && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                Brak WZ
-              </span>
-            )}
-            {wzDocs.map((wz) => (
-              <span
-                key={wz.id}
-                className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
-              >
-                {wz.document_number ?? 'WZ'}
-              </span>
-            ))}
-            {zwCount > 0 && (
-              <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-700">
-                {zwCount} ZW
-              </span>
-            )}
-          </div>
+          {deliveryEnabled && canManageDelivery && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {showMissingWz && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                  Brak WZ
+                </span>
+              )}
+              {wzDocs.map((wz) => (
+                <span
+                  key={wz.id}
+                  className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                >
+                  {wz.document_number ?? 'WZ'}
+                </span>
+              ))}
+              {zwCount > 0 && (
+                <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-700">
+                  {zwCount} ZW
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <p className="text-[15px] font-bold tabular-nums text-foreground">{money(order.total_gross)}</p>

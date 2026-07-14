@@ -39,12 +39,15 @@ INSTALLED_APPS = [
     'apps.ksef',
     'apps.reporting',
     'apps.cost_allocation',
+    'apps.fixed_costs',
     'apps.production',
     'apps.inventory',
+    'apps.activity',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'apps.activity.middleware.ActivityLogMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -117,6 +120,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # REST Framework settings
 REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'apps.activity.exceptions.activity_exception_handler',
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',

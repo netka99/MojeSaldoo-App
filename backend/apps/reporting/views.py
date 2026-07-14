@@ -582,7 +582,31 @@ class ProfitLossView(APIView):
             cat = row["opex_category"]
             opex_by_month.setdefault(m, {})[cat] = row["total"]
 
-        # Build unified month list covering all three datasets
+        # Fixed costs: manually entered recurring expenses (salaries, ZUS, rent…)
+        # Fetch all active entries that started on or before date_to, then filter
+        # per-month by active_from in Python (the list is tiny for small businesses).
+        from apps.fixed_costs.models import FixedCost
+        all_fixed_costs = list(
+            FixedCost.objects.filter(
+                company=company,
+                is_active=True,
+                active_from__lte=date_to,
+            )
+        )
+
+        def _fixed_costs_for_month(month_date) -> tuple[Decimal, dict]:
+            """Return (total, {category: amount}) for fixed costs active in month_date."""
+            # month_date may be a datetime — normalize to date
+            md = month_date.date() if hasattr(month_date, "date") else month_date
+            total = Decimal("0")
+            by_cat: dict[str, Decimal] = {}
+            for fc in all_fixed_costs:
+                if fc.active_from <= md:
+                    total += fc.amount_monthly
+                    by_cat[fc.category] = by_cat.get(fc.category, Decimal("0")) + fc.amount_monthly
+            return total, by_cat
+
+        # Build unified month list covering all datasets
         all_months = sorted(set(revenue_by_month) | set(costs_by_month) | set(opex_by_month))
         rows = []
         for month in all_months:
@@ -592,6 +616,8 @@ class ProfitLossView(APIView):
             opex_cats = opex_by_month.get(month, {})
             opex_total = sum(opex_cats.values(), Decimal("0"))
             operating_profit = gross_profit - opex_total
+            fixed_total, fixed_by_cat = _fixed_costs_for_month(month)
+            net_profit = operating_profit - fixed_total
             rows.append(
                 {
                     "month": month.strftime("%Y-%m"),
@@ -606,6 +632,12 @@ class ProfitLossView(APIView):
                     "operatingProfit": operating_profit,
                     "operatingMarginPercent": (
                         round(operating_profit / rev * 100, 1) if rev > 0 else None
+                    ),
+                    "fixedCosts": fixed_total,
+                    "fixedCostsByCategory": fixed_by_cat,
+                    "netProfit": net_profit,
+                    "netMarginPercent": (
+                        round(net_profit / rev * 100, 1) if rev > 0 else None
                     ),
                 }
             )
@@ -654,6 +686,8 @@ class ProfitLossView(APIView):
         totals_gross = totals_rev - totals_cost
         totals_opex = sum(r["opex"] for r in rows) or Decimal("0")
         totals_operating = totals_gross - totals_opex
+        totals_fixed = sum(r["fixedCosts"] for r in rows) or Decimal("0")
+        totals_net = totals_operating - totals_fixed
         if request.query_params.get("export") == "csv":
             csv_rows = [
                 [
@@ -663,11 +697,16 @@ class ProfitLossView(APIView):
                     r["grossProfit"],
                     r["opex"],
                     r["operatingProfit"],
+                    r["fixedCosts"],
+                    r["netProfit"],
                 ]
                 for r in rows
             ]
             return _csv_response(
-                ["Miesiąc", "Przychód", "Koszt własny", "Wynik brutto", "OPEX", "Zysk netto"],
+                [
+                    "Miesiąc", "Przychód", "Koszt własny", "Wynik brutto",
+                    "OPEX", "Wynik operacyjny", "Koszty stałe", "Zysk netto",
+                ],
                 csv_rows,
                 "wynik-finansowy.csv",
             )
@@ -687,6 +726,13 @@ class ProfitLossView(APIView):
                     "operatingProfit": totals_operating,
                     "operatingMarginPercent": (
                         round(totals_operating / totals_rev * 100, 1)
+                        if totals_rev > 0
+                        else None
+                    ),
+                    "fixedCosts": totals_fixed,
+                    "netProfit": totals_net,
+                    "netMarginPercent": (
+                        round(totals_net / totals_rev * 100, 1)
                         if totals_rev > 0
                         else None
                     ),

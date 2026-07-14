@@ -16,8 +16,10 @@ from rest_framework.response import Response
 from apps.invoices.models import Invoice
 from apps.orders.models import Order, OrderItem
 from apps.products.models import ProductStock, StockMovement, Warehouse
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember, _get_active_membership
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired, _get_active_membership
 from apps.users.tenant import filter_queryset_for_current_company
+from apps.activity.log import log_activity
+from apps.activity.models import ActivityLog
 
 from .filters import DeliveryDocumentFilter
 from .models import DeliveryDocument, DeliveryItem
@@ -84,10 +86,11 @@ class DeliveryDocumentPagination(PageNumberPagination):
 class DeliveryDocumentViewSet(viewsets.ModelViewSet):
     """CRUD for delivery documents, scoped to ``request.user.current_company``."""
     lookup_field = "uuid"
+    module_required = "delivery"
 
     serializer_class = DeliveryDocumentSerializer
     pagination_class = DeliveryDocumentPagination
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasAnyDeliveryPermission]
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasAnyDeliveryPermission]
     filterset_class = DeliveryDocumentFilter
     filter_backends = [
         DjangoFilterBackend,
@@ -299,6 +302,13 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 )
 
         doc.refresh_from_db()
+        log_activity(
+            user=request.user,
+            action="delivery.wz_create",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="delivery",
+            object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
@@ -1577,6 +1587,13 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     quantity_planned=qty,
                 )
             doc.refresh_from_db()
+        log_activity(
+            user=request.user,
+            action="delivery.wz_create",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="delivery",
+            object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="sync-from-order")

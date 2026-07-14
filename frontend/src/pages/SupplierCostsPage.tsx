@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useSupplierCostsQuery, useSupplierCostsDetailQuery } from '@/query/use-reports';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
 import type { SupplierCostsRow } from '@/types/reporting.types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
@@ -159,6 +160,8 @@ export function SupplierCostsPage() {
           </button>
         )}
       </div>
+
+      <RyczaltManagerialNotice />
 
       {/* Filters */}
       <Card>

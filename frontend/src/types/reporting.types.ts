@@ -163,6 +163,10 @@ export type ProfitLossRow = {
   opexByCategory: Record<string, string | number>;
   operatingProfit: string | number;
   operatingMarginPercent: number | null;
+  fixedCosts: string | number;
+  fixedCostsByCategory: Record<string, string | number>;
+  netProfit: string | number;
+  netMarginPercent: number | null;
 };
 
 /** Invoice summary inside `GET /api/reports/profit-loss/month-detail/`. */
@@ -213,6 +217,9 @@ export type ProfitLossReport = {
     opex: string | number;
     operatingProfit: string | number;
     operatingMarginPercent: number | null;
+    fixedCosts: string | number;
+    netProfit: string | number;
+    netMarginPercent: number | null;
   };
 };
 

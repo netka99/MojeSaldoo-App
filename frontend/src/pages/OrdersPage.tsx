@@ -84,6 +84,7 @@ function OrdersPageContent() {
   const [wzError, setWzError] = useState<string | null>(null);
 
   const deliveryEnabled = useModuleGuard('delivery');
+  const canManageDelivery = usePermission('can_manage_delivery');
   const generateWzM = useGenerateDeliveryForOrderMutation();
 
   const handleDateChange = useCallback(
@@ -400,7 +401,7 @@ function OrdersPageContent() {
 
       {/* Pills */}
       <div className="-mx-1 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-        {PILLS.map((p) => (
+        {PILLS.filter((p) => !(['has_wz', 'no_wz'] as FilterPill[]).includes(p.key) || (deliveryEnabled && canManageDelivery)).map((p) => (
           <button
             key={p.key}
             type="button"
@@ -634,6 +635,8 @@ function CustomerShopRow({
   onClick,
 }: CustomerShopRowProps) {
   const [expanded, setExpanded] = useState(false);
+  const deliveryEnabled = useModuleGuard('delivery');
+  const canManageDelivery = usePermission('can_manage_delivery');
   const hasOrder = orders.length > 0;
   const multipleOrders = orders.length > 1;
   const items = primaryOrder?.items ?? [];
@@ -713,7 +716,7 @@ function CustomerShopRow({
           </div>
 
           {/* WZ badges */}
-          {wzBadges && (
+          {wzBadges && deliveryEnabled && canManageDelivery && (
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               {wzBadges.type === 'single' && (
                 <>

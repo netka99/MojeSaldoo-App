@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useCustomerMarginQuery } from '@/query/use-reports';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
 import type { CustomerMarginMissingProduct } from '@/types/reporting.types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
@@ -85,6 +86,8 @@ function CustomerMarginPageContent() {
           Przychód vs. koszt własny sprzedaży (avg_cost × ilość) per klient.
         </p>
       </div>
+
+      <RyczaltManagerialNotice />
 
       <Card>
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

@@ -149,14 +149,24 @@ function NavSectionZakupy() {
 function NavSectionKsiegowos() {
   const costAllocationEnabled = useModuleGuard('cost_allocation');
   const canAccounting = usePermission('can_manage_accounting');
-  if (!costAllocationEnabled || !canAccounting) return null;
+  const canReports = usePermission('can_view_reports');
+  const showFixedCosts = canReports || canAccounting;
+  const anyEnabled = (costAllocationEnabled && canAccounting) || showFixedCosts;
+  if (!anyEnabled) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Księgowość</NavGroupTitle>
       <div className="space-y-0.5">
-        <ModuleNavItem module="cost_allocation" to="/cost-allocation">
-          Adnotacje kosztowe
-        </ModuleNavItem>
+        {costAllocationEnabled && canAccounting && (
+          <ModuleNavItem module="cost_allocation" to="/cost-allocation">
+            Adnotacje kosztowe
+          </ModuleNavItem>
+        )}
+        {showFixedCosts && (
+          <AppNavItemLink to="/fixed-costs">
+            Koszty Stałe
+          </AppNavItemLink>
+        )}
       </div>
     </div>
   );
@@ -183,6 +193,8 @@ function NavSectionProdukcja() {
 
 function NavSectionAdministracja() {
   const anyEnabled = useModuleGuard('reporting');
+  const purchasingEnabled = useModuleGuard('purchasing');
+  const warehousesEnabled = useModuleGuard('warehouses');
   const canReports = usePermission('can_view_reports');
   if (!anyEnabled || !canReports) {
     return null;
@@ -194,24 +206,34 @@ function NavSectionAdministracja() {
         <ModuleNavItem module="reporting" to="/reports" end>
           Raporty
         </ModuleNavItem>
-        <ModuleNavItem module="reporting" to="/reports/profit-loss">
-          Wynik (P&amp;L)
-        </ModuleNavItem>
-        <ModuleNavItem module="reporting" to="/reports/product-margin">
-          Marże na produktach
-        </ModuleNavItem>
         <ModuleNavItem module="reporting" to="/reports/payment-aging">
-          Aging należności
+          Niezapłacone faktury
         </ModuleNavItem>
-        <ModuleNavItem module="reporting" to="/reports/supplier-costs">
-          Koszty zakupów
+        {/* P&L always visible — even without purchasing, ryczałt users have fixed costs
+            (salaries, ZUS, rent) that need to be reflected in their profit view. */}
+        <ModuleNavItem module="reporting" to="/reports/profit-loss">
+          Zysk i Koszty (P&amp;L)
         </ModuleNavItem>
-        <ModuleNavItem module="reporting" to="/reports/inventory">
-          Magazyn
-        </ModuleNavItem>
-        <ModuleNavItem module="reporting" to="/reports/customer-margin">
-          Marże na klientach
-        </ModuleNavItem>
+        {purchasingEnabled && (
+          <ModuleNavItem module="reporting" to="/reports/product-margin">
+            Marże na produktach
+          </ModuleNavItem>
+        )}
+        {purchasingEnabled && (
+          <ModuleNavItem module="reporting" to="/reports/customer-margin">
+            Marże na klientach
+          </ModuleNavItem>
+        )}
+        {purchasingEnabled && (
+          <ModuleNavItem module="reporting" to="/reports/supplier-costs">
+            Koszty zakupów
+          </ModuleNavItem>
+        )}
+        {warehousesEnabled && (
+          <ModuleNavItem module="reporting" to="/reports/inventory">
+            Magazyn
+          </ModuleNavItem>
+        )}
       </div>
     </div>
   );
@@ -251,6 +273,9 @@ export function Sidebar() {
       </nav>
 
       <div className="space-y-1 border-t border-border p-3">
+        <AppNavItemLink to="/activity">
+          Historia aktywności
+        </AppNavItemLink>
         {canSettings && (
           <AppNavItemLink to="/settings/company" end>
             Ustawienia

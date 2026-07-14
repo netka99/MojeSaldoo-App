@@ -7,6 +7,7 @@ import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
+import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
@@ -17,13 +18,13 @@ function InfoTip({ text }: { text: string }) {
         i
       </span>
       <span className={cn(
-        'pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-56 -translate-x-1/2',
+        'pointer-events-none absolute top-full left-1/2 z-50 mt-1.5 w-56 -translate-x-1/2',
         'rounded-md border border-border bg-popover px-2.5 py-2 text-[11px] leading-relaxed text-popover-foreground shadow-md',
         'opacity-0 transition-opacity group-hover:opacity-100',
       )}>
         {text}
-        {/* small arrow */}
-        <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-border" />
+        {/* small arrow pointing up */}
+        <span className="absolute left-1/2 bottom-full -translate-x-1/2 border-4 border-transparent border-b-border" />
       </span>
     </span>
   );
@@ -222,7 +223,7 @@ export function ProfitLossPage() {
   return (
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Wynik finansowy (P&L)</h1>
+        <h1 className="text-xl font-semibold">Zysk i Koszty (P&amp;L)</h1>
         {data && data.rows.length > 0 && (
           <button
             type="button"
@@ -233,6 +234,8 @@ export function ProfitLossPage() {
           </button>
         )}
       </div>
+
+      <RyczaltManagerialNotice />
 
       {/* Filters */}
       <Card>
@@ -344,6 +347,40 @@ export function ProfitLossPage() {
               ))}
             </div>
           )}
+          {Number(totals.fixedCosts ?? 0) > 0 && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {[
+                {
+                  label: 'Koszty stałe',
+                  tip: 'Ręcznie wprowadzone stałe wydatki miesięczne: wynagrodzenia, ZUS/zdrowotne, czynsz, leasing i inne koszty spoza KSeF.',
+                  value: formatMoney(totals.fixedCosts),
+                  color: 'text-purple-600',
+                },
+                {
+                  label: 'Zysk netto',
+                  tip: 'Zysk operacyjny − Koszty stałe. Rzeczywisty zarobek firmy po odjęciu wszystkich kosztów: towarów, OPEX i kosztów stałych (kadra, czynsz).',
+                  value: formatMoney(totals.netProfit),
+                  color: Number(totals.netProfit) >= 0 ? 'text-emerald-700 font-bold' : 'text-red-600 font-bold',
+                },
+                {
+                  label: 'Marża netto',
+                  tip: 'Zysk netto ÷ Przychody × 100%. Ile realnie zarabiasz z każdej złotówki przychodu po wszystkich kosztach.',
+                  value: formatPercent(totals.netMarginPercent ?? null),
+                  color: 'text-foreground',
+                },
+              ].map(({ label, tip, value, color }) => (
+                <Card key={label}>
+                  <CardContent className="pt-4">
+                    <p className="text-xs text-muted-foreground flex items-center">
+                      {label}
+                      <InfoTip text={tip} />
+                    </p>
+                    <p className={cn('mt-1 text-lg font-semibold', color)}>{value}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </>
       )}
 
@@ -379,18 +416,14 @@ export function ProfitLossPage() {
                       { label: 'Zysk brutto', tip: 'Przychody − COGS.' },
                       { label: 'OPEX', tip: 'Koszty operacyjne — faktury KSeF oznaczone tagiem OPEX (media, czynsz, usługi itp.).' },
                       { label: 'Zysk oper.', tip: 'Zysk brutto − OPEX. Wynik po wszystkich kosztach działalności.' },
+                      { label: 'Koszty stałe', tip: 'Ręcznie wprowadzone miesięczne koszty stałe (wynagrodzenia, ZUS, czynsz itp.) z modułu Koszty Stałe.' },
+                      { label: 'Zysk netto', tip: 'Zysk operacyjny − Koszty stałe. Realny zarobek firmy po wszystkich kosztach.' },
+                      { label: 'Marża %', tip: 'Marża brutto = Zysk brutto ÷ Przychody × 100%. Nie uwzględnia OPEX.' },
                     ] as const).map(({ label, tip }) => (
-                      <th key={label} className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">
-                        <span className="inline-flex items-center justify-end gap-0.5">
-                          {label}<InfoTip text={tip} />
-                        </span>
+                      <th key={label} title={tip} className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap cursor-help">
+                        {label}
                       </th>
                     ))}
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">
-                      <span className="inline-flex items-center justify-end gap-0.5">
-                        Marża %<InfoTip text="Marża brutto = Zysk brutto ÷ Przychody × 100%. Nie uwzględnia OPEX." />
-                      </span>
-                    </th>
                     <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">Faktury</th>
                     <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">PZ</th>
                   </tr>
@@ -398,7 +431,7 @@ export function ProfitLossPage() {
                 <tbody>
                   {(data?.rows ?? []).length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                      <td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">
                         Brak danych dla wybranego okresu.
                       </td>
                     </tr>
@@ -407,6 +440,8 @@ export function ProfitLossPage() {
                       const profit = Number(row.grossProfit);
                       const opProfit = Number(row.operatingProfit ?? row.grossProfit);
                       const opex = Number(row.opex ?? 0);
+                      const fixedCosts = Number(row.fixedCosts ?? 0);
+                      const netProfit = Number(row.netProfit ?? row.operatingProfit ?? row.grossProfit);
                       const isExpanded = expandedMonth === row.month;
                       return (
                         <>
@@ -435,6 +470,12 @@ export function ProfitLossPage() {
                             <td className={cn('border-b px-3 py-2 text-right tabular-nums font-medium', opProfit >= 0 ? 'text-green-700' : 'text-red-600')}>
                               {opex > 0 ? formatMoney(row.operatingProfit) : <span className="text-muted-foreground">—</span>}
                             </td>
+                            <td className="border-b px-3 py-2 text-right tabular-nums text-purple-600">
+                              {fixedCosts > 0 ? formatMoney(row.fixedCosts) : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className={cn('border-b px-3 py-2 text-right tabular-nums font-semibold', netProfit >= 0 ? 'text-emerald-700' : 'text-red-600')}>
+                              {fixedCosts > 0 ? formatMoney(row.netProfit) : <span className="text-muted-foreground">—</span>}
+                            </td>
                             <td className="border-b px-3 py-2 text-right tabular-nums text-muted-foreground">{formatPercent(row.marginPercent)}</td>
                             <td className="border-b px-3 py-2 text-right text-muted-foreground">
                               {row.invoiceCount > 0 ? (
@@ -449,7 +490,7 @@ export function ProfitLossPage() {
                           </tr>
                           {isExpanded && (
                             <tr key={`${row.month}-detail`}>
-                              <td colSpan={10} className="border-b bg-muted/10 p-0">
+                              <td colSpan={12} className="border-b bg-muted/10 p-0">
                                 <MonthDrillDown month={row.month} />
                               </td>
                             </tr>

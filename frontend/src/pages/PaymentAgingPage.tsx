@@ -194,7 +194,7 @@ export function PaymentAgingPage() {
   return (
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Aging należności</h1>
+        <h1 className="text-xl font-semibold">Niezapłacone faktury</h1>
         {data && data.rows.length > 0 && (
           <button
             type="button"

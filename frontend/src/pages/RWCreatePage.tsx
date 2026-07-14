@@ -437,7 +437,7 @@ export function RWCreatePage() {
       <div
         className={cn(
           'fixed left-0 right-0 z-40 border-t border-border/60 bg-background/95 px-4 py-3 backdrop-blur-xl',
-          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:left-64',
+          'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0',
         )}
       >
         <div className="mx-auto max-w-3xl">

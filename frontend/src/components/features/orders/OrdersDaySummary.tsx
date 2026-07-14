@@ -183,8 +183,8 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
   return (
     <div
       className={cn(
-        'fixed bottom-[calc(83px+env(safe-area-inset-bottom))] left-0 right-0 z-40 px-3',
-        'md:bottom-0 md:left-64 md:pb-[max(0.35rem,env(safe-area-inset-bottom))]',
+        'fixed bottom-[calc(83px+env(safe-area-inset-bottom))] left-0 right-0 z-40 px-5',
+        'md:bottom-0 md:pb-[max(0.35rem,env(safe-area-inset-bottom))]',
       )}
     >
       <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-t-2xl border border-b-0 border-border/45 bg-card shadow-[0_-6px_24px_rgba(0,0,0,0.08)]">

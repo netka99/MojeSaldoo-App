@@ -21,6 +21,8 @@ from apps.ksef.xml_generator import generate_fa3_xml, generate_fa3_xml_base64
 from apps.orders.models import Order
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
+from apps.activity.log import log_activity
+from apps.activity.models import ActivityLog
 
 from .filters import InvoiceFilter
 from .models import Invoice
@@ -87,7 +89,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         if instance.status != Invoice.STATUS_DRAFT:
-            raise ValidationError({"detail": "Only draft invoices can be deleted."})
+            raise ValidationError({"detail": "Tylko faktury w statusie 'szkic' mogą być usunięte."})
         super().perform_destroy(instance)
 
     @action(
@@ -127,8 +129,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         from apps.users.models import get_workflow_settings
 
         invoice = self.get_object()
+        inv_ref = invoice.invoice_number or str(invoice.uuid)
+
         if invoice.status != Invoice.STATUS_DRAFT:
-            raise ValidationError({"detail": "Only draft invoices can be issued."})
+            log_activity(
+                user=request.user, action="invoice.issue",
+                status=ActivityLog.STATUS_ERROR, error_code="INVOICE_NOT_DRAFT",
+                object_type="invoice", object_id=inv_ref, request=request,
+            )
+            raise ValidationError({"detail": "Tylko faktury w statusie 'szkic' mogą być wystawione."})
 
         if invoice.order_id:
             wf = get_workflow_settings(request.user.current_company)
@@ -138,6 +147,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     status="delivered",
                 ).exists()
                 if not has_delivered_wz:
+                    log_activity(
+                        user=request.user, action="invoice.issue",
+                        status=ActivityLog.STATUS_ERROR, error_code="INVOICE_WZ_REQUIRED",
+                        object_type="invoice", object_id=inv_ref,
+                        error_detail=f"Zamówienie: {invoice.order.order_number}",
+                        request=request,
+                    )
                     return Response(
                         {
                             "detail": (
@@ -171,6 +187,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     )
                     invoiceable = qty_delivered - already_invoiced
                     if inv_item.quantity > invoiceable + Decimal("0.001"):
+                        log_activity(
+                            user=request.user, action="invoice.issue",
+                            status=ActivityLog.STATUS_ERROR, error_code="INVOICE_QTY_EXCEEDED",
+                            object_type="invoice", object_id=inv_ref,
+                            error_detail=f"Produkt: {inv_item.product_name}, zamówiono: {inv_item.quantity}, do fakturowania: {invoiceable}",
+                            request=request,
+                        )
                         return Response(
                             {
                                 "detail": (
@@ -186,6 +209,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice.status = Invoice.STATUS_ISSUED
         invoice.user = request.user
         invoice.save(update_fields=["status", "user", "updated_at"])
+        log_activity(
+            user=request.user, action="invoice.issue",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+        )
         return Response(self.get_serializer(invoice).data)
 
     @action(detail=True, methods=["post"], url_path="mark-paid")
@@ -198,7 +226,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         )
         if invoice.status not in payable_statuses:
             raise ValidationError(
-                {"detail": "Only issued, sent, or overdue invoices can be marked as paid."}
+                {"detail": "Tylko wystawione, wysłane lub przeterminowane faktury mogą być oznaczone jako zapłacone."}
             )
         invoice.status = Invoice.STATUS_PAID
         invoice.paid_at = timezone.now()
@@ -241,11 +269,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice = self.get_object()
 
         if invoice.status != Invoice.STATUS_ISSUED:
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="INVOICE_NOT_ISSUED",
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.pk),
+                request=request,
+            )
             return Response(
                 {"detail": "Tylko wystawione faktury mogą być wysłane do KSeF."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if invoice.ksef_status in ("pending", "sent", "accepted"):
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_WARNING, error_code="INVOICE_ALREADY_IN_KSEF",
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.pk),
+                request=request,
+            )
             return Response(
                 {"detail": f"Faktura jest już w KSeF (status: {invoice.ksef_status})."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -254,12 +294,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         company = request.user.current_company
 
         # Validate required company/customer fields for FA-3 XML
+        inv_ref = invoice.invoice_number or str(invoice.pk)
         if not company.nip:
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_NO_NIP_COMPANY",
+                object_type="invoice", object_id=inv_ref, request=request,
+            )
             return Response(
                 {"detail": "Uzupełnij NIP firmy przed wysłaniem faktury do KSeF."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not invoice.customer.nip:
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_NO_NIP_CUSTOMER",
+                object_type="invoice", object_id=inv_ref, request=request,
+            )
             return Response(
                 {"detail": "Nabywca nie ma uzupełnionego NIP. Uzupełnij dane klienta."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -269,11 +320,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         try:
             ksef_sess = KSeFSession.objects.get(company=company)
         except KSeFSession.DoesNotExist:
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_NO_SESSION",
+                object_type="invoice", object_id=inv_ref, request=request,
+            )
             return Response(
                 {"detail": "Brak sesji KSeF. Zaloguj się do KSeF przed wysłaniem faktury."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         if not ksef_sess.is_active():
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_SESSION_EXPIRED",
+                object_type="invoice", object_id=inv_ref, request=request,
+            )
             return Response(
                 {"detail": "Sesja KSeF wygasła. Zaloguj się ponownie do KSeF."},
                 status=status.HTTP_401_UNAUTHORIZED,
@@ -284,6 +345,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice_b64 = generate_fa3_xml_base64(invoice)
         except Exception as exc:
             logger.error("FA-3 XML generation failed for invoice %s: %s", invoice.pk, exc)
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_XML_FAILED",
+                object_type="invoice", object_id=inv_ref, error_detail=str(exc), request=request,
+            )
             return Response(
                 {"detail": f"Błąd generowania XML faktury: {exc}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -305,6 +371,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.ksef_status = "rejected"
             invoice.ksef_error_message = str(exc)
             invoice.save(update_fields=["ksef_status", "ksef_error_message", "updated_at"])
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_SEND_FAILED",
+                object_type="invoice", object_id=inv_ref, error_detail=str(exc), request=request,
+            )
             return Response(
                 {"detail": f"Błąd wysyłki do SSAPI: {exc}"},
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -326,7 +397,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             "ksef_error_message", "status", "updated_at",
         ])
         send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="sent")
-
+        log_activity(
+            user=request.user, action="ksef.send",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="invoice", object_id=inv_ref,
+        )
         return Response(self.get_serializer(invoice).data)
 
     @action(detail=True, methods=["get"], url_path="ksef-status")
@@ -385,11 +460,22 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 "ksef_number", "ksef_status", "upo_received", "invoice_hash", "updated_at",
             ])
             send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="accepted")
+            log_activity(
+                user=request.user, action="ksef.status",
+                status=ActivityLog.STATUS_SUCCESS,
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.pk),
+            )
         elif http_code == 200 and status_code and status_code >= 400:
             invoice.ksef_status = "rejected"
             invoice.ksef_error_message = status_block.get("description", "KSeF rejected the invoice.")
             invoice.save(update_fields=["ksef_status", "ksef_error_message", "updated_at"])
             send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="rejected")
+            log_activity(
+                user=request.user, action="ksef.status",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_REJECTED",
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.pk),
+                error_detail=invoice.ksef_error_message, request=request,
+            )
 
         return Response({**self.get_serializer(invoice).data, "_ssapi_raw": data})
 

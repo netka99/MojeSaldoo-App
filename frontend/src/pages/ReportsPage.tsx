@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { format, startOfMonth } from 'date-fns';
+import { format, startOfMonth, startOfYear } from 'date-fns';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { INVOICE_KSEF_STATUS_LABELS_PL } from '@/constants/invoiceKsefStatusPl';
@@ -16,6 +16,8 @@ import { useAuth } from '@/context/AuthContext';
 import { reportingService } from '@/services/reporting.service';
 import { cn } from '@/lib/utils';
 import type { KsefStatusReport } from '@/types/reporting.types';
+import { useFixedCostsQuery } from '@/query/use-fixed-costs';
+import { FIXED_COST_CATEGORY_LABELS, type FixedCostCategory } from '@/types/fixed-costs.types';
 
 /** Flat-rate tax rates by ryczałt category. */
 const RYCZALT_RATES: Record<string, number> = {
@@ -187,26 +189,78 @@ function ReportsPageContent() {
   const ksef = useKsefStatusReportQuery();
   const pl = useProfitLossQuery(dateFrom, dateTo);
 
+  // YTD revenue for annual tax forecast (always Jan 1 → today)
+  const ytdFrom = format(startOfYear(now), 'yyyy-MM-dd');
+  const ytdTo = format(now, 'yyyy-MM-dd');
+  const ytdSales = useSalesSummaryReportQuery(ytdFrom, ytdTo);
+  const ytdPl = useProfitLossQuery(ytdFrom, ytdTo);
+
+  // Fixed costs for break-even and cost structure cards
+  const { data: fixedCostsData = [] } = useFixedCostsQuery();
+  const activeFixedCosts = Array.isArray(fixedCostsData) ? fixedCostsData.filter((fc) => fc.is_active) : [];
+  const monthlyFixedTotal = activeFixedCosts.reduce(
+    (sum, fc) => sum + Number.parseFloat(fc.amount_monthly),
+    0,
+  );
+  const fixedCostsByCategory = activeFixedCosts.reduce<Record<string, number>>((acc, fc) => {
+    acc[fc.category] = (acc[fc.category] ?? 0) + Number.parseFloat(fc.amount_monthly);
+    return acc;
+  }, {});
+
   const ksefData = ksef.data;
   const legendRows = ksefData ? buildKsefLegendRows(ksefData) : [];
 
-  // Ryczałt profitability numbers derived from sales + P&L queries.
-  const ryczaltRevenue = sales.data
-    ? Number.parseFloat(String(sales.data.totalGross))
+  // Ryczałt profitability — use P&L totals (invoice-based) for revenue.
+  // SalesSummary sums order.total_gross which may be unpopulated for ryczałt users
+  // who create invoices directly without filling order financials.
+  const ryczaltRevenue = pl.data?.totals
+    ? Number.parseFloat(String(pl.data.totals.revenue))
     : null;
-  const ryczaltOpex = pl.data?.totals
-    ? Number.parseFloat(String(pl.data.totals.opex))
-    : null;
+  const ryczaltOpex =
+    hasCostAllocation && pl.data?.totals
+      ? Number.parseFloat(String(pl.data.totals.opex))
+      : null;
+  const ryczaltFixedCosts =
+    pl.data?.totals?.fixedCosts !== undefined
+      ? Number.parseFloat(String(pl.data.totals.fixedCosts))
+      : null;
   const ryczaltProfit =
-    ryczaltRevenue !== null && ryczaltOpex !== null
-      ? ryczaltRevenue - ryczaltOpex
-      : ryczaltRevenue !== null
+    ryczaltRevenue !== null
       ? ryczaltRevenue
+        - (ryczaltOpex ?? 0)
+        - (ryczaltFixedCosts ?? 0)
       : null;
   const estimatedTax =
     ryczaltRevenue !== null && ryczaltRate !== null
       ? ryczaltRevenue * ryczaltRate
       : null;
+
+  // Annual tax forecast (YTD extrapolation)
+  const ytdRevenue = ytdPl.data?.totals
+    ? Number.parseFloat(String(ytdPl.data.totals.revenue))
+    : null;
+  const monthsElapsed = now.getMonth() + 1; // 1–12
+  const annualProjected =
+    ytdRevenue !== null && monthsElapsed > 0
+      ? (ytdRevenue / monthsElapsed) * 12
+      : null;
+  const annualTaxProjected =
+    annualProjected !== null && ryczaltRate !== null
+      ? annualProjected * ryczaltRate
+      : null;
+  const monthlyTaxInstalment =
+    annualTaxProjected !== null ? annualTaxProjected / 12 : null;
+
+  // Break-even
+  const avgOrderValue = sales.data
+    ? Number.parseFloat(String(sales.data.avgOrderValue))
+    : null;
+  const ordersNeededMonthly =
+    monthlyFixedTotal > 0 && avgOrderValue !== null && avgOrderValue > 0
+      ? Math.ceil(monthlyFixedTotal / avgOrderValue)
+      : null;
+  const ordersNeededWeekly =
+    ordersNeededMonthly !== null ? Math.ceil(ordersNeededMonthly / 4.33) : null;
 
   return (
     <div className="p-6">
@@ -225,6 +279,30 @@ function ReportsPageContent() {
           >
             Drukuj PDF
           </button>
+        </div>
+      </div>
+
+      {/* ── Date range picker — global for all cards ─────────────────── */}
+      <div className="no-print mb-6 flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor="report-date-from" className="mb-1 block text-xs text-muted-foreground">Od</label>
+          <input
+            id="report-date-from"
+            type="date"
+            className={cn(inputClass, 'w-full min-w-[10rem]')}
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+        </div>
+        <div>
+          <label htmlFor="report-date-to" className="mb-1 block text-xs text-muted-foreground">Do</label>
+          <input
+            id="report-date-to"
+            type="date"
+            className={cn(inputClass, 'w-full min-w-[10rem]')}
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
         </div>
       </div>
 
@@ -250,7 +328,7 @@ function ReportsPageContent() {
                   to="/reports/profit-loss"
                   className="shrink-0 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
                 >
-                  Szczegółowy P&L →
+                  Zysk i Koszty →
                 </Link>
               </div>
             </CardHeader>
@@ -258,9 +336,9 @@ function ReportsPageContent() {
               {(sales.isFetching && !sales.data) || (pl.isFetching && !pl.data) ? (
                 <p className="text-sm text-muted-foreground">Ładowanie…</p>
               ) : (
-                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <dt title="Suma brutto wszystkich wystawionych faktur sprzedażowych w wybranym okresie." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Przychody brutto
                     </dt>
                     <dd className="mt-1 text-xl font-semibold tabular-nums">
@@ -268,37 +346,32 @@ function ReportsPageContent() {
                     </dd>
                   </div>
 
-                  {hasCostAllocation ? (
+                  {hasCostAllocation && (
                     <div>
-                      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <dt title="Koszty operacyjne z faktur zakupowych KSeF oznaczonych tagiem OPEX (media, usługi zewnętrzne itp.)." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">
                         Koszty OPEX
                       </dt>
                       <dd className="mt-1 text-xl font-semibold tabular-nums text-destructive">
                         {ryczaltOpex !== null && ryczaltOpex > 0
                           ? `− ${formatMoney(ryczaltOpex)}`
-                          : ryczaltOpex === 0
-                          ? formatMoney(0)
-                          : '—'}
+                          : formatMoney(0)}
                       </dd>
                     </div>
-                  ) : (
+                  )}
+
+                  {ryczaltFixedCosts !== null && ryczaltFixedCosts > 0 && (
                     <div>
-                      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Koszty OPEX
+                      <dt title="Suma kosztów stałych z modułu Koszty Stałe (wynagrodzenia, ZUS, czynsz itp.) aktywnych w wybranym okresie." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Koszty stałe
                       </dt>
-                      <dd className="mt-1 text-sm text-muted-foreground">
-                        <Link
-                          to="/settings/company"
-                          className="underline underline-offset-2 hover:text-foreground"
-                        >
-                          Włącz moduł Kosztów
-                        </Link>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums text-purple-600 dark:text-purple-400">
+                        − {formatMoney(ryczaltFixedCosts)}
                       </dd>
                     </div>
                   )}
 
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <dt title="Przychody minus wszystkie koszty (OPEX + stałe). To ile realnie zostaje w firmie po wydatkach." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Wynik rzeczywisty
                     </dt>
                     <dd
@@ -312,7 +385,7 @@ function ReportsPageContent() {
                   </div>
 
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <dt title={`Na ryczałcie podatek płacisz od przychodu, nie od zysku. Przychody × stawka ${ryczaltRateLabel ?? ''}. Przed odliczeniem składek ZUS.`} className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Szacowany podatek
                       {ryczaltRateLabel && ` (${ryczaltRateLabel})`}
                     </dt>
@@ -322,51 +395,180 @@ function ReportsPageContent() {
                   </div>
                 </dl>
               )}
-              {!hasCostAllocation && (
+              {!hasCostAllocation && monthlyFixedTotal === 0 && (
                 <p className="mt-3 text-xs text-muted-foreground">
-                  💡 Na ryczałcie podatek liczony jest od przychodu — nie od zysku. Jeśli masz
-                  koszty firmowe (telefon, internet, leasing), włącz moduł Kosztów aby zobaczyć
-                  realny wynik finansowy po odjęciu wydatków.
+                  Dodaj koszty stałe (wynagrodzenia, ZUS, czynsz) w sekcji{' '}
+                  <Link to="/fixed-costs" className="underline underline-offset-2 hover:text-foreground">
+                    Koszty Stałe
+                  </Link>
+                  {' '}aby zobaczyć realny wynik po odjęciu wydatków.
                 </p>
               )}
             </CardContent>
           </Card>
         )}
 
-        <Card>
-          <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <CardTitle className="text-lg">Podsumowanie sprzedaży</CardTitle>
-              <p className="print-only mt-1 text-xs text-muted-foreground">
-                Okres: {dateFrom} — {dateTo}
+        {/* ── Prognoza roczna podatku — ryczałt only ────────────────────── */}
+        {isRyczalt && ryczaltRate !== null && (
+          <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-900/10">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="text-lg">Prognoza roczna podatku</CardTitle>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Na podstawie przychodów od stycznia {now.getFullYear()} do dziś ({monthsElapsed}&nbsp;mies.)
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  Szacunek
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {ytdPl.isFetching && !ytdPl.data ? (
+                <p className="text-sm text-muted-foreground">Ładowanie…</p>
+              ) : (
+                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <div>
+                    <dt title={`Suma brutto faktur sprzedażowych od 1 stycznia ${now.getFullYear()} do dziś.`} className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Przychód YTD</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {ytdRevenue !== null ? pln.format(ytdRevenue) : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt title={`Przychód YTD ÷ ${monthsElapsed} mies. × 12. Zakłada że kolejne miesiące będą podobne do dotychczasowych.`} className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Prognoza roczna</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {annualProjected !== null ? pln.format(annualProjected) : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt title={`Prognoza roczna × stawka ${ryczaltRateLabel ?? ''}. Przed odliczeniem składek ZUS i zdrowotnej.`} className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Szac. podatek roczny ({ryczaltRateLabel})
+                    </dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                      {annualTaxProjected !== null ? pln.format(annualTaxProjected) : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt title="Szacowany podatek roczny ÷ 12. Orientacyjna kwota jaką powinieneś odkładać co miesiąc na podatek." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Zaliczka miesięczna</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                      {monthlyTaxInstalment !== null ? pln.format(monthlyTaxInstalment) : '—'}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+              <p className="mt-3 text-xs text-muted-foreground">
+                ⚠️ Szacunek orientacyjny — przed odliczeniem składek ZUS i zdrowotnej. Dokładną kwotę zaliczki ustala biuro rachunkowe.
+                Prognoza zakłada równomierne przychody przez cały rok.
               </p>
-            </div>
-            <div className="no-print flex flex-wrap items-end gap-3">
-              <div>
-                <label htmlFor="report-date-from" className="mb-1 block text-xs text-muted-foreground">
-                  Od
-                </label>
-                <input
-                  id="report-date-from"
-                  type="date"
-                  className={cn(inputClass, 'w-full min-w-[10rem]')}
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Próg rentowności ──────────────────────────────────────────── */}
+        {monthlyFixedTotal > 0 && (
+          <Card className="border-purple-200 bg-purple-50/40 dark:border-purple-900/40 dark:bg-purple-900/10">
+            <CardHeader>
+              <CardTitle className="text-lg">Próg rentowności</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Ile musisz sprzedać, żeby pokryć koszty stałe
+              </p>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div>
+                  <dt title="Suma wszystkich aktywnych kosztów stałych z modułu Koszty Stałe (wynagrodzenia, ZUS, czynsz itp.)." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Koszty stałe / mies.</dt>
+                  <dd className="mt-1 text-xl font-semibold tabular-nums text-destructive">
+                    {pln.format(monthlyFixedTotal)}
+                  </dd>
+                </div>
+                <div>
+                  <dt title="Średnia wartość brutto zamówienia w wybranym okresie. Podstawa do obliczenia progu rentowności." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Śr. wartość zamówienia</dt>
+                  <dd className="mt-1 text-xl font-semibold tabular-nums">
+                    {avgOrderValue !== null && avgOrderValue > 0 ? pln.format(avgOrderValue) : '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt title="Koszty stałe ÷ średnia wartość zamówienia. Tyle zamówień musisz zrealizować, żeby pokryć koszty stałe." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Zamówień / miesiąc</dt>
+                  <dd className="mt-1 text-xl font-semibold tabular-nums text-purple-700 dark:text-purple-400">
+                    {ordersNeededMonthly !== null ? ordersNeededMonthly : '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt title="Zamówień miesięcznie ÷ 4,33 tygodnie. Ile zamówień tygodniowo potrzebujesz żeby wyjść na zero." className="cursor-help text-xs font-medium uppercase tracking-wide text-muted-foreground">Zamówień / tydzień</dt>
+                  <dd className="mt-1 text-xl font-semibold tabular-nums text-purple-700 dark:text-purple-400">
+                    {ordersNeededWeekly !== null ? ordersNeededWeekly : '—'}
+                  </dd>
+                </div>
+              </dl>
+              {ordersNeededMonthly !== null ? (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Twoja firma musi zrealizować co najmniej{' '}
+                  <span className="font-semibold text-foreground">{ordersNeededMonthly} zamówień miesięcznie</span>
+                  {' '}(ok. <span className="font-semibold text-foreground">{ordersNeededWeekly} tygodniowo</span>),
+                  żeby pokryć koszty stałe — zanim wygenerujesz pierwszy grosz zysku.
+                </p>
+              ) : (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Ustaw zakres dat z zamówieniami, aby zobaczyć średnią wartość zamówienia.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Struktura kosztów stałych ─────────────────────────────────── */}
+        {activeFixedCosts.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Struktura kosztów stałych</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Miesięczny rozkład — {pln.format(monthlyFixedTotal)} łącznie
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {Object.entries(fixedCostsByCategory)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([cat, amount]) => {
+                    const pct = Math.round((amount / monthlyFixedTotal) * 100);
+                    return (
+                      <div key={cat}>
+                        <div className="mb-1 flex items-center justify-between text-sm">
+                          <span className="text-foreground">
+                            {FIXED_COST_CATEGORY_LABELS[cat as FixedCostCategory] ?? cat}
+                          </span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {pln.format(amount)}{' '}
+                            <span className="text-xs">({pct}%)</span>
+                          </span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-2 rounded-full bg-purple-500/70"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
-              <div>
-                <label htmlFor="report-date-to" className="mb-1 block text-xs text-muted-foreground">
-                  Do
-                </label>
-                <input
-                  id="report-date-to"
-                  type="date"
-                  className={cn(inputClass, 'w-full min-w-[10rem]')}
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                />
-              </div>
-            </div>
+              <p className="mt-4 text-xs text-muted-foreground">
+                Zarządzaj kosztami stałymi w{' '}
+                <Link to="/fixed-costs" className="underline underline-offset-2 hover:text-foreground">
+                  Koszty Stałe i Kadry
+                </Link>.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Podsumowanie sprzedaży</CardTitle>
+            <p className="print-only mt-1 text-xs text-muted-foreground">
+              Okres: {dateFrom} — {dateTo}
+            </p>
           </CardHeader>
           <CardContent>
             {sales.isError && (

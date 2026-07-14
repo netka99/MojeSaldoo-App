@@ -164,6 +164,12 @@ const RWCreatePage = lazy(() =>
 const TeamPage = lazy(() =>
   import('./pages/TeamPage').then((m) => ({ default: m.TeamPage })),
 );
+const FixedCostsPage = lazy(() =>
+  import('./pages/FixedCostsPage').then((m) => ({ default: m.FixedCostsPage })),
+);
+const ActivityPage = lazy(() =>
+  import('./pages/ActivityPage').then((m) => ({ default: m.ActivityPage })),
+);
 
 function RouteFallback() {
   return (
@@ -477,7 +483,9 @@ function App() {
                   path="/reports/product-margin"
                   element={
                     <ModuleRouteGate module="reporting">
-                      <ProductMarginPage />
+                      <ModuleRouteGate module="purchasing">
+                        <ProductMarginPage />
+                      </ModuleRouteGate>
                     </ModuleRouteGate>
                   }
                 />
@@ -493,7 +501,9 @@ function App() {
                   path="/reports/supplier-costs"
                   element={
                     <ModuleRouteGate module="reporting">
-                      <SupplierCostsPage />
+                      <ModuleRouteGate module="purchasing">
+                        <SupplierCostsPage />
+                      </ModuleRouteGate>
                     </ModuleRouteGate>
                   }
                 />
@@ -501,7 +511,9 @@ function App() {
                   path="/reports/inventory"
                   element={
                     <ModuleRouteGate module="reporting">
-                      <InventoryReportPage />
+                      <ModuleRouteGate module="warehouses">
+                        <InventoryReportPage />
+                      </ModuleRouteGate>
                     </ModuleRouteGate>
                   }
                 />
@@ -509,7 +521,9 @@ function App() {
                   path="/reports/customer-margin"
                   element={
                     <ModuleRouteGate module="reporting">
-                      <CustomerMarginPage />
+                      <ModuleRouteGate module="purchasing">
+                        <CustomerMarginPage />
+                      </ModuleRouteGate>
                     </ModuleRouteGate>
                   }
                 />
@@ -585,6 +599,11 @@ function App() {
                     </ModuleRouteGate>
                   }
                 />
+                <Route
+                  path="/fixed-costs"
+                  element={<FixedCostsPage />}
+                />
+                <Route path="/activity" element={<ActivityPage />} />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />
                 <Route path="/settings/team" element={<TeamPage />} />

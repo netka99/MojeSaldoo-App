@@ -18,6 +18,8 @@ from django.http import HttpResponse
 
 from apps.products.models import Product
 from apps.suppliers.models import Supplier
+from apps.activity.log import log_activity
+from apps.activity.models import ActivityLog
 from .models import KSeFSession, KSeFProductMapping, ReceivedKSeFInvoice, ReceivedKSeFInvoiceLine
 from . import ssapi_client
 
@@ -116,6 +118,11 @@ class KSeFSessionView(APIView):
         # NIP comes from the company record, not from the request body
         nip = (company.nip or "").strip()
         if not nip:
+            log_activity(
+                user=request.user, action="ksef.auth",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_NO_NIP_COMPANY",
+                request=request,
+            )
             return Response(
                 {"detail": "Uzupełnij NIP firmy przed uwierzytelnieniem KSeF."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -125,18 +132,34 @@ class KSeFSessionView(APIView):
             tokens, _cookies = ssapi_client.authenticate(nip, passphrase, str(company.id))
         except ValueError as exc:
             if "ksef_auth_in_progress" in str(exc):
+                log_activity(
+                    user=request.user, action="ksef.auth",
+                    status=ActivityLog.STATUS_WARNING, error_code="KSEF_AUTH_IN_PROGRESS",
+                    error_detail=str(exc), request=request,
+                )
                 return Response(
                     {"detail": "Uwierzytelnianie KSeF w trakcie, spróbuj ponownie za chwilę."},
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
+            log_activity(
+                user=request.user, action="ksef.auth",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_AUTH_FAILED",
+                error_detail=str(exc), request=request,
+            )
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.error("KSeF authenticate error: %s", exc)
+            log_activity(
+                user=request.user, action="ksef.auth",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_AUTH_FAILED",
+                error_detail=str(exc), request=request,
+            )
             return Response(
                 {"detail": f"Błąd uwierzytelnienia KSeF: {exc}"},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
+        log_activity(user=request.user, action="ksef.auth", status=ActivityLog.STATUS_SUCCESS)
         ksef_sess = KSeFSession.objects.get(company=company)
         return Response({
             "active": True,

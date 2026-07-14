@@ -12,8 +12,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.products.models import ProductStock, StockMovement, Warehouse
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, company_has_module
 from apps.users.tenant import filter_queryset_for_current_company
+from apps.activity.log import log_activity
+from apps.activity.models import ActivityLog
 
 from .filters import OrderFilter
 from .models import Order
@@ -100,13 +102,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
             if order.status != Order.STATUS_DRAFT:
                 return Response(
-                    {"error": "Only draft orders can be confirmed"},
+                    {"error": "Tylko zamówienia w statusie 'szkic' mogą być potwierdzone."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            track_stock = company_has_module(order.company, "warehouses")
             items = list(order.items.all())
             main_wh = None
-            if items:
+
+            if items and track_stock:
                 main_wh = (
                     Warehouse.objects.select_for_update()
                     .filter(
@@ -118,17 +122,26 @@ class OrderViewSet(viewsets.ModelViewSet):
                     .first()
                 )
                 if main_wh is None:
+                    log_activity(
+                        user=request.user,
+                        action="order.confirm",
+                        status=ActivityLog.STATUS_ERROR,
+                        error_code="ORDER_NO_WAREHOUSE",
+                        object_type="order",
+                        object_id=str(order.uuid),
+                        request=request,
+                    )
                     raise ValidationError(
                         {
                             "warehouse": (
-                                "No active main warehouse found for this company. "
-                                "Configure a warehouse with type 'main' before confirming orders."
+                                "Brak aktywnego magazynu głównego dla tej firmy. "
+                                "Skonfiguruj magazyn typu 'main' przed potwierdzeniem zamówień."
                             )
                         }
                     )
 
             stocks_by_product = {}
-            if items:
+            if items and track_stock:
                 product_ids = sorted({item.product_id for item in items})
                 for pid in product_ids:
                     stock, _created = ProductStock.objects.get_or_create(
@@ -166,36 +179,42 @@ class OrderViewSet(viewsets.ModelViewSet):
                     raise ValidationError({"stock": shortfalls})
 
             movement_user = order.user or request.user
-            for item in items:
-                stock = stocks_by_product[item.product_id]
-                qty = item.quantity
-                qty_before_avail = stock.quantity_available
-                stock.quantity_available -= qty
-                stock.quantity_reserved += qty
-                stock.save(
-                    update_fields=[
-                        "quantity_available",
-                        "quantity_reserved",
-                    ]
-                )
-                StockMovement.objects.create(
-                    company_id=order.company_id,
-                    product_id=item.product_id,
-                    warehouse=main_wh,
-                    user=movement_user,
-                    movement_type=StockMovement.MovementType.RESERVATION,
-                    quantity=-qty,
-                    quantity_before=qty_before_avail,
-                    quantity_after=stock.quantity_available,
-                    reference_type="order",
-                    reference_id=order.uuid,
-                    created_by=request.user,
-                )
+            if track_stock:
+                for item in items:
+                    stock = stocks_by_product[item.product_id]
+                    qty = item.quantity
+                    qty_before_avail = stock.quantity_available
+                    stock.quantity_available -= qty
+                    stock.quantity_reserved += qty
+                    stock.save(
+                        update_fields=[
+                            "quantity_available",
+                            "quantity_reserved",
+                        ]
+                    )
+                    StockMovement.objects.create(
+                        company_id=order.company_id,
+                        product_id=item.product_id,
+                        warehouse=main_wh,
+                        user=movement_user,
+                        movement_type=StockMovement.MovementType.RESERVATION,
+                        quantity=-qty,
+                        quantity_before=qty_before_avail,
+                        quantity_after=stock.quantity_available,
+                        reference_type="order",
+                        reference_id=order.uuid,
+                        created_by=request.user,
+                    )
 
             order.status = Order.STATUS_CONFIRMED
             if not order.confirmed_at:
                 order.confirmed_at = timezone.now()
             order.save()
+            log_activity(
+                user=request.user, action="order.confirm",
+                status=ActivityLog.STATUS_SUCCESS,
+                object_type="order", object_id=str(order.uuid),
+            )
 
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
@@ -206,8 +225,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         if order.status not in (Order.STATUS_DRAFT, Order.STATUS_CONFIRMED):
             return Response(
                 {
-                    "error": f"Order cannot be cancelled in status {order.status!r} "
-                    f"(only draft or confirmed)."
+                    "error": f"Zamówienie w statusie '{order.status}' nie może być anulowane "
+                    "(tylko szkic lub potwierdzone)."
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -222,17 +241,18 @@ class OrderViewSet(viewsets.ModelViewSet):
             if order.status not in (Order.STATUS_DRAFT, Order.STATUS_CONFIRMED):
                 return Response(
                     {
-                        "error": f"Order cannot be cancelled in status {order.status!r} "
-                        f"(only draft or confirmed)."
+                        "error": f"Zamówienie w statusie '{order.status}' nie może być anulowane "
+                        "(tylko szkic lub potwierdzone)."
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            track_stock = company_has_module(order.company, "warehouses")
             release_stock = order.status in _ORDER_STATUSES_WITH_LINE_RESERVATION
             items = list(order.items.all())
             main_wh = None
 
-            if release_stock and items:
+            if release_stock and items and track_stock:
                 main_wh = (
                     Warehouse.objects.select_for_update()
                     .filter(
@@ -247,8 +267,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                     raise ValidationError(
                         {
                             "warehouse": (
-                                "No active main warehouse found for this company; "
-                                "cannot release reserved stock."
+                                "Brak aktywnego magazynu głównego — nie można zwolnić "
+                                "zarezerwowanego stanu magazynowego."
                             )
                         }
                     )
@@ -271,8 +291,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                                         "product_id": str(pid),
                                         "product_name": line.product.name,
                                         "detail": (
-                                            "No ProductStock row for this product at the "
-                                            "main warehouse; cannot unreserve."
+                                            "Brak rekordu stanu magazynowego dla tego produktu — "
+                                            "nie można cofnąć rezerwacji."
                                         ),
                                     }
                                 ]

@@ -95,7 +95,7 @@ export const reportingService = {
   downloadJpkEwp: async (year: number, month: number): Promise<void> => {
     const { authStorage } = await import('./api');
     const token = authStorage.getAccessToken();
-    const resp = await fetch(`/api/v1/reporting/jpk-ewp/?year=${year}&month=${month}`, {
+    const resp = await fetch(`/api/reports/jpk-ewp/?year=${year}&month=${month}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!resp.ok) {

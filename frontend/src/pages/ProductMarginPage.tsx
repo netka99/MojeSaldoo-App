@@ -6,6 +6,7 @@ import { useProductMarginQuery, useProductMarginDetailQuery } from '@/query/use-
 import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const qty4 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 4 });
@@ -248,6 +249,8 @@ export function ProductMarginPage() {
           </button>
         )}
       </div>
+
+      <RyczaltManagerialNotice />
 
       {/* Filters */}
       <Card>

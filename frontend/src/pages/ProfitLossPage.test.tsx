@@ -64,6 +64,10 @@ const REPORT_NO_OPEX: ProfitLossReport = {
       opexByCategory: {},
       operatingProfit: '4000.00',
       operatingMarginPercent: 40.0,
+      fixedCosts: '0',
+      fixedCostsByCategory: {},
+      netProfit: '4000.00',
+      netMarginPercent: 40.0,
     },
   ],
   totals: {
@@ -74,6 +78,9 @@ const REPORT_NO_OPEX: ProfitLossReport = {
     opex: '0',
     operatingProfit: '4000.00',
     operatingMarginPercent: 40.0,
+    fixedCosts: '0',
+    netProfit: '4000.00',
+    netMarginPercent: 40.0,
   },
 };
 
@@ -91,6 +98,10 @@ const REPORT_WITH_OPEX: ProfitLossReport = {
       opexByCategory: { utilities: '1200.00', rent: '800.00' },
       operatingProfit: '8000.00',
       operatingMarginPercent: 40.0,
+      fixedCosts: '0',
+      fixedCostsByCategory: {},
+      netProfit: '8000.00',
+      netMarginPercent: 40.0,
     },
   ],
   totals: {
@@ -101,6 +112,9 @@ const REPORT_WITH_OPEX: ProfitLossReport = {
     opex: '2000.00',
     operatingProfit: '8000.00',
     operatingMarginPercent: 40.0,
+    fixedCosts: '0',
+    netProfit: '8000.00',
+    netMarginPercent: 40.0,
   },
 };
 
@@ -154,7 +168,7 @@ beforeEach(() => {
 describe('ProfitLossPage', () => {
   it('renders page heading', () => {
     renderPage();
-    expect(screen.getByRole('heading', { name: /wynik finansowy/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /zysk i koszty/i })).toBeInTheDocument();
   });
 
   it('redirects to login when no token', () => {
@@ -225,7 +239,7 @@ describe('ProfitLossPage', () => {
 
   it('shows empty state when no rows', () => {
     hoisted.useProfitLossQuery.mockReturnValue({
-      data: { rows: [], totals: { revenue: 0, purchaseCosts: 0, grossProfit: 0, marginPercent: null, opex: 0, operatingProfit: 0, operatingMarginPercent: null } },
+      data: { rows: [], totals: { revenue: 0, purchaseCosts: 0, grossProfit: 0, marginPercent: null, opex: 0, operatingProfit: 0, operatingMarginPercent: null, fixedCosts: 0, netProfit: 0, netMarginPercent: null } },
       isLoading: false,
       isError: false,
     });
