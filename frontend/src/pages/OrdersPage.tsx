@@ -11,7 +11,7 @@ import { formatOrderLineQuantityWithUnit } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import { useGenerateDeliveryForOrderMutation, useDeliveryByOrdersQuery } from '@/query/use-delivery';
 import { useAllActiveCustomersQuery } from '@/query/use-customers';
-import { useOrdersByDateQuery } from '@/query/use-orders';
+import { useOrdersByDateQuery, useOpenOrdersQuery } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
 import type { Customer, Order, OrderItem, DeliveryDocument } from '@/types';
 
@@ -68,11 +68,14 @@ export function OrdersPage() {
   return <OrdersPageContent />;
 }
 
+type ViewMode = 'day' | 'all';
+
 function OrdersPageContent() {
   const navigate = useNavigate();
   const canOrders = usePermission('can_manage_orders');
   const [searchParams, setSearchParams] = useSearchParams();
   const date = searchParams.get('date') ?? todayIso();
+  const [viewMode, setViewMode] = useState<ViewMode>('day');
 
   const [search, setSearch] = useState('');
   const [pill, setPill] = useState<FilterPill>('all');
@@ -104,6 +107,9 @@ function OrdersPageContent() {
   // Orders for the selected date — overlay on the customer list
   const { data: orderData, isPending: ordersPending, refetch: ordersRefetch } = useOrdersByDateQuery(date);
   const orders = orderData?.results ?? [];
+
+  // All open orders (cross-day view)
+  const { data: openOrders = [], isPending: openOrdersPending, refetch: openOrdersRefetch } = useOpenOrdersQuery();
 
   const showLoading = customersPending || (ordersPending && orderData === undefined);
 
@@ -313,185 +319,228 @@ function OrdersPageContent() {
         'pb-[calc(83px+11.5rem+env(safe-area-inset-bottom))] md:pb-[calc(10.5rem+env(safe-area-inset-bottom))]',
       )}
     >
-      <OrderDayDateNav date={date} onChange={handleDateChange} />
-
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Wybierz sklep</h1>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">Wybierz lokalizację do sprzedaży</p>
-        </div>
-        <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-          {deliveryEnabled && wzSelectionMode ? (
-            <>
-              {wzProgress && generatingIds.size > 0 ? (
-                <span className="w-full text-right text-[11px] text-muted-foreground sm:w-auto" role="status" aria-live="polite">
-                  WZ ({wzProgress.current}/{wzProgress.total})…
-                </span>
-              ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0 rounded-full"
-                disabled={generatingIds.size > 0}
-                onClick={onCancelWzSelection}
-              >
-                Anuluj
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="shrink-0 rounded-full"
-                disabled={selectedIds.size === 0 || generatingIds.size > 0}
-                loading={generatingIds.size > 0 && !wzProgress}
-                onClick={() => void onConfirmWzSelection()}
-              >
-                Utwórz WZ ({selectedIds.size})
-              </Button>
-            </>
-          ) : null}
-          {deliveryEnabled && !wzSelectionMode ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0 rounded-full"
-                onClick={() => navigate('/van-routes')}
-              >
-                Trasy Vana
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0 rounded-full"
-                disabled={wzEligibleOrders.length === 0}
-                onClick={onEnterWzSelection}
-              >
-                Generuj WZ
-              </Button>
-            </>
-          ) : null}
-          {canOrders && (
-            <Button
-              type="button"
-              size="sm"
-              className="shrink-0 rounded-full"
-              onClick={() => navigate(`/orders/new?date=${encodeURIComponent(date)}`)}
-            >
-              + Nowe zamówienie
-            </Button>
+      {/* View mode toggle */}
+      <div className="flex gap-1 rounded-xl bg-surface-card p-1 shadow-soft self-start">
+        <button
+          type="button"
+          onClick={() => setViewMode('day')}
+          className={cn(
+            'rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors',
+            viewMode === 'day'
+              ? 'bg-primary text-primary-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
           )}
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground" />
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Szukaj sklepu…"
-          aria-label="Szukaj sklepu po nazwie"
-          className="shadow-soft h-11 w-full rounded-xl border-0 bg-surface-card pl-11 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/25"
-        />
-      </div>
-
-      {/* Pills */}
-      <div className="-mx-1 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-        {PILLS.filter((p) => !(['has_wz', 'no_wz'] as FilterPill[]).includes(p.key) || (deliveryEnabled && canManageDelivery)).map((p) => (
-          <button
-            key={p.key}
-            type="button"
-            onClick={() => setPill(p.key)}
-            className={cn(
-              'shrink-0 rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
-              pill === p.key
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-surface-card text-foreground shadow-soft',
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {wzError && (
-        <div className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
-          {wzError}
-        </div>
-      )}
-
-      {customersError && (
-        <div className="flex flex-col gap-3 rounded-2xl bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
-          <p className="text-sm text-destructive">Nie udało się załadować listy sklepów</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => { void customersRefetch(); void ordersRefetch(); }}>
-            Spróbuj ponownie
-          </Button>
-        </div>
-      )}
-
-      {showLoading && (
-        <div className="flex flex-col items-center gap-3 py-10" aria-busy="true" role="status">
-          <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
-          <span className="text-sm text-muted-foreground">Ładowanie…</span>
-        </div>
-      )}
-
-      {!showLoading && !customersError && customers.length === 0 && (
-        <p className="py-10 text-center text-sm text-muted-foreground">Brak aktywnych sklepów.</p>
-      )}
-
-      {!showLoading && !customersError && customers.length > 0 && filtered.length === 0 && (
-        <p className="py-10 text-center text-sm text-muted-foreground">Brak sklepów dla wybranego filtra.</p>
-      )}
-
-      {!showLoading && !customersError && grouped.length > 0 && (
-        <motion.div
-          className="space-y-5"
-          variants={listVariants}
-          initial="hidden"
-          animate="show"
-          key={`${date}-${pill}-${search}`}
         >
-          {grouped.map(([letter, rows]) => (
-            <section key={letter} aria-label={`Sklepy — ${letter}`}>
-              <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {letter}
-              </h2>
-              <ul className="flex flex-col gap-2">
-                {rows.map((customer) => {
-                  const customerOrders = ordersByCustomerId.get(customer.id) ?? [];
-                  const primaryOrder = customerOrders[0] ?? null;
-                  const isSelected = customerOrders.some((o) => selectedIds.has(o.id));
-                  const isGenerating = customerOrders.some((o) => generatingIds.has(o.id));
-                  return (
-                    <motion.li key={customer.id} variants={rowVariants}>
-                      <CustomerShopRow
-                        customer={customer}
-                        orders={customerOrders}
-                        primaryOrder={primaryOrder}
-                        wzByOrderId={wzByOrderId}
-                        zwByOrderId={zwByOrderId}
-                        wzSelectionMode={wzSelectionMode}
-                        wzEligibleIdSet={wzEligibleIdSet}
-                        isSelected={isSelected}
-                        isGenerating={isGenerating}
-                        onSelect={primaryOrder ? () => customerOrders.forEach((o) => { if (wzEligibleIdSet.has(o.id)) toggleSelect(o.id); }) : undefined}
-                        onClick={() => handleCardClick(customer)}
-                      />
-                    </motion.li>
-                  );
-                })}
-              </ul>
-            </section>
-          ))}
-        </motion.div>
+          Widok dzienny
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('all')}
+          className={cn(
+            'rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors',
+            viewMode === 'all'
+              ? 'bg-primary text-primary-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          Wszystkie otwarte
+        </button>
+      </div>
+
+      {viewMode === 'all' && (
+        <AllOrdersView
+          orders={openOrders}
+          isPending={openOrdersPending}
+          onRefetch={() => void openOrdersRefetch()}
+          onOrderClick={(id) => navigate(`/orders/${id}`)}
+          canOrders={canOrders ?? false}
+          onNewOrder={() => navigate(`/orders/new?date=${encodeURIComponent(todayIso())}`)}
+        />
       )}
 
-      <OrdersDaySummary orders={orders} />
+      {viewMode === 'day' && (
+        <>
+          <OrderDayDateNav date={date} onChange={handleDateChange} />
+
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Wybierz sklep</h1>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">Wybierz lokalizację do sprzedaży</p>
+            </div>
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              {deliveryEnabled && wzSelectionMode ? (
+                <>
+                  {wzProgress && generatingIds.size > 0 ? (
+                    <span className="w-full text-right text-[11px] text-muted-foreground sm:w-auto" role="status" aria-live="polite">
+                      WZ ({wzProgress.current}/{wzProgress.total})…
+                    </span>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 rounded-full"
+                    disabled={generatingIds.size > 0}
+                    onClick={onCancelWzSelection}
+                  >
+                    Anuluj
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="shrink-0 rounded-full"
+                    disabled={selectedIds.size === 0 || generatingIds.size > 0}
+                    loading={generatingIds.size > 0 && !wzProgress}
+                    onClick={() => void onConfirmWzSelection()}
+                  >
+                    Utwórz WZ ({selectedIds.size})
+                  </Button>
+                </>
+              ) : null}
+              {deliveryEnabled && !wzSelectionMode ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 rounded-full"
+                    onClick={() => navigate('/van-routes')}
+                  >
+                    Trasy Vana
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 rounded-full"
+                    disabled={wzEligibleOrders.length === 0}
+                    onClick={onEnterWzSelection}
+                  >
+                    Generuj WZ
+                  </Button>
+                </>
+              ) : null}
+              {canOrders && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 rounded-full"
+                  onClick={() => navigate(`/orders/new?date=${encodeURIComponent(date)}`)}
+                >
+                  + Nowe zamówienie
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Search */}
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Szukaj sklepu…"
+              aria-label="Szukaj sklepu po nazwie"
+              className="shadow-soft h-11 w-full rounded-xl border-0 bg-surface-card pl-11 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/25"
+            />
+          </div>
+
+          {/* Pills */}
+          <div className="-mx-1 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {PILLS.filter((p) => !(['has_wz', 'no_wz'] as FilterPill[]).includes(p.key) || (deliveryEnabled && canManageDelivery)).map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => setPill(p.key)}
+                className={cn(
+                  'shrink-0 rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                  pill === p.key
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-surface-card text-foreground shadow-soft',
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {wzError && (
+            <div className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
+              {wzError}
+            </div>
+          )}
+
+          {customersError && (
+            <div className="flex flex-col gap-3 rounded-2xl bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
+              <p className="text-sm text-destructive">Nie udało się załadować listy sklepów</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => { void customersRefetch(); void ordersRefetch(); }}>
+                Spróbuj ponownie
+              </Button>
+            </div>
+          )}
+
+          {showLoading && (
+            <div className="flex flex-col items-center gap-3 py-10" aria-busy="true" role="status">
+              <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+              <span className="text-sm text-muted-foreground">Ładowanie…</span>
+            </div>
+          )}
+
+          {!showLoading && !customersError && customers.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">Brak aktywnych sklepów.</p>
+          )}
+
+          {!showLoading && !customersError && customers.length > 0 && filtered.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">Brak sklepów dla wybranego filtra.</p>
+          )}
+
+          {!showLoading && !customersError && grouped.length > 0 && (
+            <motion.div
+              className="space-y-5"
+              variants={listVariants}
+              initial="hidden"
+              animate="show"
+              key={`${date}-${pill}-${search}`}
+            >
+              {grouped.map(([letter, rows]) => (
+                <section key={letter} aria-label={`Sklepy — ${letter}`}>
+                  <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {letter}
+                  </h2>
+                  <ul className="flex flex-col gap-2">
+                    {rows.map((customer) => {
+                      const customerOrders = ordersByCustomerId.get(customer.id) ?? [];
+                      const primaryOrder = customerOrders[0] ?? null;
+                      const isSelected = customerOrders.some((o) => selectedIds.has(o.id));
+                      const isGenerating = customerOrders.some((o) => generatingIds.has(o.id));
+                      return (
+                        <motion.li key={customer.id} variants={rowVariants}>
+                          <CustomerShopRow
+                            customer={customer}
+                            orders={customerOrders}
+                            primaryOrder={primaryOrder}
+                            wzByOrderId={wzByOrderId}
+                            zwByOrderId={zwByOrderId}
+                            wzSelectionMode={wzSelectionMode}
+                            wzEligibleIdSet={wzEligibleIdSet}
+                            isSelected={isSelected}
+                            isGenerating={isGenerating}
+                            onSelect={primaryOrder ? () => customerOrders.forEach((o) => { if (wzEligibleIdSet.has(o.id)) toggleSelect(o.id); }) : undefined}
+                            onClick={() => handleCardClick(customer)}
+                          />
+                        </motion.li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </motion.div>
+          )}
+
+          <OrdersDaySummary orders={orders} />
+        </>
+      )}
 
     </div>
   );
@@ -890,4 +939,159 @@ const plnFmt = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PL
 function formatMoneyGrossLocal(value: string | number | null | undefined): string {
   const n = typeof value === 'string' ? parseFloat(value) : (value ?? 0);
   return Number.isFinite(n) ? plnFmt.format(n) : '—';
+}
+
+/* ─── All open orders view ──────────────────────────────────────── */
+
+const dateFmt = new Intl.DateTimeFormat('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
+function formatDeliveryDate(iso: string): string {
+  const d = new Date(iso + 'T00:00:00');
+  return dateFmt.format(d);
+}
+
+function isToday(iso: string): boolean {
+  return iso === todayIso();
+}
+
+interface AllOrdersViewProps {
+  orders: Order[];
+  isPending: boolean;
+  onRefetch: () => void;
+  onOrderClick: (id: string) => void;
+  canOrders: boolean;
+  onNewOrder: () => void;
+}
+
+function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, onNewOrder }: AllOrdersViewProps) {
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter(
+      (o) =>
+        o.customer_name.toLowerCase().includes(q) ||
+        (o.order_number ?? '').toLowerCase().includes(q),
+    );
+  }, [orders, search]);
+
+  // Group by delivery_date
+  const groups = useMemo(() => {
+    const map = new Map<string, Order[]>();
+    for (const o of filtered) {
+      const list = map.get(o.delivery_date) ?? [];
+      list.push(o);
+      map.set(o.delivery_date, list);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [filtered]);
+
+  if (isPending) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-10" aria-busy="true" role="status">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        <span className="text-sm text-muted-foreground">Ładowanie zamówień…</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Header */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Otwarte zamówienia</h1>
+          <p className="mt-0.5 text-[13px] text-muted-foreground">
+            {orders.length > 0 ? `${orders.length} zamówień ze wszystkich dni` : 'Brak otwartych zamówień'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {canOrders && (
+            <Button type="button" size="sm" className="shrink-0 rounded-full" onClick={onNewOrder}>
+              + Nowe zamówienie
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Szukaj po kliencie lub numerze…"
+          aria-label="Szukaj zamówień"
+          className="shadow-soft h-11 w-full rounded-xl border-0 bg-surface-card pl-11 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/25"
+        />
+      </div>
+
+      {orders.length === 0 && (
+        <div className="flex flex-col items-center gap-3 py-12 text-center">
+          <p className="text-sm text-muted-foreground">Brak otwartych zamówień.</p>
+          <Button type="button" variant="outline" size="sm" onClick={onRefetch}>
+            Odśwież
+          </Button>
+        </div>
+      )}
+
+      {orders.length > 0 && filtered.length === 0 && (
+        <p className="py-10 text-center text-sm text-muted-foreground">Brak wyników dla podanej frazy.</p>
+      )}
+
+      {groups.map(([dateIso, dateOrders]) => (
+        <section key={dateIso}>
+          <h2 className={cn(
+            'mb-2 px-1 text-[13px] font-semibold capitalize',
+            isToday(dateIso) ? 'text-primary' : 'text-muted-foreground',
+          )}>
+            {formatDeliveryDate(dateIso)}
+            {isToday(dateIso) && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">dziś</span>}
+          </h2>
+          <ul className="flex flex-col gap-2">
+            {dateOrders.map((order) => (
+              <li key={order.id}>
+                <button
+                  type="button"
+                  className={cn(
+                    'shadow-soft w-full overflow-hidden rounded-2xl bg-surface-card text-left transition-colors',
+                    'border-l-4 border-solid',
+                    orderStatusLeftBorderClass(order.status),
+                    'hover:bg-surface-low/40 active:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
+                  )}
+                  onClick={() => onOrderClick(order.id)}
+                >
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary" aria-hidden>
+                      <BuildingIcon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-foreground">{order.customer_name}</span>
+                        <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', orderStatusBadgeClassName(order.status))}>
+                          {ORDER_STATUS_LABELS_PL[order.status]}
+                        </span>
+                      </div>
+                      {order.order_number && (
+                        <p className="mt-0.5 text-[12px] text-muted-foreground">{order.order_number}</p>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-[15px] font-semibold tabular-nums text-foreground">
+                        {formatMoneyGrossLocal(order.total_gross)}
+                      </p>
+                      <p className="text-[11px] tabular-nums text-muted-foreground">
+                        {order.items.length} poz.
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
 }

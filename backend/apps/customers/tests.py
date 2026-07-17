@@ -1,9 +1,11 @@
+import io
 import uuid
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from openpyxl import Workbook
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -158,3 +160,100 @@ class CustomerViewSetAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         row = Customer.objects.get(uuid=response.data["id"])
         self.assertEqual(row.user, self.user)
+
+
+def _make_customer_xlsx(rows: list[dict]) -> io.BytesIO:
+    """Build a minimal in-memory XLSX with customer import columns."""
+    wb = Workbook()
+    ws = wb.active
+    headers = ["Nazwa", "Nazwa firmy", "NIP", "Telefon", "Email",
+               "Ulica", "Miasto", "Kod pocztowy", "Termin płatności (dni)"]
+    ws.append(headers)
+    for row in rows:
+        ws.append([row.get(h, "") for h in headers])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+class CustomerImportTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="import-cust-user",
+            email="importcust@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        self.client.force_authenticate(user=self.user)
+
+    def _upload(self, rows, dry_run="true", filename="klienci.xlsx"):
+        buf = _make_customer_xlsx(rows)
+        buf.name = filename
+        return self.client.post(
+            reverse("customer-import-customers"),
+            {"file": buf, "dry_run": dry_run},
+            format="multipart",
+        )
+
+    def test_dry_run_returns_preview(self):
+        r = self._upload([
+            {"Nazwa": "Jan Kowalski", "Termin płatności (dni)": 14},
+            {"Nazwa": "Firma ABC", "Termin płatności (dni)": 30},
+        ])
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["dry_run"])
+        self.assertEqual(r.data["to_create"], 2)
+        self.assertEqual(r.data["to_update"], 0)
+        self.assertEqual(Customer.objects.filter(company=self.company).count(), 0)
+
+    def test_commit_creates_customers(self):
+        r = self._upload([
+            {"Nazwa": "Jan Kowalski", "Miasto": "Warszawa", "Termin płatności (dni)": 14},
+        ], dry_run="false")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["created"], 1)
+        self.assertEqual(r.data["updated"], 0)
+        c = Customer.objects.get(company=self.company, name="Jan Kowalski")
+        self.assertEqual(c.city, "Warszawa")
+
+    def test_dedup_by_name_updates_existing(self):
+        Customer.objects.create(company=self.company, user=self.user, name="Jan Kowalski", city="Kraków")
+        r = self._upload([
+            {"Nazwa": "Jan Kowalski", "Miasto": "Warszawa", "Termin płatności (dni)": 14},
+        ], dry_run="false")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["created"], 0)
+        self.assertEqual(r.data["updated"], 1)
+        c = Customer.objects.get(company=self.company, name="Jan Kowalski")
+        self.assertEqual(c.city, "Warszawa")
+
+    def test_missing_name_returns_error(self):
+        r = self._upload([{"Nazwa": "", "Termin płatności (dni)": 14}])
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["error_count"], 1)
+        self.assertEqual(r.data["errors"][0]["field"], "Nazwa")
+
+    def test_invalid_payment_terms_returns_error(self):
+        r = self._upload([{"Nazwa": "Test", "Termin płatności (dni)": "notanumber"}])
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["error_count"], 1)
+
+    def test_template_download(self):
+        r = self.client.get(reverse("customer-import-template"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            r["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def test_unauthenticated_blocked(self):
+        self.client.force_authenticate(user=None)
+        buf = _make_customer_xlsx([{"Nazwa": "X", "Termin płatności (dni)": 14}])
+        buf.name = "test.xlsx"
+        r = self.client.post(reverse("customer-import-customers"), {"file": buf, "dry_run": "true"}, format="multipart")
+        self.assertIn(r.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])

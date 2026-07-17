@@ -18,6 +18,20 @@ ACTION_LABELS = {
     "order.confirm": "Potwierdzenie zamówienia",
     "delivery.wz_create": "Wystawienie WZ",
     "server.error": "Błąd serwera",
+    "product.import": "Import produktów",
+    "product.delete": "Usunięcie produktu",
+    "customer.import": "Import klientów",
+    "customer.create": "Dodanie klienta",
+    "customer.update": "Edycja klienta",
+    "customer.delete": "Usunięcie klienta",
+    "supplier.create": "Dodanie dostawcy",
+    "supplier.update": "Edycja dostawcy",
+    "supplier.delete": "Usunięcie dostawcy",
+    "warehouse.import": "Import stanu magazynowego",
+    "warehouse.transfer": "Przesunięcie między magazynami",
+    "warehouse.create": "Dodanie magazynu",
+    "warehouse.update": "Edycja magazynu",
+    "warehouse.delete": "Usunięcie magazynu",
 }
 
 

@@ -95,4 +95,38 @@ export const productService = {
     '/stock-movements/',
     { params },
   ),
+
+  downloadImportTemplate: async (): Promise<void> => {
+    const blob = await api.get<Blob>('/products/import-template/', { responseType: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'szablon_produkty.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  importProducts: async (file: File, dryRun: boolean): Promise<ImportProductsResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('dry_run', dryRun ? 'true' : 'false');
+    return api.post<ImportProductsResult>('/products/import/', form, {
+      headers: { 'Content-Type': undefined },
+    });
+  },
+};
+
+export type ImportProductError = { row: number; field: string; message: string };
+
+export type ImportProductsResult = {
+  dry_run: boolean;
+  valid_count?: number;
+  to_create?: number;
+  to_update?: number;
+  to_skip?: number;
+  created?: number;
+  updated?: number;
+  skipped?: number;
+  error_count: number;
+  errors: ImportProductError[];
 };

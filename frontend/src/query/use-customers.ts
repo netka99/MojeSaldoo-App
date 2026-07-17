@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { customerPriceService, customerService } from '@/services/customer.service';
+import type { ImportCustomersResult } from '@/services/customer.service';
 import type { CustomerProductPriceUpdate, CustomerProductPriceWrite, CustomerWrite } from '@/types';
 import { customerKeys, customerPriceKeys } from './keys';
 
@@ -112,6 +113,18 @@ export function useUpdateCustomerPriceMutation(customerId: string) {
       customerPriceService.update(id, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: customerPriceKeys.byCustomer(customerId) });
+    },
+  });
+}
+
+export function useImportCustomersMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<ImportCustomersResult, Error, { file: File; dryRun: boolean }>({
+    mutationFn: ({ file, dryRun }) => customerService.importCustomers(file, dryRun),
+    onSuccess: (_data, { dryRun }) => {
+      if (!dryRun) {
+        void queryClient.invalidateQueries({ queryKey: customerKeys.all });
+      }
     },
   });
 }

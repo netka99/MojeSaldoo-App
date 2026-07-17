@@ -7,22 +7,13 @@ import { useProductQuery, useUpdateProductStockMutation } from '@/query/use-prod
 import { useWarehouseListQuery } from '@/query/use-warehouses';
 import { authStorage } from '@/services/api';
 import type { StockMovementType } from '@/services/product.service';
-
-const MOVEMENT_TYPES: StockMovementType[] = [
-  'purchase',
-  'sale',
-  'return',
+const MOVEMENT_TYPES: Extract<StockMovementType, 'adjustment' | 'damage'>[] = [
   'adjustment',
-  'transfer',
   'damage',
 ];
 
-const MOVEMENT_TYPE_LABELS_PL: Record<StockMovementType, string> = {
-  purchase: 'Zakup',
-  sale: 'Sprzedaż',
-  return: 'Zwrot',
-  adjustment: 'Korekta',
-  transfer: 'Przesunięcie',
+const MOVEMENT_TYPE_LABELS_PL: Record<typeof MOVEMENT_TYPES[number], string> = {
+  adjustment: 'Korekta ręczna',
   damage: 'Ubytek / uszkodzenie',
 };
 
@@ -34,7 +25,7 @@ export function ProductAdjustStockPage() {
 
   const [warehouseId, setWarehouseId] = useState('');
   const [quantityChange, setQuantityChange] = useState('');
-  const [movementType, setMovementType] = useState<StockMovementType>('adjustment');
+  const [movementType, setMovementType] = useState<typeof MOVEMENT_TYPES[number]>('adjustment');
   const [notes, setNotes] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -99,9 +90,12 @@ export function ProductAdjustStockPage() {
       {product && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Korekta stanu magazynowego</CardTitle>
+            <CardTitle className="text-lg">Korekta / ubytek stanu</CardTitle>
             <p className="text-sm text-muted-foreground">
               Produkt: <span className="font-medium text-foreground">{product.name}</span>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Dla przesunięć między magazynami użyj przycisku „Przesuń" na stronie magazynu.
             </p>
           </CardHeader>
           <CardContent>

@@ -4,7 +4,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-route
 import { ProductForm } from '@/components/features/ProductForm';
 import { Button } from '@/components/ui/Button';
 import { productKeys } from '@/query/keys';
-import { useProductQuery, useUpdateProductMutation } from '@/query/use-products';
+import { useProductQuery, useUpdateProductMutation, useDeleteProductMutation } from '@/query/use-products';
 import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
@@ -45,7 +45,10 @@ export function ProductEditPage() {
   const queryClient = useQueryClient();
   const { data: product, isLoading, isError, error, refetch } = useProductQuery(id);
   const update = useUpdateProductMutation();
+  const deleteMutation = useDeleteProductMutation();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -127,6 +130,66 @@ export function ProductEditPage() {
             onCancel={() => navigate(-1)}
             isLoading={update.isPending}
           />
+
+          {/* ── Delete zone ──────────────────────────────────────── */}
+          <div className="shadow-soft rounded-2xl border border-destructive/20 bg-surface-card p-4">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Usuń produkt
+            </p>
+            <p className="mt-1 text-[13px] text-on-surface-variant">
+              Możliwe tylko gdy produkt nie ma ruchów magazynowych, zamówień, WZ/PZ ani faktur.
+            </p>
+
+            {deleteError && (
+              <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+                {deleteError}
+              </p>
+            )}
+
+            {!confirmDelete ? (
+              <button
+                type="button"
+                className="mt-3 rounded-xl border border-destructive/40 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5"
+                onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
+              >
+                Usuń produkt
+              </button>
+            ) : (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-sm text-foreground">Na pewno usunąć?</span>
+                <button
+                  type="button"
+                  disabled={deleteMutation.isPending}
+                  className="rounded-xl bg-destructive px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                  onClick={async () => {
+                    setDeleteError(null);
+                    try {
+                      await deleteMutation.mutateAsync(id!);
+                      navigate('/products');
+                    } catch (e: unknown) {
+                      const err = e as { response?: { data?: { blockers?: string[]; detail?: string } } };
+                      const blockers = err?.response?.data?.blockers;
+                      setDeleteError(
+                        blockers?.length
+                          ? blockers.join(' ')
+                          : (e instanceof Error ? e.message : 'Nie udało się usunąć produktu.')
+                      );
+                      setConfirmDelete(false);
+                    }
+                  }}
+                >
+                  {deleteMutation.isPending ? 'Usuwanie…' : 'Tak, usuń'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-foreground"
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  Anuluj
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="shadow-soft rounded-2xl bg-surface-card p-4">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">

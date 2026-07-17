@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { productService, type StockUpdatePayload } from '@/services/product.service';
+import { productService, type StockUpdatePayload, type ImportProductsResult } from '@/services/product.service';
 import type { ProductWrite } from '@/types';
-import { productKeys, stockMovementKeys, stockSnapshotKeys, type StockMovementParams } from './keys';
+import { productKeys, stockMovementKeys, stockSnapshotKeys, warehouseStockKeys, type StockMovementParams } from './keys';
 
 export function useProductListQuery(page: number, sku: string, isService?: boolean) {
   return useQuery({
@@ -72,9 +72,13 @@ export function useUpdateProductStockMutation() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: StockUpdatePayload }) =>
       productService.updateStock(id, body),
-    onSuccess: (_data, { id }) => {
+    onSuccess: (_data, { id, body }) => {
       void queryClient.invalidateQueries({ queryKey: productKeys.all });
       void queryClient.invalidateQueries({ queryKey: productKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+      if (body.warehouse_id) {
+        void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.byWarehouse(body.warehouse_id) });
+      }
     },
   });
 }
@@ -91,6 +95,18 @@ export function useAllProductsQuery() {
   return useQuery({
     queryKey: [...productKeys.lists(), 'all'],
     queryFn: () => productService.fetchList({ page_size: 200, ordering: 'name' }),
+  });
+}
+
+export function useImportProductsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<ImportProductsResult, Error, { file: File; dryRun: boolean }>({
+    mutationFn: ({ file, dryRun }) => productService.importProducts(file, dryRun),
+    onSuccess: (data) => {
+      if (!data.dry_run) {
+        void queryClient.invalidateQueries({ queryKey: productKeys.all });
+      }
+    },
   });
 }
 

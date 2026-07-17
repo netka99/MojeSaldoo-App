@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { CustomerList } from '@/components/features/customers/CustomerList';
+import { CustomerImportDialog } from '@/components/features/customers/CustomerImportDialog';
 import { Button } from '@/components/ui/Button';
 import { authStorage } from '@/services/api';
 import { useCustomerListQuery } from '@/query/use-customers';
@@ -40,6 +41,7 @@ export function CustomersPage() {
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -77,18 +79,30 @@ export function CustomersPage() {
           </p>
         </div>
         {canManageCustomers && (
-          <Button
-            type="button"
-            size="icon"
-            className="shrink-0 rounded-full"
-            onClick={() => navigate('/customers/new')}
-            aria-label="Dodaj kontrahenta"
-          >
-            <PlusIcon className="h-5 w-5" />
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setImportOpen(true)}
+            >
+              Importuj
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              className="shrink-0 rounded-full"
+              onClick={() => navigate('/customers/new')}
+              aria-label="Dodaj kontrahenta"
+            >
+              <PlusIcon className="h-5 w-5" />
+            </Button>
+          </>
         )}
       </header>
 
+      {importOpen && <CustomerImportDialog onClose={() => setImportOpen(false)} />}
       <CustomerList
         customers={data?.results ?? []}
         totalCount={totalCount}

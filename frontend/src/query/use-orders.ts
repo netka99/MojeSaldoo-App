@@ -37,6 +37,24 @@ export function useOrderListQuery(page: number, filters: OrderListFilters = {}) 
 }
 
 /**
+ * All open orders (excluding cancelled and invoiced), sorted by delivery_date ascending.
+ * Used for the "all open orders" cross-day view. Fetches up to 300 orders.
+ */
+export function useOpenOrdersQuery() {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: [...orderKeys.lists(), { companyId, ordering: 'delivery_date', view: 'open' }] as const,
+    queryFn: () =>
+      orderService.fetchList({ page: 1, page_size: 300, ordering: 'delivery_date' }),
+    enabled: Boolean(companyId),
+    select: (data) =>
+      data.results.filter((o) => o.status !== 'cancelled' && o.status !== 'invoiced'),
+  });
+}
+
+/**
  * All orders with delivery_date == date (exact day).
  * Fetches all results (page_size=100) — day views don't need pagination.
  * Disabled when date is empty string.

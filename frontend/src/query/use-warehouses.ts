@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/services/api';
 import { warehouseService } from '@/services/warehouse.service';
+import type { ImportWarehousesResult } from '@/services/warehouse.service';
 import type { WarehouseWrite } from '@/types';
-import { stockSnapshotKeys, warehouseKeys, warehouseStockKeys } from './keys';
+import { stockSnapshotKeys, warehouseKeys, warehouseStockKeys, productKeys } from './keys';
 
 export function useWarehouseListQuery(page = 1) {
   return useQuery({
@@ -48,6 +50,38 @@ export function useDeleteWarehouseMutation() {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.byWarehouse(id) });
+    },
+  });
+}
+
+export type TransferItem = { product_id: string; quantity: number | string };
+
+export function useTransferStockMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { transferred: number; source: string; destination: string },
+    Error,
+    { sourceWarehouseId: string; destination_warehouse_id: string; items: TransferItem[]; notes?: string }
+  >({
+    mutationFn: ({ sourceWarehouseId, ...body }) =>
+      api.post(`/warehouses/${sourceWarehouseId}/transfer/`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+      void queryClient.invalidateQueries({ queryKey: productKeys.all });
+    },
+  });
+}
+
+export function useImportStockMutation() {
+  const queryClient = useQueryClient();
+  return useMutation<ImportWarehousesResult, Error, { file: File; dryRun: boolean }>({
+    mutationFn: ({ file, dryRun }) => warehouseService.importStock(file, dryRun),
+    onSuccess: (_data, { dryRun }) => {
+      if (!dryRun) {
+        void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+        void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+        void queryClient.invalidateQueries({ queryKey: productKeys.all });
+      }
     },
   });
 }

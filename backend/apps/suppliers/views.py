@@ -1,6 +1,9 @@
-from rest_framework import filters, viewsets
+from rest_framework import filters, status, viewsets
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
+from apps.activity.log import log_activity
+from apps.activity.models import ActivityLog
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired
 
 from .models import Supplier
@@ -27,3 +30,36 @@ class SupplierViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return SupplierListSerializer
         return SupplierSerializer
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_activity(
+            user=self.request.user,
+            action="supplier.create",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="supplier",
+            object_id=instance.name,
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_activity(
+            user=self.request.user,
+            action="supplier.update",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="supplier",
+            object_id=instance.name,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        name = instance.name
+        instance.delete()
+        log_activity(
+            user=request.user,
+            action="supplier.delete",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="supplier",
+            object_id=name,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)

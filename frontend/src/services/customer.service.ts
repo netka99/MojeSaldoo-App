@@ -36,6 +36,40 @@ export const customerService = {
 
   partialUpdateItem: (id: string, body: Partial<CustomerWrite>) =>
     api.patch<Customer>(`/customers/${id}/`, body),
+
+  downloadImportTemplate: async (): Promise<void> => {
+    const blob = await api.get<Blob>('/customers/import-template/', { responseType: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'szablon_klienci.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  importCustomers: async (file: File, dryRun: boolean): Promise<ImportCustomersResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('dry_run', dryRun ? 'true' : 'false');
+    return api.post<ImportCustomersResult>('/customers/import/', form, {
+      headers: { 'Content-Type': undefined },
+    });
+  },
+};
+
+export type ImportCustomerError = { row: number; field: string; message: string };
+
+export type ImportCustomersResult = {
+  dry_run: boolean;
+  valid_count?: number;
+  to_create?: number;
+  to_update?: number;
+  to_skip?: number;
+  created?: number;
+  updated?: number;
+  skipped?: number;
+  error_count: number;
+  errors: ImportCustomerError[];
 };
 
 export const customerPriceService = {

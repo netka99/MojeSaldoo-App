@@ -1,3 +1,4 @@
+import io
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -6,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
+from openpyxl import Workbook
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1134,3 +1136,424 @@ class IsServiceFieldTests(TestCase):
         names = [r["name"] for r in response.data["results"]]
         self.assertIn("Towar", names)
         self.assertIn("Usługa", names)
+
+
+class ProductImportTests(TestCase):
+    """Tests for POST /api/products/import/ and GET /api/products/import-template/."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="import-test-user",
+            email="import@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save()
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _csv_file(self, content: str, filename="produkty.csv"):
+        import io
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(filename, content.encode("utf-8"), content_type="text/csv")
+
+    def _xlsx_file(self, rows: list[list], filename="produkty.xlsx"):
+        import io
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        for row in rows:
+            ws.append(row)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return SimpleUploadedFile(filename, buf.read(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ── Template ──────────────────────────────────────────────────────────
+
+    def test_template_download_returns_xlsx(self):
+        resp = self.client.get(reverse("product-import-template"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+        self.assertIn("szablon_produkty.xlsx", resp["Content-Disposition"])
+
+    def test_template_requires_auth(self):
+        self.client.logout()
+        resp = APIClient().get(reverse("product-import-template"))
+        self.assertEqual(resp.status_code, 401)
+
+    # ── Dry run — valid CSV ───────────────────────────────────────────────
+
+    def test_dry_run_valid_csv(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU;Kod kreskowy;Opis;Alert minimalny\r\nChleb;szt;2,50;5;SKU-1;;;;\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data["dry_run"])
+        self.assertEqual(resp.data["valid_count"], 1)
+        self.assertEqual(resp.data["error_count"], 0)
+        self.assertEqual(Product.objects.filter(company=self.company).count(), 0)  # no commit
+
+    def test_dry_run_valid_xlsx(self):
+        rows = [
+            ["Nazwa", "Jednostka", "Cena brutto", "VAT (%)", "SKU", "Kod kreskowy", "Opis", "Alert minimalny"],
+            ["Masło", "kg", "8.00", "5", "", "", "", ""],
+            ["Mąka", "kg", "3.20", "8", "MAK-001", "", "pszenna", "10"],
+        ]
+        f = self._xlsx_file(rows)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["valid_count"], 2)
+        self.assertEqual(resp.data["error_count"], 0)
+
+    # ── Dry run — validation errors ───────────────────────────────────────
+
+    def test_dry_run_missing_required_fields(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\n;szt;2,50;5\r\nChleb;;2,50;5\r\nChleb;szt;;5\r\nChleb;szt;2,50;\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["error_count"], 4)
+
+    def test_dry_run_invalid_vat_rate(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,50;7\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.data["error_count"], 1)
+        self.assertEqual(resp.data["errors"][0]["field"], "VAT (%)")
+
+    def test_dry_run_invalid_price(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;abc;5\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.data["error_count"], 1)
+        self.assertEqual(resp.data["errors"][0]["field"], "Cena brutto")
+
+    # ── Commit ────────────────────────────────────────────────────────────
+
+    def test_commit_creates_products(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU\r\nChleb;szt;2,50;5;SKU-1\r\nMasło;kg;8,00;5;\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        self.assertEqual(resp.status_code, 201)
+        self.assertFalse(resp.data["dry_run"])
+        self.assertEqual(resp.data["created"], 2)
+        self.assertEqual(Product.objects.filter(company=self.company).count(), 2)
+
+    def test_commit_calculates_price_net(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;10,00;23\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        product = Product.objects.get(company=self.company, name="Chleb")
+        # price_net = 10.00 / 1.23 ≈ 8.13
+        self.assertAlmostEqual(float(product.price_net), 10.00 / 1.23, places=2)
+        self.assertEqual(product.price_gross, Decimal("10.00"))
+        self.assertEqual(product.vat_rate, Decimal("23"))
+
+    def test_commit_scoped_to_current_company(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nBułka;szt;0,50;5\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Bułka")
+        self.assertEqual(p.company, self.company)
+
+    def test_commit_stops_on_errors(self):
+        # Mix of valid and invalid rows — commit should be rejected (errors returned, nothing created)
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,50;5\r\n;szt;2,50;5\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        self.assertEqual(resp.status_code, 200)  # returns preview with errors
+        self.assertTrue(resp.data["dry_run"])
+        self.assertEqual(Product.objects.filter(company=self.company).count(), 0)
+
+    def test_no_file_returns_400(self):
+        resp = self.client.post(reverse("product-import-products"), {}, format="multipart")
+        self.assertEqual(resp.status_code, 400)
+
+    # ── Dedup: dry-run preview ────────────────────────────────────────────
+
+    def test_dry_run_shows_update_when_sku_matches(self):
+        Product.objects.create(company=self.company, user=self.user, name="Chleb stary", sku="SKU-1", unit="szt",
+                               price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU\r\nChleb nowa cena;szt;3,00;5;SKU-1\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["to_update"], 1)
+        self.assertEqual(resp.data["to_create"], 0)
+        self.assertEqual(resp.data["to_skip"], 0)
+
+    def test_dry_run_shows_update_when_name_matches_no_sku(self):
+        Product.objects.create(company=self.company, user=self.user, name="Chleb", sku="", unit="szt",
+                               price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;3,00;5\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.data["to_update"], 1)
+        self.assertEqual(resp.data["to_create"], 0)
+
+    def test_dry_run_shows_create_for_new_products(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nBagietka;szt;3,50;5\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.data["to_create"], 1)
+        self.assertEqual(resp.data["to_update"], 0)
+        self.assertEqual(resp.data["to_skip"], 0)
+
+    # ── Dedup: commit ─────────────────────────────────────────────────────
+
+    def test_commit_updates_existing_product_by_sku(self):
+        p = Product.objects.create(company=self.company, user=self.user, name="Chleb stary", sku="SKU-1", unit="szt",
+                                   price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU\r\nChleb nowa nazwa;szt;5,25;5;SKU-1\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data["updated"], 1)
+        self.assertEqual(resp.data["created"], 0)
+        p.refresh_from_db()
+        self.assertEqual(p.name, "Chleb nowa nazwa")
+        self.assertEqual(p.price_gross, Decimal("5.25"))
+
+    def test_commit_updates_existing_product_by_name_no_sku(self):
+        Product.objects.create(company=self.company, user=self.user, name="Chleb", sku="", unit="szt",
+                               price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;5,00;5\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        self.assertEqual(resp.data["updated"], 1)
+        self.assertEqual(resp.data["created"], 0)
+        # Price must have been updated
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertEqual(p.price_gross, Decimal("5.00"))
+
+
+class ProductSafeDeleteTests(TestCase):
+    """Tests for safe DELETE /api/products/{uuid}/."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="delete-test-user",
+            email="delete@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save()
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+        self.product = Product.objects.create(
+            company=self.company,
+            user=self.user,
+            name="Produkt do usunięcia",
+            unit="szt",
+            price_gross=Decimal("10.00"),
+            price_net=Decimal("9.52"),
+            vat_rate=Decimal("5"),
+        )
+
+    def _delete_url(self):
+        return reverse("product-detail", kwargs={"uuid": self.product.uuid})
+
+    def test_delete_product_without_history(self):
+        resp = self.client.delete(self._delete_url())
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(Product.objects.filter(pk=self.product.pk).exists())
+
+    def test_delete_blocked_by_stock_movement(self):
+        warehouse = Warehouse.objects.create(company=self.company, user=self.user, code="MG", name="Magazyn")
+        StockMovement.objects.create(
+            company=self.company,
+            product=self.product,
+            warehouse=warehouse,
+            user=self.user,
+            movement_type=StockMovement.MovementType.ADJUSTMENT,
+            quantity=Decimal("10"),
+            quantity_before=Decimal("0"),
+            quantity_after=Decimal("10"),
+        )
+        resp = self.client.delete(self._delete_url())
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("blockers", resp.data)
+        self.assertTrue(Product.objects.filter(pk=self.product.pk).exists())
+
+    def test_delete_blocked_by_stock_on_hand(self):
+        warehouse = Warehouse.objects.create(company=self.company, user=self.user, code="MG2", name="Magazyn 2")
+        ProductStock.objects.create(
+            company=self.company,
+            product=self.product,
+            warehouse=warehouse,
+            quantity_available=Decimal("5"),
+            quantity_reserved=Decimal("0"),
+        )
+        resp = self.client.delete(self._delete_url())
+        self.assertEqual(resp.status_code, 409)
+        self.assertTrue(Product.objects.filter(pk=self.product.pk).exists())
+
+    def test_delete_requires_auth(self):
+        resp = APIClient().delete(self._delete_url())
+        self.assertEqual(resp.status_code, 401)
+
+    def test_delete_blocked_by_order_item(self):
+        from apps.orders.models import Order, OrderItem
+        from apps.customers.models import Customer
+        customer = Customer.objects.create(company=self.company, name="Test Klient")
+        from datetime import date
+        today = date.today()
+        order = Order.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=customer,
+            status=Order.STATUS_DRAFT,
+            order_date=today,
+            delivery_date=today,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.product,
+            product_name=self.product.name,
+            product_unit=self.product.unit,
+            quantity=Decimal("2"),
+            unit_price_gross=self.product.price_gross,
+            vat_rate=self.product.vat_rate,
+            line_total_gross=Decimal("20.00"),
+        )
+        resp = self.client.delete(self._delete_url())
+        self.assertEqual(resp.status_code, 409)
+        blockers = resp.data["blockers"]
+        self.assertTrue(any("zamówieni" in b for b in blockers))
+
+
+def _make_stock_xlsx(rows: list[dict]) -> io.BytesIO:
+    """Build a minimal in-memory XLSX with stock import columns."""
+    wb = Workbook()
+    ws = wb.active
+    headers = ["Nazwa produktu", "SKU", "Kod magazynu", "Ilość", "Notatka"]
+    ws.append(headers)
+    for row in rows:
+        ws.append([row.get(h, "") for h in headers])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+class WarehouseStockImportTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="import-stock-user",
+            email="importstock@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        self.client.force_authenticate(user=self.user)
+
+        self.wh = Warehouse.objects.create(
+            company=self.company, user=self.user, code="MG", name="Magazyn Główny"
+        )
+        self.wh2 = Warehouse.objects.create(
+            company=self.company, user=self.user, code="MV1", name="Van 1"
+        )
+        self.product = Product.objects.create(
+            company=self.company, user=self.user,
+            name="Mąka pszenna", unit="kg", price_gross="2.50", vat_rate=5,
+        )
+        self.product_sku = Product.objects.create(
+            company=self.company, user=self.user,
+            name="Chleb pszenny", sku="SKU-002", unit="szt", price_gross="3.50", vat_rate=5,
+        )
+
+    def _upload(self, rows, dry_run="true"):
+        buf = _make_stock_xlsx(rows)
+        buf.name = "stan.xlsx"
+        return self.client.post(
+            reverse("warehouse-import-stock"),
+            {"file": buf, "dry_run": dry_run},
+            format="multipart",
+        )
+
+    def test_dry_run_returns_preview(self):
+        r = self._upload([
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 150},
+            {"Nazwa produktu": "Chleb pszenny", "Kod magazynu": "MV1", "Ilość": 20},
+        ])
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["dry_run"])
+        self.assertEqual(r.data["to_create"], 2)
+        self.assertEqual(ProductStock.objects.count(), 0)
+
+    def test_commit_creates_stock_movements(self):
+        r = self._upload([
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 150, "Notatka": "Stan otwarcia"},
+        ], dry_run="false")
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data["created"], 1)
+        stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.quantity_available, Decimal("150"))
+        movement = StockMovement.objects.get(product=self.product, warehouse=self.wh)
+        self.assertEqual(movement.quantity, Decimal("150"))
+        self.assertEqual(movement.reference_type, "import")
+
+    def test_match_by_sku(self):
+        r = self._upload([
+            {"SKU": "SKU-002", "Kod magazynu": "MG", "Ilość": 50},
+        ], dry_run="false")
+        self.assertEqual(r.status_code, 201)
+        stock = ProductStock.objects.get(product=self.product_sku, warehouse=self.wh)
+        self.assertEqual(stock.quantity_available, Decimal("50"))
+
+    def test_same_product_multiple_warehouses(self):
+        r = self._upload([
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 100},
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MV1", "Ilość": 30},
+        ], dry_run="false")
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data["created"], 2)
+        self.assertEqual(ProductStock.objects.filter(product=self.product).count(), 2)
+
+    def test_unknown_product_returns_error(self):
+        r = self._upload([
+            {"Nazwa produktu": "Nieistniejący produkt", "Kod magazynu": "MG", "Ilość": 10},
+        ])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["error_count"], 1)
+        self.assertIn("Nie znaleziono produktu", r.data["errors"][0]["message"])
+
+    def test_unknown_warehouse_code_returns_error(self):
+        r = self._upload([
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "XXX", "Ilość": 10},
+        ])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["error_count"], 1)
+        self.assertIn("Nie znaleziono magazynu", r.data["errors"][0]["message"])
+
+    def test_missing_quantity_returns_error(self):
+        r = self._upload([
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": ""},
+        ])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["error_count"], 1)
+        self.assertEqual(r.data["errors"][0]["field"], "Ilość")
+
+    def test_zero_quantity_returns_error(self):
+        r = self._upload([
+            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 0},
+        ])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["error_count"], 1)
+
+    def test_template_download(self):
+        r = self.client.get(reverse("warehouse-import-template"))
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("spreadsheetml", r["Content-Type"])

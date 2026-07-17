@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WarehouseForm } from '@/components/features/warehouses/WarehouseForm';
+import { AddStockDialog } from '@/components/features/warehouses/AddStockDialog';
+import { StockCorrectionDialog } from '@/components/features/warehouses/StockCorrectionDialog';
+import { LossDialog } from '@/components/features/warehouses/LossDialog';
+import { TransferDialog } from '@/components/features/warehouses/TransferDialog';
 import { Accordion } from '@/components/ui/Accordion';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -10,6 +14,7 @@ import {
   useWarehouseQuery,
   useWarehouseStockQuery,
 } from '@/query/use-warehouses';
+import { usePermission } from '@/hooks/usePermission';
 import { authStorage } from '@/services/api';
 import type { WarehouseStockItem, WarehouseWrite } from '@/types';
 
@@ -35,6 +40,13 @@ function StockBadge({ item }: { item: WarehouseStockItem }) {
   );
 }
 
+type ActiveDialog =
+  | { type: 'correction'; item: WarehouseStockItem }
+  | { type: 'loss'; item: WarehouseStockItem }
+  | { type: 'transfer' }
+  | { type: 'add' }
+  | null;
+
 export function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -42,15 +54,15 @@ export function WarehouseDetailPage() {
   const warehouseQ = useWarehouseQuery(id);
   const update = useUpdateWarehouseMutation();
   const remove = useDeleteWarehouseMutation();
+  const canManage = usePermission('can_manage_products');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [activeDialog, setActiveDialog] = useState<ActiveDialog>(null);
 
-  // Stock filter state
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [showBelowMin, setShowBelowMin] = useState(false);
 
-  // Debounce search input
   useEffect(() => {
     const t = window.setTimeout(() => setSearch(searchInput.trim()), 300);
     return () => window.clearTimeout(t);
@@ -61,18 +73,13 @@ export function WarehouseDetailPage() {
     below_minimum: showBelowMin || undefined,
   });
 
-  const stockItems = useMemo(
-    () => stockQ.data ?? [],
-    [stockQ.data],
-  );
+  const stockItems = useMemo(() => stockQ.data ?? [], [stockQ.data]);
+  const existingProductIds = useMemo(() => new Set(stockItems.map((s) => s.product_id)), [stockItems]);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
-
-  if (!id) {
-    return <Navigate to="/warehouses" replace />;
-  }
+  if (!id) return <Navigate to="/warehouses" replace />;
 
   const warehouse = warehouseQ.data;
 
@@ -88,6 +95,8 @@ export function WarehouseDetailPage() {
     }
   };
 
+  const closeDialog = () => setActiveDialog(null);
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -97,12 +106,8 @@ export function WarehouseDetailPage() {
       </div>
 
       {warehouseQ.isLoading && <p className="text-sm text-muted-foreground">Ładowanie magazynu…</p>}
-
       {warehouseQ.isError && (
-        <div
-          className="rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-          role="alert"
-        >
+        <div className="rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
           {warehouseQ.error instanceof Error ? warehouseQ.error.message : 'Nie udało się wczytać magazynu'}
         </div>
       )}
@@ -118,22 +123,13 @@ export function WarehouseDetailPage() {
                   </CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">Stan produktów w tym magazynie.</p>
                 </div>
-                {/* search + filter controls */}
+
+                {/* Controls row */}
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* Search */}
                   <div className="relative">
-                    <svg
-                      className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      aria-hidden
-                    >
-                      <path
-                        d="M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-4-4"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
+                    <svg className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-4-4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                     <input
                       type="search"
@@ -144,6 +140,7 @@ export function WarehouseDetailPage() {
                       aria-label="Szukaj produktu"
                     />
                   </div>
+
                   <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
                     <input
                       type="checkbox"
@@ -153,9 +150,21 @@ export function WarehouseDetailPage() {
                     />
                     Tylko poniżej min.
                   </label>
+
+                  {canManage && (
+                    <>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setActiveDialog({ type: 'transfer' })}>
+                        ⇄ Przesuń
+                      </Button>
+                      <Button type="button" size="sm" onClick={() => setActiveDialog({ type: 'add' })}>
+                        + Dodaj produkt
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             </CardHeader>
+
             <CardContent className="pt-6">
               {stockQ.isLoading && <p className="text-sm text-muted-foreground">Ładowanie stanów…</p>}
               {stockQ.isError && (
@@ -173,45 +182,23 @@ export function WarehouseDetailPage() {
                   <table className="min-w-full divide-y divide-border text-sm">
                     <thead className="bg-muted/50">
                       <tr>
-                        <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                          Produkt
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">
-                          SKU
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                          Dostępne
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                          Zarezerwowane
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                          Razem
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                          Min. stan
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-center font-medium text-muted-foreground">
-                          Status
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">
-                          Korekta
-                        </th>
+                        <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">Produkt</th>
+                        <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">SKU</th>
+                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">Dostępne</th>
+                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">Zarezerwowane</th>
+                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">Razem</th>
+                        <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">Min. stan</th>
+                        <th scope="col" className="px-4 py-3 text-center font-medium text-muted-foreground">Status</th>
+                        {canManage && (
+                          <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">Akcje</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border bg-card">
                       {stockItems.map((row) => (
-                        <tr
-                          key={row.id}
-                          className={row.is_below_minimum ? 'bg-red-50/40' : undefined}
-                        >
-                          <td className="max-w-[200px] truncate px-4 py-3">
-                            <Link
-                              to={`/products/${row.product_id}/edit`}
-                              className="text-foreground underline-offset-2 hover:text-primary hover:underline"
-                            >
-                              {row.product_name}
-                            </Link>
+                        <tr key={row.id} className={row.is_below_minimum ? 'bg-red-50/40' : undefined}>
+                          <td className="max-w-[180px] truncate px-4 py-3 font-medium text-foreground">
+                            {row.product_name}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground">
                             {row.product_sku ?? '—'}
@@ -231,14 +218,26 @@ export function WarehouseDetailPage() {
                           <td className="px-4 py-3 text-center">
                             <StockBadge item={row} />
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right">
-                            <Link
-                              to={`/products/${row.product_id}/adjust-stock`}
-                              className="text-sm font-medium text-primary underline underline-offset-2 hover:text-primary/90"
-                            >
-                              Koryguj
-                            </Link>
-                          </td>
+                          {canManage && (
+                            <td className="whitespace-nowrap px-4 py-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  className="rounded-md px-2 py-1 text-xs font-medium text-primary ring-1 ring-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                                  onClick={() => setActiveDialog({ type: 'correction', item: row })}
+                                >
+                                  Korekta
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-md px-2 py-1 text-xs font-medium text-destructive ring-1 ring-destructive/30 hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+                                  onClick={() => setActiveDialog({ type: 'loss', item: row })}
+                                >
+                                  Strata
+                                </button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -248,6 +247,47 @@ export function WarehouseDetailPage() {
             </CardContent>
           </Card>
 
+          {/* Dialogs */}
+          {activeDialog?.type === 'add' && (
+            <AddStockDialog
+              warehouseId={warehouse.id}
+              warehouseName={`${warehouse.code} — ${warehouse.name}`}
+              existingProductIds={existingProductIds}
+              onClose={closeDialog}
+            />
+          )}
+          {activeDialog?.type === 'correction' && (
+            <StockCorrectionDialog
+              productId={activeDialog.item.product_id}
+              productName={activeDialog.item.product_name}
+              productUnit={activeDialog.item.product_unit}
+              currentQty={parseFloat(String(activeDialog.item.quantity_available))}
+              warehouseId={warehouse.id}
+              warehouseName={`${warehouse.code} — ${warehouse.name}`}
+              onClose={closeDialog}
+            />
+          )}
+          {activeDialog?.type === 'loss' && (
+            <LossDialog
+              productId={activeDialog.item.product_id}
+              productName={activeDialog.item.product_name}
+              productUnit={activeDialog.item.product_unit}
+              currentQty={parseFloat(String(activeDialog.item.quantity_available))}
+              warehouseId={warehouse.id}
+              warehouseName={`${warehouse.code} — ${warehouse.name}`}
+              onClose={closeDialog}
+            />
+          )}
+          {activeDialog?.type === 'transfer' && (
+            <TransferDialog
+              sourceWarehouseId={warehouse.id}
+              sourceWarehouseCode={warehouse.code}
+              sourceWarehouseName={warehouse.name}
+              stockItems={stockItems}
+              onClose={closeDialog}
+            />
+          )}
+
           <Accordion
             title="Ustawienia magazynu"
             description="Edycja danych, opcji oraz trwałe usunięcie magazynu"
@@ -255,10 +295,7 @@ export function WarehouseDetailPage() {
           >
             <div className="space-y-6">
               {submitError && (
-                <p
-                  className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-                  role="alert"
-                >
+                <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
                   {submitError}
                 </p>
               )}
@@ -280,10 +317,7 @@ export function WarehouseDetailPage() {
 
               <div className="border-t border-border pt-6">
                 {deleteError && (
-                  <p
-                    className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-                    role="alert"
-                  >
+                  <p className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
                     {deleteError}
                   </p>
                 )}
