@@ -155,6 +155,11 @@ def generate_invoice_from_order(
         due_date=resolved_due,
         payment_method=pm,
         status=Invoice.STATUS_DRAFT,
+        # Pre-fill bank details from company defaults so the user doesn't
+        # have to re-enter them on every invoice (can be overridden per invoice).
+        bank_account_iban=company.bank_account_iban or "",
+        bank_swift=company.bank_swift or "",
+        bank_name=company.bank_name or "",
     )
     invoice.save()
 

@@ -23,6 +23,13 @@ type CompanyRow = {
   postalCode?: string | null;
   phone?: string | null;
   email?: string | null;
+  // KSeF / invoice defaults
+  bank_account_iban?: string | null;
+  bank_swift?: string | null;
+  bank_name?: string | null;
+  regon?: string | null;
+  krs?: string | null;
+  bdo?: string | null;
 };
 
 function pickStr(c: CompanyRow | undefined, camel: string, snake: string): string {
@@ -74,6 +81,43 @@ const companyDataSchema = z.object({
       (s) => s === undefined || z.string().email().safeParse(s).success,
       { message: 'Nieprawidłowy adres e-mail' },
     ),
+  // KSeF / invoice defaults
+  bank_account_iban: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length === 0 || /^[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}$/.test(s.replace(/\s/g, '')), {
+      message: 'Nieprawidłowy format IBAN',
+    })
+    .optional(),
+  bank_swift: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length === 0 || /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(s), {
+      message: 'Nieprawidłowy format SWIFT/BIC',
+    })
+    .optional(),
+  bank_name: z.string().transform((s) => s.trim()).optional(),
+  regon: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length === 0 || /^\d{9}(\d{5})?$/.test(s), {
+      message: 'REGON musi mieć 9 lub 14 cyfr',
+    })
+    .optional(),
+  krs: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length === 0 || /^\d{10}$/.test(s), {
+      message: 'KRS musi mieć 10 cyfr',
+    })
+    .optional(),
+  bdo: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length === 0 || /^\d{9}$/.test(s), {
+      message: 'BDO musi mieć 9 cyfr',
+    })
+    .optional(),
 });
 
 type FormValues = z.infer<typeof companyDataSchema>;
@@ -88,6 +132,12 @@ function rowToDefaults(c: CompanyRow | undefined): FormValues {
       postalCode: '',
       phone: '',
       email: '',
+      bank_account_iban: '',
+      bank_swift: '',
+      bank_name: '',
+      regon: '',
+      krs: '',
+      bdo: '',
     };
   }
   return {
@@ -98,6 +148,12 @@ function rowToDefaults(c: CompanyRow | undefined): FormValues {
     postalCode: pickStr(c, 'postalCode', 'postal_code'),
     phone: pickStr(c, 'phone', 'phone'),
     email: pickStr(c, 'email', 'email'),
+    bank_account_iban: c.bank_account_iban ?? '',
+    bank_swift: c.bank_swift ?? '',
+    bank_name: c.bank_name ?? '',
+    regon: c.regon ?? '',
+    krs: c.krs ?? '',
+    bdo: c.bdo ?? '',
   };
 }
 
@@ -110,6 +166,12 @@ function formToWrite(v: FormValues): CompanyWrite {
     postalCode: v.postalCode,
     phone: v.phone,
     email: v.email,
+    bank_account_iban: v.bank_account_iban,
+    bank_swift: v.bank_swift,
+    bank_name: v.bank_name,
+    regon: v.regon,
+    krs: v.krs,
+    bdo: v.bdo,
   };
 }
 
@@ -170,7 +232,7 @@ export function CompanyDataPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
+    <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-[1.5rem] font-semibold tracking-tight">Dane firmy</h1>
@@ -226,7 +288,7 @@ export function CompanyDataPage() {
             </p>
           )}
 
-          <form className="space-y-4" onSubmit={handleSubmit((v) => void onSubmit(v))} noValidate>
+          <form id="company-data-form" className="space-y-4" onSubmit={handleSubmit((v) => void onSubmit(v))} noValidate>
             <Input label="Nazwa firmy" required autoComplete="organization" error={errors.name?.message} {...register('name')} />
             <Input label="NIP" placeholder="opcjonalnie" inputMode="numeric" error={errors.nip?.message} {...register('nip')} />
             <Input label="Miasto" required autoComplete="address-level2" error={errors.city?.message} {...register('city')} />
@@ -253,14 +315,70 @@ export function CompanyDataPage() {
               error={errors.email?.message}
               {...register('email')}
             />
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button type="submit" loading={updateCompany.isPending} disabled={!currentCompany}>
-                Zapisz
-              </Button>
-            </div>
           </form>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">KSeF — dane dodatkowe</CardTitle>
+          <CardDescription>
+            Dane bankowe są automatycznie przenoszone na każdą nową fakturę. Rejestry (REGON, KRS, BDO) pojawiają się
+            w bloku sprzedawcy w XML FA-3.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-muted-foreground">Konto bankowe (przelew)</p>
+            <Input
+              label="IBAN"
+              placeholder="np. PL61109010140000071219812874"
+              error={errors.bank_account_iban?.message}
+              {...register('bank_account_iban')}
+            />
+            <Input
+              label="SWIFT / BIC"
+              placeholder="np. WBKPPLPP"
+              error={errors.bank_swift?.message}
+              {...register('bank_swift')}
+            />
+            <Input
+              label="Nazwa banku"
+              placeholder="np. Santander Bank Polska"
+              error={errors.bank_name?.message}
+              {...register('bank_name')}
+            />
+            <p className="pt-2 text-sm font-medium text-muted-foreground">Rejestry</p>
+            <Input
+              label="REGON"
+              placeholder="9 lub 14 cyfr"
+              inputMode="numeric"
+              error={errors.regon?.message}
+              {...register('regon')}
+            />
+            <Input
+              label="KRS"
+              placeholder="10 cyfr"
+              inputMode="numeric"
+              error={errors.krs?.message}
+              {...register('krs')}
+            />
+            <Input
+              label="BDO (rejestr odpadów)"
+              placeholder="9 cyfr"
+              inputMode="numeric"
+              error={errors.bdo?.message}
+              {...register('bdo')}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex flex-wrap gap-2 pb-2">
+        <Button form="company-data-form" type="submit" loading={updateCompany.isPending} disabled={!currentCompany}>
+          Zapisz
+        </Button>
+      </div>
     </div>
   );
 }

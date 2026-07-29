@@ -84,7 +84,7 @@ export function CorrectionInvoiceCreatePage() {
 
   if (invoice.is_correction || (invoice.status !== 'issued' && invoice.status !== 'sent' && invoice.status !== 'paid')) {
     return (
-      <div className="mx-auto max-w-2xl p-6">
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
         <p className="text-destructive">
           Korektę można wystawić tylko do faktury wystawionej, wysłanej lub opłaconej.
         </p>
@@ -232,7 +232,7 @@ export function CorrectionInvoiceCreatePage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={() => navigate(`/invoices/${id}`)}>
           ← Wróć

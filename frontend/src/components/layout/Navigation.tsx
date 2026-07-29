@@ -232,7 +232,7 @@ function BottomNavItem({ to, end, activePathPrefix, label, IconOutline, IconFill
 
 const bottomNavBarClass = cn(
   'fixed bottom-0 left-0 right-0 z-50',
-  'flex items-center justify-around',
+  'flex items-center justify-evenly',
   'h-[83px] pb-[env(safe-area-inset-bottom)]',
   'px-4',
   'bg-surface-card/80 backdrop-blur-xl',
@@ -313,12 +313,24 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 <AppNavItemLink to="/" end>Pulpit</AppNavItemLink>
               </div>
 
-              {(customersEnabled || ordersEnabled) && (
+              {(customersEnabled || ordersEnabled || invoicingEnabled || reportingEnabled) && (
                 <div className="space-y-1">
                   <NavGroupTitle>Sprzedaż</NavGroupTitle>
                   <div className="space-y-0.5">
                     {customersEnabled && <AppNavItemLink to="/customers">Klienci</AppNavItemLink>}
                     {ordersEnabled && <AppNavItemLink to="/orders">Zamówienia</AppNavItemLink>}
+                    {invoicingEnabled && <AppNavItemLink to="/invoices">Faktury</AppNavItemLink>}
+                    {reportingEnabled && <AppNavItemLink to="/reports/payment-aging">Niezapłacone faktury</AppNavItemLink>}
+                  </div>
+                </div>
+              )}
+
+              {deliveryEnabled && (
+                <div className="space-y-1">
+                  <NavGroupTitle>Dostawa</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    <AppNavItemLink to="/van-routes">Trasy Vana</AppNavItemLink>
+                    <AppNavItemLink to="/delivery">Dokumenty dostawy</AppNavItemLink>
                   </div>
                 </div>
               )}
@@ -331,20 +343,6 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                     {warehousesEnabled && <AppNavItemLink to="/warehouses">Magazyny</AppNavItemLink>}
                     {warehousesEnabled && <AppNavItemLink to="/inventory">Inwentaryzacja</AppNavItemLink>}
                     {warehousesEnabled && <AppNavItemLink to="/delivery/new-rw">Odpisy (RW)</AppNavItemLink>}
-                  </div>
-                </div>
-              )}
-
-              {(deliveryEnabled || invoicingEnabled || ksefEnabled) && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Dokumenty</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    {deliveryEnabled && <AppNavItemLink to="/van-routes">Trasy Vana</AppNavItemLink>}
-                    {deliveryEnabled && <AppNavItemLink to="/delivery">Dostawa</AppNavItemLink>}
-                    {invoicingEnabled && <AppNavItemLink to="/invoices">Faktury</AppNavItemLink>}
-                    {ksefEnabled && <AppNavItemLink to="/ksef">KSeF</AppNavItemLink>}
-                    {ksefEnabled && <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>}
-                    {ksefEnabled && <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>}
                   </div>
                 </div>
               )}
@@ -369,26 +367,37 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 </div>
               )}
 
+              {ksefEnabled && (
+                <div className="space-y-1">
+                  <NavGroupTitle>E-Faktury (KSeF)</NavGroupTitle>
+                  <div className="space-y-0.5">
+                    <AppNavItemLink to="/ksef">KSeF</AppNavItemLink>
+                    <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>
+                    <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>
+                  </div>
+                </div>
+              )}
+
               {costAllocationEnabled && (
                 <div className="space-y-1">
-                  <NavGroupTitle>Księgowość</NavGroupTitle>
+                  <NavGroupTitle>Finanse</NavGroupTitle>
                   <div className="space-y-0.5">
                     <AppNavItemLink to="/cost-allocation">Adnotacje kosztowe</AppNavItemLink>
+                    <AppNavItemLink to="/fixed-costs">Koszty Stałe</AppNavItemLink>
                   </div>
                 </div>
               )}
 
               {reportingEnabled && (
                 <div className="space-y-1">
-                  <NavGroupTitle>Administracja</NavGroupTitle>
+                  <NavGroupTitle>Raporty</NavGroupTitle>
                   <div className="space-y-0.5">
-                    <AppNavItemLink to="/reports" end>Raporty</AppNavItemLink>
-                    <AppNavItemLink to="/reports/payment-aging">Niezapłacone faktury</AppNavItemLink>
+                    <AppNavItemLink to="/reports" end>Przegląd</AppNavItemLink>
                     <AppNavItemLink to="/reports/profit-loss">Zysk i Koszty (P&amp;L)</AppNavItemLink>
                     {purchasingEnabled && <AppNavItemLink to="/reports/product-margin">Marże na produktach</AppNavItemLink>}
                     {purchasingEnabled && <AppNavItemLink to="/reports/customer-margin">Marże na klientach</AppNavItemLink>}
                     {purchasingEnabled && <AppNavItemLink to="/reports/supplier-costs">Koszty zakupów</AppNavItemLink>}
-                    {warehousesEnabled && <AppNavItemLink to="/reports/inventory">Magazyn</AppNavItemLink>}
+                    {warehousesEnabled && <AppNavItemLink to="/reports/inventory">Stan magazynu</AppNavItemLink>}
                   </div>
                 </div>
               )}
@@ -396,7 +405,6 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
               <div className="space-y-1 border-t border-border pt-3">
                 <AppNavItemLink to="/activity">Historia aktywności</AppNavItemLink>
                 <AppNavItemLink to="/settings/company" end>Ustawienia</AppNavItemLink>
-                {ksefEnabled && <AppNavItemLink to="/settings/certificate" end>Certyfikat KSeF</AppNavItemLink>}
               </div>
             </nav>
           </motion.div>

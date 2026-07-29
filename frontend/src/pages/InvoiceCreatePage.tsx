@@ -3,11 +3,13 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { InvoiceKsefOptions } from '@/components/features/invoicing/InvoiceKsefOptions';
 import { useGenerateInvoiceFromOrderMutation } from '@/query/use-invoices';
 import { useOrderListQuery, useOrderQuery, type OrderListFilters } from '@/query/use-orders';
+import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
-import type { InvoicePaymentMethod } from '@/types';
+import type { Company, InvoiceKsefOptions as KsefOptionsType, InvoicePaymentMethod } from '@/types';
 
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -67,6 +69,8 @@ export function InvoiceCreatePage() {
 
 function InvoiceCreatePageContent() {
   const navigate = useNavigate();
+  const resolved = useResolvedCompanyId();
+  const company = resolved.state === 'ready' ? (resolved.company as Company | undefined) : undefined;
 
   const [listPage, setListPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
@@ -77,7 +81,20 @@ function InvoiceCreatePageContent() {
   const [saleDate, setSaleDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<InvoicePaymentMethod>('transfer');
+  const [ksefOptions, setKsefOptions] = useState<KsefOptionsType>({});
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Seed bank fields from company defaults once loaded
+  useEffect(() => {
+    if (!company) return;
+    setKsefOptions((prev) => ({
+      bank_account_iban: company.bank_account_iban ?? '',
+      bank_swift: company.bank_swift ?? '',
+      bank_name: company.bank_name ?? '',
+      ...prev,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?.bank_account_iban, company?.bank_swift, company?.bank_name]);
 
   useEffect(() => {
     const h = window.setTimeout(() => {
@@ -140,6 +157,7 @@ function InvoiceCreatePageContent() {
           sale_date: saleDate,
           due_date: dueDate,
           payment_method: paymentMethod,
+          ...ksefOptions,
         },
       },
       {
@@ -342,6 +360,22 @@ function InvoiceCreatePageContent() {
               (!orderDetail.items || orderDetail.items.length === 0) ? (
                 <p className="text-sm text-muted-foreground">Brak pozycji.</p>
               ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className="mx-auto w-full max-w-4xl shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-lg">4. Opcje KSeF (opcjonalne)</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Dodatkowe pola FA-3 — wypełnij tylko jeśli faktura wymaga specjalnych adnotacji.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <InvoiceKsefOptions
+                value={ksefOptions}
+                onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+                paymentMethod={paymentMethod}
+              />
             </CardContent>
           </Card>
 

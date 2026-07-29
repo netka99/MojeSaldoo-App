@@ -254,7 +254,7 @@ export function CostProjectsPage() {
   };
 
   return (
-    <div className="max-w-2xl p-6 space-y-6">
+    <div className="mx-auto max-w-2xl px-4 py-6 space-y-6 sm:px-6">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">
           Adnotacje kosztowe

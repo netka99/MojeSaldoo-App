@@ -32,6 +32,9 @@ class CustomerSerializer(UUIDModelSerializer):
             "payment_terms",
             "credit_limit",
             "is_active",
+            # KSeF / FA-3 Podmiot2 flags
+            "is_jst",
+            "is_gv_member",
             "created_at",
             "updated_at",
         ]

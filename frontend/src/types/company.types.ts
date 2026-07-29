@@ -112,6 +112,13 @@ export interface Company {
   email: string
   isActive: boolean
   createdAt: string
+  // KSeF / invoice defaults
+  bank_account_iban?: string
+  bank_swift?: string
+  bank_name?: string
+  regon?: string
+  krs?: string
+  bdo?: string
 }
 
 export interface CompanyMembership {
@@ -143,4 +150,11 @@ export interface CompanyWrite {
   email?: string
   taxation_form?: string
   ryczalt_category?: string | null
+  // KSeF / invoice defaults
+  bank_account_iban?: string
+  bank_swift?: string
+  bank_name?: string
+  regon?: string
+  krs?: string
+  bdo?: string
 }

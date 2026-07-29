@@ -114,6 +114,13 @@ class CompanySerializer(UUIDModelSerializer):
             "is_active",
             "taxation_form",
             "ryczalt_category",
+            # KSeF / invoice defaults
+            "bank_account_iban",
+            "bank_swift",
+            "bank_name",
+            "regon",
+            "krs",
+            "bdo",
             "created_at",
             "updated_at",
         ]

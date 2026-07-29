@@ -91,7 +91,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/30 p-6">
+    <div className="flex min-h-screen flex-col bg-muted/30 px-6 pb-10 pt-16 sm:items-center sm:justify-center sm:py-12">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">MojeSaldoo</h1>

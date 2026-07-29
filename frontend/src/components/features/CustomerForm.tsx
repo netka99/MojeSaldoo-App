@@ -79,6 +79,9 @@ export const customerFormSchema = z.object({
   ),
   credit_limit: creditLimitStr,
   is_active: z.boolean(),
+  // KSeF FA-3 Podmiot2 flags
+  is_jst: z.boolean(),
+  is_gv_member: z.boolean(),
 });
 
 export type CustomerFormValues = z.infer<typeof customerFormSchema>;
@@ -98,6 +101,8 @@ const EMPTY_CUSTOMER_DEFAULTS: CustomerFormValues = {
   payment_terms: '14',
   credit_limit: '0',
   is_active: true,
+  is_jst: false,
+  is_gv_member: false,
 };
 
 function customerToFormDefaults(customer: Customer): CustomerFormValues {
@@ -116,6 +121,8 @@ function customerToFormDefaults(customer: Customer): CustomerFormValues {
     payment_terms: String(customer.payment_terms),
     credit_limit: String(customer.credit_limit),
     is_active: customer.is_active,
+    is_jst: customer.is_jst ?? false,
+    is_gv_member: customer.is_gv_member ?? false,
   };
 }
 
@@ -137,6 +144,8 @@ function formValuesToCustomerWrite(values: CustomerFormValues, id?: string): Cus
     payment_terms: Number.parseInt(values.payment_terms, 10),
     credit_limit: values.credit_limit,
     is_active: values.is_active,
+    is_jst: values.is_jst,
+    is_gv_member: values.is_gv_member,
   };
 }
 
@@ -199,6 +208,21 @@ function IconCredit(props: SVGProps<SVGSVGElement>) {
     <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
       <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth={1.75} />
       <path d="M2 10h20" stroke="currentColor" strokeWidth={1.75} />
+    </svg>
+  );
+}
+
+function IconKsef(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M14 2v6h6M9 13h6M9 17h4" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" />
     </svg>
   );
 }
@@ -426,6 +450,39 @@ export function CustomerForm({
           />
         )}
       />
+
+      <FormSection title="KSeF — dane nabywcy" Icon={IconKsef}>
+        <p className="text-sm text-muted-foreground">
+          Flagi wymagane przez FA-3 (XML KSeF) w bloku Podmiot2. Zaznacz tylko jeśli nabywca spełnia poniższe
+          kryteria — w przeciwnym razie pozostaw wyłączone.
+        </p>
+        <Controller
+          name="is_jst"
+          control={control}
+          render={({ field }) => (
+            <IosToggle
+              checked={field.value}
+              onChange={field.onChange}
+              label="JST — sektor finansów publicznych"
+              description="Nabywca jest jednostką sektora finansów publicznych (urząd gminy, szkoła, szpital publiczny itp.). Powoduje ustawienie P_15A=1 w FA-3."
+              disabled={isLoading}
+            />
+          )}
+        />
+        <Controller
+          name="is_gv_member"
+          control={control}
+          render={({ field }) => (
+            <IosToggle
+              checked={field.value}
+              onChange={field.onChange}
+              label="GV — członek grupy VAT"
+              description="Nabywca jest członkiem grupy VAT (GV) zarejestrowanej w Polsce. Powoduje ustawienie P_15B=1 w FA-3."
+              disabled={isLoading}
+            />
+          )}
+        />
+      </FormSection>
 
       <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

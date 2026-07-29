@@ -685,7 +685,7 @@ export function CompanySettingsPage() {
   const { companyId, company: currentCompany, isUnsynced } = resolved;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 p-6">
+    <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 sm:px-6">
       <div>
         <h1 className="text-[1.5rem] font-semibold tracking-tight">Ustawienia firmy</h1>
         <p className="text-sm text-muted-foreground">

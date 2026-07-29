@@ -8,6 +8,9 @@ import type { Order } from './order.types';
 /** `Invoice.payment_method`. */
 export type InvoicePaymentMethod = 'transfer' | 'cash' | 'card';
 
+/** FA-3 RodzajFaktury (KOR is derived from is_correction, not set here). */
+export type KsefInvoiceType = 'VAT' | 'ZAL' | 'ROZ';
+
 /** `Invoice.status` (local lifecycle; not KSeF). */
 export type InvoiceStatus =
   | 'draft'
@@ -75,6 +78,32 @@ export interface Invoice {
   corrections: { id: string; invoice_number: string | null }[];
   paid_at: string | null;
   notes: string;
+
+  // --- KSeF FA-3 optional fields ---
+  ksef_invoice_type: KsefInvoiceType;
+  // Adnotacje
+  annotation_mpp: boolean;
+  annotation_kasowa: boolean;
+  annotation_odwrotne: boolean;
+  annotation_trojstronna: boolean;
+  annotation_zwolnienie: boolean;
+  annotation_marza: boolean;
+  annotation_tp: boolean;
+  annotation_fp: boolean;
+  annotation_oss: boolean;
+  // Płatność
+  bank_account_iban: string;
+  bank_swift: string;
+  bank_name: string;
+  payment_link: string;
+  ksef_payment_id: string;
+  discount_conditions: string;
+  // Dokumenty i stopka
+  wz_numbers: string[];
+  footer_text: string;
+  extra_notes: string;
+  prices_include_vat: boolean;
+
   created_at: string;
   updated_at: string;
   items: InvoiceItem[];
@@ -95,8 +124,32 @@ export interface CreateCorrectionBody {
   items?: CorrectionItemEntry[];
 }
 
+/** KSeF optional fields shared across InvoiceCreate / InvoicePatch / GenerateFromOrder. */
+export interface InvoiceKsefOptions {
+  ksef_invoice_type?: KsefInvoiceType;
+  annotation_mpp?: boolean;
+  annotation_kasowa?: boolean;
+  annotation_odwrotne?: boolean;
+  annotation_trojstronna?: boolean;
+  annotation_zwolnienie?: boolean;
+  annotation_marza?: boolean;
+  annotation_tp?: boolean;
+  annotation_fp?: boolean;
+  annotation_oss?: boolean;
+  bank_account_iban?: string;
+  bank_swift?: string;
+  bank_name?: string;
+  payment_link?: string;
+  ksef_payment_id?: string;
+  discount_conditions?: string;
+  wz_numbers?: string[];
+  footer_text?: string;
+  extra_notes?: string;
+  prices_include_vat?: boolean;
+}
+
 /** `POST /api/invoices/` — writable fields (`status` is server / action controlled). */
-export interface InvoiceCreate {
+export interface InvoiceCreate extends InvoiceKsefOptions {
   order_id: string;
   issue_date: string;
   sale_date: string;
@@ -136,7 +189,7 @@ export interface PaginatedInvoices {
 }
 
 /** Optional body for `POST .../generate-from-order/:orderId/`. */
-export interface GenerateInvoiceFromOrderBody {
+export interface GenerateInvoiceFromOrderBody extends InvoiceKsefOptions {
   delivery_document_id?: string;
   issue_date?: string;
   sale_date?: string;

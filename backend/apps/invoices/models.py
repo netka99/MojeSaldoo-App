@@ -21,6 +21,18 @@ class Invoice(models.Model):
     STATUS_OVERDUE = "overdue"
     STATUS_CANCELLED = "cancelled"
 
+    # FA-3 RodzajFaktury: KOR is derived from is_correction=True; ZAL/ROZ must be
+    # set explicitly. ZAL (advance) and ROZ (settlement) require additional XML
+    # blocks not yet implemented — the validator blocks sending them until they are.
+    KSEF_TYPE_VAT = "VAT"
+    KSEF_TYPE_ZAL = "ZAL"
+    KSEF_TYPE_ROZ = "ROZ"
+    KSEF_INVOICE_TYPE_CHOICES = [
+        (KSEF_TYPE_VAT, "Podstawowa (VAT)"),
+        (KSEF_TYPE_ZAL, "Zaliczkowa (ZAL)"),
+        (KSEF_TYPE_ROZ, "Rozliczeniowa (ROZ)"),
+    ]
+
     PAYMENT_METHOD_CHOICES = [
         ("transfer", "Przelew"),
         ("cash", "Gotówka"),
@@ -150,6 +162,119 @@ class Invoice(models.Model):
     )
     paid_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
+
+    # ---------------------------------------------------------------
+    # KSeF FA-3 optional fields
+    # ---------------------------------------------------------------
+
+    # RodzajFaktury — VAT/ZAL/ROZ (KOR overrides this when is_correction=True).
+    ksef_invoice_type = models.CharField(
+        max_length=3,
+        choices=KSEF_INVOICE_TYPE_CHOICES,
+        default=KSEF_TYPE_VAT,
+        help_text="Rodzaj faktury w KSeF FA-3. KOR jest ustawiany automatycznie.",
+    )
+
+    # Adnotacje (P_16–P_23): FA-3 requires these flags to be set explicitly.
+    # Default False → emits code "2" (nie dotyczy) in the XML for all of them.
+    annotation_mpp = models.BooleanField(
+        default=False,
+        help_text="Mechanizm podzielonej płatności (MPP, P_16). "
+                  "Wymagany gdy faktura opiewa na ≥15 000 PLN i zawiera towary/usługi z załącznika nr 15 do ustawy VAT.",
+    )
+    annotation_kasowa = models.BooleanField(
+        default=False,
+        help_text="Metoda kasowa (P_17, art. 21 ust. 1 ustawy VAT). "
+                  "Dotyczy podatników rozliczających VAT metodą kasową.",
+    )
+    annotation_odwrotne = models.BooleanField(
+        default=False,
+        help_text="Odwrotne obciążenie (P_18). "
+                  "Stosowane gdy VAT rozlicza nabywca (np. złom, odpady, usługi budowlane B2B).",
+    )
+    annotation_trojstronna = models.BooleanField(
+        default=False,
+        help_text="Uproszczona procedura trójstronna (P_18A, art. 135 ust. 1 pkt 4 ustawy VAT). "
+                  "Dotyczy transakcji wewnątrzwspólnotowych z trzema podmiotami.",
+    )
+    annotation_zwolnienie = models.BooleanField(
+        default=False,
+        help_text="Dostawa zwolniona od podatku (P_19, art. 43 ust. 1, art. 113 ust. 1 i 9 lub art. 82 ust. 3). "
+                  "Zaznacz gdy sprzedajesz towary/usługi zwolnione z VAT.",
+    )
+    annotation_marza = models.BooleanField(
+        default=False,
+        help_text="Procedura marży (P_23, art. 119 lub 120 ustawy VAT). "
+                  "Dotyczy biur podróży i handlu używanymi towarami.",
+    )
+    annotation_tp = models.BooleanField(
+        default=False,
+        help_text="Powiązania między nabywcą a sprzedawcą (TP, P_106E_2). "
+                  "Wymagany zgodnie z §10 ust. 4 pkt 3 rozporządzenia JPK, gdy strony są podmiotami powiązanymi.",
+    )
+    annotation_fp = models.BooleanField(
+        default=False,
+        help_text="Faktura do paragonu z kasy fiskalnej (FP, P_106E_3, art. 109 ust. 3d ustawy VAT). "
+                  "Zaznacz gdy wystawiasz fakturę do wcześniej wydrukowanego paragonu.",
+    )
+    annotation_oss = models.BooleanField(
+        default=False,
+        help_text="Procedura OSS — One Stop Shop (P_106E_1). "
+                  "Dotyczy sprzedaży B2C do konsumentów w innych krajach UE.",
+    )
+
+    # Płatność — dane bankowe
+    bank_account_iban = models.CharField(
+        max_length=34, blank=True, default="",
+        help_text="Numer rachunku bankowego IBAN (np. PL12 1234 5678 9012 3456 7890 1234). "
+                  "Wymagany przy formie płatności 'przelew'.",
+    )
+    bank_swift = models.CharField(
+        max_length=11, blank=True, default="",
+        help_text="Kod SWIFT/BIC banku (opcjonalnie).",
+    )
+    bank_name = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Nazwa banku (opcjonalnie).",
+    )
+    payment_link = models.CharField(
+        max_length=512, blank=True, default="",
+        help_text="Link do płatności bezgotówkowej (opcjonalnie, max 512 znaków).",
+    )
+    ksef_payment_id = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="Identyfikator płatności KSeF (opcjonalnie, max 50 znaków).",
+    )
+    discount_conditions = models.CharField(
+        max_length=256, blank=True, default="",
+        help_text="Warunki skonta — opis rabatu za wcześniejszą płatność (opcjonalnie, max 256 znaków).",
+    )
+
+    # Dokumenty WZ — numery magazynowych dokumentów wydania zewnętrznego
+    wz_numbers = models.JSONField(
+        default=list, blank=True,
+        help_text="Lista numerów dokumentów magazynowych WZ powiązanych z fakturą (opcjonalnie).",
+    )
+
+    # Stopka i opis
+    footer_text = models.CharField(
+        max_length=3500, blank=True, default="",
+        help_text="Stopka faktury — tekst drukowany u dołu faktury (opcjonalnie, max 3500 znaków).",
+    )
+    extra_notes = models.TextField(
+        blank=True, default="",
+        help_text="Dodatkowy opis do faktury (widoczny na wydruku, nie wysyłany do KSeF).",
+    )
+
+    # prices_include_vat: True = FaWiersz używa P_9B+P_11A (brutto, domyślne zachowanie).
+    # False = P_9A+P_11 (netto). Default True zachowuje kompatybilność ze starymi fakturami.
+    prices_include_vat = models.BooleanField(
+        default=True,
+        help_text="True = faktura w cenach brutto (P_9B/P_11A). "
+                  "False = faktura w cenach netto (P_9A/P_11). "
+                  "Domyślnie True dla zgodności z istniejącymi fakturami.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

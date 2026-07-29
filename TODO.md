@@ -1,10 +1,29 @@
 1.Testing:
     - PZ-KOR - create KOR invoice from supplier
     - removing an account
-    - ryczałt
 
 
+2.  Recorded / Replay Testing (E2E Tests)
+What you're thinking of is End-to-End (E2E) testing. The idea: you interact with the app like a real user, the tool records those interactions, then replays them automatically on every change.
 
+Best options for your React + Django stack:
+Playwright (recommended)
+
+3.  UI/UX Polish
+This is broader. The main approaches:
+
+Automated audits (instant wins)
+Lighthouse (built into Chrome DevTools) — scores your app on performance, accessibility, best practices
+axe DevTools (browser extension) — finds accessibility issues (contrast, missing labels, etc.)
+I have Chrome DevTools MCP available — I can run these audits on your running app right now
+Manual UX review strategies
+Heuristic evaluation — go through Nielsen's 10 usability heuristics against your own screens
+User flows — map every key flow (login → create order → invoice) and look for friction points
+Mobile responsiveness — test on small screens, your target users (bakeries, van sellers) may use phones
+Design consistency
+Check spacing, font sizes, button styles are consistent
+Color contrast meets WCAG AA (4.5:1 ratio)
+Loading states, empty states, error messages all handled
 
 ====================================
 IDEAS FOR FUTURE REPORTS:

@@ -139,6 +139,21 @@ def generate_fa3_xml(invoice) -> str:
     def _rate_key(item) -> str:
         return str(int(item.vat_rate)) if item.vat_rate == item.vat_rate.to_integral_value() else str(item.vat_rate)
 
+    # --- Optional invoice-level flags ---
+    is_mpp = bool(getattr(invoice, "annotation_mpp", False))
+    is_kasowa = bool(getattr(invoice, "annotation_kasowa", False))
+    is_odwrotne = bool(getattr(invoice, "annotation_odwrotne", False))
+    is_trojstronna = bool(getattr(invoice, "annotation_trojstronna", False))
+    is_zwolnienie = bool(getattr(invoice, "annotation_zwolnienie", False))
+    is_marza = bool(getattr(invoice, "annotation_marza", False))
+    is_tp = bool(getattr(invoice, "annotation_tp", False))
+    is_fp = bool(getattr(invoice, "annotation_fp", False))
+    is_oss = bool(getattr(invoice, "annotation_oss", False))
+
+    # JST / GV from customer (defaults: 2 = nie dotyczy)
+    jst_val = "1" if getattr(customer, "is_jst", False) else "2"
+    gv_val = "1" if getattr(customer, "is_gv_member", False) else "2"
+
     # --- VAT summary ---
     # For KOR: show the DIFFERENCE (corrected − original); may be negative.
     # For regular invoices: sum of all lines.
@@ -249,6 +264,90 @@ def generate_fa3_xml(invoice) -> str:
         for idx, item in enumerate(items, start=1):
             lines_xml += _fa_wiersz(idx, item)
 
+    # --- Adnotacje block (dynamic) ---
+    zwolnienie_inner = "<P_19>1</P_19>" if is_zwolnienie else "<P_19N>1</P_19N>"
+    marza_inner = "<P_PMarzy>1</P_PMarzy>" if is_marza else "<P_PMarzyN>1</P_PMarzyN>"
+    adnotacje_xml = f"""
+    <Adnotacje>
+      <P_16>{"1" if is_mpp else "2"}</P_16>
+      <P_17>{"1" if is_kasowa else "2"}</P_17>
+      <P_18>{"1" if is_odwrotne else "2"}</P_18>
+      <P_18A>{"1" if is_trojstronna else "2"}</P_18A>
+      <Zwolnienie>{zwolnienie_inner}</Zwolnienie>
+      <NoweSrodkiTransportu><P_22N>1</P_22N></NoweSrodkiTransportu>
+      <P_23>{"1" if is_marza else "2"}</P_23>
+      <PMarzy>{marza_inner}</PMarzy>
+    </Adnotacje>"""
+
+    # P_106E_1/2/3 — after Adnotacje, before RodzajFaktury (per FA-3 schema ordering)
+    p106e_xml = ""
+    if is_oss:
+        p106e_xml += "\n    <P_106E_1>1</P_106E_1>"
+    if is_tp:
+        p106e_xml += "\n    <P_106E_2>1</P_106E_2>"
+    if is_fp:
+        p106e_xml += "\n    <P_106E_3>1</P_106E_3>"
+
+    # --- RodzajFaktury: KOR overrides model field ---
+    ksef_type = getattr(invoice, "ksef_invoice_type", "VAT") or "VAT"
+    rodzaj_faktury = "KOR" if is_kor else ksef_type
+
+    # --- Stopka faktury (after FaWiersz, before Platnosc) ---
+    stopka_xml = ""
+    footer = (getattr(invoice, "footer_text", "") or "").strip()
+    if footer:
+        stopka_xml = f"\n    <StopkaFaktury>{_escape(footer)}</StopkaFaktury>"
+
+    # --- Platnosc extras ---
+    # Bank account: only emit for transfer payments
+    bank_xml = ""
+    bank_iban = (getattr(invoice, "bank_account_iban", "") or "").strip()
+    if bank_iban and invoice.payment_method == "transfer":
+        bank_swift_val = (getattr(invoice, "bank_swift", "") or "").strip()
+        bank_name_val = (getattr(invoice, "bank_name", "") or "").strip()
+        bank_xml = f"""
+      <RachunekBankowy>
+        <NrRB>{_escape(bank_iban)}</NrRB>"""
+        if bank_swift_val:
+            bank_xml += f"\n        <SWIFT>{_escape(bank_swift_val)}</SWIFT>"
+        if bank_name_val:
+            bank_xml += f"\n        <NazwaBanku>{_escape(bank_name_val)}</NazwaBanku>"
+        bank_xml += "\n      </RachunekBankowy>"
+
+    skonto_xml = ""
+    discount = (getattr(invoice, "discount_conditions", "") or "").strip()
+    if discount:
+        skonto_xml = f"\n      <Skonto>{_escape(discount)}</Skonto>"
+
+    link_xml = ""
+    payment_link_val = (getattr(invoice, "payment_link", "") or "").strip()
+    if payment_link_val:
+        link_xml = f"\n      <LinkDoPlatnosci>{_escape(payment_link_val)}</LinkDoPlatnosci>"
+
+    ksef_pid_xml = ""
+    ksef_pid_val = (getattr(invoice, "ksef_payment_id", "") or "").strip()
+    if ksef_pid_val:
+        ksef_pid_xml = f"\n      <IdPlatnosci>{_escape(ksef_pid_val)}</IdPlatnosci>"
+
+    # --- Rejestry (seller registry identifiers) ---
+    # NOTE: element names (KRS/REGON/BDO) and their ordering inside DaneIdentyfikacyjne
+    # must be verified against the official FA-3 XSD at
+    # http://crd.gov.pl/wzor/2025/06/25/13775/ before production use.
+    # TODO: verify Rejestry sub-element ordering from XSD.
+    regon_val = (getattr(company, "regon", "") or "").strip()
+    krs_val = (getattr(company, "krs", "") or "").strip()
+    bdo_val = (getattr(company, "bdo", "") or "").strip()
+    rejestry_xml = ""
+    if krs_val or regon_val or bdo_val:
+        rejestry_inner = ""
+        if krs_val:
+            rejestry_inner += f"\n      <KRS>{_escape(krs_val)}</KRS>"
+        if regon_val:
+            rejestry_inner += f"\n      <REGON>{_escape(regon_val)}</REGON>"
+        if bdo_val:
+            rejestry_inner += f"\n      <BDO>{_escape(bdo_val)}</BDO>"
+        rejestry_xml = f"\n    <Rejestry>{rejestry_inner}\n    </Rejestry>"
+
     # --- KOR: DaneFaKorygowanej block ---
     dane_kor_xml = ""
     if is_kor and invoice.corrects_invoice_id:
@@ -262,8 +361,6 @@ def generate_fa3_xml(invoice) -> str:
     <DataWystFaKorygowanej>{_fmt_date(orig_inv.issue_date)}</DataWystFaKorygowanej>
     <NrFaKorygowanej>{_escape(orig_inv.invoice_number)}</NrFaKorygowanej>{ksef_nr_tag}
   </DaneFaKorygowanej>"""
-
-    rodzaj_faktury = "KOR" if is_kor else "VAT"
 
     # --- Creation timestamp (UTC, ISO 8601) ---
     now_utc = datetime.now(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -279,7 +376,7 @@ def generate_fa3_xml(invoice) -> str:
   <Podmiot1>
     <DaneIdentyfikacyjne>
       <NIP>{_escape(company.nip)}</NIP>
-      <Nazwa>{_escape(company.name)}</Nazwa>
+      <Nazwa>{_escape(company.name)}</Nazwa>{rejestry_xml}
     </DaneIdentyfikacyjne>
     <Adres>
       <KodKraju>PL</KodKraju>
@@ -297,8 +394,8 @@ def generate_fa3_xml(invoice) -> str:
       <AdresL1>{_escape(buyer_l1)}</AdresL1>
       <AdresL2>{_escape(buyer_l2)}</AdresL2>
     </Adres>
-    <JST>2</JST>
-    <GV>2</GV>
+    <JST>{jst_val}</JST>
+    <GV>{gv_val}</GV>
   </Podmiot2>
   <Fa>
     <KodWaluty>PLN</KodWaluty>
@@ -306,21 +403,14 @@ def generate_fa3_xml(invoice) -> str:
     <P_1M>{_escape(company.city or "Warszawa")}</P_1M>
     <P_2>{_escape(invoice.invoice_number)}</P_2>
     <P_6>{_fmt_date(invoice.sale_date)}</P_6>{vat_fields_xml}
-    <P_15>{_fmt_amount(total_gross)}</P_15>
-    <Adnotacje>
-      <P_16>2</P_16><P_17>2</P_17><P_18>2</P_18><P_18A>2</P_18A>
-      <Zwolnienie><P_19N>1</P_19N></Zwolnienie>
-      <NoweSrodkiTransportu><P_22N>1</P_22N></NoweSrodkiTransportu>
-      <P_23>2</P_23>
-      <PMarzy><P_PMarzyN>1</P_PMarzyN></PMarzy>
-    </Adnotacje>
+    <P_15>{_fmt_amount(total_gross)}</P_15>{adnotacje_xml}{p106e_xml}
     <RodzajFaktury>{rodzaj_faktury}</RodzajFaktury>{dane_kor_xml}
-    {lines_xml}
+    {lines_xml}{stopka_xml}
     <Platnosc>
       <TerminPlatnosci>
         <Termin>{_fmt_date(invoice.due_date)}</Termin>
       </TerminPlatnosci>
-      <FormaPlatnosci>{_payment_code(invoice.payment_method)}</FormaPlatnosci>
+      <FormaPlatnosci>{_payment_code(invoice.payment_method)}</FormaPlatnosci>{bank_xml}{skonto_xml}{link_xml}{ksef_pid_xml}
     </Platnosc>
   </Fa>
 </Faktura>"""

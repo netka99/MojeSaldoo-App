@@ -28,6 +28,22 @@ class Customer(models.Model):
     payment_terms = models.IntegerField(default=14)
     credit_limit = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
+
+    # --- KSeF / FA-3 Podmiot2 flags ---
+    # JST: 1 = nabywca jest jednostką sektora finansów publicznych (art. 14 uptu).
+    # Maps to <JST>1</JST> in FA-3 XML (2 = nie dotyczy).
+    is_jst = models.BooleanField(
+        default=False,
+        help_text="Nabywca jest jednostką sektora finansów publicznych (JST). "
+                  "Zaznacz jeśli wystawiasz fakturę dla gminy/powiatu/szkoły itp.",
+    )
+    # GV: 1 = nabywca jest członkiem grupy VAT.
+    # Maps to <GV>1</GV> in FA-3 XML (2 = nie dotyczy).
+    is_gv_member = models.BooleanField(
+        default=False,
+        help_text="Nabywca jest członkiem grupy VAT (GV). Rzadko stosowane.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

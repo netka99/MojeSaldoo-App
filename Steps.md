@@ -1665,61 +1665,104 @@ Etap C (opcjonalny, później): Google OAuth
 ✅ SetupNudgeBar widoczny na dashboardzie dla nowych użytkowników
 ✅ Wszystkie testy przechodzą
 ===================================
-Testy Korekt
-1. FV-KOR — Create a correction invoice
-Setup: you need an issued or paid invoice first.
 
-Go to Faktury (/invoices)
-
-Open any invoice with status Wystawiona or Opłacona
-
-On the detail page, find the "Utwórz korektę FV" button in the top-right action area
-
-Verify it is not visible on a draft invoice
-Verify it is not visible on an invoice that is already a correction
-Click "Utwórz korektę FV" → you land on /invoices/{id}/correction/new
-
-On the correction form: 5. Try clicking "Utwórz korektę FV (draft)" without filling in the reason — the button should be disabled 6. Fill in a reason, e.g. Błędna cena 7. Optionally change a line item quantity or price 8. Watch the Różnica live-counter update at the bottom 9. Click "Utwórz korektę FV (draft)" 10. You should be redirected to the new correction's detail page
-
-Verify in the correction detail:
-
-Invoice number should be FV-KOR/2026/NNNN
-Header shows "Korekta FV/2026/XXXX" (linking back to the original)
-Reason text is displayed
-Verify in the invoice list (/invoices):
-
-The new correction row has a red KOR badge next to the number
-Below the number: "Koryguje: FV/2026/XXXX" — clicking it navigates to the original
-2. FV-KOR list filters
-On the /invoices page, use the Typ toggle buttons:
-
-Button	Expected result
-Korekty FV-KOR
-Only FV-KOR/… invoices visible
-Tylko zwykłe
-Only FV/… invoices visible, no KOR badges
-Wszystkie
-Both types visible
 3. KSeF KOR → PZ-KOR (inbound correction)
 Go to KSeF → Skrzynka odbiorcza (/ksef/inbox)
 Find or sync a correction invoice (one with RodzajFaktury = KOR in its XML)
 That row should show an orange KOR badge next to the invoice number
 Instead of the normal + PZ button, there should be an orange PZ-KOR button
 Click PZ-KOR → you land on /ksef/inbox/{ksefNumber}/pz-kor
-On the PZ-KOR flow page: 6. If the original PZ is found: select it from the list 7. Check/uncheck line items, change quantities or unit costs for corrected lines 8. Fill in an optional reason 9. Click "Utwórz PZ-KOR" → redirected to the new delivery document
+On the PZ-KOR flow page: 6. If the original PZ is found: select it from the list 7. Check/uncheck line items, change quantities or unit costs for corrected lines 8. Fill in an optional reason 
+You are the buyer. Flow:
+
+Supplier sends you FV → you receive it in KSeF inbox → you create a PZ (record that goods arrived at your warehouse)
+Later the supplier realizes a mistake (wrong qty, wrong price) → they send you a FV-KOR correction
+This FV-KOR appears in your KSeF inbox (skrzynka odbiorcza) with RodzajFaktury = KOR
+You now need to adjust your warehouse records → you create PZ-KOR to correct the original PZ
+The "edge case — no PZ matched" means:
+
+The supplier sent you a FV-KOR correcting their FV, but you never created a PZ for that original FV yet. The system can't create a PZ-KOR without an original PZ to correct. Warning: "First create a PZ for the original invoice before correcting it."
+
+9. Click "Utwórz PZ-KOR" → redirected to the new delivery document
 
 Edge case — no PZ matched:
 
 Should show an amber warning: "Nie znaleziono powiązanego PZ" with guidance to first create a PZ for the original invoice
-4. Quick sanity checks
-What to check	                               Where
-FV-KOR number format is FV-KOR/2026/0001
-                                             Correction detail page
-Second correction gets FV-KOR/2026/0002
-                                              Create a second one
-Can't correct a draft invoice
-                                              Button hidden in detail
-Can't correct a FV-KOR itself
-                                               Button hidden in detail
-?is_correction=true API filter
-                                            GET /api/invoices/?is_correction=true in browser/Postman
+
+==========================================
+
+Testy Usuwania konta: 
+Manual Testing Guide
+Setup — you need 2 test users
+Create them via the app's register flow or Django shell:
+
+
+cd backend
+python manage.py shell
+
+from apps.users.models import User, Company, CompanyMembership, CompanyRole
+
+# Create two users
+u1 = User.objects.create_user('testadmin', 'admin@test.com', 'pass1234')
+u2 = User.objects.create_user('testmember', 'member@test.com', 'pass1234')
+
+# Create a company
+co = Company.objects.create(name='Testowa Firma', nip='1234567890')
+admin_role = CompanyRole.objects.create(company=co, name='Administrator', is_admin=True)
+worker_role = CompanyRole.objects.create(company=co, name='Pracownik', is_admin=False)
+
+CompanyMembership.objects.create(user=u1, company=co, role='admin', company_role=admin_role, is_active=True)
+CompanyMembership.objects.create(user=u2, company=co, role='viewer', company_role=worker_role, is_active=True)
+Test 1 — Non-admin cannot delete
+Login as testmember
+Go to Ustawienia firmy
+Scroll to bottom — "Strefa niebezpieczna" section should be visible
+Confirm: "Usuń firmę" button is NOT visible (only "Opuść firmę")
+Test 2 — Wrong name blocks deletion
+Login as testadmin
+Go to Ustawienia firmy → scroll to bottom
+Click "Usuń firmę" → modal opens
+Type anything wrong, e.g. testowa firma (lowercase)
+Confirm button stays disabled
+Type exact name: Testowa Firma
+Confirm button becomes enabled
+Click Anuluj — nothing changes
+Test 3 — Member leaves the company
+Login as testmember
+Ustawienia firmy → "Opuść firmę" → confirm
+Expected: redirected to /, company gone from switcher
+Check DB:
+
+CompanyMembership.objects.filter(user=u2, company=co).exists()  # → False
+User.objects.get(pk=u2.pk).is_active  # → False (anonymized, no other memberships)
+Test 4 — Sole admin cannot leave
+Login as testadmin (u2 is already gone from step 3, so u1 is the only member)
+Click "Opuść firmę"
+Expected: error message in modal — "Jesteś jedynym administratorem..."
+Membership still exists in DB
+Test 5 — Admin deletes the company
+Login as testadmin
+Ustawienia firmy → "Usuń firmę" → type Testowa Firma → confirm
+Expected: redirected to /, company gone
+Verify in DB:
+
+co.refresh_from_db()
+co.deleted_at    # → timestamp (not None)
+co.is_active     # → False
+co.name          # → "Firma usunięta [1234567890]"
+CompanyMembership.objects.filter(company=co).exists()  # → False
+
+# Tax documents retained (if you created any):
+from apps.invoices.models import Invoice
+Invoice.objects.filter(company=co).count()  # → same as before
+
+# Admin user anonymized:
+u1.refresh_from_db()
+u1.is_active     # → False
+u1.username      # → "deleted_xxxx..."
+Test 6 — Deleted company hidden from API
+After deletion, call the API directly:
+
+
+GET /api/companies/me/
+The deleted company should not appear in the response list.

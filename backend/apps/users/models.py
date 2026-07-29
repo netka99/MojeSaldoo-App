@@ -95,6 +95,35 @@ class Company(models.Model):
     )
     # True once the user completes the tile-based onboarding wizard.
     onboarding_completed = models.BooleanField(default=False)
+
+    # --- KSeF / invoice defaults ---
+    # Default bank account pre-filled onto new invoices (can be overridden per invoice).
+    bank_account_iban = models.CharField(
+        max_length=34, blank=True, default="",
+        help_text="IBAN rachunku bankowego (prefill na fakturach, np. PL12345678901234567890123456).",
+    )
+    bank_swift = models.CharField(
+        max_length=11, blank=True, default="",
+        help_text="Kod SWIFT/BIC banku (opcjonalnie).",
+    )
+    bank_name = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Nazwa banku (opcjonalnie, wyświetlana na fakturze).",
+    )
+    # Rejestry — identyfikatory w rejestrach publicznych (Podmiot1/DaneIdentyfikacyjne/Rejestry).
+    regon = models.CharField(
+        max_length=14, blank=True, default="",
+        help_text="Numer REGON (9 lub 14 cyfr).",
+    )
+    krs = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Numer KRS (10 cyfr).",
+    )
+    bdo = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Numer BDO (rejestr odpadów).",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)

@@ -10,12 +10,18 @@ import { AppNavItemLink, ModuleNavItem, NavGroupTitle } from './Navigation';
 function NavSectionSprzedaz() {
   const customersEnabled = useModuleGuard('customers');
   const ordersEnabled = useModuleGuard('orders');
+  const invoicingEnabled = useModuleGuard('invoicing');
+  const reportingEnabled = useModuleGuard('reporting');
   const canCustomers = usePermission('can_manage_customers');
   const canOrders = usePermission('can_manage_orders');
-  const anyEnabled = (customersEnabled && canCustomers) || (ordersEnabled && canOrders);
-  if (!anyEnabled) {
-    return null;
-  }
+  const canInvoices = usePermission('can_manage_invoices');
+  const canReports = usePermission('can_view_reports');
+  const anyEnabled =
+    (customersEnabled && canCustomers) ||
+    (ordersEnabled && canOrders) ||
+    (invoicingEnabled && canInvoices) ||
+    (reportingEnabled && canReports);
+  if (!anyEnabled) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Sprzedaż</NavGroupTitle>
@@ -28,6 +34,16 @@ function NavSectionSprzedaz() {
         {canOrders && (
           <ModuleNavItem module="orders" to="/orders">
             Zamówienia
+          </ModuleNavItem>
+        )}
+        {canInvoices && (
+          <ModuleNavItem module="invoicing" to="/invoices">
+            Faktury
+          </ModuleNavItem>
+        )}
+        {reportingEnabled && canReports && (
+          <ModuleNavItem module="reporting" to="/reports/payment-aging">
+            Niezapłacone faktury
           </ModuleNavItem>
         )}
       </div>
@@ -76,21 +92,15 @@ function NavSectionMagazyn() {
   );
 }
 
-function NavSectionDokumenty() {
+function NavSectionDostawa() {
   const deliveryEnabled = useModuleGuard('delivery');
-  const invoicingEnabled = useModuleGuard('invoicing');
-  const ksefEnabled = useModuleGuard('ksef');
   const canRoutes = usePermission('can_access_routes');
   const canDelivery = usePermission('can_manage_delivery');
-  const canInvoices = usePermission('can_manage_invoices');
-  const canKsefInbox = usePermission('can_access_ksef_inbox');
-  const anyEnabled = (deliveryEnabled && (canDelivery || canRoutes)) || (invoicingEnabled && canInvoices) || (ksefEnabled && (canInvoices || canKsefInbox));
-  if (!anyEnabled) {
-    return null;
-  }
+  const anyEnabled = deliveryEnabled && (canRoutes || canDelivery);
+  if (!anyEnabled) return null;
   return (
     <div className="space-y-1">
-      <NavGroupTitle>Dokumenty</NavGroupTitle>
+      <NavGroupTitle>Dostawa</NavGroupTitle>
       <div className="space-y-0.5">
         {canRoutes && (
           <ModuleNavItem module="delivery" to="/van-routes">
@@ -99,14 +109,24 @@ function NavSectionDokumenty() {
         )}
         {canDelivery && (
           <ModuleNavItem module="delivery" to="/delivery">
-            Dostawa
+            Dokumenty dostawy
           </ModuleNavItem>
         )}
-        {canInvoices && (
-          <ModuleNavItem module="invoicing" to="/invoices">
-            Faktury
-          </ModuleNavItem>
-        )}
+      </div>
+    </div>
+  );
+}
+
+function NavSectionEFaktury() {
+  const ksefEnabled = useModuleGuard('ksef');
+  const canInvoices = usePermission('can_manage_invoices');
+  const canKsefInbox = usePermission('can_access_ksef_inbox');
+  const anyEnabled = ksefEnabled && (canInvoices || canKsefInbox);
+  if (!anyEnabled) return null;
+  return (
+    <div className="space-y-1">
+      <NavGroupTitle>E-Faktury (KSeF)</NavGroupTitle>
+      <div className="space-y-0.5">
         {canInvoices && (
           <ModuleNavItem module="ksef" to="/ksef">
             KSeF
@@ -146,7 +166,7 @@ function NavSectionZakupy() {
   );
 }
 
-function NavSectionKsiegowos() {
+function NavSectionFinanse() {
   const costAllocationEnabled = useModuleGuard('cost_allocation');
   const canAccounting = usePermission('can_manage_accounting');
   const canReports = usePermission('can_view_reports');
@@ -155,7 +175,7 @@ function NavSectionKsiegowos() {
   if (!anyEnabled) return null;
   return (
     <div className="space-y-1">
-      <NavGroupTitle>Księgowość</NavGroupTitle>
+      <NavGroupTitle>Finanse</NavGroupTitle>
       <div className="space-y-0.5">
         {costAllocationEnabled && canAccounting && (
           <ModuleNavItem module="cost_allocation" to="/cost-allocation">
@@ -191,23 +211,18 @@ function NavSectionProdukcja() {
   );
 }
 
-function NavSectionAdministracja() {
-  const anyEnabled = useModuleGuard('reporting');
+function NavSectionRaporty() {
+  const reportingEnabled = useModuleGuard('reporting');
   const purchasingEnabled = useModuleGuard('purchasing');
   const warehousesEnabled = useModuleGuard('warehouses');
   const canReports = usePermission('can_view_reports');
-  if (!anyEnabled || !canReports) {
-    return null;
-  }
+  if (!reportingEnabled || !canReports) return null;
   return (
     <div className="space-y-1">
-      <NavGroupTitle>Administracja</NavGroupTitle>
+      <NavGroupTitle>Raporty</NavGroupTitle>
       <div className="space-y-0.5">
         <ModuleNavItem module="reporting" to="/reports" end>
-          Raporty
-        </ModuleNavItem>
-        <ModuleNavItem module="reporting" to="/reports/payment-aging">
-          Niezapłacone faktury
+          Przegląd
         </ModuleNavItem>
         {/* P&L always visible — even without purchasing, ryczałt users have fixed costs
             (salaries, ZUS, rent) that need to be reflected in their profit view. */}
@@ -231,7 +246,7 @@ function NavSectionAdministracja() {
         )}
         {warehousesEnabled && (
           <ModuleNavItem module="reporting" to="/reports/inventory">
-            Magazyn
+            Stan magazynu
           </ModuleNavItem>
         )}
       </div>
@@ -245,7 +260,6 @@ export function Sidebar() {
   const navigate = useNavigate();
   const canSettings = user?.is_company_admin || user?.permissions?.can_manage_settings;
   const canTeam = user?.is_company_admin || user?.permissions?.can_manage_team;
-  const canKsefCert = user?.is_company_admin || user?.permissions?.can_manage_invoices;
 
   return (
     <aside
@@ -264,12 +278,13 @@ export function Sidebar() {
           </AppNavItemLink>
         </div>
         <NavSectionSprzedaz />
+        <NavSectionDostawa />
         <NavSectionMagazyn />
-        <NavSectionDokumenty />
         <NavSectionZakupy />
         <NavSectionProdukcja />
-        <NavSectionKsiegowos />
-        <NavSectionAdministracja />
+        <NavSectionEFaktury />
+        <NavSectionFinanse />
+        <NavSectionRaporty />
       </nav>
 
       <div className="space-y-1 border-t border-border p-3">
@@ -280,11 +295,6 @@ export function Sidebar() {
           <AppNavItemLink to="/settings/company" end>
             Ustawienia
           </AppNavItemLink>
-        )}
-        {canKsefCert && (
-          <ModuleNavItem module="ksef" to="/settings/certificate" end>
-            Certyfikat KSeF
-          </ModuleNavItem>
         )}
         {canTeam && (
           <AppNavItemLink to="/settings/team" end>

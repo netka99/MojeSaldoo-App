@@ -73,11 +73,16 @@ function StockTable({ rows }: { rows: InventoryReportRow[] }) {
                 <th className={thClass}>Magazyn</th>
                 <th className={cn(thClass, 'text-right')}>Dostępne</th>
                 <th className={cn(thClass, 'text-right')}>Min. alert</th>
+                <th className={cn(thClass, 'text-right')}>Brakuje</th>
                 <th className={cn(thClass, 'text-right')}>Dni zapasów</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row, i) => (
+              {filtered.map((row, i) => {
+                const available = typeof row.quantityAvailable === 'string' ? parseFloat(row.quantityAvailable) : row.quantityAvailable;
+                const minimum = typeof row.minStockAlert === 'string' ? parseFloat(row.minStockAlert) : row.minStockAlert;
+                const shortage = row.belowMinimum && minimum > 0 ? minimum - available : null;
+                return (
                 <tr key={`${row.productName}-${row.warehouseCode}-${i}`} className={row.belowMinimum ? 'bg-red-50/60' : ''}>
                   <td className={tdClass}>
                     {row.belowMinimum && (
@@ -88,13 +93,20 @@ function StockTable({ rows }: { rows: InventoryReportRow[] }) {
                   <td className={cn(tdClass, 'font-mono text-xs')}>{row.warehouseCode}</td>
                   <td className={cn(tdClass, 'text-right tabular-nums')}>{formatQty(row.quantityAvailable)}</td>
                   <td className={cn(tdClass, 'text-right tabular-nums text-muted-foreground')}>
-                    {row.minStockAlert != null ? formatQty(row.minStockAlert) : '—'}
+                    {minimum > 0 ? formatQty(minimum) : '—'}
+                  </td>
+                  <td className={cn(tdClass, 'text-right tabular-nums')}>
+                    {shortage !== null
+                      ? <span className="font-semibold text-red-600">+{formatQty(shortage)}</span>
+                      : <span className="text-muted-foreground">—</span>
+                    }
                   </td>
                   <td className={cn(tdClass, 'text-right tabular-nums', daysOfStockClass(row.daysOfStock))}>
                     {row.daysOfStock !== null ? `${row.daysOfStock} dni` : '—'}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

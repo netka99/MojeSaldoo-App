@@ -188,7 +188,7 @@ export function CertificateUploadPage() {
   const busy = uploadMut.isPending || deleteMut.isPending;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-8 p-6">
+    <div className="mx-auto max-w-2xl space-y-8 px-4 py-6 sm:px-6">
       <div>
         <h1 className="text-[1.5rem] font-semibold tracking-tight">Certyfikat KSeF</h1>
         <p className="text-sm text-muted-foreground">

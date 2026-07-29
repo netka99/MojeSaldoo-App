@@ -18,6 +18,7 @@ from apps.ksef import ssapi_client
 from apps.users.web_push_service import send_ksef_status_push
 from apps.ksef.models import KSeFSession
 from apps.ksef.xml_generator import generate_fa3_xml, generate_fa3_xml_base64
+from apps.ksef.validators import validate_invoice_for_ksef
 from apps.orders.models import Order
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
@@ -338,6 +339,20 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Sesja KSeF wygasła. Zaloguj się ponownie do KSeF."},
                 status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Validate all FA-3 fields before generating XML
+        ksef_errors, ksef_warnings = validate_invoice_for_ksef(invoice)
+        if ksef_errors:
+            log_activity(
+                user=request.user, action="ksef.send",
+                status=ActivityLog.STATUS_ERROR, error_code="KSEF_VALIDATION_FAILED",
+                object_type="invoice", object_id=inv_ref,
+                error_detail="; ".join(ksef_errors), request=request,
+            )
+            return Response(
+                {"detail": "Faktura nie spełnia wymagań FA-3 KSeF.", "errors": ksef_errors, "warnings": ksef_warnings},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Generate FA-3 XML and encode as Base64
