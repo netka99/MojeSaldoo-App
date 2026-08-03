@@ -291,6 +291,8 @@ class InvoiceAnnotationView(APIView):
                     la.is_private = bool(la_data["isPrivate"])
                 if "note" in la_data:
                     la.note = la_data.get("note", "")
+                if "opexCategory" in la_data:
+                    la.opex_category = la_data.get("opexCategory") or None
                 la.save()
 
                 # Handle splits — full replace when provided

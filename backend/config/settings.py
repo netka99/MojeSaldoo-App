@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -43,6 +46,7 @@ INSTALLED_APPS = [
     'apps.production',
     'apps.inventory',
     'apps.activity',
+    'apps.cash_flow',
 ]
 
 MIDDLEWARE = [
@@ -197,6 +201,11 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # Google OAuth — set GOOGLE_CLIENT_ID in .env to enable "Sign in with Google".
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+
+# Google Cloud Vision OCR — set GOOGLE_APPLICATION_CREDENTIALS in .env to a service account JSON key path.
+# Example: GOOGLE_APPLICATION_CREDENTIALS=/path/to/mojesaldoo-vision-key.json
+# The SDK reads this variable automatically — no further configuration needed.
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
 
 # Logging configuration
 LOGGING = {

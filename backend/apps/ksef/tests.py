@@ -148,10 +148,9 @@ class InvoiceOpexTagViewTests(TestCase):
     # ------------------------------------------------------------------
 
     def test_tag_all_valid_categories(self):
-        valid_categories = [
-            choice[0] for choice in ReceivedKSeFInvoice.OPEX_CATEGORY_CHOICES
-        ]
-        self.assertEqual(len(valid_categories), 6)
+        from apps.cash_flow.models import OPEX_CATEGORY_CHOICES
+        valid_categories = [choice[0] for choice in OPEX_CATEGORY_CHOICES]
+        self.assertEqual(len(valid_categories), 11)
 
         self.client.force_authenticate(user=self.user)
         for category in valid_categories:

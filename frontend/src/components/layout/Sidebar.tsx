@@ -171,12 +171,13 @@ function NavSectionFinanse() {
   const canAccounting = usePermission('can_manage_accounting');
   const canReports = usePermission('can_view_reports');
   const showFixedCosts = canReports || canAccounting;
-  const anyEnabled = (costAllocationEnabled && canAccounting) || showFixedCosts;
-  if (!anyEnabled) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Finanse</NavGroupTitle>
       <div className="space-y-0.5">
+        <AppNavItemLink to="/cash-flow">
+          Saldo i Podatki
+        </AppNavItemLink>
         {costAllocationEnabled && canAccounting && (
           <ModuleNavItem module="cost_allocation" to="/cost-allocation">
             Adnotacje kosztowe

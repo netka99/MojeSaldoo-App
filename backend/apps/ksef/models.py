@@ -5,6 +5,8 @@ from decimal import Decimal
 from django.db import models
 from django.utils import timezone
 
+from apps.cash_flow.models import OPEX_CATEGORY_CHOICES
+
 
 class KSeFSession(models.Model):
     """
@@ -147,20 +149,13 @@ class ReceivedKSeFInvoice(models.Model):
     is_paid = models.BooleanField(default=False)
 
     # OPEX tagging — mark service invoices as operating costs (not product purchases)
+    # Legacy class-level constants kept for backward compatibility
     OPEX_UTILITIES = "utilities"
     OPEX_RENT = "rent"
     OPEX_SERVICES = "services"
     OPEX_TRANSPORT = "transport"
     OPEX_MARKETING = "marketing"
     OPEX_OTHER = "other"
-    OPEX_CATEGORY_CHOICES = [
-        (OPEX_UTILITIES, "Media (prąd, gaz, woda)"),
-        (OPEX_RENT, "Czynsz / leasing"),
-        (OPEX_SERVICES, "Usługi zewnętrzne"),
-        (OPEX_TRANSPORT, "Transport / logistyka"),
-        (OPEX_MARKETING, "Marketing / reklama"),
-        (OPEX_OTHER, "Inne"),
-    ]
     opex_category = models.CharField(
         max_length=20,
         choices=OPEX_CATEGORY_CHOICES,

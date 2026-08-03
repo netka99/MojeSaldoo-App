@@ -2,6 +2,8 @@ import uuid
 
 from django.db import models
 
+from apps.cash_flow.models import OPEX_CATEGORY_CHOICES
+
 
 class CostProject(models.Model):
     """User-defined project/cost-centre that invoice lines can be tagged with."""
@@ -82,6 +84,13 @@ class InvoiceLineAnnotation(models.Model):
         null=True,
         blank=True,
         related_name="line_annotations",
+    )
+    opex_category = models.CharField(
+        max_length=20,
+        choices=OPEX_CATEGORY_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Cost category for this line item — used in cash flow calculations.",
     )
     is_private = models.BooleanField(default=False)
     note = models.TextField(blank=True)

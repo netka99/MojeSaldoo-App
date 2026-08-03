@@ -231,6 +231,33 @@ export function useKsefTagOpexMutation() {
   });
 }
 
+/** Fetch per-line opex categories for a single received invoice. */
+export function useKsefOpexLinesQuery(ksefNumber: string, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: ['ksef', 'opex-lines', companyId, ksefNumber],
+    queryFn: () => ksefService.getOpexLines(ksefNumber),
+    enabled: enabled && Boolean(companyId) && Boolean(ksefNumber),
+    staleTime: 30_000,
+  });
+}
+
+/** Assign opex category to one or more invoice lines (no cost_allocation module needed). */
+export function useKsefLineOpexMutation(ksefNumber: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (line_categories: Record<string, string | null>) =>
+      ksefService.tagOpexLines(ksefNumber, line_categories),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['ksef', 'opex-lines', companyId, ksefNumber] });
+      void queryClient.invalidateQueries({ queryKey: ['ksef', 'inbox'] });
+    },
+  });
+}
+
 /** Query received invoices from local DB (syncs new ones from KSeF on each call). */
 export function useKsefInboxQuery(
   dateFrom: string,

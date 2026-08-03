@@ -1,6 +1,6 @@
 import { GoogleLogin } from '@react-oauth/google';
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { authApi } from '@/services/api';
@@ -18,6 +18,17 @@ export function GoogleSignInButton({ defaultRedirect = '/' }: GoogleSignInButton
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [btnWidth, setBtnWidth] = useState(300);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver((entries) => {
+      setBtnWidth(Math.floor(entries[0].contentRect.width));
+    });
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
 
   if (loading) {
     return (
@@ -34,7 +45,7 @@ export function GoogleSignInButton({ defaultRedirect = '/' }: GoogleSignInButton
           {error}
         </p>
       )}
-      <div className="flex justify-center">
+      <div ref={containerRef} className="w-full">
         <GoogleLogin
           onSuccess={async (response) => {
             if (!response.credential) return;
@@ -55,10 +66,9 @@ export function GoogleSignInButton({ defaultRedirect = '/' }: GoogleSignInButton
           }}
           onError={() => setError('Logowanie przez Google nie powiodło się. Spróbuj ponownie.')}
           text="continue_with"
-          shape="rectangular"
+          shape="pill"
           size="large"
-          width="360"
-          locale="pl"
+          width={String(btnWidth)}
         />
       </div>
     </div>

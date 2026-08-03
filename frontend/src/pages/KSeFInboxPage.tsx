@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefSessionQuery, useKsefTagOpexMutation } from '@/query/use-invoices';
+import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefSessionQuery, useKsefTagOpexMutation, useKsefOpexLinesQuery, useKsefLineOpexMutation } from '@/query/use-invoices';
 import { useLinkInvoiceToPzMutation, useUnmatchedPzQuery } from '@/query/use-delivery';
 import { useCostProjectsQuery, useInvoiceAnnotationQuery, useSaveInvoiceAnnotationMutation } from '@/query/use-cost-allocation';
+import { useCreateOpexCategoryMutation, useOpexCategoriesQuery } from '@/query/use-cashflow';
+import { OpexCategoryManager } from '@/components/features/cashflow/OpexCategoryManager';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -51,14 +53,6 @@ function downloadXml(ksefNumber: string) {
     .catch((err) => alert(`Błąd pobierania XML: ${err}`));
 }
 
-const OPEX_BADGE_COLORS: Record<OpexCategory, string> = {
-  utilities: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
-  rent: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
-  services: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300',
-  transport: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
-  marketing: 'bg-pink-100 text-pink-800 dark:bg-pink-900/40 dark:text-pink-300',
-  other: 'bg-muted text-muted-foreground',
-};
 
 interface InvoiceRowProps {
   inv: ReceivedInvoiceMeta;
@@ -66,72 +60,137 @@ interface InvoiceRowProps {
   onDownload: (ref: string) => void;
   onCreatePz: (ref: string) => void;
   onCreatePzKor: (ref: string) => void;
+  onOpenCatManager: () => void;
 }
 
-function OpexTagButton({ inv }: { inv: ReceivedInvoiceMeta }) {
+function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpenManager: () => void }) {
   const [open, setOpen] = useState(false);
+  const [addingNew, setAddingNew] = useState(false);
+  const [newName, setNewName] = useState('');
   const ref = useRef<HTMLDivElement>(null);
   const tagMutation = useKsefTagOpexMutation();
+  const { data: companyCategories = [] } = useOpexCategoriesQuery();
+  const createCatMutation = useCreateOpexCategoryMutation();
 
   // Close dropdown on outside click
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setAddingNew(false);
+        setNewName('');
+      }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
-  const handleTag = (category: OpexCategory | null) => {
-    tagMutation.mutate({ ksefNumber: inv.ksefNumber, opex_category: category });
+  const handleTag = (category: string | null) => {
+    tagMutation.mutate({ ksefNumber: inv.ksefNumber, opex_category: category as OpexCategory | null });
     setOpen(false);
+    setAddingNew(false);
+    setNewName('');
   };
+
+  const handleCreateAndTag = async () => {
+    if (!newName.trim()) return;
+    const created = await createCatMutation.mutateAsync({ name: newName.trim() });
+    if (created.slug) handleTag(created.slug);
+    setAddingNew(false);
+    setNewName('');
+  };
+
+  // Label for current category — use company category name if available
+  const currentLabel = inv.opex_category
+    ? (companyCategories.find((c) => c.slug === inv.opex_category)?.name
+        ?? OPEX_CATEGORY_LABELS[inv.opex_category as OpexCategory]
+        ?? inv.opex_category)
+    : null;
+
+  const categoryList = companyCategories.length > 0
+    ? companyCategories.filter((c) => c.slug).map((c) => ({ slug: c.slug, name: c.name }))
+    : (Object.entries(OPEX_CATEGORY_LABELS) as [string, string][]).map(([slug, name]) => ({ slug, name }));
+
+  const dropdown = (
+    <div className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-border bg-background shadow-lg">
+      {categoryList.map((cat) => (
+        <button
+          key={cat.slug}
+          type="button"
+          onClick={() => handleTag(cat.slug)}
+          className={cn(
+            'w-full text-left px-3 py-1.5 text-xs hover:bg-muted',
+            cat.slug === inv.opex_category && 'font-semibold text-primary',
+          )}
+        >
+          {cat.name}
+        </button>
+      ))}
+      <div className="border-t border-border">
+        {addingNew ? (
+          <div className="flex items-center gap-1 px-2 py-1.5">
+            <input
+              autoFocus
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleCreateAndTag(); }}
+              placeholder="Nazwa kategorii..."
+              className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <button
+              type="button"
+              onClick={() => void handleCreateAndTag()}
+              disabled={!newName.trim() || createCatMutation.isPending}
+              className="shrink-0 text-xs font-medium text-primary disabled:opacity-40"
+            >
+              OK
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAddingNew(true)}
+            className="w-full text-left px-3 py-1.5 text-xs text-primary hover:bg-muted"
+          >
+            + Dodaj kategorię...
+          </button>
+        )}
+      </div>
+      <div className="border-t border-border">
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setAddingNew(false); onOpenManager(); }}
+          className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-1.5"
+        >
+          ⚙ Zarządzaj kategoriami
+        </button>
+      </div>
+    </div>
+  );
 
   if (inv.opex_category) {
     return (
       <div className="relative inline-flex items-center gap-0.5" ref={ref}>
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          className={cn(
-            'inline-flex items-center rounded-l px-1.5 py-0.5 text-xs font-medium',
-            OPEX_BADGE_COLORS[inv.opex_category],
-          )}
-          title="Zmień kategorię OPEX"
+          onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
+          className="inline-flex items-center rounded-l px-1.5 py-0.5 text-xs font-medium bg-primary/10 text-primary"
+          title="Zmień kategorię"
         >
-          {OPEX_CATEGORY_LABELS[inv.opex_category]}
+          {currentLabel}
         </button>
         <button
           type="button"
           onClick={() => handleTag(null)}
           disabled={tagMutation.isPending}
-          className={cn(
-            'inline-flex items-center rounded-r px-1 py-0.5 text-xs font-medium border-l border-white/30',
-            OPEX_BADGE_COLORS[inv.opex_category],
-            'hover:opacity-75',
-          )}
-          title="Usuń tag OPEX"
+          className="inline-flex items-center rounded-r px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary border-l border-primary/20 hover:bg-primary/20"
+          title="Usuń kategorię"
         >
           ✕
         </button>
-        {open && (
-          <div className="absolute right-0 top-full mt-1 z-20 min-w-[160px] rounded-md border border-border bg-background shadow-lg">
-            {(Object.keys(OPEX_CATEGORY_LABELS) as OpexCategory[]).map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => handleTag(cat)}
-                className={cn(
-                  'w-full text-left px-3 py-1.5 text-xs hover:bg-muted',
-                  cat === inv.opex_category && 'font-semibold',
-                )}
-              >
-                {OPEX_CATEGORY_LABELS[cat]}
-              </button>
-            ))}
-          </div>
-        )}
+        {open && dropdown}
       </div>
     );
   }
@@ -141,26 +200,13 @@ function OpexTagButton({ inv }: { inv: ReceivedInvoiceMeta }) {
       <Button
         size="sm"
         variant="outline"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
         className={cn(open && 'bg-muted')}
-        title="Oznacz jako koszt operacyjny (OPEX)"
+        title="Przypisz kategorię kosztu"
       >
-        OPEX
+        Kategoria
       </Button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[160px] rounded-md border border-border bg-background shadow-lg">
-          {(Object.keys(OPEX_CATEGORY_LABELS) as OpexCategory[]).map((cat) => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => handleTag(cat)}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              {OPEX_CATEGORY_LABELS[cat]}
-            </button>
-          ))}
-        </div>
-      )}
+      {open && dropdown}
     </div>
   );
 }
@@ -692,10 +738,20 @@ function AnnotationPanel({ ksefNumber, lines }: AnnotationPanelProps) {
   );
 }
 
-function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor }: InvoiceRowProps) {
+function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, onOpenCatManager }: InvoiceRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showMatchPanel, setShowMatchPanel] = useState(false);
   const hasCostAllocation = useModuleGuard('cost_allocation');
+
+  // OPEX line categorization state
+  const [checkedLines, setCheckedLines] = useState<Set<number>>(new Set());
+  const [bulkCategory, setBulkCategory] = useState<string>('');
+  const [newCategoryName, setNewCategoryName] = useState<string>('');
+
+  const { data: categories = [] } = useOpexCategoriesQuery();
+  const createCatMutation = useCreateOpexCategoryMutation();
+  const lineOpexMutation = useKsefLineOpexMutation(inv.ksefNumber);
+  const { data: opexData } = useKsefOpexLinesQuery(inv.ksefNumber, expanded);
 
   const isKor = isKorType(inv.invoiceType);
   const hasActivePz = (inv.pzDocuments ?? []).some((pz) => pz.status !== 'cancelled');
@@ -713,6 +769,24 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor }:
 
   const lines = parsed?.lines ?? null;
   const annotationStatus = (inv as ReceivedInvoiceMeta & { annotationStatus?: string }).annotationStatus ?? null;
+
+  const handleBulkAssign = async () => {
+    if (!bulkCategory || !lines) return;
+    const line_categories: Record<string, string> = {};
+    checkedLines.forEach((pos) => {
+      line_categories[String(pos)] = bulkCategory;
+    });
+    await lineOpexMutation.mutateAsync(line_categories);
+    setCheckedLines(new Set());
+    setBulkCategory('');
+  };
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    const created = await createCatMutation.mutateAsync({ name: newCategoryName });
+    if (created.slug) setBulkCategory(created.slug);
+    setNewCategoryName('');
+  };
 
   return (
     <>
@@ -812,7 +886,7 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor }:
                 Dopasuj
               </Button>
             )}
-            <OpexTagButton inv={inv} />
+            <OpexTagButton inv={inv} onOpenManager={onOpenCatManager} />
           </div>
         </td>
       </tr>
@@ -832,61 +906,172 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor }:
               <p className="text-sm text-muted-foreground">Brak pozycji w fakturze.</p>
             )}
             {!linesLoading && lines !== null && lines.length > 0 && (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground">
-                    <th className="text-left pb-1 pr-4 font-medium">Nazwa</th>
-                    <th className="text-right pb-1 pr-4 font-medium">Ilość</th>
-                    <th className="text-left pb-1 pr-4 font-medium">Jm.</th>
-                    <th className="text-right pb-1 pr-4 font-medium">Cena netto</th>
-                    <th className="text-right pb-1 pr-4 font-medium">VAT %</th>
-                    <th className="text-right pb-1 pr-4 font-medium">Wartość netto</th>
-                    <th className="text-left pb-1 font-medium">PZ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((line, i) => {
-                    const linePzDocs = line.existing_pz_documents ?? [];
-                    const hasActivePz = linePzDocs.some((p) => p.status !== 'cancelled');
-                    return (
-                      <tr key={i} className={cn('border-t border-border/50', hasActivePz && 'bg-emerald-50/50 dark:bg-emerald-950/20')}>
-                        <td className="py-1 pr-4">{line.name}</td>
-                        <td className="py-1 pr-4 text-right tabular-nums">{line.quantity}</td>
-                        <td className="py-1 pr-4 text-muted-foreground">{line.unit}</td>
-                        <td className="py-1 pr-4 text-right tabular-nums">{plMoney.format(line.unit_net_price)}</td>
-                        <td className="py-1 pr-4 text-right tabular-nums text-muted-foreground">{line.vat_rate}%</td>
-                        <td className="py-1 pr-4 text-right tabular-nums">{plMoney.format(line.line_net)}</td>
-                        <td className="py-1">
-                          {linePzDocs.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {linePzDocs.map((pz: PzDocumentRef) => {
-                                const cancelled = pz.status === 'cancelled';
-                                return (
-                                  <Link
-                                    key={pz.id}
-                                    to={`/delivery/${pz.id}`}
-                                    className={cn(
-                                      'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium hover:underline whitespace-nowrap',
-                                      cancelled
-                                        ? 'bg-muted text-muted-foreground line-through'
-                                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
-                                    )}
-                                    title={cancelled ? 'PZ anulowany' : undefined}
-                                  >
-                                    {pz.documentNumber}
-                                  </Link>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground">
+                      <th className="pb-1 pr-2 font-medium w-6">
+                        <input
+                          type="checkbox"
+                          checked={checkedLines.size === lines.length}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setCheckedLines(new Set(lines.map((line) => line.position ?? 0)));
+                            } else {
+                              setCheckedLines(new Set());
+                            }
+                          }}
+                          className="rounded border-input"
+                          title="Zaznacz wszystkie"
+                        />
+                      </th>
+                      <th className="text-left pb-1 pr-4 font-medium">Nazwa</th>
+                      <th className="text-right pb-1 pr-4 font-medium">Ilość</th>
+                      <th className="text-left pb-1 pr-4 font-medium">Jm.</th>
+                      <th className="text-right pb-1 pr-4 font-medium">Cena netto</th>
+                      <th className="text-right pb-1 pr-4 font-medium">VAT %</th>
+                      <th className="text-right pb-1 pr-4 font-medium">Wartość netto</th>
+                      <th className="text-left pb-1 pr-4 font-medium">Kategoria</th>
+                      <th className="text-left pb-1 font-medium">PZ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((line, i) => {
+                      const linePos = line.position ?? i;
+                      const linePzDocs = line.existing_pz_documents ?? [];
+                      const hasActivePzLine = linePzDocs.some((p) => p.status !== 'cancelled');
+                      const lineOpexCategory = opexData?.line_categories?.[String(linePos)] ?? null;
+                      const categoryObj = lineOpexCategory
+                        ? categories.find((c) => c.slug === lineOpexCategory)
+                        : null;
+                      const isChecked = checkedLines.has(linePos);
+                      return (
+                        <tr key={linePos} className={cn('border-t border-border/50', hasActivePzLine && 'bg-emerald-50/50 dark:bg-emerald-950/20')}>
+                          <td className="py-1 pr-2">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                setCheckedLines((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(linePos);
+                                  else next.delete(linePos);
+                                  return next;
+                                });
+                              }}
+                              className="rounded border-input"
+                            />
+                          </td>
+                          <td className="py-1 pr-4">{line.name}</td>
+                          <td className="py-1 pr-4 text-right tabular-nums">{line.quantity}</td>
+                          <td className="py-1 pr-4 text-muted-foreground">{line.unit}</td>
+                          <td className="py-1 pr-4 text-right tabular-nums">{plMoney.format(line.unit_net_price)}</td>
+                          <td className="py-1 pr-4 text-right tabular-nums text-muted-foreground">{line.vat_rate}%</td>
+                          <td className="py-1 pr-4 text-right tabular-nums">{plMoney.format(line.line_net)}</td>
+                          <td className="py-1 pr-4">
+                            {categoryObj ? (
+                              <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary whitespace-nowrap">
+                                {categoryObj.name}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="py-1">
+                            {linePzDocs.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {linePzDocs.map((pz: PzDocumentRef) => {
+                                  const cancelled = pz.status === 'cancelled';
+                                  return (
+                                    <Link
+                                      key={pz.id}
+                                      to={`/delivery/${pz.id}`}
+                                      className={cn(
+                                        'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium hover:underline whitespace-nowrap',
+                                        cancelled
+                                          ? 'bg-muted text-muted-foreground line-through'
+                                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+                                      )}
+                                      title={cancelled ? 'PZ anulowany' : undefined}
+                                    >
+                                      {pz.documentNumber}
+                                    </Link>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Bulk assign bar */}
+                {checkedLines.size > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center gap-2 rounded-lg bg-primary/5 border border-primary/20 px-3 py-2">
+                      <span className="text-sm text-muted-foreground">
+                        Zaznaczono {checkedLines.size} {checkedLines.size === 1 ? 'linię' : 'linie'}
+                      </span>
+                      <select
+                        value={bulkCategory}
+                        onChange={(e) => setBulkCategory(e.target.value)}
+                        className="text-sm rounded-lg border border-input bg-background px-2 py-1"
+                      >
+                        <option value="">-- wybierz kategorię --</option>
+                        {categories.filter((cat) => cat.slug).map((cat) => (
+                          <option key={cat.id} value={cat.slug}>{cat.name}</option>
+                        ))}
+                        <option value="__new__">+ Utwórz nową kategorię...</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void handleBulkAssign()}
+                        disabled={!bulkCategory || bulkCategory === '__new__' || lineOpexMutation.isPending}
+                        className="text-sm font-medium text-primary hover:underline disabled:opacity-40"
+                      >
+                        Przypisz
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCheckedLines(new Set())}
+                        className="text-sm text-muted-foreground hover:text-foreground"
+                      >
+                        Anuluj
+                      </button>
+                    </div>
+                    {bulkCategory === '__new__' && (
+                      <div className="flex items-center gap-2 px-3">
+                        <input
+                          type="text"
+                          placeholder="Nazwa kategorii..."
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          className="text-sm rounded-lg border border-input px-2 py-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleCreateCategory()}
+                          disabled={createCatMutation.isPending}
+                          className="text-sm font-medium text-primary"
+                        >
+                          Utwórz
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBulkCategory('')}
+                          className="text-sm text-muted-foreground"
+                        >
+                          Anuluj
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
             {hasCostAllocation && (
               <AnnotationPanel
@@ -911,7 +1096,7 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type InboxFilter = 'all' | 'pz' | 'opex' | 'unassigned';
+type InboxFilter = 'all' | 'pz' | 'category' | 'unassigned';
 
 export function KSeFInboxPage() {
   const navigate = useNavigate();
@@ -920,6 +1105,11 @@ export function KSeFInboxPage() {
   const [page, setPage] = useState(1);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [viewFilter, setViewFilter] = useState<InboxFilter>('all');
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
+  const [catFilterOpen, setCatFilterOpen] = useState(false);
+  const catFilterRef = useRef<HTMLDivElement>(null);
+  const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const { data: allCategories = [] } = useOpexCategoriesQuery();
 
   const { data: session } = useKsefSessionQuery();
   const syncMutation = useKsefInboxSyncMutation();
@@ -930,6 +1120,18 @@ export function KSeFInboxPage() {
     page,
     true,
   );
+
+  // Close category filter dropdown on outside click
+  useEffect(() => {
+    if (!catFilterOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (catFilterRef.current && !catFilterRef.current.contains(e.target as Node)) {
+        setCatFilterOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [catFilterOpen]);
 
   const handleSync = () => {
     syncMutation.mutate({ dateFrom, dateTo });
@@ -945,7 +1147,10 @@ export function KSeFInboxPage() {
   const invoices = allInvoices.filter((inv) => {
     const hasPz = (inv.pzDocuments ?? []).some((p) => p.status !== 'cancelled');
     if (viewFilter === 'pz') return hasPz;
-    if (viewFilter === 'opex') return !!inv.opex_category;
+    if (viewFilter === 'category') {
+      if (selectedCategories.size === 0) return !!inv.opex_category;
+      return !!inv.opex_category && selectedCategories.has(inv.opex_category);
+    }
     if (viewFilter === 'unassigned') return !hasPz && !inv.opex_category;
     return true;
   });
@@ -959,6 +1164,15 @@ export function KSeFInboxPage() {
         <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">
           Odebrane faktury KSeF
         </h1>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCatManagerOpen((v) => !v)}
+            title="Zarządzaj kategoriami kosztów"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            ⚙
+          </button>
         {!session?.active && (
           <Link
             to="/settings/certificate"
@@ -970,7 +1184,10 @@ export function KSeFInboxPage() {
             Zaloguj się do KSeF
           </Link>
         )}
+        </div>
       </div>
+
+      <OpexCategoryManager open={catManagerOpen} onClose={() => setCatManagerOpen(false)} />
 
       {/* Filter bar */}
       <Card>
@@ -1027,17 +1244,16 @@ export function KSeFInboxPage() {
             </p>
           )}
           {/* View filter */}
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
             {([
               { id: 'all', label: 'Wszystkie' },
               { id: 'pz', label: 'Z PZ' },
-              { id: 'opex', label: 'OPEX' },
               { id: 'unassigned', label: 'Nieprzypisane' },
             ] as { id: InboxFilter; label: string }[]).map(({ id, label }) => (
               <button
                 key={id}
                 type="button"
-                onClick={() => setViewFilter(id)}
+                onClick={() => { setViewFilter(id); setSelectedCategories(new Set()); }}
                 className={cn(
                   'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
                   viewFilter === id
@@ -1048,6 +1264,75 @@ export function KSeFInboxPage() {
                 {label}
               </button>
             ))}
+
+            {/* Category multi-filter dropdown */}
+            <div className="relative" ref={catFilterRef}>
+              <button
+                type="button"
+                onClick={() => { setViewFilter('category'); setCatFilterOpen((v) => !v); }}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                  viewFilter === 'category'
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background text-foreground hover:bg-muted',
+                )}
+              >
+                Kategorie
+                {viewFilter === 'category' && selectedCategories.size > 0 && (
+                  <span className="ml-0.5 rounded-full bg-white/30 px-1.5 text-[10px] font-semibold">
+                    {selectedCategories.size}
+                  </span>
+                )}
+                <span className="ml-0.5 text-[10px]">▾</span>
+              </button>
+
+              {catFilterOpen && (
+                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-xl border border-border bg-background shadow-lg py-1">
+                  <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Filtruj według kategorii
+                  </p>
+                  {allCategories.length === 0 && (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">Brak kategorii</p>
+                  )}
+                  {allCategories.map((cat) => {
+                    const checked = selectedCategories.has(cat.slug || cat.id);
+                    return (
+                      <label
+                        key={cat.id}
+                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const slug = cat.slug || cat.id;
+                            setSelectedCategories((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.delete(slug);
+                              else next.add(slug);
+                              return next;
+                            });
+                          }}
+                          className="rounded"
+                        />
+                        {cat.name}
+                      </label>
+                    );
+                  })}
+                  {selectedCategories.size > 0 && (
+                    <div className="border-t border-border mt-1 pt-1 px-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCategories(new Set())}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Wyczyść zaznaczenie
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1101,6 +1386,7 @@ export function KSeFInboxPage() {
                         onDownload={handleDownload}
                         onCreatePz={(ref) => navigate(`/ksef/inbox/${encodeURIComponent(ref)}/pz`)}
                         onCreatePzKor={(ref) => navigate(`/ksef/inbox/${encodeURIComponent(ref)}/pz-kor`)}
+                        onOpenCatManager={() => setCatManagerOpen(true)}
                       />
                     ))}
                   </tbody>

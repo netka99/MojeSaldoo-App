@@ -28,6 +28,7 @@ export interface LineSplit {
 export interface LineAnnotation {
   isPrivate: boolean;
   note: string;
+  opexCategory?: string | null;
   splits: LineSplit[];
 }
 
@@ -56,6 +57,7 @@ export interface InvoiceAnnotationWrite {
   lineAnnotations?: Record<string, {
     isPrivate?: boolean;
     note?: string;
+    opexCategory?: string | null;
     splits?: LineSplitWrite[];
   }>;
 }

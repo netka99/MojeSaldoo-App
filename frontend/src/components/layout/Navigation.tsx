@@ -1,8 +1,9 @@
 import type { ReactNode, ReactElement } from 'react';
 import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
+import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import type { ModuleName } from '@/types';
 
@@ -263,8 +264,13 @@ function IconClose({ className }: { className?: string }) {
 /** Full-screen drawer shown when "Więcej" is tapped on mobile. */
 function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { logout, user } = useAuth();
   // Close drawer on navigation
   useEffect(() => { onClose(); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const canSettings = user?.is_company_admin || user?.permissions?.can_manage_settings;
+  const canTeam = user?.is_company_admin || user?.permissions?.can_manage_team;
 
   const deliveryEnabled = useModuleGuard('delivery');
   const invoicingEnabled = useModuleGuard('invoicing');
@@ -289,7 +295,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-40 bg-black/40 md:hidden"
+            className="fixed inset-0 z-[55] bg-black/40 md:hidden"
             onClick={onClose}
           />
           {/* Drawer panel */}
@@ -299,7 +305,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
             animate={{ x: 0 }}
             exit={{ x: '-100%' }}
             transition={{ type: 'spring', stiffness: 350, damping: 35 }}
-            className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-background shadow-xl md:hidden"
+            className="fixed inset-y-0 left-0 z-[60] flex w-72 flex-col bg-background shadow-xl md:hidden"
           >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <span className="text-base font-semibold">Menu</span>
@@ -378,15 +384,16 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 </div>
               )}
 
-              {costAllocationEnabled && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Finanse</NavGroupTitle>
-                  <div className="space-y-0.5">
+              <div className="space-y-1">
+                <NavGroupTitle>Finanse</NavGroupTitle>
+                <div className="space-y-0.5">
+                  <AppNavItemLink to="/cash-flow">Saldo i Podatki</AppNavItemLink>
+                  <AppNavItemLink to="/fixed-costs">Koszty Stałe</AppNavItemLink>
+                  {costAllocationEnabled && (
                     <AppNavItemLink to="/cost-allocation">Adnotacje kosztowe</AppNavItemLink>
-                    <AppNavItemLink to="/fixed-costs">Koszty Stałe</AppNavItemLink>
-                  </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               {reportingEnabled && (
                 <div className="space-y-1">
@@ -402,11 +409,24 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 </div>
               )}
 
-              <div className="space-y-1 border-t border-border pt-3">
-                <AppNavItemLink to="/activity">Historia aktywności</AppNavItemLink>
-                <AppNavItemLink to="/settings/company" end>Ustawienia</AppNavItemLink>
-              </div>
             </nav>
+
+            {/* Sticky footer — always visible, no scroll needed */}
+            <div className="shrink-0 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] space-y-0.5">
+              <AppNavItemLink to="/activity">Historia aktywności</AppNavItemLink>
+              {canSettings && <AppNavItemLink to="/settings/company" end>Ustawienia</AppNavItemLink>}
+              {canTeam && <AppNavItemLink to="/settings/team" end>Zespół</AppNavItemLink>}
+              <button
+                type="button"
+                onClick={() => {
+                  logout();
+                  navigate('/login', { replace: true });
+                }}
+                className="flex w-full items-center rounded-2xl px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10"
+              >
+                Wyloguj
+              </button>
+            </div>
           </motion.div>
         </>
       )}

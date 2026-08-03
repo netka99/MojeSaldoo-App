@@ -233,6 +233,26 @@ export const ksefService = {
     ),
 
   /**
+   * GET line-level opex categories for a received invoice.
+   * GET /api/ksef/inbox/<ksefNumber>/opex/
+   */
+  getOpexLines: (ksefNumber: string) =>
+    api.get<{ ksef_number: string; opex_category: string | null; line_categories: Record<string, string> }>(
+      `/ksef/inbox/${encodeURIComponent(ksefNumber)}/opex/`,
+    ),
+
+  /**
+   * Assign opex categories to specific invoice lines.
+   * PATCH /api/ksef/inbox/<ksefNumber>/opex/
+   * Body: { line_categories: { "0": "fuel", "1": "transport" } }
+   */
+  tagOpexLines: (ksefNumber: string, line_categories: Record<string, string | null>) =>
+    api.patch<{ ksef_number: string; opex_category: string | null }>(
+      `/ksef/inbox/${encodeURIComponent(ksefNumber)}/opex/`,
+      { line_categories },
+    ),
+
+  /**
    * Upload a paper invoice image for OCR extraction.
    * POST /api/ksef/scan-paper/   (multipart/form-data, field: image)
    * Returns best-effort extracted fields; any field may be empty if OCR fails.

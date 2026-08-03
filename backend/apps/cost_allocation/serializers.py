@@ -63,12 +63,14 @@ class InvoiceAnnotationSerializer(UUIDModelSerializer):
                 result[str(line.position)] = {
                     "isPrivate": ann.is_private,
                     "note": ann.note,
+                    "opexCategory": ann.opex_category,
                     "splits": splits,
                 }
             except InvoiceLineAnnotation.DoesNotExist:
                 result[str(line.position)] = {
                     "isPrivate": False,
                     "note": "",
+                    "opexCategory": None,
                     "splits": [],
                 }
         return result

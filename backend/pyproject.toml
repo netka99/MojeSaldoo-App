@@ -29,8 +29,9 @@ dependencies = [
     "gunicorn==21.2.0",
     "whitenoise==6.6.0",
     "openpyxl==3.1.5",
-    # OCR for paper invoice scanner (requires system Tesseract: apt install tesseract-ocr tesseract-ocr-pol)
-    "pytesseract>=0.3.10",
+    # OCR for paper invoice scanner — Google Cloud Vision API (1 000 free scans/month)
+    # Requires GOOGLE_APPLICATION_CREDENTIALS env var pointing to a service account JSON key.
+    "google-cloud-vision>=3.7",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +49,7 @@ packages = ["config", "apps"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
+django_settings_module = "config.settings"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
 
 [tool.ruff]

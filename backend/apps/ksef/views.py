@@ -4,6 +4,7 @@ These proxy authentication to the SSAPI backend.
 """
 
 import logging
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -21,6 +22,7 @@ from apps.suppliers.models import Supplier
 from apps.activity.log import log_activity
 from apps.activity.models import ActivityLog
 from .models import KSeFSession, KSeFProductMapping, ReceivedKSeFInvoice, ReceivedKSeFInvoiceLine
+from apps.cash_flow.models import OPEX_CATEGORY_CHOICES
 from . import ssapi_client
 
 FA3_NS = "http://crd.gov.pl/wzor/2025/06/25/13775/"
@@ -462,7 +464,7 @@ def _enrich_result_with_pz(result: dict, db_invoice: "ReceivedKSeFInvoice") -> N
     if pz_docs:
         pz_by_pos = _pz_info_by_line_position(db_invoice)
         for i, line in enumerate(result.get("lines", [])):
-            line["existing_pz_documents"] = pz_by_pos.get(i, [])
+            line["existing_pz_documents"] = pz_by_pos.get(line.get("position", i), [])
 
 
 def _pz_info_by_line_position(db_invoice: "ReceivedKSeFInvoice") -> dict:
@@ -524,6 +526,7 @@ def _invoice_parsed_from_db(db_invoice: "ReceivedKSeFInvoice", company) -> dict:
         if product is None:
             product = Product.objects.filter(name__iexact=ln.name, company=company).first()
         lines.append({
+            "position": ln.position,
             "name": ln.name,
             "unit": ln.unit,
             "quantity": float(ln.quantity),
@@ -596,7 +599,7 @@ def _cache_invoice_lines(db_invoice, ksef_number: str, company, parsed: dict) ->
     ReceivedKSeFInvoiceLine.objects.bulk_create([
         ReceivedKSeFInvoiceLine(
             invoice=db_invoice,
-            position=i,
+            position=ln.get("position", i),
             name=ln["name"],
             unit=ln["unit"],
             quantity=ln["quantity"],
@@ -678,7 +681,7 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
 
     # Line items: FaWiersz elements
     lines = []
-    for row in fa.findall(f"{{{ns}}}FaWiersz"):
+    for line_idx, row in enumerate(fa.findall(f"{{{ns}}}FaWiersz")):
         def t(tag):
             el = row.find(f"{{{ns}}}{tag}")
             return (el.text or "").strip() if el is not None else ""
@@ -711,6 +714,7 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
                 suggested_product_name = product.name
 
         lines.append({
+            "position": line_idx,
             "name": name,
             "unit": unit,
             "quantity": quantity,
@@ -786,15 +790,49 @@ class KSeFProductMappingView(APIView):
 
 class InvoiceOpexTagView(APIView):
     """
-    PATCH /api/ksef/inbox/<ksef_reference_number>/opex/
-    Body: { opex_category: "utilities"|"rent"|"services"|"transport"|"marketing"|"other"|null }
+    GET  /api/ksef/inbox/<ksef_reference_number>/opex/
+         Returns invoice-level opex_category + per-line opex categories.
+         { opex_category, line_categories: { "0": "fuel"|null, ... } }
 
-    Tags or clears the OPEX category on a received KSeF invoice.
-    Setting opex_category=null clears the tag.
+    PATCH /api/ksef/inbox/<ksef_reference_number>/opex/
+         Body: {
+           opex_category?: "fuel"|...|null,   # invoice-level
+           line_categories?: { "0": "fuel", "1": null }  # per-line
+         }
+         No cost_allocation module required — available to all companies.
     """
 
     required_permission = 'can_access_ksef_inbox'
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+
+    def _get_invoice(self, company, ksef_reference_number):
+        try:
+            return ReceivedKSeFInvoice.objects.get(
+                company=company, ksef_number=ksef_reference_number
+            )
+        except ReceivedKSeFInvoice.DoesNotExist:
+            return None
+
+    def get(self, request, ksef_reference_number: str):
+        company = request.user.current_company
+        invoice = self._get_invoice(company, ksef_reference_number)
+        if not invoice:
+            return Response({"detail": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from apps.cost_allocation.models import InvoiceLineAnnotation
+        line_anns = InvoiceLineAnnotation.objects.filter(
+            line__invoice=invoice,
+        ).select_related("line")
+        line_categories = {
+            str(ann.line.position): ann.opex_category
+            for ann in line_anns
+            if ann.opex_category is not None
+        }
+        return Response({
+            "ksef_number": invoice.ksef_number,
+            "opex_category": invoice.opex_category,
+            "line_categories": line_categories,
+        })
 
     def patch(self, request, ksef_reference_number: str):
         from django.utils import timezone as _tz
@@ -803,33 +841,60 @@ class InvoiceOpexTagView(APIView):
         if not company:
             return Response({"detail": "No active company."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            invoice = ReceivedKSeFInvoice.objects.get(
-                company=company, ksef_number=ksef_reference_number
-            )
-        except ReceivedKSeFInvoice.DoesNotExist:
+        invoice = self._get_invoice(company, ksef_reference_number)
+        if not invoice:
             return Response({"detail": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        category = request.data.get("opex_category")
-        valid_categories = {c[0] for c in ReceivedKSeFInvoice.OPEX_CATEGORY_CHOICES}
+        from apps.cash_flow.models import CompanyOpexCategory
+        valid_categories = {c[0] for c in OPEX_CATEGORY_CHOICES} | set(
+            CompanyOpexCategory.objects.filter(company=company)
+            .exclude(slug='')
+            .values_list('slug', flat=True)
+        )
 
-        if category is None:
-            invoice.opex_category = None
-            invoice.opex_tagged_at = None
-        elif category in valid_categories:
-            invoice.opex_category = category
-            invoice.opex_tagged_at = _tz.now()
-        else:
-            return Response(
-                {"opex_category": f"Must be one of: {', '.join(sorted(valid_categories))} or null."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # --- Invoice-level opex_category ---
+        if "opex_category" in request.data:
+            category = request.data.get("opex_category")
+            if category is None:
+                invoice.opex_category = None
+                invoice.opex_tagged_at = None
+            elif category in valid_categories:
+                invoice.opex_category = category
+                invoice.opex_tagged_at = _tz.now()
+            else:
+                return Response(
+                    {"opex_category": f"Must be one of: {', '.join(sorted(valid_categories))} or null."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            invoice.save(update_fields=["opex_category", "opex_tagged_at"])
 
-        invoice.save(update_fields=["opex_category", "opex_tagged_at"])
+        # --- Per-line opex categories ---
+        line_categories = request.data.get("line_categories")
+        if line_categories and isinstance(line_categories, dict):
+            from apps.cost_allocation.models import InvoiceLineAnnotation
+            lines_by_position = {
+                line.position: line
+                for line in invoice.lines.all()
+            }
+            for pos_str, cat_value in line_categories.items():
+                try:
+                    pos = int(pos_str)
+                except (ValueError, TypeError):
+                    continue
+                line = lines_by_position.get(pos)
+                if not line:
+                    continue
+                if cat_value is None:
+                    InvoiceLineAnnotation.objects.filter(line=line).update(opex_category=None)
+                elif cat_value in valid_categories:
+                    InvoiceLineAnnotation.objects.update_or_create(
+                        line=line,
+                        defaults={"opex_category": cat_value},
+                    )
+
         return Response({
             "ksef_number": invoice.ksef_number,
             "opex_category": invoice.opex_category,
-            "opex_tagged_at": invoice.opex_tagged_at,
         })
 
 
@@ -931,25 +996,26 @@ class KorMatchView(APIView):
 # ---------------------------------------------------------------------------
 
 def _ocr_image(image_file) -> str:
-    """Run Tesseract OCR on an uploaded image. Returns raw text, or empty string if unavailable."""
+    """Run Google Cloud Vision OCR on an uploaded image. Returns raw text, or empty string on failure.
+
+    Requires the GOOGLE_APPLICATION_CREDENTIALS environment variable to point to a service account
+    JSON key file with the 'Cloud Vision API' enabled. Free tier: 1 000 scans/month.
+    """
     try:
-        import pytesseract  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
+        from google.cloud import vision  # noqa: PLC0415
 
-        # On Windows, Tesseract is rarely on PATH — point directly to the binary.
-        import os, sys  # noqa: PLC0415
-        if sys.platform == "win32":
-            for candidate in [
-                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                r"C:\Tesseract-OCR\tesseract.exe",
-            ]:
-                if os.path.isfile(candidate):
-                    pytesseract.pytesseract.tesseract_cmd = candidate
-                    break
+        client = vision.ImageAnnotatorClient()
+        content = image_file.read()
+        image = vision.Image(content=content)
+        response = client.document_text_detection(image=image)
 
-        img = Image.open(image_file)
-        return pytesseract.image_to_string(img, lang="pol+eng")
+        if response.error.message:
+            logging.warning("Google Vision API error: %s", response.error.message)
+            return ""
+
+        return response.full_text_annotation.text or ""
     except ImportError:
+        logging.warning("google-cloud-vision is not installed. Run: pip install google-cloud-vision")
         return ""
     except Exception as exc:  # noqa: BLE001
         logging.warning("OCR failed: %s", exc)
@@ -978,18 +1044,40 @@ def _parse_invoice_fields(text: str) -> dict:
             seller_nip = nip_match.group(1)
 
     # --- Document number ---
-    # VAT invoice: FV/2026/001, FA/2026/001, etc.
-    inv_match = re.search(
-        r"(?:Faktura\s*VAT|Faktura|Nr\s*faktury|Numer)\s*[:\s]*([A-Z]{1,3}[/\-]\d{4}[/\-]\d+|[A-Z]{2,4}\s+\d{4}/\d+)",
-        text,
-        re.IGNORECASE,
-    )
-    if inv_match:
-        invoice_number = inv_match.group(1).strip()
-    else:
-        # Paragon/receipt: "nr:480130" or "nr : 299183"
-        nr_match = re.search(r"\bnr\s*[:\.]?\s*(\d{4,8})\b", text, re.IGNORECASE)
-        invoice_number = nr_match.group(1) if nr_match else ""
+    # Try patterns in order of specificity (most specific first):
+    # 0. "Numer faktury uproszczonej:\n<number>" — Biedronka simplified VAT invoice (at bottom)
+    # 1. "Nr faktury: XXX" or "Faktura VAT: XXX" — explicit label
+    # 2. "nr: 2868F00781/0726" — Biedronka thermal (alphanumeric with slashes)
+    # 3. Classic Polish: FV/2026/001, FA/2026/001, NNFV/01/00327/05/26
+    # 4. Paragon/receipt: "nr:480130" — digits only
+    invoice_number = ""
+
+    # Priority 0: Biedronka "Numer faktury uproszczonej" — always wins over generic "nr:"
+    m = re.search(r"Numer\s+faktury\s+uproszczonej\s*[:\n]\s*(\S+)", text, re.IGNORECASE)
+    if m:
+        invoice_number = m.group(1).strip()
+
+    if not invoice_number:
+        patterns = [
+            r"(?:Nr\s*faktury|Faktura\s*VAT\s*[:\s]*nr|Faktura\s*nr)\s*[:\s]+([A-Z0-9][A-Z0-9/\-]{3,30})",
+            r"\bnr\s*[:\.]?\s*([A-Z0-9][A-Z0-9/\-]{4,30})\b",
+            r"\b([A-Z]{1,4}[/\-]\d{4}[/\-][\d/\-]+)\b",
+            r"\bnr\s*[:\.]?\s*(\d{4,8})\b",
+        ]
+        for pat in patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                candidate = m.group(1).strip().rstrip("-/")
+                # Skip if it looks like a NIP or date
+                if not re.match(r"^\d{10}$", candidate) and not re.match(r"^\d{4}-\d{2}-\d{2}$", candidate):
+                    invoice_number = candidate
+                    break
+
+    # Fallback: "Faktury VAT nr\n<number>" — number on next line (Gobarto format)
+    if not invoice_number:
+        m = re.search(r"Faktury\s+VAT\s+nr\s*\n\s*(\S+)", text, re.IGNORECASE)
+        if m:
+            invoice_number = m.group(1).strip()
 
     # --- Issue date ---
     # DD.MM.YYYY (invoices) — take priority
@@ -1165,6 +1253,792 @@ def _parse_receipt_lines(text: str) -> list:
     return entries
 
 
+# ---------------------------------------------------------------------------
+# Multi-format document parser
+# ---------------------------------------------------------------------------
+
+# Common skip patterns shared by all parsers
+_SKIP_WORDS_RE = re.compile(
+    r"RAZEM|SUMA|PTU|SPRZEDA|PARAGON|FISKALN|NIP|NABYWCA|SPRZEDAWCA|FAKTURA"
+    r"|DATA\b|TERMIN|DOKUMENT|STRONA|WYDRUK|WAPRO|KARTA|ROZLICZ|BDO|EAO"
+    r"|\bLp\.?\b|\bNazwa\b|\bIlo[sś][cć]\b|\bCena\b|\bWarto[sś][cć]\b"
+    r"|\bSymbol\b|\bRabat\b|\bNumer\b|transakcj|Sp\.?:|[łl][aą]cznie"
+    r"|NOTA\s+ODSETKOW|Kasa\s+Winien|ZAMÓWIENIE\s+NR\s+ZO",
+    re.IGNORECASE,
+)
+_PKWIU_RE = re.compile(r"\(\s*PKWIU[\s\d.]+\)", re.IGNORECASE)
+_LOT_RE = re.compile(r"\[L:\d+\]", re.IGNORECASE)
+_UNIT_MAP = {
+    "kg": "kg", "kgs": "kg",
+    "szt": "szt", "szt.": "szt", "sztuk": "szt",
+    "op": "op", "op.": "op",
+    "l": "l", "litr": "l", "litry": "l",
+    "g": "g", "ml": "ml", "m2": "m2", "m²": "m2", "jm": "szt",
+}
+
+
+def _norm_unit(raw: str) -> str:
+    s = raw.lower().strip(" .,")
+    return _UNIT_MAP.get(s, s or "szt")
+
+
+def _to_float(s: str) -> float:
+    return float(s.strip().replace(" ", "").replace(",", "."))
+
+
+def _detect_doc_type(text: str) -> str:
+    """Detect document type from OCR text structure — NOT by supplier name.
+
+    Detection is based on document keywords and table structure only,
+    so it works regardless of which company issued the document.
+
+    Returns: "paragon", "faktura_thermal", "faktura_a4", "wz_delivery_spec",
+             "wz_tabular", "wz_multiline", "wz_insert", "zamowienie", or "other".
+    """
+    # Documents with no product lines — skip immediately
+    if re.search(r"NOTA\s+ODSETKOW|Kasa\s+Winien|ZAMÓWIENIE\s+NR", text, re.IGNORECASE):
+        return "other"
+
+    # --- WZ / Delivery documents ---
+
+    # "Specyfikacja dostawy do Faktury VAT" — combined WZ+FV delivery spec
+    # Structural signal: Lp blocks with qty+unit on separate line, price below
+    if re.search(r"Specyfikacja\s+dostawy\s+do\s+Faktury\s+VAT", text, re.IGNORECASE):
+        return "wz_delivery_spec"
+
+    # WAPRO Mag / similar — full table on one line per product
+    # Signal: "Zadysponowano" column header OR "WAPRO Mag" footer
+    if re.search(r"Zadysponowano|WAPRO\s+Mag|Wydrukowano\s+z\s+programu", text, re.IGNORECASE):
+        return "wz_tabular"
+
+    # Generic WZ — "Dokument WZ" or "Wydanie zewnętrzne" or "Dokument wydania"
+    # with tabular structure (Lp + columns on one line)
+    if re.search(r"Dokument\s+WZ|DOKUMENT\s+WYDANIA|Wydanie\s+zewn[eę]trzne", text, re.IGNORECASE):
+        # InsERT GT specific: "Wydanie zewnętrzne z VAT" with j.m. column
+        if re.search(r"Wydanie\s+zewn[eę]trzne\s+z\s+VAT|InsERT", text, re.IGNORECASE):
+            return "wz_insert"
+        return "wz_tabular"
+
+    # --- Receipts and invoices ---
+
+    # Fiscal receipt — always has "PARAGON FISKALNY"
+    if re.search(r"PARAGON\s+FISKALNY", text):
+        return "paragon"
+
+    # Thermal invoice (Biedronka-style): FAKTURA on thermal paper
+    # Structural signal: "Nazwa towaru i stawka" header + "CC"/"C" VAT class markers
+    if re.search(r"FAKTURA", text, re.IGNORECASE) and re.search(
+        r"Nazwa\s+towaru\s+i\s+stawka|\bCC\b", text, re.IGNORECASE
+    ):
+        return "faktura_thermal"
+
+    # A4 VAT invoice with tabular product lines
+    # Structural signal: "Faktura VAT" + standard column headers
+    if re.search(r"Faktura\s+VAT|FAKTURA\s+VAT", text, re.IGNORECASE) and re.search(
+        r"Cena\s+netto|Warto[sś][cć]\s+netto|Warto[sś][cć]\s+brutto", text, re.IGNORECASE
+    ):
+        # Check if it's multi-column tabular (one row per product) or multi-line blocks
+        # Tabular: Lp + product code + name + unit + numbers all on same line
+        if re.search(r"^\d+\s+\d{4,6}\s+\S.+?(KG|SZT|OP)\s+[\d,]+", text, re.IGNORECASE | re.MULTILINE):
+            return "faktura_a4"
+        return "faktura_a4"  # default for A4 invoices
+
+    return "other"
+
+
+def _parse_paragon_lines(text: str) -> list:
+    """Parse product lines from PARAGON FISKALNY (Biedronka, Carrefour, AS Bylak).
+
+    Two OPUST formats exist on Biedronka receipts:
+      Format A — OPUST after price line:
+          ProductName C
+          2,056 x14,99 30,82C
+          OPUST
+          -14,39C          ← discount value (skip)
+          16,43            ← final price after discount
+
+      Format B — OPUST before price line:
+          ProductName C
+          OPUST
+          1,123 x14,99 16,83C
+          8.97             ← final price after discount
+    """
+    price_seg = re.compile(
+        r"([\d,.]+)\s*(kg|szt|l|g|ml|op)?[.,]?\s*[xX×«¥*]\s*([\d,.]+)\s*=?\s+([\d,.\s]+)[A-Za-z]?\s*$",
+        re.IGNORECASE,
+    )
+    amount_re = re.compile(r"^[^0-9]*([\d]+[,.][\d]{2})\s*[A-Za-z]?\s*$")
+    opust_re = re.compile(r"^OPUST\s*$|^RABAT\s*$", re.IGNORECASE)
+    neg_re = re.compile(r"^\s*-+\s*[\d,.]+\s*[A-Za-z]?\s*$")
+    vat_suffix = re.compile(r"\s+[A-Z]{0,2}\.?[A-Z]\s*$")
+    skip_re = re.compile(
+        r"SUMA|PTU|SPRZEDA|RAZEM|KARTA|PARAGON|NIP|FISKALN|ROZLICZ"
+        r"|Udzielono|Numer|BDO|EAO|Nr[\s:]|transakcj|Promoc|Sp:|[łl][aą]cznie",
+        re.IGNORECASE,
+    )
+
+    raw_lines = [ln.strip() for ln in text.splitlines()]
+    non_empty = [(idx, ln) for idx, ln in enumerate(raw_lines) if ln.strip()]
+    entries = []
+    pending_name: str | None = None
+    j = 0
+
+    while j < len(non_empty):
+        _idx, line = non_empty[j]
+
+        # Skip summary/footer lines — reset name context
+        if skip_re.search(line):
+            pending_name = None
+            j += 1
+            continue
+
+        # OPUST/RABAT is a discount marker — skip it, preserve pending_name
+        if opust_re.match(line):
+            j += 1
+            continue
+
+        # Skip standalone negative numbers (discount values like "-14,39C")
+        if neg_re.match(line):
+            j += 1
+            continue
+
+        m = price_seg.search(line)
+        if m:
+            qty_raw = m.group(1).replace(",", ".")
+            unit = _norm_unit(m.group(2) or "szt")
+            price_raw = m.group(3).replace(",", ".")
+            total_raw = m.group(4).replace(" ", "").replace(",", ".")
+            prefix = vat_suffix.sub("", line[:m.start()]).strip()
+            name = prefix if len(prefix) > 2 else pending_name
+            try:
+                qty = float(qty_raw)
+                price = float(price_raw)
+                total = float(total_raw)
+                if qty > 0 and price > 0 and name:
+                    after_discount = total
+                    # Look at next line: skip OPUST and negative lines, then check for final price
+                    look = j + 1
+                    while look < len(non_empty):
+                        _, candidate = non_empty[look]
+                        if opust_re.match(candidate) or neg_re.match(candidate):
+                            look += 1
+                            continue
+                        am = amount_re.match(candidate)
+                        if am:
+                            try:
+                                candidate_val = _to_float(am.group(1))
+                                # Only accept as after-discount if lower than original total
+                                if 0 < candidate_val < total:
+                                    after_discount = candidate_val
+                                    j = look
+                            except ValueError:
+                                pass
+                        break
+                    eff_price = round(after_discount / qty, 4) if qty > 0 else price
+                    entries.append({
+                        "name": name, "quantity": str(qty),
+                        "unit": unit, "unit_price": str(eff_price),
+                    })
+            except ValueError:
+                pass
+            pending_name = None
+        elif re.search(r"[A-Za-ząćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}", line) and not re.search(r"\d{4,}", line):
+            pending_name = vat_suffix.sub("", line).strip()
+        j += 1
+
+    return entries
+
+
+def _parse_faktura_thermal_lines(text: str) -> list:
+    """Parse product lines from Biedronka thermal VAT invoice (multi-line block format).
+
+    OCR splits each product across multiple lines:
+        MakaT450PlonNat1kg CC   ← name + VAT class (C/CC/A/B) — block start
+        20,000 KG                ← qty + unit
+        OPUST                    ← optional discount marker
+        1,79                     ← cena brutto
+        23,05                    ← wartość netto
+        -11.60                   ← opust value (negative)
+        1.15 5                   ← kwota VAT + VAT%
+        24,20                    ← wartość brutto (final, after discount)
+
+    Strategy: detect block start by VAT class suffix (CC/C/A/B at end of line).
+    Collect lines until next block or summary. Extract qty+unit from first numeric line,
+    and wartość_brutto = last positive standalone number in block.
+    unit_price = wartość_brutto / qty
+    """
+    # Block start: line ending with VAT class letter(s)
+    block_start_re = re.compile(r"^(.+?)\s+(CC?|[AB])\s*$", re.IGNORECASE)
+    # qty + unit on same line: "20,000 KG" or "1,000 SZT"
+    qty_unit_re = re.compile(
+        r"^([\d,]+)\s+(KG|SZT|L|G|ML|OP|OPA|szt\.?|kg)\s*$",
+        re.IGNORECASE,
+    )
+    # Summary/footer — stop collecting
+    summary_re = re.compile(
+        r"VAT%\s+Warto[sś][cć]|RAZEM|Do\s+zap[łl]aty|S[łl]ownie"
+        r"|Nabywca|Sprzedawca|FAKTURA|NIP|Podpis|DZIEKUJEMY|BDO",
+        re.IGNORECASE,
+    )
+    # Standalone number (possibly negative, comma or dot decimal)
+    number_re = re.compile(r"^-?([\d]+[,.][\d]+)\s*$")
+
+    # Find product table section: starts after "Nazwa towaru" header, ends at summary
+    table_start_re = re.compile(r"Nazwa\s+towaru", re.IGNORECASE)
+    table_end_re = re.compile(r"VAT%\s+Warto[sś][cć]\s+netto|RAZEM|Do\s+zap[łl]aty", re.IGNORECASE)
+
+    all_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    # Find start and end of product table
+    start_idx = 0
+    for i, ln in enumerate(all_lines):
+        if table_start_re.search(ln):
+            start_idx = i + 1
+            break
+    end_idx = len(all_lines)
+    for i, ln in enumerate(all_lines[start_idx:], start=start_idx):
+        if table_end_re.search(ln):
+            end_idx = i
+            break
+
+    lines = all_lines[start_idx:end_idx]
+    entries = []
+
+    # Split into blocks: each block starts at a block_start line
+    blocks: list[tuple[str, str, list[str]]] = []  # (name, vat_class, subsequent_lines)
+    current_name: str | None = None
+    current_vat: str | None = None
+    current_block: list[str] = []
+
+    for line in lines:
+        m = block_start_re.match(line)
+        if m and not line.upper().startswith("OPUST"):
+            if current_name:
+                blocks.append((current_name, current_vat or "", current_block))
+            current_name = m.group(1).strip()
+            current_vat = m.group(2)
+            current_block = []
+        elif current_name is not None:
+            current_block.append(line)
+
+    if current_name:
+        blocks.append((current_name, current_vat or "", current_block))
+
+    # Parse each block
+    for name, _vat, block_lines in blocks:
+        if not block_lines or len(name) < 3:
+            continue
+
+        qty: float | None = None
+        unit = "szt"
+        positive_numbers: list[float] = []
+
+        for bline in block_lines:
+            # Try qty + unit
+            qm = qty_unit_re.match(bline)
+            if qm and qty is None:
+                try:
+                    qty = _to_float(qm.group(1))
+                    unit = _norm_unit(qm.group(2))
+                except ValueError:
+                    pass
+                continue
+            # Collect standalone numbers (skip negative — those are opust)
+            nm = number_re.match(bline)
+            if nm:
+                try:
+                    val = _to_float(nm.group(1))
+                    if val > 0:
+                        positive_numbers.append(val)
+                except ValueError:
+                    pass
+
+        if qty and qty > 0 and positive_numbers:
+            # Last positive number in block = wartość brutto after all discounts
+            wartość_brutto = positive_numbers[-1]
+            eff_price = round(wartość_brutto / qty, 4)
+            entries.append({
+                "name": name, "quantity": str(qty),
+                "unit": unit, "unit_price": str(eff_price),
+            })
+
+    return entries
+
+
+def _parse_faktura_a4_lines(text: str) -> list:
+    """Parse product lines from an A4 VAT invoice (BJANEX format) or BJANEX WZ.
+
+    Column order: Lp [Symbol] Nazwa JM Ilość Cena_netto Wartość_netto Cena_brutto Wartość_brutto
+    """
+    row_re = re.compile(
+        r"^\d+\s+"
+        r"(?:\d{4,6}\s+)?"
+        r"(.+?)\s+"
+        r"(KG|SZT|OP|L|G|ML|M2|JM|[A-Z]{1,4})\s+"
+        r"([\d,]+)\s+"
+        r"([\d,]+)\s+"
+        r"([\d,]+)\s+"
+        r"([\d,]+)\s+"
+        r"([\d,]+)",
+        re.IGNORECASE,
+    )
+    entries = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or _SKIP_WORDS_RE.search(line):
+            continue
+        line = _PKWIU_RE.sub("", _LOT_RE.sub("", line))
+        line = re.sub(r"\s{2,}", " ", line).strip()
+        m = row_re.match(line)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        if re.search(r"\bNazwa\b|\bSymbol\b|\bLp\b", name, re.IGNORECASE):
+            continue
+        try:
+            qty = _to_float(m.group(3))
+            price = _to_float(m.group(4))
+            if qty > 0 and price > 0 and len(name) > 1:
+                entries.append({
+                    "name": name, "quantity": str(qty),
+                    "unit": _norm_unit(m.group(2)), "unit_price": str(price),
+                })
+        except ValueError:
+            pass
+    return entries
+
+
+def _parse_wz_wapro_lines(text: str) -> list:
+    """Parse WAPRO Mag DOKUMENT WYDANIA WZ.
+
+    WAPRO prints landscape A4. OCR reads column-by-column, producing:
+        - Product names first (numbered lines)
+        - Then column headers (fragmented)
+        - Then all units, quantities, prices in separate blocks
+
+    Also handles pipe-delimited dot-matrix variant (single-line rows).
+    """
+    all_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    # --- Try single-line tabular first (pipe-delimited or landscape with good OCR) ---
+    row_re = re.compile(
+        r"^\d+\s+(?:[A-Z0-9]{4,}\s+)?(.+?)\s+"
+        r"(OP|SZT\.?|KG|L|G|M2)\s+([\d,]+)\s+[\d,]+\s+\d+\s+([\d,]+)",
+        re.IGNORECASE,
+    )
+    tabular_entries = []
+    for raw_line in all_lines:
+        line = raw_line.replace("|", " ")
+        line = re.sub(r"\s{2,}", " ", line).strip()
+        m = row_re.match(line)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        if re.search(r"\bNazwa\b|\bLp\b", name, re.IGNORECASE) or len(name) < 2:
+            continue
+        try:
+            qty = _to_float(m.group(3))
+            price = _to_float(m.group(4))
+            if qty > 0 and price > 0:
+                tabular_entries.append({
+                    "name": name, "quantity": str(qty),
+                    "unit": _norm_unit(m.group(2)), "unit_price": str(price),
+                })
+        except ValueError:
+            pass
+    if tabular_entries:
+        return tabular_entries
+
+    # --- Column-by-column fallback (landscape OCR) ---
+    # Step 1: extract names from numbered lines (before column header block)
+    # In WAPRO landscape OCR, names appear BETWEEN "Nazwa artykułu" and "Symbol sww/ku"
+    # Find those boundary lines first
+    names_start = 0
+    names_end = len(all_lines)
+    for i, line in enumerate(all_lines):
+        if re.search(r"Nazwa\s+artyku", line, re.IGNORECASE):
+            names_start = i + 1
+        if names_start > 0 and re.search(r"Symbol\s+sww|Zadyspo|Data:\s+\d", line, re.IGNORECASE):
+            names_end = i
+            break
+
+    name_re = re.compile(r"^(\d+)\s+(.+)$")
+    skip_name_re = re.compile(
+        r"^LP$|Wystawił|Zatwierdził|Wydał|Odebrał|Wydrukowano|Odbiorca|Sprzedawca"
+        r"|Uwagi|NIP:|ul\.|Numer|Magazyn|faktury|telefon",
+        re.IGNORECASE,
+    )
+
+    names: list[str] = []
+    pending_name: str | None = None
+
+    for line in all_lines[names_start:names_end]:
+        if skip_name_re.search(line):
+            continue
+        m = name_re.match(line)
+        if m:
+            if pending_name:
+                names.append(pending_name)
+            pending_name = m.group(2).strip()
+        elif pending_name:
+            # continuation line (e.g. "POLSKA 15KG" after "ZIEMNIAK...")
+            pending_name += " " + line.strip()
+
+    if pending_name:
+        names.append(pending_name)
+
+    if not names:
+        return []
+
+    # Step 2: collect data tokens after "PLN" markers
+    pln_count = 0
+    data_start = len(all_lines)
+    for i, line in enumerate(all_lines):
+        if re.match(r"^PLN\s*$", line):
+            pln_count += 1
+            if pln_count >= 2:
+                data_start = i + 1
+                break
+
+    data_lines = all_lines[data_start:]
+
+    # Step 3: split into per-product clusters by unit markers
+    unit_re = re.compile(r"^(OP|SZT\.?|KG|L|G|M2)\s*$", re.IGNORECASE)
+    number_re = re.compile(r"^-?[\d]+[,.][\d]+$")
+    int_re = re.compile(r"^\d+$")
+    noise_re = re.compile(r"^(X{3,}|\d{4}-\d{2}-\d{2}|Wystawił|Zatwierdził|Wydał|Odebrał|WZ\s)", re.IGNORECASE)
+
+    clusters: list[dict] = []
+    current: dict | None = None
+
+    for line in data_lines:
+        if noise_re.search(line):
+            continue
+        if unit_re.match(line):
+            if current is not None:
+                clusters.append(current)
+            current = {"unit": _norm_unit(line), "numbers": [], "ints": []}
+        elif current is not None:
+            if number_re.match(line):
+                try:
+                    current["numbers"].append(_to_float(line))
+                except ValueError:
+                    pass
+            elif int_re.match(line):
+                v = int(line)
+                if v < 1000:
+                    current["ints"].append(v)
+            # "0,00 5" style lines (rabat + VAT%) — skip
+
+    if current is not None:
+        clusters.append(current)
+
+    # Step 4: match names[i] → clusters[i]
+    entries = []
+    for i, name in enumerate(names):
+        if i >= len(clusters):
+            break
+        c = clusters[i]
+        numbers = c["numbers"]
+        ints = c["ints"]
+
+        qty: float | None = None
+        for v in ints:
+            if v not in (5, 8, 23):  # skip VAT rates
+                qty = float(v)
+                break
+        if qty is None and ints:
+            qty = float(ints[0])
+
+        price = numbers[0] if numbers else None
+
+        if qty and price and qty > 0 and price > 0 and len(name) > 1:
+            entries.append({
+                "name": name.strip(),
+                "quantity": str(qty),
+                "unit": c["unit"],
+                "unit_price": str(price),
+            })
+
+    return entries
+
+
+def _parse_wz_gobarto_lines(text: str) -> list:
+    """Parse product lines from Gobarto Specyfikacja dostawy (multi-line block format).
+
+    OCR splits each product across multiple lines:
+        1                          ← Lp (block start)
+        601-6122 PODGARDLE WP B/S  ← Kod + Nazwa
+        / PKWIU                    ← noise
+        02031959                   ← PCN code (skip)
+        7,12 KG                    ← Ilość + j.m.
+        6,99                       ← Cena jedn. netto
+        49,77                      ← Wartość netto
+        5%                         ← VAT%
+        (L: 2620300000)            ← lot number (skip)
+
+    Strategy: block starts with standalone Lp digit(s).
+    Extract: Kod+Nazwa from next text line, qty+unit from "N,NN KG" line, price = first standalone number.
+    """
+    all_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    # Find product table: between column header and summary
+    start_idx = 0
+    for i, ln in enumerate(all_lines):
+        if re.search(r"Nazwa\s+towaru|Lp\s+Kod", ln, re.IGNORECASE):
+            start_idx = i + 1
+            break
+    end_idx = len(all_lines)
+    for i, ln in enumerate(all_lines[start_idx:], start=start_idx):
+        if re.search(r"Razem\s+j\.m\.|Forma\s+p[łl]atn|Razem\s+do\s+zap", ln, re.IGNORECASE):
+            end_idx = i
+            break
+
+    lines = all_lines[start_idx:end_idx]
+
+    # Qty+unit pattern: "7,12 KG"
+    qty_unit_re = re.compile(r"^([\d,]+)\s+(KG|SZT|OP|L|G|M2|[A-Z]{1,4})\s*$", re.IGNORECASE)
+    # Standalone number (price): "6,99" or "49,77"
+    number_re = re.compile(r"^([\d]+[,.][\d]+)\s*$")
+    # Lp line: just digits
+    lp_re = re.compile(r"^\d+$")
+    # Kod + Nazwa: starts with product code like "601-6122"
+    kod_nazwa_re = re.compile(r"^([\w-]{5,})\s+(.+)$")
+    # Skip patterns
+    skip_re = re.compile(r"^[/\\]|PKWIU|PCN|\(L:|^\d{6,}$|^%$", re.IGNORECASE)
+
+    # Build blocks
+    blocks: list[dict] = []
+    current: dict | None = None
+
+    for line in lines:
+        if skip_re.search(line):
+            continue
+        if lp_re.match(line):
+            if current:
+                blocks.append(current)
+            current = {"name": "", "qty": None, "unit": "kg", "numbers": []}
+            continue
+        if current is None:
+            continue
+
+        # Try qty+unit
+        qm = qty_unit_re.match(line)
+        if qm and current["qty"] is None:
+            try:
+                current["qty"] = _to_float(qm.group(1))
+                current["unit"] = _norm_unit(qm.group(2))
+            except ValueError:
+                pass
+            continue
+
+        # Try name (Kod + Nazwa)
+        if not current["name"]:
+            km = kod_nazwa_re.match(line)
+            if km:
+                current["name"] = _LOT_RE.sub("", km.group(2)).strip()
+                continue
+            # Plain name line
+            if re.search(r"[A-Za-ząćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}", line) and not number_re.match(line):
+                current["name"] = _LOT_RE.sub("", line).strip()
+                continue
+
+        # Collect standalone numbers
+        nm = number_re.match(line)
+        if nm:
+            try:
+                current["numbers"].append(_to_float(nm.group(1)))
+            except ValueError:
+                pass
+
+    if current:
+        blocks.append(current)
+
+    # Extract entries from blocks
+    entries = []
+    for b in blocks:
+        name = b["name"]
+        qty = b["qty"]
+        numbers = b["numbers"]
+        if not name or not qty or not numbers or qty <= 0:
+            continue
+        price = numbers[0]  # first number = cena jedn. netto
+        if price > 0 and len(name) > 1:
+            entries.append({
+                "name": name, "quantity": str(qty),
+                "unit": b["unit"], "unit_price": str(price),
+            })
+    return entries
+
+
+def _parse_wz_insert_lines(text: str) -> list:
+    """Parse product lines from Subiekt GT / InsERT GT 'Wydanie zewnętrzne'.
+
+    Column order: Lp | Nazwa | Ilość | j.m. | Cena | Wartość netto | Koszt
+    Numbers use comma decimal separator.
+
+    Special: 'Rozbicie kompletu' sub-rows appear indented under the main item —
+    skip these (they are components, not separate products).
+
+    Example:
+        1  Zestaw kosmetyków    1,000  szt.  272,50  272,50  299,93
+        Rozbicie kompletu:Symbol towaru  Nazwa towaru  Ilość  J.m.   ← skip header
+            BAREG200  Balsam do ciała...  1,000  szt.                ← skip sub-row
+        2  Puder w kamieniu 07  1,000  szt.   35,00   35,00   63,00
+    """
+    row_re = re.compile(
+        r"^(\d+)\s+"                        # Lp
+        r"(.+?)\s+"                         # Nazwa
+        r"([\d,]+)\s+"                      # Ilość
+        r"(szt\.?|kg\.?|op\.?|l|g|m2?)\s+"  # j.m.
+        r"([\d,]+)\s+"                      # Cena
+        r"([\d,]+)",                        # Wartość netto
+        re.IGNORECASE,
+    )
+    skip_re = re.compile(
+        r"Rozbicie\s+kompletu|Symbol\s+towaru|Nazwa\s+towaru|Razem|Słownie"
+        r"|Wystawił|Odebrał|Podpis|Sprzedawca|Odbiorca|NIP|Wydanie\s+zewn",
+        re.IGNORECASE,
+    )
+
+    entries = []
+    seen: set[str] = set()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or skip_re.search(line):
+            continue
+        m = row_re.match(line)
+        if not m:
+            continue
+        name = m.group(2).strip()
+        if name in seen or len(name) < 2:
+            continue
+        try:
+            qty = _to_float(m.group(3))
+            price = _to_float(m.group(5))
+            if qty > 0 and price > 0:
+                seen.add(name)
+                entries.append({
+                    "name": name, "quantity": str(qty),
+                    "unit": _norm_unit(m.group(4)), "unit_price": str(price),
+                })
+        except ValueError:
+            pass
+    return entries
+
+
+def _parse_lines(text: str) -> list:
+    """Detect document type and dispatch to the appropriate line parser.
+
+    Returns [{name, quantity, unit, unit_price}] for all supported formats.
+    """
+    doc_type = _detect_doc_type(text)
+    if doc_type == "paragon":
+        return _parse_paragon_lines(text)
+    if doc_type == "faktura_thermal":
+        return _parse_faktura_thermal_lines(text)
+    if doc_type in ("faktura_a4", "wz_tabular"):
+        return _parse_faktura_a4_lines(text)
+    if doc_type == "wz_delivery_spec":
+        return _parse_wz_gobarto_lines(text)
+    if doc_type == "wz_insert":
+        return _parse_wz_insert_lines(text)
+    return []
+
+
+def _parse_lines_with_gemini(text: str) -> list:
+    """Use Gemini Flash to extract product lines from OCR text.
+
+    Requires GEMINI_API_KEY environment variable.
+    Returns [{name, quantity, unit, unit_price}] or [] on failure.
+    Retries up to 3 times on 429 with 10s backoff.
+    """
+    import json  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    logging.info("Gemini API key prefix: %s", api_key[:20] if api_key else "MISSING")
+    if not api_key:
+        return []
+    try:
+        from google import genai  # noqa: PLC0415
+        client = genai.Client(api_key=api_key)
+
+        # Short prompt to minimize token usage
+        prompt = (
+            "Wyciągnij pozycje towarowe z poniższego tekstu OCR (faktura/paragon).\n"
+            "Zwróć TYLKO czysty JSON:\n"
+            '[{"name": "...", "quantity": "...", "unit": "...", "unit_price": "..."}]\n'
+            "Zasady:\n"
+            "- name: nazwa bez kodów/PKWiU\n"
+            "- quantity: liczba z kropką (np. '2.056')\n"
+            "- unit: lowercase (szt, kg, op, l, g)\n"
+            "- unit_price: cena po rabacie za jednostkę z kropką\n"
+            "- Pomiń nagłówki, podsumowania, linie OPUST/RABAT. Jeśli brak pozycji, zwróć [].\n\n"
+            f"Tekst OCR:\n{text[:3000]}"
+        )
+
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-flash-latest",
+                    contents=prompt,
+                )
+                raw = response.text.strip()
+                if raw.startswith("```"):
+                    raw = re.sub(r"^```[a-z]*\n?", "", raw)
+                    raw = re.sub(r"\n?```$", "", raw)
+                result = json.loads(raw)
+                return result if isinstance(result, list) else []
+            except Exception as exc:  # noqa: BLE001
+                if "429" in str(exc) and attempt < 2:
+                    logging.warning("Gemini 429, retry %d/3 in 10s", attempt + 1)
+                    time.sleep(10)
+                else:
+                    raise
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Gemini parsing failed: %s", exc)
+        return []
+
+
+def _parse_lines(text: str) -> tuple[list, bool]:
+    """Detect document type, parse with regex, fallback to Gemini if 0 results.
+
+    Returns (lines, used_gemini).
+    """
+    doc_type = _detect_doc_type(text)
+
+    if doc_type == "paragon":
+        result = _parse_paragon_lines(text)
+    elif doc_type == "faktura_thermal":
+        result = _parse_faktura_thermal_lines(text)
+    elif doc_type in ("faktura_a4", "wz_tabular"):
+        result = _parse_faktura_a4_lines(text)
+    elif doc_type == "wz_delivery_spec":
+        result = _parse_wz_gobarto_lines(text)
+    elif doc_type == "wz_insert":
+        result = _parse_wz_insert_lines(text)
+    else:
+        result = []
+
+    if not result:
+        logging.info("Regex returned 0 lines for doc_type=%s, trying Gemini", doc_type)
+        result = _parse_lines_with_gemini(text)
+        return result, True
+
+    return result, False
+
+
+# Aliases for backward compatibility
+def _parse_receipt_lines(text: str) -> list:
+    lines, _ = _parse_lines(text)
+    return lines
+
+
+def _parse_invoice_lines(text: str) -> list:
+    lines, _ = _parse_lines(text)
+    return lines
+
+
 class PaperScanView(APIView):
     """Accept an image upload, run OCR, return extracted invoice fields.
 
@@ -1172,9 +2046,9 @@ class PaperScanView(APIView):
     Content-Type: multipart/form-data
     Body: image (file)
 
-    Response: { seller_name, seller_nip, invoice_number, issue_date, total_gross, raw_text, lines }
+    Response: { seller_name, seller_nip, invoice_number, issue_date, total_gross, doc_type, raw_text, lines }
     OCR is best-effort: fields may be empty when extraction fails.
-    lines: [{name, quantity, unit_price}] — product lines parsed from receipt (may be empty).
+    lines: [{name, quantity, unit, unit_price}] — product lines (may be empty for unknown formats).
     """
 
     required_permission = 'can_manage_invoices'
@@ -1188,6 +2062,15 @@ class PaperScanView(APIView):
         raw_text = _ocr_image(image_file)
         parsed = _parse_invoice_fields(raw_text)
         parsed["raw_text"] = raw_text
-        parsed["lines"] = _parse_receipt_lines(raw_text)
+        parsed["doc_type"] = _detect_doc_type(raw_text)
+        lines, used_gemini = _parse_lines(raw_text)
+        parsed["lines"] = lines
+        if used_gemini:
+            logging.warning(
+                "GEMINI_USED user=%s doc_type=%s lines=%d",
+                request.user,
+                parsed.get("doc_type", "?"),
+                len(lines),
+            )
 
         return Response(parsed)

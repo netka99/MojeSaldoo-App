@@ -170,6 +170,9 @@ const FixedCostsPage = lazy(() =>
 const ActivityPage = lazy(() =>
   import('./pages/ActivityPage').then((m) => ({ default: m.ActivityPage })),
 );
+const CashFlowPage = lazy(() =>
+  import('./pages/CashFlowPage').then((m) => ({ default: m.CashFlowPage })),
+);
 
 function RouteFallback() {
   return (
@@ -603,6 +606,7 @@ function App() {
                   path="/fixed-costs"
                   element={<FixedCostsPage />}
                 />
+                <Route path="/cash-flow" element={<CashFlowPage />} />
                 <Route path="/activity" element={<ActivityPage />} />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />

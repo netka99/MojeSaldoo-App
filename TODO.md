@@ -3,6 +3,8 @@
     - removing an account
 
 
+- Nie wprowadzone - Faktury zaliczkowe (ZAL) i rozliczeniowe (ROZ) - sprawdzic czy potrzebne!
+
 2.  Recorded / Replay Testing (E2E Tests)
 What you're thinking of is End-to-End (E2E) testing. The idea: you interact with the app like a real user, the tool records those interactions, then replays them automatically on every change.
 
