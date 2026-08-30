@@ -17,6 +17,7 @@ class UserSerializer(UUIDModelSerializer):
     taxation_form = serializers.SerializerMethodField()
     ryczalt_category = serializers.SerializerMethodField()
     modules = serializers.SerializerMethodField()
+    is_vat_payer = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -36,6 +37,7 @@ class UserSerializer(UUIDModelSerializer):
             "company_type",
             "taxation_form",
             "ryczalt_category",
+            "is_vat_payer",
             "modules",
         ]
         extra_kwargs = {"password": {"write_only": True}}
@@ -90,6 +92,11 @@ class UserSerializer(UUIDModelSerializer):
             return None
         return obj.current_company.ryczalt_category
 
+    def get_is_vat_payer(self, obj) -> bool:
+        if not obj.current_company_id:
+            return False
+        return obj.current_company.is_vat_payer
+
     def get_modules(self, obj) -> dict:
         if not obj.current_company_id:
             return {}
@@ -121,6 +128,7 @@ class CompanySerializer(UUIDModelSerializer):
             "regon",
             "krs",
             "bdo",
+            "is_vat_payer",
             "created_at",
             "updated_at",
         ]

@@ -67,6 +67,7 @@ function makeInvoice(over: Partial<Invoice> = {}): Invoice {
     corrects_invoice_id: null,
     corrects_invoice_number: null,
     correction_reason: '',
+    corrections: [],
     items: [],
     ...over,
   };
@@ -90,6 +91,7 @@ vi.mock('@/query/use-invoices', async (importOriginal) => {
     useInvoicePreviewQuery: (...args: unknown[]) => mockUseInvoicePreviewQuery(...args),
     useIssueInvoiceMutation: () => mockMutation(),
     useMarkPaidInvoiceMutation: () => mockMutation(),
+    useMarkUnpaidInvoiceMutation: () => mockMutation(),
     useSendToKsefMutation: () => mockMutation(),
     useKsefAuthenticateMutation: () => mockMutation(),
     useFetchKsefStatusMutation: () => mockMutation(),
@@ -222,5 +224,57 @@ describe('InvoiceDetailPage — "Utwórz korektę FV" button visibility', () => 
     });
     renderDetail();
     expect(screen.queryByRole('button', { name: 'Utwórz korektę FV' })).not.toBeInTheDocument();
+  });
+});
+
+describe('InvoiceDetailPage — "Cofnij opłatę" button visibility', () => {
+  beforeEach(() => {
+    mockUseInvoicePreviewQuery.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+  });
+
+  it('shows "Cofnij opłatę" button for paid invoice', () => {
+    mockUseInvoiceQuery.mockReturnValue({
+      data: makeInvoice({ status: 'paid' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.getByRole('button', { name: 'Oznacz jako nieopłaconą' })).toBeInTheDocument();
+  });
+
+  it('hides "Cofnij opłatę" button for issued invoice', () => {
+    mockUseInvoiceQuery.mockReturnValue({
+      data: makeInvoice({ status: 'issued' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.queryByRole('button', { name: 'Oznacz jako nieopłaconą' })).not.toBeInTheDocument();
+  });
+
+  it('hides "Cofnij opłatę" button for overdue invoice', () => {
+    mockUseInvoiceQuery.mockReturnValue({
+      data: makeInvoice({ status: 'overdue' }),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.queryByRole('button', { name: 'Oznacz jako nieopłaconą' })).not.toBeInTheDocument();
   });
 });

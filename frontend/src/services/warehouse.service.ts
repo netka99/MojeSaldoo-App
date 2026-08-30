@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { Warehouse, WarehouseStockItem, WarehouseWrite } from '../types';
+import type { StockBatch, Warehouse, WarehouseStockItem, WarehouseWrite } from '../types';
 
 interface PaginatedResponse<T> {
   count: number;
@@ -32,8 +32,11 @@ export const warehouseService = {
   partialUpdateItem: (id: string, body: Partial<WarehouseWrite>) =>
     api.patch<Warehouse>(`/warehouses/${id}/`, body),
 
-  fetchStock: (id: string, params?: { below_minimum?: boolean; search?: string }) =>
+  fetchStock: (id: string, params?: { below_minimum?: boolean; search?: string; expiring_days?: number }) =>
     api.get<WarehouseStockItem[]>(`/warehouses/${id}/stock/`, { params }),
+
+  fetchBatches: (warehouseId: string, productId: string) =>
+    api.get<StockBatch[]>(`/warehouses/${warehouseId}/batches/`, { params: { product: productId } }),
 
   downloadImportTemplate: async (): Promise<void> => {
     const blob = await api.get<Blob>('/warehouses/import-template/', { responseType: 'blob' });

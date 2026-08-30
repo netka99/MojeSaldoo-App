@@ -4022,3 +4022,181 @@ class WzKorAPITests(TestCase):
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class PZExtraFieldsTests(TestCase):
+    """
+    Tests for 3 new optional PZ fields:
+    - external_document_number (on DeliveryDocument)
+    - delivered_at (on DeliveryDocument)
+    - batch_number per item (on DeliveryItem, used when posting)
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="pz-fields-user",
+            email="pz-fields@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="PZ Fields Tenant")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="Sugar",
+            company=self.co,
+            price_net=Decimal("1.50"),
+            price_gross=Decimal("1.62"),
+            track_batches=True,
+        )
+        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="purchasing", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="warehouses", is_enabled=True)
+        self.client.force_authenticate(user=self.user)
+
+    def _url_create_pz(self):
+        return reverse("delivery-document-create-pz")
+
+    def _url_complete(self, doc_uuid):
+        return reverse("delivery-document-complete", kwargs={"uuid": str(doc_uuid)})
+
+    def _create_pz(self, extra=None):
+        payload = {
+            "to_warehouse_id": str(self.wh.uuid),
+            "items": [
+                {
+                    "product_id": str(self.product.uuid),
+                    "quantity_planned": "50",
+                    "unit_cost": "1.50",
+                }
+            ],
+        }
+        if extra:
+            payload.update(extra)
+        r = self.client.post(self._url_create_pz(), data=payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        return r.data
+
+    def test_external_document_number_stored(self):
+        """external_document_number is saved on DeliveryDocument."""
+        self._create_pz({"external_document_number": "WZ/2026/0042"})
+        doc = DeliveryDocument.objects.get(
+            company=self.co, document_type=DeliveryDocument.DOC_TYPE_PZ
+        )
+        self.assertEqual(doc.external_document_number, "WZ/2026/0042")
+
+    def test_external_document_number_optional(self):
+        """PZ can be created without external_document_number."""
+        self._create_pz()
+        doc = DeliveryDocument.objects.get(
+            company=self.co, document_type=DeliveryDocument.DOC_TYPE_PZ
+        )
+        self.assertEqual(doc.external_document_number, "")
+
+    def test_delivered_at_stored_from_date_string(self):
+        """delivered_at accepts a date string (YYYY-MM-DD)."""
+        self._create_pz({"delivered_at": "2026-07-15"})
+        doc = DeliveryDocument.objects.get(
+            company=self.co, document_type=DeliveryDocument.DOC_TYPE_PZ
+        )
+        self.assertIsNotNone(doc.delivered_at)
+        from django.utils import timezone as tz
+        local_date = tz.localtime(doc.delivered_at).date().isoformat()
+        self.assertEqual(local_date, "2026-07-15")
+
+    def test_delivered_at_optional(self):
+        """PZ can be created without delivered_at."""
+        self._create_pz()
+        doc = DeliveryDocument.objects.get(
+            company=self.co, document_type=DeliveryDocument.DOC_TYPE_PZ
+        )
+        self.assertIsNone(doc.delivered_at)
+
+    def test_batch_number_stored_on_delivery_item(self):
+        """batch_number from payload is persisted on the DeliveryItem."""
+        payload = {
+            "to_warehouse_id": str(self.wh.uuid),
+            "items": [
+                {
+                    "product_id": str(self.product.uuid),
+                    "quantity_planned": "50",
+                    "unit_cost": "1.50",
+                    "batch_number": "LOT-2026-ABC",
+                }
+            ],
+        }
+        r = self.client.post(self._url_create_pz(), data=payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        doc = DeliveryDocument.objects.get(
+            company=self.co, document_type=DeliveryDocument.DOC_TYPE_PZ
+        )
+        item = doc.items.first()
+        self.assertEqual(item.batch_number, "LOT-2026-ABC")
+
+    def test_batch_number_used_when_posting_pz(self):
+        """When posting a PZ, the custom batch_number overrides the auto-generated one."""
+        from apps.products.models import StockBatch
+
+        payload = {
+            "to_warehouse_id": str(self.wh.uuid),
+            "items": [
+                {
+                    "product_id": str(self.product.uuid),
+                    "quantity_planned": "50",
+                    "unit_cost": "1.50",
+                    "batch_number": "LOT-CUSTOM-001",
+                }
+            ],
+        }
+        r = self.client.post(self._url_create_pz(), data=payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        doc_uuid = r.data["id"]
+
+        self.client.post(self._url_complete(doc_uuid), data={}, format="json")
+
+        batch = StockBatch.objects.filter(
+            company=self.co, product=self.product, warehouse=self.wh
+        ).first()
+        self.assertIsNotNone(batch)
+        self.assertEqual(batch.batch_number, "LOT-CUSTOM-001")
+
+    def test_auto_batch_number_when_not_provided(self):
+        """When batch_number is not provided, the auto-generated number is used."""
+        from apps.products.models import StockBatch
+
+        r = self.client.post(
+            self._url_create_pz(),
+            data={
+                "to_warehouse_id": str(self.wh.uuid),
+                "items": [
+                    {
+                        "product_id": str(self.product.uuid),
+                        "quantity_planned": "30",
+                        "unit_cost": "1.50",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        doc_uuid = r.data["id"]
+
+        self.client.post(self._url_complete(doc_uuid), data={}, format="json")
+
+        batch = StockBatch.objects.filter(
+            company=self.co, product=self.product, warehouse=self.wh
+        ).first()
+        self.assertIsNotNone(batch)
+        self.assertIn("/", batch.batch_number)

@@ -282,6 +282,12 @@ class DeliveryItem(models.Model):
         blank=True,
         help_text="Data ważności partii — przenoszona na StockBatch przy przyjęciu PZ.",
     )
+    batch_number = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Numer partii dostawcy — jeśli podany, zastępuje auto-generowany numer przy przyjęciu PZ.",
+    )
     ksef_invoice_line_position = models.PositiveSmallIntegerField(
         null=True,
         blank=True,

@@ -6,7 +6,7 @@ from rest_framework import serializers
 
 from apps.common.serializers import UUIDModelSerializer
 
-from .models import CustomerProductPrice, Product, ProductStock, StockMovement, Warehouse
+from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
 
 
 class ProductSerializer(UUIDModelSerializer):
@@ -176,6 +176,7 @@ class WarehouseStockItemSerializer(UUIDModelSerializer):
         read_only=True,
     )
     is_below_minimum = serializers.SerializerMethodField()
+    nearest_expiry_date = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductStock
@@ -190,6 +191,7 @@ class WarehouseStockItemSerializer(UUIDModelSerializer):
             "quantity_total",
             "min_stock_alert",
             "is_below_minimum",
+            "nearest_expiry_date",
         ]
 
     def get_is_below_minimum(self, obj) -> bool:
@@ -197,6 +199,21 @@ class WarehouseStockItemSerializer(UUIDModelSerializer):
         if not alert:
             return False
         return obj.quantity_total < alert
+
+    def get_nearest_expiry_date(self, obj) -> str | None:
+        from apps.products.models import StockBatch
+        batch = (
+            StockBatch.objects.filter(
+                product=obj.product,
+                warehouse=obj.warehouse,
+                quantity_remaining__gt=0,
+                expiry_date__isnull=False,
+            )
+            .order_by("expiry_date")
+            .values_list("expiry_date", flat=True)
+            .first()
+        )
+        return str(batch) if batch else None
 
 
 class StockMovementListSerializer(UUIDModelSerializer):
@@ -377,3 +394,20 @@ class CustomerProductPriceSerializer(serializers.ModelSerializer):
                     "Cena indywidualna dla tego klienta i produktu już istnieje."
                 )
         return attrs
+
+
+class StockBatchSerializer(UUIDModelSerializer):
+    """Read-only FIFO batch for GET /warehouses/{id}/batches/?product={uuid}."""
+
+    class Meta:
+        model = StockBatch
+        fields = [
+            "id",
+            "batch_number",
+            "received_date",
+            "expiry_date",
+            "quantity_initial",
+            "quantity_remaining",
+            "unit_cost",
+        ]
+        read_only_fields = fields

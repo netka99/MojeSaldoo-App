@@ -1,14 +1,3 @@
-import { useState } from 'react';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from 'recharts';
-import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 import { useExpenseChartQuery } from '@/query/use-cashflow';
 import { QUICK_EXPENSE_CATEGORY_LABELS } from '@/types/cashflow.types';
 
@@ -17,26 +6,43 @@ import { QUICK_EXPENSE_CATEGORY_LABELS } from '@/types/cashflow.types';
 // ---------------------------------------------------------------------------
 
 const CATEGORY_COLORS: Record<string, string> = {
-  raw_materials: '#f59e0b',
-  packaging:     '#10b981',
-  fuel:          '#3b82f6',
-  transport:     '#6366f1',
-  utilities:     '#8b5cf6',
-  rent:          '#ec4899',
-  services:      '#14b8a6',
-  marketing:     '#f97316',
-  salaries:      '#ef4444',
-  repair:        '#84cc16',
-  fixed:         '#94a3b8',
-  other:         '#64748b',
+  // QuickExpense categories
+  raw_materials:       '#f59e0b',
+  packaging:           '#10b981',
+  fuel:                '#3b82f6',
+  transport:           '#6366f1',
+  utilities:           '#8b5cf6',
+  rent:                '#ec4899',
+  services:            '#14b8a6',
+  marketing:           '#f97316',
+  salaries:            '#ef4444',
+  repair:              '#84cc16',
+  other:               '#64748b',
+  // FixedCost categories (prefixed fixed_)
+  fixed_wynagrodzenia: '#ef4444',
+  fixed_zus_zdrowotne: '#f97316',
+  fixed_czynsz:        '#ec4899',
+  fixed_leasing:       '#8b5cf6',
+  fixed_ubezpieczenia: '#6366f1',
+  fixed_ksiegowosc:    '#14b8a6',
+  fixed_subskrypcje:   '#10b981',
+  fixed_paliwo:        '#3b82f6',
+  fixed_inne:          '#94a3b8',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
   ...QUICK_EXPENSE_CATEGORY_LABELS,
-  fixed: 'Koszty stałe',
+  // FixedCost categories
+  fixed_wynagrodzenia: 'Wynagrodzenia',
+  fixed_zus_zdrowotne: 'ZUS / Zdrowotne',
+  fixed_czynsz:        'Czynsz / Najem',
+  fixed_leasing:       'Leasing / Raty',
+  fixed_ubezpieczenia: 'Ubezpieczenia',
+  fixed_ksiegowosc:    'Biuro rachunkowe',
+  fixed_subskrypcje:   'Subskrypcje',
+  fixed_paliwo:        'Paliwo (stały)',
+  fixed_inne:          'Inne stałe',
 };
-
-type ViewMode = 'month' | '6months' | 'year' | 'custom';
 
 const pln = new Intl.NumberFormat('pl-PL', {
   style: 'currency',
@@ -44,73 +50,38 @@ const pln = new Intl.NumberFormat('pl-PL', {
   maximumFractionDigits: 0,
 });
 
-// ---------------------------------------------------------------------------
-// Single-period bar list (pure CSS — no squishing on mobile)
-// ---------------------------------------------------------------------------
-
-interface BarItem {
-  name: string;
-  value: number;
-  category: string;
+function labelForCat(cat: string): string {
+  if (CATEGORY_LABELS[cat]) return CATEGORY_LABELS[cat];
+  const key = cat.startsWith('fixed_') ? cat.slice(6) : cat;
+  return key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
 }
 
-function SinglePeriodBars({ items }: { items: BarItem[] }) {
-  const max = Math.max(...items.map((i) => i.value), 1);
-  return (
-    <div className="space-y-2.5">
-      {items.map((item) => (
-        <div key={item.category}>
-          <div className="mb-1 flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">{item.name}</span>
-            <span className="font-semibold tabular-nums">{pln.format(item.value)}</span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full transition-all"
-              style={{
-                width: `${Math.max((item.value / max) * 100, 2)}%`,
-                backgroundColor: CATEGORY_COLORS[item.category] ?? '#94a3b8',
-              }}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+interface ExpenseChartProps {
+  /** YYYY-MM — when provided, fetches data for that specific month */
+  month?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function ExpenseChart() {
-  const [viewMode, setViewMode] = useState<ViewMode>('month');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-
-  const params =
-    viewMode === 'custom'
-      ? { date_from: dateFrom, date_to: dateTo }
-      : viewMode === '6months'
-        ? { months: 6 }
-        : viewMode === 'year'
-          ? { months: 12 }
-          : { months: 1 };
-
-  const enabled = viewMode !== 'custom' || (Boolean(dateFrom) && Boolean(dateTo));
-  const { data = [], isLoading } = useExpenseChartQuery(enabled ? params : { months: 1 });
+export function ExpenseChart({ month }: ExpenseChartProps) {
+  const params = month ? { date_from: `${month}-01`, date_to: lastDayOf(month) } : { months: 1 };
+  const { data = [], isLoading } = useExpenseChartQuery(params);
 
   const allCategories = Array.from(
     new Set(data.flatMap((d) => Object.keys(d).filter((k) => k !== 'period' && k !== 'total'))),
   );
 
-  const isSinglePeriod = viewMode === 'month' || viewMode === 'custom';
-
-  const singlePeriodData: BarItem[] =
-    isSinglePeriod && data[0]
+  const items =
+    data[0]
       ? allCategories
           .map((cat) => ({
-            name: CATEGORY_LABELS[cat] ?? cat,
+            name: labelForCat(cat),
             value: (data[0][cat] as number) ?? 0,
             category: cat,
           }))
@@ -118,121 +89,76 @@ export function ExpenseChart() {
           .sort((a, b) => b.value - a.value)
       : [];
 
-  const VIEW_LABELS: Record<ViewMode, string> = {
-    month: 'Miesiąc',
-    '6months': '6 mies.',
-    year: 'Rok',
-    custom: 'Zakres',
-  };
+  const total = (data[0]?.total as number) ?? 0;
+  const max = Math.max(...items.map((i) => i.value), 1);
 
   return (
-    <div className="rounded-xl border border-border p-4 space-y-3">
-      {/* Header + mode buttons */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-          Koszty wg kategorii
+    <div className="overflow-hidden rounded-xl border border-border">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border bg-muted/20 px-4 py-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Na co idą pieniądze?
         </h3>
-        <div className="flex gap-1">
-          {(['month', '6months', 'year', 'custom'] as ViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              className={`rounded-lg px-2 py-1 text-xs font-medium transition-colors ${
-                viewMode === mode
-                  ? 'bg-primary text-white'
-                  : 'text-muted-foreground hover:bg-muted'
-              }`}
-            >
-              {VIEW_LABELS[mode]}
-            </button>
-          ))}
-        </div>
+        {total > 0 && (
+          <span className="text-xs text-muted-foreground">
+            Łącznie: <span className="font-semibold text-foreground">{pln.format(total)}</span>
+          </span>
+        )}
       </div>
 
-      {/* Date pickers for custom range */}
-      {viewMode === 'custom' && (
-        <div className="flex gap-2 items-center">
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="flex-1 rounded-lg border border-input bg-background px-2 py-1.5 text-sm"
-          />
-          <span className="shrink-0 text-muted-foreground text-sm">—</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="flex-1 rounded-lg border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
-      )}
+      <div className="space-y-3 px-4 pb-4 pt-3">
+        {isLoading && (
+          <p className="py-8 text-center text-sm text-muted-foreground">Ładowanie…</p>
+        )}
 
-      {/* Loading */}
-      {isLoading && (
-        <p className="py-8 text-center text-sm text-muted-foreground">Ładowanie…</p>
-      )}
+        {!isLoading && items.length === 0 && (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Brak skategoryzowanych kosztów w tym miesiącu.
+          </p>
+        )}
 
-      {/* Single period: empty state */}
-      {!isLoading && isSinglePeriod && singlePeriodData.length === 0 && (
-        <p className="py-6 text-center text-sm text-muted-foreground">
-          Brak skategoryzowanych kosztów w tym okresie.
-        </p>
-      )}
-
-      {/* Single period: CSS bar list — no Recharts squishing */}
-      {!isLoading && isSinglePeriod && singlePeriodData.length > 0 && (
-        <SinglePeriodBars items={singlePeriodData} />
-      )}
-
-      {/* Multi-period: stacked bar */}
-      {!isLoading && !isSinglePeriod && data.length > 0 && (
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={data} margin={{ left: 0, right: 4, top: 4, bottom: 4 }}>
-            <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-            <YAxis
-              width={48}
-              tickFormatter={(v: number) =>
-                v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)
-              }
-              tick={{ fontSize: 11 }}
-            />
-            <Tooltip
-              formatter={(value: ValueType | undefined, name: NameType | undefined) =>
-                [
-                  pln.format(Number(value ?? 0)),
-                  CATEGORY_LABELS[String(name ?? '')] ?? String(name ?? ''),
-                ] as [string, string]
-              }
-            />
-            <Legend
-              formatter={(value: string) => CATEGORY_LABELS[value] ?? value}
-              wrapperStyle={{ fontSize: 11 }}
-            />
-            {allCategories.map((cat) => (
-              <Bar
-                key={cat}
-                dataKey={cat}
-                stackId="a"
-                fill={CATEGORY_COLORS[cat] ?? '#94a3b8'}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
-      )}
-
-      {/* Multi-period: empty state */}
-      {!isLoading && !isSinglePeriod && data.length === 0 && (
-        <p className="py-6 text-center text-sm text-muted-foreground">Brak danych.</p>
-      )}
-
-      {/* Total for single period */}
-      {!isLoading && isSinglePeriod && (data[0]?.total as number) > 0 && (
-        <div className="border-t border-border pt-2 flex justify-between text-sm">
-          <span className="text-muted-foreground">Łącznie</span>
-          <span className="font-bold">{pln.format(data[0].total as number)}</span>
-        </div>
-      )}
+        {!isLoading && items.map((item) => {
+          const pct = Math.max((item.value / max) * 100, 2);
+          const totalPct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+          return (
+            <div key={item.category} className="space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: CATEGORY_COLORS[item.category] ?? '#94a3b8' }}
+                  />
+                  <span className="text-muted-foreground">{item.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {totalPct > 0 && (
+                    <span className="text-muted-foreground/60">{totalPct}%</span>
+                  )}
+                  <span className="font-semibold tabular-nums">{pln.format(item.value)}</span>
+                </div>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${pct}%`,
+                    backgroundColor: CATEGORY_COLORS[item.category] ?? '#94a3b8',
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function lastDayOf(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(y, m, 0).toISOString().slice(0, 10);
 }

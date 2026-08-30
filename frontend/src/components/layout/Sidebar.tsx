@@ -46,6 +46,9 @@ function NavSectionSprzedaz() {
             Niezapłacone faktury
           </ModuleNavItem>
         )}
+        <AppNavItemLink to="/sprzedaz">
+          Sprzedaż gotówkowa
+        </AppNavItemLink>
       </div>
     </div>
   );

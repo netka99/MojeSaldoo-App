@@ -611,6 +611,73 @@ function TaxationSettingsSection({
 }
 
 // ---------------------------------------------------------------------------
+// VAT Settings Section
+// ---------------------------------------------------------------------------
+
+function VatSettingsSection({
+  companyId,
+  currentIsVatPayer,
+  canEdit,
+  onSaved,
+}: {
+  companyId: string;
+  currentIsVatPayer: boolean;
+  canEdit: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const updateMutation = useUpdateCompanyMutation();
+  const [isVatPayer, setIsVatPayer] = useState(currentIsVatPayer);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!canEdit) return;
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await updateMutation.mutateAsync({ companyId, data: { name: '', is_vat_payer: isVatPayer } });
+      await onSaved();
+      setSaved(true);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Nie udało się zapisać');
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-lg font-semibold">VAT</h2>
+        <p className="text-sm text-muted-foreground">Wpływa na wyświetlanie podziału VAT w raportach sprzedaży.</p>
+      </div>
+      <Card>
+        <CardContent className="pt-5 space-y-4">
+          <label className={cn('flex cursor-pointer items-center gap-3', !canEdit && 'cursor-not-allowed opacity-60')}>
+            <input
+              type="checkbox"
+              checked={isVatPayer}
+              disabled={!canEdit}
+              onChange={(e) => { setIsVatPayer(e.target.checked); setSaved(false); }}
+              className="h-4 w-4 rounded border-input"
+            />
+            <div>
+              <p className="text-sm font-medium">Czynny podatnik VAT</p>
+              <p className="text-xs text-muted-foreground">Zaznacz jeśli firma jest zarejestrowana jako płatnik VAT</p>
+            </div>
+          </label>
+          {saveError && <p className="text-sm text-destructive">{saveError}</p>}
+          {saved && <p className="text-sm text-green-600">Zapisano.</p>}
+          {canEdit && (
+            <Button size="sm" onClick={handleSave} loading={updateMutation.isPending}>
+              Zapisz
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Danger Zone Section
 // ---------------------------------------------------------------------------
 
@@ -774,6 +841,13 @@ export function CompanySettingsPage() {
         companyId={companyId}
         currentTaxationForm={user?.taxation_form}
         currentRyczaltCategory={user?.ryczalt_category}
+        canEdit={user?.is_company_admin === true}
+        onSaved={refreshUser}
+      />
+
+      <VatSettingsSection
+        companyId={companyId}
+        currentIsVatPayer={user?.is_vat_payer ?? false}
         canEdit={user?.is_company_admin === true}
         onSaved={refreshUser}
       />

@@ -9,16 +9,29 @@ import type {
   PaginatedInvoices,
 } from '../types';
 
+export type InvoiceSummary = {
+  unpaid_count: number;
+  unpaid_total: string;
+  overdue_count: number;
+  overdue_total: string;
+  paid_this_month_count: number;
+  paid_this_month_total: string;
+};
+
 /** Query string for `GET /api/invoices/` — filters match `InvoiceFilter` (django-filter). */
 export type InvoiceListParams = {
   page?: number;
   status?: string;
+  /** Comma-separated list of statuses, e.g. "issued,sent" — maps to status__in on backend */
+  'status__in'?: string;
   ksef_status?: string;
   customer?: string;
   issue_date_after?: string;
   issue_date_before?: string;
   /** Filter by correction flag. true = only FV-KOR, false = only regular invoices */
   is_correction?: boolean;
+  /** Sort column. Prefix with "-" for descending: "issue_date", "-due_date", "total_gross" */
+  ordering?: string;
 };
 
 const basePath = '/invoices/';
@@ -45,6 +58,8 @@ export const invoiceService = {
   issue: (id: string) => api.post<Invoice>(`${basePath}${id}/issue/`, {}),
 
   markPaid: (id: string) => api.post<Invoice>(`${basePath}${id}/mark-paid/`, {}),
+
+  markUnpaid: (id: string) => api.post<Invoice>(`${basePath}${id}/mark-unpaid/`, {}),
 
   fetchPreview: (id: string) => api.get<InvoicePreviewPayload>(`${basePath}${id}/preview/`),
 
@@ -96,4 +111,7 @@ export const invoiceService = {
   /** Create a draft FV-KOR correction for an issued or paid invoice. */
   createCorrection: (id: string, body: CreateCorrectionBody) =>
     api.post<Invoice>(`${basePath}${id}/create-correction/`, body),
+
+  /** Aggregate summary: unpaid, overdue, paid-this-month counts and totals. */
+  fetchSummary: () => api.get<InvoiceSummary>(`${basePath}summary/`),
 };

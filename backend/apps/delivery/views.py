@@ -471,6 +471,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         to_warehouse_id = request.data.get("to_warehouse_id")
         from_supplier_id = request.data.get("from_supplier_id")
         issue_date_raw = request.data.get("issue_date")
+        delivered_at_raw = request.data.get("delivered_at")
+        external_document_number = (request.data.get("external_document_number") or "").strip()
         notes = request.data.get("notes", "")
         ksef_number = (request.data.get("ksef_number") or "").strip()
         items_data = request.data.get("items", [])
@@ -534,6 +536,19 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             for p in ProductModel.objects.filter(uuid__in=product_ids, company_id=company_id)
         }
 
+        parsed_delivered_at = None
+        if delivered_at_raw:
+            from django.utils.dateparse import parse_datetime, parse_date as _pd
+            from datetime import datetime as _dt
+            parsed_delivered_at = parse_datetime(str(delivered_at_raw))
+            if parsed_delivered_at is not None:
+                if timezone.is_naive(parsed_delivered_at):
+                    parsed_delivered_at = timezone.make_aware(parsed_delivered_at)
+            else:
+                d = _pd(str(delivered_at_raw))
+                if d:
+                    parsed_delivered_at = timezone.make_aware(_dt(d.year, d.month, d.day))
+
         with transaction.atomic():
             doc = DeliveryDocument.objects.create(
                 company=request.user.current_company,
@@ -545,6 +560,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 notes=notes or "",
                 status=DeliveryDocument.STATUS_DRAFT,
                 ksef_invoice=ksef_invoice,
+                external_document_number=external_document_number,
+                delivered_at=parsed_delivered_at,
             )
             for row in items_data:
                 pid = str(row.get("product_id", ""))
@@ -580,6 +597,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     unit_cost=unit_cost,
                     ksef_invoice_line_position=ksef_line_pos,
                     expiry_date=expiry_date,
+                    batch_number=(row.get("batch_number") or "").strip(),
                 )
 
         doc.refresh_from_db()

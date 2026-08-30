@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
-import { invoiceService, type InvoiceListParams } from '@/services/invoice.service';
+import { invoiceService, type InvoiceListParams, type InvoiceSummary } from '@/services/invoice.service';
 import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult, type OpexCategory, type PaperScanResult, type KorMatchResult } from '@/services/ksef.service';
 import type {
   GenerateInvoiceFromOrderBody,
@@ -118,6 +118,18 @@ export function useMarkPaidInvoiceMutation() {
   });
 }
 
+export function useMarkUnpaidInvoiceMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => invoiceService.markUnpaid(id),
+    onSuccess: (inv: Invoice) => {
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(inv.id) });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.preview(inv.id) });
+    },
+  });
+}
+
 /**
  * Check the company's active KSeF session status on the backend.
  * Runs once on mount (not automatically refetching).
@@ -219,6 +231,19 @@ export function useKsefKorMatchQuery(ksefNumber: string, enabled = true) {
   });
 }
 
+/** Mark a received KSeF invoice as paid or unpaid. */
+export function useKsefMarkPaidMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ksefNumber, isPaid, dueDate }: { ksefNumber: string; isPaid: boolean; dueDate?: string }) =>
+      ksefService.markInvoicePaid(ksefNumber, isPaid, dueDate),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['ksef', 'inbox'] });
+      void queryClient.invalidateQueries({ queryKey: ['cash-flow'] });
+    },
+  });
+}
+
 /** Tag or clear an OPEX category on a received KSeF invoice. */
 export function useKsefTagOpexMutation() {
   const queryClient = useQueryClient();
@@ -264,12 +289,13 @@ export function useKsefInboxQuery(
   dateTo: string,
   page: number,
   enabled = true,
+  isPaid?: boolean,
 ) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   return useQuery<ReceivedInvoicesResult>({
-    queryKey: ['ksef', 'inbox', { companyId, dateFrom, dateTo, page }],
-    queryFn: () => ksefService.queryReceivedInvoices(dateFrom, dateTo, page),
+    queryKey: ['ksef', 'inbox', { companyId, dateFrom, dateTo, page, isPaid }],
+    queryFn: () => ksefService.queryReceivedInvoices(dateFrom, dateTo, page, 20, isPaid),
     enabled: enabled && Boolean(companyId),
   });
 }
@@ -278,6 +304,17 @@ export function useKsefInboxQuery(
 export function useKsefScanPaperMutation() {
   return useMutation<PaperScanResult, Error, File>({
     mutationFn: (image: File) => ksefService.scanPaperInvoice(image),
+  });
+}
+
+export function useInvoiceSummaryQuery() {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<InvoiceSummary>({
+    queryKey: invoiceKeys.summary(companyId),
+    queryFn: () => invoiceService.fetchSummary(),
+    enabled: Boolean(companyId),
+    staleTime: 30_000,
   });
 }
 

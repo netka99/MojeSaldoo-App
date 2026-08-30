@@ -30,6 +30,7 @@ type CompanyRow = {
   regon?: string | null;
   krs?: string | null;
   bdo?: string | null;
+  is_vat_payer?: boolean;
 };
 
 function pickStr(c: CompanyRow | undefined, camel: string, snake: string): string {
@@ -184,6 +185,7 @@ export function CompanyDataPage() {
   const resolved = useResolvedCompanyId();
   const updateCompany = useUpdateCompanyMutation();
   const [saveOk, setSaveOk] = useState(false);
+  const [isVatPayer, setIsVatPayer] = useState(false);
 
   const currentCompany: CompanyRow | undefined = resolved.state === 'ready' ? resolved.company : undefined;
   const companyId = resolved.state === 'ready' ? resolved.companyId : undefined;
@@ -201,12 +203,13 @@ export function CompanyDataPage() {
 
   useEffect(() => {
     reset(rowToDefaults(currentCompany));
+    setIsVatPayer(currentCompany?.is_vat_payer ?? false);
   }, [currentCompany, reset]);
 
   const onSubmit = async (values: FormValues) => {
     if (resolved.state !== 'ready' || !companyId) return;
     setSaveOk(false);
-    const body = formToWrite(values);
+    const body = { ...formToWrite(values), is_vat_payer: isVatPayer };
     await updateCompany.mutateAsync({ companyId, data: body });
     await refreshUser();
     setSaveOk(true);
@@ -371,6 +374,28 @@ export function CompanyDataPage() {
               {...register('bdo')}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* VAT payer toggle */}
+      <Card>
+        <CardHeader>
+          <CardTitle>VAT</CardTitle>
+          <CardDescription>Wpływa na wyświetlanie podziału VAT w raportach sprzedaży.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <label className="flex cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={isVatPayer}
+              onChange={(e) => setIsVatPayer(e.target.checked)}
+              className="h-4 w-4 rounded border-input"
+            />
+            <div>
+              <p className="text-sm font-medium">Czynny podatnik VAT</p>
+              <p className="text-xs text-muted-foreground">Zaznacz jeśli firma jest zarejestrowana jako płatnik VAT</p>
+            </div>
+          </label>
         </CardContent>
       </Card>
 

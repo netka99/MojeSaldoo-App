@@ -174,12 +174,16 @@ export interface PzCreateItem {
   quantity_planned: string;  // decimal string, e.g. "10.00"
   unit_cost?: string | null; // decimal string, e.g. "5.5000"
   ksef_line_position?: number | null;
+  expiry_date?: string | null;  // "YYYY-MM-DD"
+  batch_number?: string;        // dostawcy numer partii (opcjonalnie)
 }
 
 export interface PzCreatePayload {
   to_warehouse_id: string;
   from_supplier_id?: string | null;
   issue_date?: string;  // "YYYY-MM-DD", defaults to today
+  delivered_at?: string;  // "YYYY-MM-DD", data faktycznego przyjęcia towaru
+  external_document_number?: string;  // nr dokumentu dostawcy (WZ/FV)
   notes?: string;
   ksef_number?: string;
   items: PzCreateItem[];

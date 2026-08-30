@@ -557,6 +557,44 @@ class InvoiceActionsAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
         self.assertEqual(r.data["status"], Invoice.STATUS_PAID)
 
+    def test_mark_unpaid_from_paid(self):
+        r = self.client.post(self._gen_url(), data={}, format="json")
+        inv_id = r.data["id"]
+        self.client.post(
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
+            data={},
+            format="json",
+        )
+        self.client.post(
+            reverse("invoice-mark-paid", kwargs={"uuid": inv_id}),
+            data={},
+            format="json",
+        )
+        r_unpaid = self.client.post(
+            reverse("invoice-mark-unpaid", kwargs={"uuid": inv_id}),
+            data={},
+            format="json",
+        )
+        self.assertEqual(r_unpaid.status_code, status.HTTP_200_OK, r_unpaid.data)
+        self.assertEqual(r_unpaid.data["status"], Invoice.STATUS_ISSUED)
+        row = Invoice.objects.get(uuid=inv_id)
+        self.assertIsNone(row.paid_at)
+
+    def test_mark_unpaid_fails_from_issued(self):
+        r = self.client.post(self._gen_url(), data={}, format="json")
+        inv_id = r.data["id"]
+        self.client.post(
+            reverse("invoice-issue", kwargs={"uuid": inv_id}),
+            data={},
+            format="json",
+        )
+        r2 = self.client.post(
+            reverse("invoice-mark-unpaid", kwargs={"uuid": inv_id}),
+            data={},
+            format="json",
+        )
+        self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_preview_returns_html_ready_payload(self):
         r = self.client.post(self._gen_url(), data={}, format="json")
         inv_id = r.data["id"]

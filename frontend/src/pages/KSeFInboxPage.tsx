@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefSessionQuery, useKsefTagOpexMutation, useKsefOpexLinesQuery, useKsefLineOpexMutation } from '@/query/use-invoices';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefMarkPaidMutation, useKsefSessionQuery, useKsefTagOpexMutation, useKsefOpexLinesQuery, useKsefLineOpexMutation } from '@/query/use-invoices';
 import { useLinkInvoiceToPzMutation, useUnmatchedPzQuery } from '@/query/use-delivery';
 import { useCostProjectsQuery, useInvoiceAnnotationQuery, useSaveInvoiceAnnotationMutation } from '@/query/use-cost-allocation';
 import { useCreateOpexCategoryMutation, useOpexCategoriesQuery } from '@/query/use-cashflow';
@@ -9,7 +9,7 @@ import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { authStorage } from '@/services/api';
+import { authStorage, apiClient } from '@/services/api';
 import { cn } from '@/lib/utils';
 import type { OpexCategory, PzDocumentRef, ReceivedInvoiceMeta } from '@/services/ksef.service';
 import { isKorType, OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
@@ -172,11 +172,11 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
 
   if (inv.opex_category) {
     return (
-      <div className="relative inline-flex items-center gap-0.5" ref={ref}>
+      <div className="relative inline-flex items-center h-7 rounded-md overflow-hidden border border-primary/25" ref={ref}>
         <button
           type="button"
           onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
-          className="inline-flex items-center rounded-l px-1.5 py-0.5 text-xs font-medium bg-primary/10 text-primary"
+          className="inline-flex items-center h-full px-2 text-xs font-medium bg-primary/8 text-primary hover:bg-primary/15 transition-colors"
           title="Zmień kategorię"
         >
           {currentLabel}
@@ -185,7 +185,7 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
           type="button"
           onClick={() => handleTag(null)}
           disabled={tagMutation.isPending}
-          className="inline-flex items-center rounded-r px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary border-l border-primary/20 hover:bg-primary/20"
+          className="inline-flex items-center justify-center h-full w-5 text-[10px] text-primary/50 bg-primary/8 hover:bg-red-50 hover:text-red-500 border-l border-primary/20 transition-colors"
           title="Usuń kategorię"
         >
           ✕
@@ -197,15 +197,17 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
 
   return (
     <div className="relative inline-block" ref={ref}>
-      <Button
-        size="sm"
-        variant="outline"
+      <button
+        type="button"
         onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
-        className={cn(open && 'bg-muted')}
+        className={cn(
+          'inline-flex items-center h-7 px-2 rounded-md border border-dashed border-border text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors',
+          open && 'border-primary/40 text-primary bg-primary/5',
+        )}
         title="Przypisz kategorię kosztu"
       >
-        Kategoria
-      </Button>
+        + Kategoria
+      </button>
       {open && dropdown}
     </div>
   );
@@ -738,6 +740,88 @@ function AnnotationPanel({ ksefNumber, lines }: AnnotationPanelProps) {
   );
 }
 
+interface InvoiceActionsMenuProps {
+  inv: ReceivedInvoiceMeta;
+  downloading: string | null;
+  showMatchPanel: boolean;
+  hasActivePz: boolean;
+  onDownload: (ref: string) => void;
+  onToggleMatch: () => void;
+}
+
+function InvoiceActionsMenu({ inv, downloading, showMatchPanel, hasActivePz, onDownload, onToggleMatch }: InvoiceActionsMenuProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Więcej opcji"
+        className={cn(
+          'inline-flex items-center justify-center h-7 w-7 rounded-md text-xs text-muted-foreground border border-transparent hover:border-border hover:bg-muted transition-colors',
+          open && 'bg-muted border-border',
+        )}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 min-w-[150px] rounded-lg border border-border bg-background shadow-lg py-1">
+          <button
+            type="button"
+            onClick={async () => {
+              setOpen(false);
+              try {
+                const resp = await apiClient.get<string>(
+                  `/ksef/inbox/${encodeURIComponent(inv.ksefNumber)}/html/`,
+                  { responseType: 'text' },
+                );
+                const win = window.open('', '_blank');
+                if (win) {
+                  win.document.write(resp.data);
+                  win.document.close();
+                }
+              } catch {
+                // ignore
+              }
+            }}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted"
+          >
+            Podgląd faktury
+          </button>
+          <button
+            type="button"
+            onClick={() => { onDownload(inv.ksefNumber); setOpen(false); }}
+            disabled={downloading === inv.ksefNumber}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+          >
+            {downloading === inv.ksefNumber ? 'Pobieranie…' : 'Pobierz XML'}
+          </button>
+          {!hasActivePz && (
+            <button
+              type="button"
+              onClick={() => { onToggleMatch(); setOpen(false); }}
+              className={cn('w-full text-left px-3 py-1.5 text-xs hover:bg-muted', showMatchPanel && 'text-primary font-medium')}
+            >
+              Dopasuj do PZ
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, onOpenCatManager }: InvoiceRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showMatchPanel, setShowMatchPanel] = useState(false);
@@ -755,6 +839,7 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
 
   const isKor = isKorType(inv.invoiceType);
   const hasActivePz = (inv.pzDocuments ?? []).some((pz) => pz.status !== 'cancelled');
+  const markPaidMutation = useKsefMarkPaidMutation();
   // Close match panel automatically once invoice becomes linked
   if (showMatchPanel && hasActivePz) setShowMatchPanel(false);
 
@@ -788,11 +873,25 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
     setNewCategoryName('');
   };
 
+  const isUnpaid = !inv.isPaid;
+  const today = new Date().toISOString().slice(0, 10);
+  const isOverdue = isUnpaid && inv.dueDate && inv.dueDate < today;
+  const rowBg = isOverdue
+    ? 'bg-red-50/60 dark:bg-red-950/20'
+    : isUnpaid && inv.dueDate
+      ? 'bg-orange-50/50 dark:bg-orange-950/20'
+      : '';
+
   return (
     <>
-      <tr className="border-b border-border hover:bg-muted/30 transition-colors">
+      <tr className={cn('border-b border-border hover:bg-muted/30 transition-colors', rowBg)}>
         <td className="px-3 py-2 text-sm text-muted-foreground whitespace-nowrap">
           {isoToDisplay(inv.issueDate)}
+          {inv.dueDate && isUnpaid && (
+            <p className={cn('text-xs mt-0.5', isOverdue ? 'text-destructive font-medium' : 'text-orange-600')}>
+              płatność {isOverdue ? 'po terminie' : 'do'} {inv.dueDate}
+            </p>
+          )}
         </td>
         <td className="px-3 py-2 text-sm font-medium">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -814,79 +913,101 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
         <td className="px-3 py-2 text-sm text-right tabular-nums text-muted-foreground whitespace-nowrap">
           {formatAmount(inv.vatAmount, inv.currency)}
         </td>
-        <td className="px-3 py-2 text-right">
-          <div className="flex items-center justify-end gap-1 flex-wrap">
-            {hasCostAllocation && annotationStatus && (
-              <span
-                className={cn(
-                  'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap',
-                  ACCOUNTING_STATUS_COLORS[annotationStatus as AccountingStatus],
-                )}
-              >
-                {ACCOUNTING_STATUS_LABELS[annotationStatus as AccountingStatus] ?? annotationStatus}
-              </span>
-            )}
-            {(inv.pzDocuments ?? []).map((pz: PzDocumentRef) => {
-              const cancelled = pz.status === 'cancelled';
-              return (
-                <Link
-                  key={pz.id}
-                  to={`/delivery/${pz.id}`}
-                  className={cn(
-                    'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium hover:underline whitespace-nowrap',
-                    cancelled
-                      ? 'bg-muted text-muted-foreground line-through'
-                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
-                  )}
-                  title={cancelled ? 'PZ anulowany' : 'Przejdź do dokumentu PZ'}
-                >
-                  {pz.documentNumber}
-                </Link>
-              );
-            })}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setExpanded((v) => !v)}
-              className={cn('w-7 px-0', expanded && 'bg-muted')}
-              title={expanded ? 'Zwiń' : 'Pokaż pozycje'}
-            >
-              {expanded ? '▲' : '▼'}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              loading={downloading === inv.ksefNumber}
-              onClick={() => onDownload(inv.ksefNumber)}
-            >
-              XML
-            </Button>
-            {isKor ? (
-              <Button
-                size="sm"
-                className="bg-orange-500 hover:bg-orange-600 text-white"
-                onClick={() => onCreatePzKor(inv.ksefNumber)}
-                title="Utwórz korektę PZ na podstawie tej faktury korygującej"
-              >
-                PZ-KOR
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => onCreatePz(inv.ksefNumber)}>
-                + PZ
-              </Button>
-            )}
-            {!hasActivePz && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowMatchPanel((v) => !v)}
-                className={cn(showMatchPanel && 'bg-muted')}
-                title="Dopasuj do istniejącego PZ"
-              >
-                Dopasuj
-              </Button>
-            )}
+        <td className="px-3 py-2">
+          {/* Tags row — only rendered when there's something to show */}
+          {(hasCostAllocation && annotationStatus || (inv.pzDocuments ?? []).length > 0) && (
+            <div className="flex items-center justify-end gap-1 flex-wrap mb-1.5">
+              {hasCostAllocation && annotationStatus && (
+                <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap', ACCOUNTING_STATUS_COLORS[annotationStatus as AccountingStatus])}>
+                  {ACCOUNTING_STATUS_LABELS[annotationStatus as AccountingStatus] ?? annotationStatus}
+                </span>
+              )}
+              {(inv.pzDocuments ?? []).map((pz: PzDocumentRef) => {
+                const cancelled = pz.status === 'cancelled';
+                return (
+                  <Link
+                    key={pz.id}
+                    to={`/delivery/${pz.id}`}
+                    className={cn(
+                      'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium hover:underline whitespace-nowrap',
+                      cancelled ? 'bg-muted text-muted-foreground line-through' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+                    )}
+                    title={cancelled ? 'PZ anulowany' : 'Przejdź do dokumentu PZ'}
+                  >
+                    {pz.documentNumber}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Actions row — single line, consistent h-7 */}
+          <div className="flex items-center justify-end gap-1.5">
+            {/* Category tag */}
             <OpexTagButton inv={inv} onOpenManager={onOpenCatManager} />
+
+            {/* Divider */}
+            <div className="h-4 w-px bg-border" />
+
+            {/* Payment status toggle */}
+            <button
+              type="button"
+              disabled={markPaidMutation.isPending}
+              onClick={() => markPaidMutation.mutate({ ksefNumber: inv.ksefNumber, isPaid: !inv.isPaid })}
+              title={inv.isPaid ? 'Kliknij aby cofnąć' : 'Oznacz jako opłacone'}
+              className={cn(
+                'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border transition-colors whitespace-nowrap',
+                inv.isPaid
+                  ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-800 dark:bg-green-950/30 dark:text-green-400'
+                  : isOverdue
+                    ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
+                    : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400',
+              )}
+            >
+              {markPaidMutation.isPending
+                ? '…'
+                : inv.isPaid
+                  ? '✓ Opłacono'
+                  : isOverdue
+                    ? '↑ Zaległe'
+                    : 'Opłać'}
+            </button>
+
+            {/* Divider */}
+            <div className="h-4 w-px bg-border" />
+
+            {/* Primary PZ action */}
+            <button
+              type="button"
+              onClick={() => isKor ? onCreatePzKor(inv.ksefNumber) : onCreatePz(inv.ksefNumber)}
+              title={isKor ? 'Utwórz korektę PZ' : 'Utwórz dokument przyjęcia'}
+              className="inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-primary/30 text-primary bg-primary/5 hover:bg-primary/10 transition-colors whitespace-nowrap"
+            >
+              {isKor ? 'PZ-KOR' : '+ PZ'}
+            </button>
+
+            {/* Expand toggle */}
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              title={expanded ? 'Zwiń pozycje' : 'Pokaż pozycje'}
+              className={cn(
+                'inline-flex items-center justify-center h-7 w-7 rounded-md text-xs text-muted-foreground border border-transparent hover:border-border hover:bg-muted transition-colors',
+                expanded && 'bg-muted border-border',
+              )}
+            >
+              {expanded ? '▴' : '▾'}
+            </button>
+
+            {/* Secondary actions */}
+            <InvoiceActionsMenu
+              inv={inv}
+              downloading={downloading}
+              showMatchPanel={showMatchPanel}
+              hasActivePz={hasActivePz}
+              onDownload={onDownload}
+              onToggleMatch={() => setShowMatchPanel((v) => !v)}
+            />
           </div>
         </td>
       </tr>
@@ -1086,9 +1207,9 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
   );
 }
 
-function lastWeekIso(): string {
+function lastMonthIso(): string {
   const d = new Date();
-  d.setDate(d.getDate() - 7);
+  d.setDate(d.getDate() - 30);
   return d.toISOString().slice(0, 10);
 }
 
@@ -1100,11 +1221,16 @@ type InboxFilter = 'all' | 'pz' | 'category' | 'unassigned';
 
 export function KSeFInboxPage() {
   const navigate = useNavigate();
-  const [dateFrom, setDateFrom] = useState(lastWeekIso);
-  const [dateTo, setDateTo] = useState(todayIso);
+  const [searchParams] = useSearchParams();
+  const initDateFrom = searchParams.has('date_from') ? searchParams.get('date_from') ?? '' : lastMonthIso();
+  const initDateTo = searchParams.has('date_to') ? searchParams.get('date_to') ?? '' : todayIso();
+  const initIsPaid = searchParams.get('is_paid') === 'false' ? false : undefined;
+  const [dateFrom, setDateFrom] = useState(initDateFrom);
+  const [dateTo, setDateTo] = useState(initDateTo);
+  const [isPaidFilter, setIsPaidFilter] = useState<boolean | undefined>(initIsPaid);
   const [page, setPage] = useState(1);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [viewFilter, setViewFilter] = useState<InboxFilter>('all');
+  const [viewFilter, setViewFilter] = useState<InboxFilter>(initIsPaid === false ? 'all' : 'all');
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
   const [catFilterOpen, setCatFilterOpen] = useState(false);
   const catFilterRef = useRef<HTMLDivElement>(null);
@@ -1119,6 +1245,7 @@ export function KSeFInboxPage() {
     dateTo,
     page,
     true,
+    isPaidFilter,
   );
 
   // Close category filter dropdown on outside click
@@ -1159,7 +1286,7 @@ export function KSeFInboxPage() {
   const newCount = data?.new_count ?? 0;
 
   return (
-    <div className="max-w-5xl p-6 space-y-6">
+    <div className="max-w-7xl px-6 py-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">
           Odebrane faktury KSeF
@@ -1245,18 +1372,41 @@ export function KSeFInboxPage() {
           )}
           {/* View filter */}
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setIsPaidFilter(undefined); setPage(1); }}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                isPaidFilter === undefined
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-background text-foreground hover:bg-muted',
+              )}
+            >
+              Wszystkie
+            </button>
+            <button
+              type="button"
+              onClick={() => { setIsPaidFilter(false); setPage(1); }}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                isPaidFilter === false
+                  ? 'border-orange-500 bg-orange-500 text-white'
+                  : 'border-border bg-background text-foreground hover:bg-muted',
+              )}
+            >
+              Nieopłacone
+            </button>
             {([
-              { id: 'all', label: 'Wszystkie' },
               { id: 'pz', label: 'Z PZ' },
               { id: 'unassigned', label: 'Nieprzypisane' },
             ] as { id: InboxFilter; label: string }[]).map(({ id, label }) => (
               <button
                 key={id}
                 type="button"
-                onClick={() => { setViewFilter(id); setSelectedCategories(new Set()); }}
+                onClick={() => { setViewFilter(id); setIsPaidFilter(undefined); setSelectedCategories(new Set()); }}
                 className={cn(
                   'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                  viewFilter === id
+                  viewFilter === id && isPaidFilter === undefined
                     ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-border bg-background text-foreground hover:bg-muted',
                 )}

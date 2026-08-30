@@ -327,6 +327,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                     {ordersEnabled && <AppNavItemLink to="/orders">Zamówienia</AppNavItemLink>}
                     {invoicingEnabled && <AppNavItemLink to="/invoices">Faktury</AppNavItemLink>}
                     {reportingEnabled && <AppNavItemLink to="/reports/payment-aging">Niezapłacone faktury</AppNavItemLink>}
+                    <AppNavItemLink to="/sprzedaz">Sprzedaż gotówkowa</AppNavItemLink>
                   </div>
                 </div>
               )}

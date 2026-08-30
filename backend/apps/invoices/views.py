@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
+from rest_framework.filters import OrderingFilter
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -50,8 +51,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     required_permission = 'can_manage_invoices'
     read_permission = None  # any company member may list/read invoices
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_class = InvoiceFilter
+    ordering_fields = ['issue_date', 'due_date', 'total_gross']
 
     def get_queryset(self) -> QuerySet:
         qs = (
@@ -235,7 +237,57 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice.save(
             update_fields=["status", "paid_at", "user", "updated_at"],
         )
+        log_activity(
+            user=request.user, action="invoice.mark_paid",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+        )
         return Response(self.get_serializer(invoice).data)
+
+    @action(detail=True, methods=["post"], url_path="mark-unpaid")
+    def mark_unpaid(self, request, uuid=None):
+        invoice = self.get_object()
+        if invoice.status != Invoice.STATUS_PAID:
+            raise ValidationError(
+                {"detail": "Tylko opłacone faktury mogą być cofnięte do statusu nieopłaconej."}
+            )
+        invoice.status = Invoice.STATUS_ISSUED
+        invoice.paid_at = None
+        invoice.user = request.user
+        invoice.save(
+            update_fields=["status", "paid_at", "user", "updated_at"],
+        )
+        log_activity(
+            user=request.user, action="invoice.mark_unpaid",
+            status=ActivityLog.STATUS_SUCCESS,
+            object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+        )
+        return Response(self.get_serializer(invoice).data)
+
+    @action(detail=False, methods=["get"], url_path="summary", permission_classes=[IsAuthenticated, IsCompanyMember])
+    def summary(self, request):
+        from django.db.models import Count, Sum, Q
+
+        qs = self.get_queryset().filter(is_correction=False)
+        first_of_month = timezone.now().date().replace(day=1)
+
+        agg = qs.aggregate(
+            unpaid_count=Count('id', filter=Q(status__in=['issued', 'sent'])),
+            unpaid_total=Sum('total_gross', filter=Q(status__in=['issued', 'sent'])),
+            overdue_count=Count('id', filter=Q(status='overdue')),
+            overdue_total=Sum('total_gross', filter=Q(status='overdue')),
+            paid_this_month_count=Count('id', filter=Q(status='paid', paid_at__date__gte=first_of_month)),
+            paid_this_month_total=Sum('total_gross', filter=Q(status='paid', paid_at__date__gte=first_of_month)),
+        )
+
+        return Response({
+            'unpaid_count': agg['unpaid_count'] or 0,
+            'unpaid_total': str(agg['unpaid_total'] or 0),
+            'overdue_count': agg['overdue_count'] or 0,
+            'overdue_total': str(agg['overdue_total'] or 0),
+            'paid_this_month_count': agg['paid_this_month_count'] or 0,
+            'paid_this_month_total': str(agg['paid_this_month_total'] or 0),
+        })
 
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, uuid=None):

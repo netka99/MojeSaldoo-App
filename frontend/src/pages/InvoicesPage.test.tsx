@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
@@ -44,12 +44,30 @@ const useCustomerListQueryMock = vi.hoisted(() =>
   })),
 );
 
+const markPaidMutateAsync = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+const useMarkPaidInvoiceMutationMock = vi.hoisted(() =>
+  vi.fn(() => ({ mutateAsync: markPaidMutateAsync, isPending: false })),
+);
+
+const useInvoiceSummaryQueryMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    data: {
+      unpaid_count: 0, unpaid_total: '0',
+      overdue_count: 0, overdue_total: '0',
+      paid_this_month_count: 0, paid_this_month_total: '0',
+    },
+    isLoading: false,
+  })),
+);
+
 vi.mock('@/query/use-invoices', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/query/use-invoices')>();
   return {
     ...actual,
     useInvoiceListQuery: (page: number, filters: InvoiceListFilters) =>
       useInvoiceListQueryMock(page, filters),
+    useMarkPaidInvoiceMutation: () => useMarkPaidInvoiceMutationMock(),
+    useInvoiceSummaryQuery: () => useInvoiceSummaryQueryMock(),
   };
 });
 
@@ -91,7 +109,8 @@ function makeOrder(over: Partial<Order> = {}): Order {
 }
 
 function makeInvoice(over: Partial<Invoice> = {}): Invoice {
-  return {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const inv: any = {
     id: 'inv-1',
     company: 'co-1',
     user: 1,
@@ -123,9 +142,12 @@ function makeInvoice(over: Partial<Invoice> = {}): Invoice {
     corrects_invoice_id: null,
     corrects_invoice_number: null,
     correction_reason: '',
+    ksef_invoice_type: 'VAT',
+    corrections: [],
     items: [],
     ...over,
   };
+  return inv as Invoice;
 }
 
 function renderInvoicesRoute() {
@@ -143,12 +165,31 @@ function renderInvoicesRoute() {
 }
 
 describe('buildInvoiceListFilters + badge helpers', () => {
-  it('passes optional status, ksef_status, customer, issue date range', () => {
+  it('empty tab key returns no status filters', () => {
     expect(buildInvoiceListFilters('', '', '', '', '')).toEqual({});
+  });
+
+  it('"unpaid" tab sends status__in=issued,sent', () => {
+    expect(buildInvoiceListFilters('unpaid', '', '', '', '')).toEqual({ 'status__in': 'issued,sent' });
+  });
+
+  it('"overdue" tab sends status=overdue', () => {
+    expect(buildInvoiceListFilters('overdue', '', '', '', '')).toEqual({ status: 'overdue' });
+  });
+
+  it('"paid" tab sends status=paid', () => {
+    expect(buildInvoiceListFilters('paid', '', '', '', '')).toEqual({ status: 'paid' });
+  });
+
+  it('"draft" tab sends status=draft', () => {
+    expect(buildInvoiceListFilters('draft', '', '', '', '')).toEqual({ status: 'draft' });
+  });
+
+  it('passes ksef_status, customer, issue date range', () => {
     expect(
-      buildInvoiceListFilters('draft', 'pending', 'cust-1', '2026-04-01', '2026-04-30'),
+      buildInvoiceListFilters('paid', 'pending', 'cust-1', '2026-04-01', '2026-04-30'),
     ).toEqual({
-      status: 'draft',
+      status: 'paid',
       ksef_status: 'pending',
       customer: 'cust-1',
       issue_date_after: '2026-04-01',
@@ -193,6 +234,17 @@ describe('InvoicesPage', () => {
       data: { count: 0, next: null, previous: null, results: [] },
       isFetching: false,
     }));
+    markPaidMutateAsync.mockReset();
+    markPaidMutateAsync.mockResolvedValue({});
+    useInvoiceSummaryQueryMock.mockReset();
+    useInvoiceSummaryQueryMock.mockImplementation(() => ({
+      data: {
+        unpaid_count: 0, unpaid_total: '0',
+        overdue_count: 0, overdue_total: '0',
+        paid_this_month_count: 0, paid_this_month_total: '0',
+      },
+      isLoading: false,
+    }));
   });
 
   afterEach(() => {
@@ -214,8 +266,8 @@ describe('InvoicesPage', () => {
     expect(within(table).getByRole('columnheader', { name: 'Data wystawienia' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Termin płatności' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: 'Wartość brutto' })).toBeInTheDocument();
-    expect(within(table).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
-    expect(within(table).getByRole('columnheader', { name: 'Status KSeF' })).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: 'Płatność' })).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: 'KSeF' })).toBeInTheDocument();
   });
 
   it('shows invoice number, client, dates, gross, and status labels', () => {
@@ -233,15 +285,21 @@ describe('InvoicesPage', () => {
       within(table).getByRole('link', { name: 'FV/2026/0001' }),
     ).toHaveAttribute('href', '/invoices/inv-1');
     expect(within(table).getByText('Klient testowy')).toBeInTheDocument();
-    expect(within(table).getByText('Wystawiona')).toBeInTheDocument();
-    expect(within(table).getByText('Nie wysłana')).toBeInTheDocument();
+    expect(within(table).getByText('Nieopłacona')).toBeInTheDocument();
+    // KSeF column shows short text "—" for not_sent status
+    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
   });
 
   it('applies status and ksef filters to the list query', async () => {
     const user = userEvent.setup();
     renderInvoicesRoute();
-    await user.selectOptions(screen.getByLabelText('Filtruj po statusie faktury'), 'paid');
-    await user.selectOptions(screen.getByLabelText('Filtruj po statusie KSeF'), 'accepted');
+    // Status is set via tabs
+    await user.click(screen.getByRole('tab', { name: 'Opłacone' }));
+    // KSeF filter is in the KSeF column header dropdown
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const ksefHeader = within(table).getByRole('columnheader', { name: /KSeF/ });
+    await user.click(within(ksefHeader).getByRole('button'));
+    await user.click(screen.getByRole('button', { name: 'Przyjęta' }));
     const last = useInvoiceListQueryMock.mock.calls.at(-1);
     expect(last?.[0]).toBe(1);
     expect(last?.[1]).toMatchObject({
@@ -250,9 +308,18 @@ describe('InvoicesPage', () => {
     });
   });
 
+  it('"Nieopłacone" tab sends status__in=issued,sent', async () => {
+    const user = userEvent.setup();
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('tab', { name: 'Nieopłacone' }));
+    const last = useInvoiceListQueryMock.mock.calls.at(-1);
+    expect(last?.[1]).toMatchObject({ 'status__in': 'issued,sent' });
+  });
+
   it('sends issue date range in list query params', async () => {
     const user = userEvent.setup();
     renderInvoicesRoute();
+    // Date inputs are always visible in the date bar
     await user.clear(screen.getByLabelText('Data wystawienia od'));
     await user.type(screen.getByLabelText('Data wystawienia od'), '2026-06-01');
     await user.clear(screen.getByLabelText('Data wystawienia do'));
@@ -297,10 +364,17 @@ describe('InvoicesPage', () => {
       isFetching: false,
     }));
     renderInvoicesRoute();
-    const custSelect = screen.getByLabelText('Filtruj po kliencie');
-    await user.selectOptions(custSelect, 'cust-x');
-    const last = useInvoiceListQueryMock.mock.calls.at(-1);
-    expect(last?.[1]).toMatchObject({ customer: 'cust-x' });
+    // Customer search: type → showCustomerDropdown becomes true → mock returns data → option appears
+    const searchInput = screen.getByLabelText('Szukaj klienta');
+    await user.type(searchInput, 'A'); // triggers setShowCustomerDropdown(true)
+    // Find and click the button inside the autocomplete dropdown
+    const optionBtn = await screen.findByRole('button', { name: /Acme SA/ });
+    await user.click(optionBtn);
+    // Wait for customerId state to propagate to the query
+    await waitFor(() => {
+      const last = useInvoiceListQueryMock.mock.calls.at(-1);
+      expect(last?.[1]).toMatchObject({ customer: 'cust-x' });
+    });
   });
 
   it('shows KOR badge and "Koryguje" link for correction invoices', () => {
@@ -341,6 +415,10 @@ describe('InvoicesPage', () => {
   it('correction filter button "Korekty FV-KOR" sends is_correction=true in query', async () => {
     const user = userEvent.setup();
     renderInvoicesRoute();
+    // Correction filter is in the "Nr faktury" column header dropdown
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const nrHeader = within(table).getByRole('columnheader', { name: /Nr faktury/ });
+    await user.click(within(nrHeader).getByRole('button'));
     await user.click(screen.getByRole('button', { name: 'Korekty FV-KOR' }));
     const last = useInvoiceListQueryMock.mock.calls.at(-1);
     expect(last?.[1]).toMatchObject({ is_correction: true });
@@ -349,6 +427,9 @@ describe('InvoicesPage', () => {
   it('correction filter button "Tylko zwykłe" sends is_correction=false in query', async () => {
     const user = userEvent.setup();
     renderInvoicesRoute();
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const nrHeader = within(table).getByRole('columnheader', { name: /Nr faktury/ });
+    await user.click(within(nrHeader).getByRole('button'));
     await user.click(screen.getByRole('button', { name: 'Tylko zwykłe' }));
     const last = useInvoiceListQueryMock.mock.calls.at(-1);
     expect(last?.[1]).toMatchObject({ is_correction: false });
@@ -357,9 +438,167 @@ describe('InvoicesPage', () => {
   it('correction filter "Wszystkie" clears is_correction from query', async () => {
     const user = userEvent.setup();
     renderInvoicesRoute();
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const nrHeader = within(table).getByRole('columnheader', { name: /Nr faktury/ });
+    // Set to Korekty first
+    await user.click(within(nrHeader).getByRole('button'));
     await user.click(screen.getByRole('button', { name: 'Korekty FV-KOR' }));
-    await user.click(screen.getByRole('button', { name: 'Wszystkie' }));
+    // Re-open and pick Wszystkie
+    await user.click(within(nrHeader).getByRole('button'));
+    await user.click(screen.getAllByRole('button', { name: 'Wszystkie' })[0]);
     const last = useInvoiceListQueryMock.mock.calls.at(-1);
     expect(last?.[1]).not.toHaveProperty('is_correction');
+  });
+
+  it('no checkboxes visible by default; "Oznacz opłacone" button enters selection mode', async () => {
+    const user = userEvent.setup();
+    const inv = makeInvoice({ status: 'issued' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [inv] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    expect(within(table).queryAllByRole('checkbox')).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+    expect(within(table).getAllByRole('checkbox').length).toBeGreaterThan(0);
+  });
+
+  it('"Anuluj" exits selection mode and hides checkboxes', async () => {
+    const user = userEvent.setup();
+    const inv = makeInvoice({ status: 'sent' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [inv] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+    expect(screen.queryByRole('button', { name: 'Oznacz opłacone' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Anuluj' }));
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    expect(within(table).queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Oznacz opłacone' })).toBeInTheDocument();
+  });
+
+  it('shows checkbox for non-paid invoice, not for paid invoice in selection mode', async () => {
+    const user = userEvent.setup();
+    const issuedInv = makeInvoice({ id: 'inv-a', invoice_number: 'FV/2026/0001', status: 'issued' });
+    const paidInv = makeInvoice({ id: 'inv-b', invoice_number: 'FV/2026/0002', status: 'paid' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 2, next: null, previous: null, results: [issuedInv, paidInv] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const checkboxes = within(table).getAllByRole('checkbox');
+    // header select-all + 1 row checkbox for issued; no checkbox for paid
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes[1]).toHaveAttribute('aria-label', 'Zaznacz fakturę FV/2026/0001');
+  });
+
+  it('action bar shows count when a checkbox is checked', async () => {
+    const user = userEvent.setup();
+    const inv = makeInvoice({ status: 'sent' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [inv] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const rowCheckbox = within(table).getByRole('checkbox', { name: /Zaznacz fakturę/ });
+    await user.click(rowCheckbox);
+
+    expect(screen.getByText('1 faktura zaznaczona')).toBeInTheDocument();
+  });
+
+  it('select-all checkbox selects all selectable rows', async () => {
+    const user = userEvent.setup();
+    const inv1 = makeInvoice({ id: 'inv-1', invoice_number: 'FV/2026/0001', status: 'issued' });
+    const inv2 = makeInvoice({ id: 'inv-2', invoice_number: 'FV/2026/0002', status: 'sent' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 2, next: null, previous: null, results: [inv1, inv2] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    const selectAll = within(table).getByRole('checkbox', { name: 'Zaznacz wszystkie faktury na stronie' });
+    await user.click(selectAll);
+    expect(screen.getByText('2 faktury zaznaczone')).toBeInTheDocument();
+  });
+
+  it('"Oznacz jako opłacone" calls markPaid for each selected invoice', async () => {
+    const user = userEvent.setup();
+    const inv1 = makeInvoice({ id: 'inv-1', invoice_number: 'FV/2026/0001', status: 'issued' });
+    const inv2 = makeInvoice({ id: 'inv-2', invoice_number: 'FV/2026/0002', status: 'sent' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 2, next: null, previous: null, results: [inv1, inv2] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+    const table = screen.getByRole('table', { name: 'Lista faktur' });
+    await user.click(within(table).getByRole('checkbox', { name: 'Zaznacz wszystkie faktury na stronie' }));
+
+    await user.click(screen.getByRole('button', { name: /Oznacz.*jako opłacone/ }));
+    expect(markPaidMutateAsync).toHaveBeenCalledTimes(2);
+    expect(markPaidMutateAsync).toHaveBeenCalledWith('inv-1');
+    expect(markPaidMutateAsync).toHaveBeenCalledWith('inv-2');
+  });
+
+  it('shows summary strip with unpaid/overdue/paid this month stats', () => {
+    useInvoiceSummaryQueryMock.mockReturnValue({
+      data: {
+        unpaid_count: 5, unpaid_total: '1234.56',
+        overdue_count: 2, overdue_total: '567.89',
+        paid_this_month_count: 3, paid_this_month_total: '890.12',
+      },
+      isLoading: false,
+    });
+    renderInvoicesRoute();
+    // Summary cards visible — check labels (not amounts, as Intl formatting varies per environment)
+    expect(screen.getAllByText('Nieopłacone').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Przeterminowane').length).toBeGreaterThan(0);
+    // Paid this month tile shows the count as a bare number
+    const paidTile = screen.getByRole('button', { name: /ten miesiąc/ });
+    expect(within(paidTile).getByText('3')).toBeInTheDocument();
+  });
+
+  it('date range inputs are always visible in the filter bar', () => {
+    renderInvoicesRoute();
+    expect(screen.getByLabelText('Data wystawienia od')).toBeInTheDocument();
+    expect(screen.getByLabelText('Data wystawienia do')).toBeInTheDocument();
+  });
+
+  it('inline "Opłać" button calls markPaid for that single invoice', async () => {
+    const user = userEvent.setup();
+    const inv = makeInvoice({ id: 'inv-1', invoice_number: 'FV/2026/0001', status: 'sent' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [inv] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    // Should show "Opłać" button (not in bulk mode)
+    const oplacBtn = screen.getAllByRole('button', { name: /Oznacz fakturę.*jako opłaconą/ })[0];
+    await user.click(oplacBtn);
+    expect(markPaidMutateAsync).toHaveBeenCalledWith('inv-1');
+  });
+
+  it('inline "Opłać" button is hidden when bulk selection mode is active', async () => {
+    const user = userEvent.setup();
+    const inv = makeInvoice({ status: 'sent' });
+    useInvoiceListQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [inv] },
+      isFetching: false, isError: false, error: null, refetch: vi.fn(),
+    });
+    renderInvoicesRoute();
+    await user.click(screen.getByRole('button', { name: 'Oznacz opłacone' }));
+    // After entering bulk mode, inline buttons gone
+    expect(screen.queryByRole('button', { name: /Oznacz fakturę.*jako opłaconą/ })).not.toBeInTheDocument();
   });
 });

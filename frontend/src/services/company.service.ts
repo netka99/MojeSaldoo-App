@@ -22,7 +22,8 @@ function mapCompanyModule(row: CompanyModuleApi): CompanyModule {
  * Optional fields are omitted when undefined.
  */
 function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
-  const body: Record<string, unknown> = { name: data.name };
+  const body: Record<string, unknown> = {};
+  if (data.name) body.name = data.name;
   if (data.nip !== undefined) {
     body.nip = data.nip === '' || data.nip == null ? null : data.nip;
   }
@@ -33,6 +34,7 @@ function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
   if (data.email !== undefined) body.email = data.email;
   if (data.taxation_form !== undefined) body.taxation_form = data.taxation_form;
   if (data.ryczalt_category !== undefined) body.ryczalt_category = data.ryczalt_category;
+  if (data.is_vat_payer !== undefined) body.is_vat_payer = data.is_vat_payer;
   return body;
 }
 

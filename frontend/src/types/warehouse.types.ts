@@ -31,6 +31,17 @@ export interface Warehouse {
 export type WarehouseWrite = Omit<Warehouse, 'id' | 'created_at' | 'updated_at' | 'user'> &
   Partial<Pick<Warehouse, 'id'>>;
 
+/** Active FIFO batch for a product in a warehouse — from GET /warehouses/{id}/batches/. */
+export interface StockBatch {
+  id: string;
+  batch_number: string | null;
+  received_date: string;
+  expiry_date: string | null;
+  quantity_initial: string;
+  quantity_remaining: string;
+  unit_cost: string | null;
+}
+
 /** ProductStock row enriched with product details — from GET /warehouses/{id}/stock/. */
 export interface WarehouseStockItem {
   id: string;
@@ -43,4 +54,5 @@ export interface WarehouseStockItem {
   quantity_total: string | number;
   min_stock_alert: string | number | null;
   is_below_minimum: boolean;
+  nearest_expiry_date: string | null;
 }

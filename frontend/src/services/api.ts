@@ -104,6 +104,8 @@ export interface AuthUser {
   ryczalt_category?: string | null;
   /** Dict of module_key → is_enabled for the current company. */
   modules?: Record<string, boolean>;
+  /** True when the company is a VAT payer — shows VAT breakdown in sales reports. */
+  is_vat_payer?: boolean;
 }
 
 export interface AuthResponse {

@@ -96,6 +96,12 @@ class Company(models.Model):
     # True once the user completes the tile-based onboarding wizard.
     onboarding_completed = models.BooleanField(default=False)
 
+    # VAT status — affects sales report VAT breakdown display.
+    is_vat_payer = models.BooleanField(
+        default=False,
+        help_text="Czy firma jest czynnym podatnikiem VAT.",
+    )
+
     # --- KSeF / invoice defaults ---
     # Default bank account pre-filled onto new invoices (can be overridden per invoice).
     bank_account_iban = models.CharField(

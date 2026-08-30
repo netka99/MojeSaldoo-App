@@ -14,6 +14,7 @@ import {
   useKsefAuthenticateMutation,
   useKsefSessionQuery,
   useMarkPaidInvoiceMutation,
+  useMarkUnpaidInvoiceMutation,
   useSendToKsefMutation,
 } from '@/query/use-invoices';
 import { useMyCompaniesQuery } from '@/query/use-companies';
@@ -90,6 +91,7 @@ export function InvoiceDetailPage() {
 
   const issueM = useIssueInvoiceMutation();
   const markPaidM = useMarkPaidInvoiceMutation();
+  const markUnpaidM = useMarkUnpaidInvoiceMutation();
   const sendToKsefM = useSendToKsefMutation();
   const ksefAuthM = useKsefAuthenticateMutation();
   const fetchKsefStatusM = useFetchKsefStatusMutation();
@@ -147,6 +149,17 @@ export function InvoiceDetailPage() {
     setActionError(null);
     try {
       await markPaidM.mutateAsync(id);
+      refetchAll();
+    } catch (e) {
+      setActionError(errMsg(e));
+    }
+  };
+
+  const onMarkUnpaid = async () => {
+    if (!id) return;
+    setActionError(null);
+    try {
+      await markUnpaidM.mutateAsync(id);
       refetchAll();
     } catch (e) {
       setActionError(errMsg(e));
@@ -268,6 +281,7 @@ export function InvoiceDetailPage() {
     invoice?.status === 'issued' ||
     invoice?.status === 'sent' ||
     invoice?.status === 'overdue';
+  const showMarkUnpaid = invoice?.status === 'paid';
   const showSendToKsef = invoice?.status === 'issued' && invoice.ksef_status === 'not_sent';
   const showResendKsef = invoice?.ksef_status === 'rejected';
   const showKsefRefresh = invoice?.ksef_status === 'pending';
@@ -372,6 +386,7 @@ export function InvoiceDetailPage() {
               {canInvoices && showIssue && (
                 <Button
                   type="button"
+                  size="sm"
                   onClick={() => void onIssue()}
                   disabled={issueM.isPending || fetching}
                 >
@@ -381,6 +396,7 @@ export function InvoiceDetailPage() {
               {canInvoices && showMarkPaid && (
                 <Button
                   type="button"
+                  size="sm"
                   variant="secondary"
                   onClick={() => void onMarkPaid()}
                   disabled={markPaidM.isPending || fetching}
@@ -388,8 +404,20 @@ export function InvoiceDetailPage() {
                   {markPaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako opłaconą'}
                 </Button>
               )}
+              {canInvoices && showMarkUnpaid && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void onMarkUnpaid()}
+                  disabled={markUnpaidM.isPending || fetching}
+                >
+                  {markUnpaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako nieopłaconą'}
+                </Button>
+              )}
               <Button
                 type="button"
+                size="sm"
                 variant="outline"
                 onClick={onPrintInvoice}
                 disabled={!preview || loading}
@@ -399,6 +427,7 @@ export function InvoiceDetailPage() {
               {canInvoices && (
                 <Button
                   type="button"
+                  size="sm"
                   variant="outline"
                   onClick={() => void onDownloadXml()}
                   disabled={!invoice || xmlDownloading}
@@ -411,6 +440,7 @@ export function InvoiceDetailPage() {
               {canInvoices && invoice?.upo_received && (
                 <Button
                   type="button"
+                  size="sm"
                   variant="outline"
                   onClick={() => void onDownloadUpo()}
                   disabled={upoDownloading}
@@ -423,6 +453,7 @@ export function InvoiceDetailPage() {
               {canInvoices && (showSendToKsef || showResendKsef) && (
                 <Button
                   type="button"
+                  size="sm"
                   onClick={() => void onSendToKsef()}
                   disabled={sendToKsefM.isPending || ksefAuthM.isPending}
                   loading={sendToKsefM.isPending || ksefAuthM.isPending}
@@ -438,6 +469,7 @@ export function InvoiceDetailPage() {
               {canInvoices && showKsefRefresh && (
                 <Button
                   type="button"
+                  size="sm"
                   variant="outline"
                   onClick={() => void onRefreshKsefStatus()}
                   disabled={isPolling || fetchKsefStatusM.isPending}
@@ -449,6 +481,7 @@ export function InvoiceDetailPage() {
               {canInvoices && showCreateCorrection && (
                 <Button
                   type="button"
+                  size="sm"
                   variant="outline"
                   onClick={() => navigate(`/invoices/${id}/correction/new`)}
                   disabled={createCorrectionM.isPending}

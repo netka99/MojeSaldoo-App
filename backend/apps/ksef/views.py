@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 
 from django.http import HttpResponse
+from django.utils import timezone
 
 from apps.products.models import Product
 from apps.suppliers.models import Supplier
@@ -63,6 +64,8 @@ def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
         "annotationStatus": _annotation_status(inv),
         "opex_category": inv.opex_category,
         "opex_tagged_at": inv.opex_tagged_at.isoformat() if inv.opex_tagged_at else None,
+        "isPaid": inv.is_paid,
+        "dueDate": inv.due_date.isoformat() if inv.due_date else None,
         "pzDocuments": [
             {"id": str(d.id), "documentNumber": d.document_number, "status": d.status}
             for d in pz_docs
@@ -219,11 +222,17 @@ class ReceivedInvoicesView(APIView):
             except ValueError:
                 pass
 
+        is_paid_param = request.query_params.get("is_paid", "").strip().lower()
+
         qs = ReceivedKSeFInvoice.objects.filter(company=company).select_related("annotation")
         if df:
             qs = qs.filter(issue_date__gte=df)
         if dt:
             qs = qs.filter(issue_date__lte=dt)
+        if is_paid_param == "false":
+            qs = qs.filter(is_paid=False)
+        elif is_paid_param == "true":
+            qs = qs.filter(is_paid=True)
         qs = qs.order_by("-issue_date", "-first_seen_at")
 
         total = qs.count()
@@ -335,7 +344,7 @@ class ReceivedInvoicesSyncView(APIView):
 class ReceivedInvoiceDownloadView(APIView):
     """
     GET /api/ksef/inbox/<ksef_reference_number>/xml/
-    Download a received invoice XML from KSeF.
+    Download a received invoice XML — serves from DB cache first, falls back to KSeF API.
     """
 
     required_permission = 'can_access_ksef_inbox'
@@ -346,8 +355,18 @@ class ReceivedInvoiceDownloadView(APIView):
         if not company:
             return Response({"detail": "No active company."}, status=status.HTTP_400_BAD_REQUEST)
 
-        nip = (company.nip or "").strip()
+        # Step 1: serve from DB cache if available (works for demo data too)
+        db_invoice = ReceivedKSeFInvoice.objects.filter(
+            company=company, ksef_number=ksef_reference_number
+        ).first()
+        if db_invoice and db_invoice.xml_content:
+            xml_bytes = db_invoice.xml_content.encode("utf-8")
+            http_resp = HttpResponse(xml_bytes, content_type="application/xml; charset=utf-8")
+            http_resp["Content-Disposition"] = f'attachment; filename="{ksef_reference_number}.xml"'
+            return http_resp
 
+        # Step 2: fall back to live KSeF API
+        nip = (company.nip or "").strip()
         try:
             ksef_sess = KSeFSession.objects.get(company=company)
         except KSeFSession.DoesNotExist:
@@ -366,9 +385,69 @@ class ReceivedInvoiceDownloadView(APIView):
             logger.error("KSeF download received invoice failed (ref: %s): %s", ksef_reference_number, exc)
             return Response({"detail": f"Błąd pobierania: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
 
-        http_resp = HttpResponse(xml_bytes, content_type="application/octet-stream")
+        if db_invoice:
+            _store_invoice_xml(db_invoice, xml_bytes, company)
+
+        http_resp = HttpResponse(xml_bytes, content_type="application/xml; charset=utf-8")
         http_resp["Content-Disposition"] = f'attachment; filename="{ksef_reference_number}.xml"'
         return http_resp
+
+
+class ReceivedInvoiceHtmlView(APIView):
+    """
+    GET /api/ksef/inbox/<ksef_reference_number>/html/
+    Render a KSeF-style HTML preview of a received invoice.
+    Serves from DB cache; falls back to live KSeF API if xml_content is missing.
+    """
+
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+
+    def get(self, request, ksef_reference_number: str):
+        company = request.user.current_company
+        if not company:
+            return Response({"detail": "No active company."}, status=status.HTTP_400_BAD_REQUEST)
+
+        db_invoice = ReceivedKSeFInvoice.objects.filter(
+            company=company, ksef_number=ksef_reference_number
+        ).prefetch_related("lines").first()
+
+        xml_str: str | None = None
+
+        if db_invoice and db_invoice.xml_content:
+            xml_str = db_invoice.xml_content
+        else:
+            nip = (company.nip or "").strip()
+            try:
+                ksef_sess = KSeFSession.objects.get(company=company)
+                if ksef_sess.is_active():
+                    xml_bytes = ssapi_client.download_received_invoice(
+                        nip=nip,
+                        ksef_reference_number=ksef_reference_number,
+                        company_id=str(company.id),
+                    )
+                    xml_str = xml_bytes.decode("utf-8", errors="replace")
+                    if db_invoice:
+                        _store_invoice_xml(db_invoice, xml_bytes, company)
+            except Exception:
+                pass
+
+        if not xml_str:
+            if db_invoice:
+                html = _render_invoice_html_from_db(db_invoice)
+                return HttpResponse(html, content_type="text/html; charset=utf-8")
+            return Response({"detail": "Brak XML faktury."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            html = _render_invoice_html_from_xml(xml_str, ksef_reference_number)
+        except Exception as exc:
+            logger.error("HTML render failed for %s: %s", ksef_reference_number, exc)
+            if db_invoice:
+                html = _render_invoice_html_from_db(db_invoice)
+            else:
+                return Response({"detail": f"Błąd renderowania: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return HttpResponse(html, content_type="text/html; charset=utf-8")
 
 
 class ReceivedInvoiceParseView(APIView):
@@ -577,6 +656,15 @@ def _store_invoice_xml(db_invoice: "ReceivedKSeFInvoice", xml_bytes: bytes, comp
         if parsed.get("original_ksef_number"):
             db_invoice.original_ksef_number = parsed["original_ksef_number"][:255]
             update_fields.append("original_ksef_number")
+        # Save due_date only if not already set manually
+        if not db_invoice.due_date:
+            if parsed.get("due_date"):
+                db_invoice.due_date = parsed["due_date"]
+            elif db_invoice.issue_date:
+                # No TerminyPlatnosci in XML — default to 30 days per PL payment terms law
+                import datetime as _dt
+                db_invoice.due_date = db_invoice.issue_date + _dt.timedelta(days=30)
+            update_fields.append("due_date")
         db_invoice.save(update_fields=update_fields)
         if not db_invoice.lines_cached:
             _cache_invoice_lines(db_invoice, db_invoice.ksef_number, company, parsed)
@@ -679,6 +767,23 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
         ).select_related("product"):
             mappings[m.invoice_line_name.lower()] = m.product
 
+    # Payment due date: Platnosci > TerminyPlatnosci > Termin (last / latest date wins)
+    due_date_parsed = None
+    platnosci_el = find(fa, "Platnosci")
+    if platnosci_el is not None:
+        terminy = platnosci_el.findall(f"{{{ns}}}TerminyPlatnosci")
+        dates = []
+        for t_el in terminy:
+            termin_text = (t_el.find(f"{{{ns}}}Termin") or None)
+            if termin_text is not None and termin_text.text:
+                try:
+                    from datetime import date as _date
+                    dates.append(_date.fromisoformat(termin_text.text.strip()[:10]))
+                except ValueError:
+                    pass
+        if dates:
+            due_date_parsed = max(dates)  # latest term is the binding one
+
     # Line items: FaWiersz elements
     lines = []
     for line_idx, row in enumerate(fa.findall(f"{{{ns}}}FaWiersz")):
@@ -736,11 +841,356 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
         "seller_country": seller_country,
         "seller_address_l1": seller_address_l1,
         "seller_address_l2": seller_address_l2,
+        "due_date": due_date_parsed,
         "suggested_supplier_id": suggested_supplier_id,
         "suggested_supplier_name": suggested_supplier_name,
         "lines": lines,
         "pz_documents": [],  # populated by caller once db_invoice is known
     }
+
+
+def _html_escape(text: str) -> str:
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _render_invoice_html_from_xml(xml_str: str, ksef_reference_number: str = "") -> str:
+    """Parse FA-3 XML and render a KSeF-style HTML invoice preview."""
+    import xml.etree.ElementTree as ET
+    from decimal import Decimal
+
+    ns = FA3_NS
+    root = ET.fromstring(xml_str.encode("utf-8"))
+
+    def find(node, tag):
+        return node.find(f"{{{ns}}}{tag}")
+
+    def text(node, tag, default=""):
+        el = find(node, tag)
+        return (el.text or "").strip() if el is not None else default
+
+    fa = find(root, "Fa")
+    podmiot1 = find(root, "Podmiot1")
+    podmiot2 = find(root, "Podmiot2")
+
+    invoice_number = text(fa, "P_2") if fa is not None else ""
+    issue_date = text(fa, "P_1") if fa is not None else ""
+    currency = text(fa, "KodWaluty") if fa is not None else "PLN"
+    invoice_type = text(fa, "RodzajFaktury") if fa is not None else "VAT"
+    gross_total_str = text(fa, "P_15") if fa is not None else "0.00"
+
+    seller_nip = seller_name = seller_addr = ""
+    if podmiot1:
+        dane1 = find(podmiot1, "DaneIdentyfikacyjne")
+        adres1 = find(podmiot1, "Adres")
+        seller_nip = text(dane1, "NIP") if dane1 else ""
+        seller_name = text(dane1, "PelnaNazwa") if dane1 else ""
+        seller_addr = text(adres1, "AdresL1") if adres1 else ""
+        addr_l2 = text(adres1, "AdresL2") if adres1 else ""
+        if addr_l2:
+            seller_addr = f"{seller_addr}, {addr_l2}"
+
+    buyer_nip = buyer_name = buyer_addr = ""
+    if podmiot2:
+        dane2 = find(podmiot2, "DaneIdentyfikacyjne")
+        adres2 = find(podmiot2, "Adres")
+        buyer_nip = text(dane2, "NIP") if dane2 else ""
+        buyer_name = text(dane2, "PelnaNazwa") if dane2 else ""
+        buyer_addr = text(adres2, "AdresL1") if adres2 else ""
+
+    due_date = ""
+    if fa is not None:
+        platnosci = find(fa, "Platnosci")
+        if platnosci:
+            terminy = find(platnosci, "TerminyPlatnosci")
+            if terminy:
+                due_date = text(terminy, "Termin")
+
+    # Line items
+    lines = []
+    if fa is not None:
+        for wiersz in fa.findall(f"{{{ns}}}FaWiersz"):
+            lines.append({
+                "nr": text(wiersz, "NrWierszaFa"),
+                "name": text(wiersz, "P_7"),
+                "unit": text(wiersz, "P_8A"),
+                "qty": text(wiersz, "P_8B"),
+                "unit_net": text(wiersz, "P_9A"),
+                "line_net": text(wiersz, "P_11"),
+                "vat_rate": text(wiersz, "P_12"),
+            })
+
+    # VAT summary rows from P_13_X / P_14_X
+    vat_rows = []
+    RATE_LABELS = {1: "23%", 2: "8%", 3: "5%", 4: "0%", 5: "zw", 6: "np"}
+    if fa is not None:
+        for idx, label in RATE_LABELS.items():
+            net_el = fa.find(f"{{{ns}}}P_13_{idx}")
+            vat_el = fa.find(f"{{{ns}}}P_14_{idx}")
+            if net_el is not None and vat_el is not None:
+                net_v = (net_el.text or "0").strip()
+                vat_v = (vat_el.text or "0").strip()
+                try:
+                    gross_v = f"{Decimal(net_v) + Decimal(vat_v):.2f}"
+                except Exception:
+                    gross_v = "?"
+                vat_rows.append({"rate": label, "net": net_v, "vat": vat_v, "gross": gross_v})
+
+    lines_html = ""
+    for ln in lines:
+        lines_html += f"""
+        <tr>
+          <td>{_html_escape(ln['nr'])}</td>
+          <td>{_html_escape(ln['name'])}</td>
+          <td class="num">{_html_escape(ln['unit'])}</td>
+          <td class="num">{_html_escape(ln['qty'])}</td>
+          <td class="num">{_html_escape(ln['unit_net'])}</td>
+          <td class="num">{_html_escape(ln['line_net'])}</td>
+          <td class="num">{_html_escape(ln['vat_rate'])}%</td>
+        </tr>"""
+
+    vat_rows_html = ""
+    for vr in vat_rows:
+        vat_rows_html += f"""
+        <tr>
+          <td>{_html_escape(vr['rate'])}</td>
+          <td class="num">{_html_escape(vr['net'])}</td>
+          <td class="num">{_html_escape(vr['vat'])}</td>
+          <td class="num">{_html_escape(vr['gross'])}</td>
+        </tr>"""
+
+    due_row = f"<p><strong>Termin płatności:</strong> {_html_escape(due_date)}</p>" if due_date else ""
+    ksef_row = f"<p class='ksef-num'>Numer KSeF: {_html_escape(ksef_reference_number)}</p>" if ksef_reference_number else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Faktura {_html_escape(invoice_number)}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: Arial, sans-serif; font-size: 12px; color: #1a1a1a; padding: 32px; max-width: 900px; margin: 0 auto; }}
+  .header {{ background: #c0392b; color: white; padding: 12px 20px; border-radius: 4px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }}
+  .header h1 {{ font-size: 16px; font-weight: bold; letter-spacing: 1px; }}
+  .header .inv-num {{ font-size: 13px; opacity: 0.9; }}
+  .parties {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }}
+  .party {{ border: 1px solid #ddd; border-radius: 4px; padding: 14px; }}
+  .party h2 {{ font-size: 11px; text-transform: uppercase; color: #888; margin-bottom: 8px; letter-spacing: 0.5px; }}
+  .party .name {{ font-size: 13px; font-weight: bold; margin-bottom: 4px; }}
+  .party .nip {{ color: #555; margin-bottom: 2px; }}
+  .meta {{ display: flex; gap: 32px; margin-bottom: 24px; padding: 12px; background: #f9f9f9; border-radius: 4px; }}
+  .meta div {{ display: flex; flex-direction: column; gap: 2px; }}
+  .meta span.label {{ font-size: 10px; text-transform: uppercase; color: #888; }}
+  .meta span.val {{ font-size: 12px; font-weight: bold; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }}
+  th {{ background: #f0f0f0; text-align: left; padding: 7px 8px; border-bottom: 2px solid #ddd; font-size: 10px; text-transform: uppercase; color: #555; }}
+  td {{ padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }}
+  tr:last-child td {{ border-bottom: none; }}
+  .num {{ text-align: right; }}
+  .total-row {{ background: #fef3f3; font-weight: bold; font-size: 14px; }}
+  .ksef-num {{ color: #aaa; font-size: 10px; margin-top: 24px; }}
+  .print-btn {{
+    position: fixed; top: 16px; right: 16px;
+    background: #c0392b; color: white; border: none; border-radius: 6px;
+    padding: 8px 18px; font-size: 13px; font-weight: bold; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 999;
+  }}
+  .print-btn:hover {{ background: #a93226; }}
+  @media print {{
+    body {{ padding: 16px; }}
+    .header {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    .total-row {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    .print-btn {{ display: none; }}
+  }}
+</style>
+</head>
+<body>
+
+<button class="print-btn" onclick="window.print()">Drukuj / PDF</button>
+
+<div class="header">
+  <h1>Krajowy System e-Faktur</h1>
+  <span class="inv-num">Faktura {_html_escape(invoice_type)} &mdash; {_html_escape(invoice_number)}</span>
+</div>
+
+<div class="parties">
+  <div class="party">
+    <h2>Sprzedawca</h2>
+    <div class="name">{_html_escape(seller_name)}</div>
+    <div class="nip">NIP: {_html_escape(seller_nip)}</div>
+    <div>{_html_escape(seller_addr)}</div>
+  </div>
+  <div class="party">
+    <h2>Nabywca</h2>
+    <div class="name">{_html_escape(buyer_name)}</div>
+    <div class="nip">NIP: {_html_escape(buyer_nip)}</div>
+    <div>{_html_escape(buyer_addr)}</div>
+  </div>
+</div>
+
+<div class="meta">
+  <div><span class="label">Data wystawienia</span><span class="val">{_html_escape(issue_date)}</span></div>
+  <div><span class="label">Waluta</span><span class="val">{_html_escape(currency)}</span></div>
+  {"<div><span class='label'>Termin płatności</span><span class='val'>" + _html_escape(due_date) + "</span></div>" if due_date else ""}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Lp.</th><th>Nazwa towaru/usługi</th><th class="num">J.m.</th>
+      <th class="num">Ilość</th><th class="num">Cena netto</th>
+      <th class="num">Wartość netto</th><th class="num">VAT</th>
+    </tr>
+  </thead>
+  <tbody>{lines_html}</tbody>
+</table>
+
+<table style="width:50%; margin-left: auto;">
+  <thead>
+    <tr><th>Stawka VAT</th><th class="num">Netto</th><th class="num">VAT</th><th class="num">Brutto</th></tr>
+  </thead>
+  <tbody>{vat_rows_html}
+    <tr class="total-row">
+      <td colspan="3" style="text-align:right; padding-right: 12px;">Do zapłaty ({_html_escape(currency)})</td>
+      <td class="num">{_html_escape(gross_total_str)}</td>
+    </tr>
+  </tbody>
+</table>
+
+{ksef_row}
+
+</body>
+</html>"""
+
+
+def _render_invoice_html_from_db(db_invoice: "ReceivedKSeFInvoice") -> str:
+    """Fallback HTML render using DB fields + cached line items (no XML required)."""
+    from decimal import Decimal
+
+    lines = list(db_invoice.lines.order_by("position"))
+
+    lines_html = ""
+    for i, ln in enumerate(lines, 1):
+        lines_html += f"""
+        <tr>
+          <td>{ln.position or i}</td>
+          <td>{_html_escape(ln.name or '')}</td>
+          <td class="num">{_html_escape(ln.unit or 'szt.')}</td>
+          <td class="num">{_html_escape(str(ln.quantity or ''))}</td>
+          <td class="num">{_html_escape(str(ln.unit_net_price or ''))}</td>
+          <td class="num">{_html_escape(str(ln.line_net or ''))}</td>
+          <td class="num">{_html_escape(str(ln.vat_rate or '23'))}%</td>
+        </tr>"""
+
+    gross = db_invoice.gross_amount or (
+        (db_invoice.net_amount or 0) + (db_invoice.vat_amount or 0)
+    )
+    due_date = db_invoice.due_date.isoformat() if db_invoice.due_date else ""
+    ksef_num = db_invoice.ksef_number or ""
+
+    due_html = f"<div><span class='label'>Termin płatności</span><span class='val'>{_html_escape(due_date)}</span></div>" if due_date else ""
+    ksef_row = f"<p class='ksef-num'>Numer KSeF: {_html_escape(ksef_num)}</p>" if ksef_num else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Faktura {_html_escape(db_invoice.invoice_number or '')}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: Arial, sans-serif; font-size: 12px; color: #1a1a1a; padding: 32px; max-width: 900px; margin: 0 auto; }}
+  .header {{ background: #c0392b; color: white; padding: 12px 20px; border-radius: 4px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }}
+  .header h1 {{ font-size: 16px; font-weight: bold; letter-spacing: 1px; }}
+  .header .inv-num {{ font-size: 13px; opacity: 0.9; }}
+  .parties {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }}
+  .party {{ border: 1px solid #ddd; border-radius: 4px; padding: 14px; }}
+  .party h2 {{ font-size: 11px; text-transform: uppercase; color: #888; margin-bottom: 8px; letter-spacing: 0.5px; }}
+  .party .name {{ font-size: 13px; font-weight: bold; margin-bottom: 4px; }}
+  .party .nip {{ color: #555; margin-bottom: 2px; }}
+  .meta {{ display: flex; gap: 32px; margin-bottom: 24px; padding: 12px; background: #f9f9f9; border-radius: 4px; }}
+  .meta div {{ display: flex; flex-direction: column; gap: 2px; }}
+  .meta span.label {{ font-size: 10px; text-transform: uppercase; color: #888; }}
+  .meta span.val {{ font-size: 12px; font-weight: bold; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }}
+  th {{ background: #f0f0f0; text-align: left; padding: 7px 8px; border-bottom: 2px solid #ddd; font-size: 10px; text-transform: uppercase; color: #555; }}
+  td {{ padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }}
+  tr:last-child td {{ border-bottom: none; }}
+  .num {{ text-align: right; }}
+  .total-row {{ background: #fef3f3; font-weight: bold; font-size: 14px; }}
+  .ksef-num {{ color: #aaa; font-size: 10px; margin-top: 24px; }}
+  .print-btn {{
+    position: fixed; top: 16px; right: 16px;
+    background: #c0392b; color: white; border: none; border-radius: 6px;
+    padding: 8px 18px; font-size: 13px; font-weight: bold; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 999;
+  }}
+  .print-btn:hover {{ background: #a93226; }}
+  @media print {{
+    body {{ padding: 16px; }}
+    .header {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    .total-row {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    .print-btn {{ display: none; }}
+  }}
+</style>
+</head>
+<body>
+
+<button class="print-btn" onclick="window.print()">Drukuj / PDF</button>
+
+<div class="header">
+  <h1>Krajowy System e-Faktur</h1>
+  <span class="inv-num">Faktura {_html_escape(db_invoice.invoice_type or 'VAT')} &mdash; {_html_escape(db_invoice.invoice_number or '')}</span>
+</div>
+
+<div class="parties">
+  <div class="party">
+    <h2>Sprzedawca</h2>
+    <div class="name">{_html_escape(db_invoice.seller_name or '')}</div>
+    <div class="nip">NIP: {_html_escape(db_invoice.seller_nip or '')}</div>
+    <div>{_html_escape(db_invoice.seller_address_l1 or '')}</div>
+  </div>
+  <div class="party">
+    <h2>Nabywca</h2>
+    <div class="name">{_html_escape(db_invoice.buyer_name or '')}</div>
+    <div class="nip">NIP: {_html_escape(db_invoice.buyer_nip or '')}</div>
+    <div></div>
+  </div>
+</div>
+
+<div class="meta">
+  <div><span class="label">Data wystawienia</span><span class="val">{_html_escape(str(db_invoice.issue_date or ''))}</span></div>
+  <div><span class="label">Waluta</span><span class="val">{_html_escape(db_invoice.currency or 'PLN')}</span></div>
+  {due_html}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Lp.</th><th>Nazwa towaru/usługi</th><th class="num">J.m.</th>
+      <th class="num">Ilość</th><th class="num">Cena netto</th>
+      <th class="num">Wartość netto</th><th class="num">VAT</th>
+    </tr>
+  </thead>
+  <tbody>{lines_html}</tbody>
+</table>
+
+<table style="width:50%; margin-left: auto;">
+  <thead>
+    <tr><th colspan="3">Podsumowanie</th><th class="num">Kwota</th></tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="3">Wartość netto</td><td class="num">{_html_escape(str(db_invoice.net_amount or ''))}</td></tr>
+    <tr><td colspan="3">VAT</td><td class="num">{_html_escape(str(db_invoice.vat_amount or ''))}</td></tr>
+    <tr class="total-row">
+      <td colspan="3" style="text-align:right; padding-right: 12px;">Do zapłaty ({_html_escape(db_invoice.currency or 'PLN')})</td>
+      <td class="num">{_html_escape(str(gross))}</td>
+    </tr>
+  </tbody>
+</table>
+
+{ksef_row}
+
+</body>
+</html>"""
 
 
 class KSeFProductMappingView(APIView):
@@ -899,6 +1349,58 @@ class InvoiceOpexTagView(APIView):
 
 
 # ---------------------------------------------------------------------------
+# Mark invoice as paid / unpaid
+# ---------------------------------------------------------------------------
+
+class MarkInvoicePaidView(APIView):
+    """
+    PATCH /api/ksef/inbox/<ksef_reference_number>/mark-paid/
+    Body: { is_paid: bool, due_date?: "YYYY-MM-DD" }
+    Marks the invoice as paid/unpaid and optionally sets/clears the due date.
+    """
+
+    required_permission = 'can_access_ksef_inbox'
+    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+
+    def patch(self, request, ksef_reference_number):
+        company = request.user.current_company
+        if not company:
+            return Response({"detail": "No active company."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            inv = ReceivedKSeFInvoice.objects.get(company=company, ksef_number=ksef_reference_number)
+        except ReceivedKSeFInvoice.DoesNotExist:
+            return Response({"detail": "Nie znaleziono faktury."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_paid = request.data.get("is_paid")
+        update_fields = []
+
+        if is_paid is not None:
+            inv.is_paid = bool(is_paid)
+            inv.paid_at = timezone.now() if inv.is_paid else None
+            update_fields += ["is_paid", "paid_at"]
+
+        if "due_date" in request.data:
+            raw_due = request.data["due_date"]
+            if raw_due:
+                from datetime import date as _date
+                try:
+                    inv.due_date = _date.fromisoformat(raw_due[:10])
+                except ValueError:
+                    return Response({"detail": "Nieprawidłowy format daty (YYYY-MM-DD)."}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                inv.due_date = None
+            update_fields.append("due_date")
+
+        if update_fields:
+            inv.save(update_fields=update_fields)
+
+        return Response({
+            "isPaid": inv.is_paid,
+            "paidAt": inv.paid_at.isoformat() if inv.paid_at else None,
+            "dueDate": inv.due_date.isoformat() if inv.due_date else None,
+        })
+
+
 # KOR match helper — finds the original PZ for a correction invoice
 # ---------------------------------------------------------------------------
 

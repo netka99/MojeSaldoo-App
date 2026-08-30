@@ -3,7 +3,7 @@ import { api } from '@/services/api';
 import { warehouseService } from '@/services/warehouse.service';
 import type { ImportWarehousesResult } from '@/services/warehouse.service';
 import type { WarehouseWrite } from '@/types';
-import { stockSnapshotKeys, warehouseKeys, warehouseStockKeys, productKeys } from './keys';
+import { stockSnapshotKeys, warehouseKeys, warehouseStockKeys, warehouseBatchKeys, productKeys } from './keys';
 
 export function useWarehouseListQuery(page = 1) {
   return useQuery({
@@ -88,7 +88,7 @@ export function useImportStockMutation() {
 
 export function useWarehouseStockQuery(
   warehouseId: string | undefined,
-  params?: { below_minimum?: boolean; search?: string },
+  params?: { below_minimum?: boolean; search?: string; expiring_days?: number },
 ) {
   return useQuery({
     queryKey: warehouseId
@@ -96,5 +96,19 @@ export function useWarehouseStockQuery(
       : warehouseStockKeys.all,
     queryFn: () => warehouseService.fetchStock(warehouseId!, params),
     enabled: Boolean(warehouseId),
+  });
+}
+
+export function useWarehouseBatchesQuery(
+  warehouseId: string | undefined,
+  productId: string | undefined,
+) {
+  return useQuery({
+    queryKey:
+      warehouseId && productId
+        ? warehouseBatchKeys.byWarehouseProduct(warehouseId, productId)
+        : warehouseBatchKeys.all,
+    queryFn: () => warehouseService.fetchBatches(warehouseId!, productId!),
+    enabled: Boolean(warehouseId) && Boolean(productId),
   });
 }

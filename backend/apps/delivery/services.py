@@ -186,7 +186,7 @@ def apply_pz_receipt(pz_document: "DeliveryDocument", user) -> None:
 
             # ── 2. Create StockBatch (FIFO) if product tracks batches ─────────
             if product.track_batches:
-                batch_number = f"{doc_label}/{idx:02d}"
+                batch_number = item.batch_number.strip() if item.batch_number else f"{doc_label}/{idx:02d}"
                 StockBatch.objects.create(
                     company_id=company_id,
                     product=product,

@@ -25,6 +25,7 @@ _URL_PATTERNS = [
     (re.compile(r"/api/invoices/[^/]+/send-to-ksef/"),    "ksef.send",           "Wysyłka faktury do KSeF"),
     (re.compile(r"/api/invoices/[^/]+/ksef-status/"),     "ksef.status",         "Sprawdzenie statusu KSeF"),
     (re.compile(r"/api/invoices/[^/]+/mark-paid/"),       "invoice.mark_paid",   "Oznaczenie faktury jako zapłaconej"),
+    (re.compile(r"/api/invoices/[^/]+/mark-unpaid/"),     "invoice.mark_unpaid", "Cofnięcie opłacenia faktury"),
     (re.compile(r"/api/invoices/[^/]+/create-correction/"), "invoice.correction","Tworzenie korekty faktury"),
     (re.compile(r"/api/invoices/generate-from-order/"),   "invoice.create",      "Generowanie faktury z zamówienia"),
     (re.compile(r"/api/invoices/$"),                      "invoice.create",      "Tworzenie faktury"),

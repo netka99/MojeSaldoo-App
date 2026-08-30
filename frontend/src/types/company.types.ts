@@ -157,4 +157,5 @@ export interface CompanyWrite {
   regon?: string
   krs?: string
   bdo?: string
+  is_vat_payer?: boolean
 }

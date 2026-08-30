@@ -42,6 +42,7 @@ interface PzLine {
   quantity: string;
   unit_cost: string;
   expiry_date: string;
+  batch_number: string;
 }
 
 /* ── icons ───────────────────────────────────────────────────────── */
@@ -80,6 +81,8 @@ export function PZCreatePage() {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const [issueDate, setIssueDate] = useState(todayIso);
+  const [deliveredAt, setDeliveredAt] = useState('');
+  const [externalDocNumber, setExternalDocNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [toWarehouseId, setToWarehouseId] = useState('');
   const [fromSupplierId, setFromSupplierId] = useState('');
@@ -162,7 +165,7 @@ export function PZCreatePage() {
   const addProduct = (product: Product) => {
     setLines((prev) => {
       if (prev.some((l) => l.product.id === product.id)) return prev;
-      return [...prev, { product, quantity: '1', unit_cost: '', expiry_date: '' }];
+      return [...prev, { product, quantity: '1', unit_cost: '', expiry_date: '', batch_number: '' }];
     });
     setProductSearch('');
     setShowProductSearch(false);
@@ -172,7 +175,7 @@ export function PZCreatePage() {
     setLines((prev) => prev.filter((l) => l.product.id !== productId));
   };
 
-  const updateLine = (productId: string, field: 'quantity' | 'unit_cost' | 'expiry_date', value: string) => {
+  const updateLine = (productId: string, field: 'quantity' | 'unit_cost' | 'expiry_date' | 'batch_number', value: string) => {
     setLines((prev) =>
       prev.map((l) => (l.product.id === productId ? { ...l, [field]: value } : l)),
     );
@@ -203,12 +206,15 @@ export function PZCreatePage() {
         to_warehouse_id: toWarehouseId,
         from_supplier_id: fromSupplierId || null,
         issue_date: issueDate,
+        delivered_at: deliveredAt || undefined,
+        external_document_number: externalDocNumber.trim() || undefined,
         notes: notes.trim() || undefined,
         items: lines.map((l) => ({
           product_id: l.product.id,
           quantity_planned: parseFloat(l.quantity).toFixed(2),
           unit_cost: l.unit_cost ? parseFloat(l.unit_cost).toFixed(4) : undefined,
           expiry_date: l.expiry_date || undefined,
+          batch_number: l.batch_number.trim() || undefined,
         })),
       });
       navigate(`/delivery/${doc.id}`);
@@ -311,6 +317,35 @@ export function PZCreatePage() {
                 type="date"
                 value={issueDate}
                 onChange={(e) => setIssueDate(e.target.value)}
+                className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            {/* external document number */}
+            <div>
+              <label htmlFor="external_doc_number" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                Nr dokumentu dostawcy
+              </label>
+              <input
+                id="external_doc_number"
+                type="text"
+                value={externalDocNumber}
+                onChange={(e) => setExternalDocNumber(e.target.value)}
+                placeholder="np. WZ/2026/001 lub FV/2026/001"
+                className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            {/* delivered at */}
+            <div>
+              <label htmlFor="delivered_at" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                Data przyjęcia towaru
+              </label>
+              <input
+                id="delivered_at"
+                type="date"
+                value={deliveredAt}
+                onChange={(e) => setDeliveredAt(e.target.value)}
                 className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
@@ -456,7 +491,7 @@ export function PZCreatePage() {
 
                     <div className="space-y-1">
                       <label className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                        Cena netto
+                        Koszt jedn.
                       </label>
                       <input
                         type="number"
@@ -465,7 +500,7 @@ export function PZCreatePage() {
                         value={line.unit_cost}
                         onChange={(e) => updateLine(line.product.id, 'unit_cost', e.target.value)}
                         placeholder="—"
-                        aria-label={`Cena netto — ${line.product.name}`}
+                        aria-label={`Koszt jednostkowy — ${line.product.name}`}
                         className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                       />
                     </div>
@@ -482,6 +517,21 @@ export function PZCreatePage() {
                         className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                       />
                     </div>
+                  </div>
+
+                  {/* row 3: batch number */}
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Nr partii dostawcy
+                    </label>
+                    <input
+                      type="text"
+                      value={line.batch_number}
+                      onChange={(e) => updateLine(line.product.id, 'batch_number', e.target.value)}
+                      placeholder="np. LOT-2026-001 (opcjonalnie)"
+                      aria-label={`Nr partii — ${line.product.name}`}
+                      className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
                   </div>
                 </motion.div>
               ))}

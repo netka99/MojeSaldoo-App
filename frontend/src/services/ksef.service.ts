@@ -79,6 +79,8 @@ export interface ReceivedInvoiceMeta {
   pzDocuments: PzDocumentRef[];
   opex_category: OpexCategory | null;
   opex_tagged_at: string | null;
+  isPaid: boolean;
+  dueDate: string | null;
 }
 
 export interface KorMatchPzItem {
@@ -127,6 +129,7 @@ export interface ParsedInvoiceLine {
   unit_net_price: number;
   vat_rate: string;
   line_net: number;
+  position?: number;
   suggested_product_id: string | null;
   suggested_product_name: string | null;
   /** PZ documents that have already taken items from this invoice line */
@@ -195,9 +198,16 @@ export const ksefService = {
     dateTo: string,
     page = 1,
     pageSize = 20,
+    isPaid?: boolean,
   ) =>
     api.get<ReceivedInvoicesResult>('/ksef/inbox/', {
-      params: { date_from: dateFrom, date_to: dateTo, page, page_size: pageSize },
+      params: {
+        date_from: dateFrom,
+        date_to: dateTo,
+        page,
+        page_size: pageSize,
+        ...(isPaid !== undefined ? { is_paid: isPaid } : {}),
+      },
     }),
 
   parseInvoice: (ksefNumber: string) =>
@@ -210,6 +220,12 @@ export const ksefService = {
    */
   getKorMatch: (ksefNumber: string) =>
     api.get<KorMatchResult>(`/ksef/inbox/${encodeURIComponent(ksefNumber)}/kor-match/`),
+
+  markInvoicePaid: (ksefNumber: string, isPaid: boolean, dueDate?: string) =>
+    api.patch<{ isPaid: boolean; paidAt: string | null; dueDate: string | null }>(
+      `/ksef/inbox/${encodeURIComponent(ksefNumber)}/mark-paid/`,
+      { is_paid: isPaid, ...(dueDate !== undefined ? { due_date: dueDate } : {}) },
+    ),
 
   syncInbox: (dateFrom: string, dateTo: string) =>
     api.post<{ new_count: number; total: number }>('/ksef/inbox/sync/', { date_from: dateFrom, date_to: dateTo }),

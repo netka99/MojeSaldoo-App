@@ -1557,3 +1557,227 @@ class WarehouseStockImportTests(TestCase):
         r = self.client.get(reverse("warehouse-import-template"))
         self.assertEqual(r.status_code, 200)
         self.assertIn("spreadsheetml", r["Content-Type"])
+
+
+class WarehouseStockExpiryFilterTests(TestCase):
+    """Tests for ?expiring_days and nearest_expiry_date on GET /warehouses/{id}/stock/."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="expiry-filter-user",
+            email="expiry@test.com",
+            password="test12345",
+        )
+        self.co = _company_with_user(self.user)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.client.force_authenticate(user=self.user)
+
+        self.warehouse = Warehouse.objects.create(
+            user=self.user, company=self.co, code="EW1", name="Expiry Warehouse",
+        )
+        self.p_expiring = Product.objects.create(
+            user=self.user, company=self.co, name="Produkt wygasający", unit="szt", track_batches=True,
+        )
+        self.p_ok = Product.objects.create(
+            user=self.user, company=self.co, name="Produkt OK", unit="szt", track_batches=True,
+        )
+        self.p_no_batch = Product.objects.create(
+            user=self.user, company=self.co, name="Produkt bez partii", unit="szt", track_batches=False,
+        )
+
+        for p in [self.p_expiring, self.p_ok, self.p_no_batch]:
+            ProductStock.objects.create(
+                company=self.co, product=p, warehouse=self.warehouse,
+                quantity_available=Decimal("10"), quantity_reserved=Decimal("0"),
+            )
+
+        today = date.today()
+        # batch expiring in 5 days
+        StockBatch.objects.create(
+            company=self.co, product=self.p_expiring, warehouse=self.warehouse,
+            received_date=today, expiry_date=today + __import__('datetime').timedelta(days=5),
+            quantity_initial=Decimal("10"), quantity_remaining=Decimal("10"),
+        )
+        # batch expiring in 60 days
+        StockBatch.objects.create(
+            company=self.co, product=self.p_ok, warehouse=self.warehouse,
+            received_date=today, expiry_date=today + __import__('datetime').timedelta(days=60),
+            quantity_initial=Decimal("10"), quantity_remaining=Decimal("10"),
+        )
+
+        self.url = reverse("warehouse-stock", kwargs={"uuid": str(self.warehouse.uuid)})
+
+    def test_no_filter_returns_all(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data), 3)
+
+    def test_expiring_days_filters_correctly(self):
+        r = self.client.get(self.url, {"expiring_days": 14})
+        self.assertEqual(r.status_code, 200)
+        names = [row["product_name"] for row in r.data]
+        self.assertIn("Produkt wygasający", names)
+        self.assertNotIn("Produkt OK", names)
+        self.assertNotIn("Produkt bez partii", names)
+
+    def test_expiring_days_wide_window_includes_both(self):
+        r = self.client.get(self.url, {"expiring_days": 90})
+        self.assertEqual(r.status_code, 200)
+        names = [row["product_name"] for row in r.data]
+        self.assertIn("Produkt wygasający", names)
+        self.assertIn("Produkt OK", names)
+
+    def test_nearest_expiry_date_returned(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 200)
+        expiring_row = next(row for row in r.data if row["product_name"] == "Produkt wygasający")
+        self.assertIsNotNone(expiring_row["nearest_expiry_date"])
+
+    def test_nearest_expiry_date_null_when_no_batch(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 200)
+        no_batch_row = next(row for row in r.data if row["product_name"] == "Produkt bez partii")
+        self.assertIsNone(no_batch_row["nearest_expiry_date"])
+
+    def test_expiring_days_zero_ignored(self):
+        r = self.client.get(self.url, {"expiring_days": 0})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data), 3)
+
+    def test_expiring_days_invalid_ignored(self):
+        r = self.client.get(self.url, {"expiring_days": "abc"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data), 3)
+
+
+class WarehouseBatchesAPITests(TestCase):
+    """Tests for GET /warehouses/{id}/batches/?product={uuid}."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="batches-user",
+            email="batches@test.com",
+            password="test12345",
+        )
+        self.other = User.objects.create_user(
+            username="batches-other",
+            email="batches-other@test.com",
+            password="test12345",
+        )
+        self.co = _company_with_user(self.user)
+        self.co_other = _company_with_user(self.other)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.other.current_company = self.co_other
+        self.other.save(update_fields=["current_company"])
+
+        self.warehouse = Warehouse.objects.create(
+            user=self.user, company=self.co, code="BW1", name="Batch Warehouse",
+        )
+        self.product = Product.objects.create(
+            user=self.user, company=self.co, name="Mąka pszenna", unit="kg", track_batches=True,
+        )
+        self.product2 = Product.objects.create(
+            user=self.user, company=self.co, name="Cukier", unit="kg", track_batches=True,
+        )
+
+        self.batch1 = StockBatch.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.warehouse,
+            received_date=date(2026, 1, 1),
+            quantity_initial=Decimal("100"),
+            quantity_remaining=Decimal("60"),
+            unit_cost=Decimal("2.50"),
+        )
+        self.batch2 = StockBatch.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.warehouse,
+            received_date=date(2026, 3, 1),
+            quantity_initial=Decimal("50"),
+            quantity_remaining=Decimal("50"),
+            unit_cost=Decimal("2.80"),
+        )
+        # Empty batch — should be excluded (quantity_remaining=0)
+        StockBatch.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.warehouse,
+            received_date=date(2026, 2, 1),
+            quantity_initial=Decimal("30"),
+            quantity_remaining=Decimal("0"),
+        )
+        # Different product batch
+        StockBatch.objects.create(
+            company=self.co,
+            product=self.product2,
+            warehouse=self.warehouse,
+            received_date=date(2026, 4, 1),
+            quantity_initial=Decimal("20"),
+            quantity_remaining=Decimal("20"),
+        )
+        # Other company batch — should never be visible
+        other_wh = Warehouse.objects.create(
+            user=self.other, company=self.co_other, code="OW1", name="Other",
+        )
+        other_prod = Product.objects.create(
+            user=self.other, company=self.co_other, name="Other product", unit="szt",
+        )
+        StockBatch.objects.create(
+            company=self.co_other,
+            product=other_prod,
+            warehouse=other_wh,
+            received_date=date(2026, 1, 1),
+            quantity_initial=Decimal("100"),
+            quantity_remaining=Decimal("100"),
+        )
+
+        self.url = reverse("warehouse-batches", kwargs={"uuid": str(self.warehouse.uuid)})
+
+    def test_requires_auth(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_returns_active_batches_for_warehouse(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        # batch1 + batch2 + product2 batch = 3 (empty one excluded)
+        self.assertEqual(len(r.data), 3)
+
+    def test_filter_by_product(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url, {"product": str(self.product.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 2)
+        ids = {b["id"] for b in r.data}
+        self.assertIn(str(self.batch1.uuid), ids)
+        self.assertIn(str(self.batch2.uuid), ids)
+
+    def test_excludes_empty_batches(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url, {"product": str(self.product.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        for b in r.data:
+            self.assertGreater(float(b["quantity_remaining"]), 0)
+
+    def test_other_company_cannot_access_warehouse(self):
+        self.client.force_authenticate(user=self.other)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_batch_fields_returned(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url, {"product": str(self.product.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        first = next(b for b in r.data if b["id"] == str(self.batch1.uuid))
+        self.assertEqual(first["quantity_initial"], "100.00")
+        self.assertEqual(first["quantity_remaining"], "60.00")
+        self.assertEqual(first["unit_cost"], "2.50")
+        self.assertEqual(first["received_date"], "2026-01-01")

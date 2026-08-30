@@ -19,10 +19,11 @@ from rest_framework.response import Response
 from apps.activity.log import log_activity
 from apps.activity.models import ActivityLog
 from .filters import ProductFilter
-from .models import CustomerProductPrice, Product, ProductStock, StockMovement, Warehouse
+from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
 from .serializers import (
     CustomerProductPriceSerializer,
     ProductSerializer,
+    StockBatchSerializer,
     StockMovementListSerializer,
     StockMovementSerializer,
     StockUpdateSerializer,
@@ -952,9 +953,12 @@ class WarehouseViewSet(viewsets.ModelViewSet):
         """GET /api/warehouses/{id}/stock/ — all ProductStock rows for this warehouse.
 
         Query params:
-          ?below_minimum=true  — only items below min_stock_alert
-          ?search=name         — filter by product name (icontains)
+          ?below_minimum=true   — only items below min_stock_alert
+          ?expiring_days=N      — only items with at least one batch expiring within N days
+          ?search=name          — filter by product name (icontains)
         """
+        from datetime import date, timedelta
+
         warehouse = self.get_object()
         company = request.user.current_company
 
@@ -979,7 +983,52 @@ class WarehouseViewSet(viewsets.ModelViewSet):
                 if s.product.min_stock_alert and s.quantity_total < s.product.min_stock_alert
             ]
 
+        expiring_days_raw = request.query_params.get("expiring_days", "").strip()
+        if expiring_days_raw:
+            try:
+                days = int(expiring_days_raw)
+            except ValueError:
+                days = None
+            if days is not None and days > 0:
+                cutoff = date.today() + timedelta(days=days)
+                expiring_product_ids = set(
+                    StockBatch.objects.filter(
+                        warehouse=warehouse,
+                        company=company,
+                        quantity_remaining__gt=0,
+                        expiry_date__isnull=False,
+                        expiry_date__lte=cutoff,
+                    ).values_list("product_id", flat=True)
+                )
+                qs = [s for s in qs if s.product_id in expiring_product_ids]
+
         serializer = WarehouseStockItemSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="batches")
+    def batches(self, request, uuid=None):
+        """GET /api/warehouses/{id}/batches/ — active FIFO batches for this warehouse.
+
+        Query params:
+          ?product={uuid}  — filter to a single product (required in practice)
+        """
+        warehouse = self.get_object()
+        company = request.user.current_company
+
+        qs = (
+            StockBatch.objects.filter(
+                warehouse=warehouse,
+                company=company,
+                quantity_remaining__gt=0,
+            )
+            .order_by("received_date", "id")
+        )
+
+        product_id = request.query_params.get("product")
+        if product_id:
+            qs = qs.filter(product__uuid=product_id)
+
+        serializer = StockBatchSerializer(qs, many=True)
         return Response(serializer.data)
 
 
