@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
 import { cashFlowService } from '@/services/cashflow.service';
-import type { CompanyTaxConfigWrite, DailyB2CRevenueWrite, QuickExpenseWrite } from '@/types/cashflow.types';
+import type { CashFlowHistoryMonth, CashFlowPeriodSummary, CompanyTaxConfigWrite, DailyB2CRevenueWrite, HarmonogramData, QuickExpenseWrite } from '@/types/cashflow.types';
 
 // ---------------------------------------------------------------------------
 // Query keys
@@ -22,6 +22,12 @@ export const cashFlowKeys = {
     [...cashFlowKeys.all, 'opex-categories', companyId] as const,
   expenseChart: (companyId: string, params: string) =>
     [...cashFlowKeys.all, 'expense-chart', companyId, params] as const,
+  periodSummary: (companyId: string, dateFrom: string, dateTo: string) =>
+    [...cashFlowKeys.all, 'period-summary', companyId, dateFrom, dateTo] as const,
+  history: (companyId: string) =>
+    [...cashFlowKeys.all, 'history', companyId] as const,
+  harmonogram: (companyId: string, month?: string) =>
+    [...cashFlowKeys.all, 'harmonogram', companyId, month ?? 'current'] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -127,12 +133,47 @@ export function useQuickExpensesQuery(month?: string) {
   });
 }
 
+export function useB2CRevenueQuery(month?: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  const dateFrom = month ? `${month}-01` : undefined;
+  const dateTo = month
+    ? (() => {
+        const [y, m] = month.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        return `${month}-${String(lastDay).padStart(2, '0')}`;
+      })()
+    : undefined;
+
+  return useQuery({
+    queryKey: [...cashFlowKeys.b2cRevenue(companyId), month ?? 'all'],
+    queryFn: () =>
+      cashFlowService.listB2CRevenue(dateFrom ? { date_from: dateFrom, date_to: dateTo } : undefined),
+    enabled: Boolean(companyId),
+    staleTime: 30_000,
+  });
+}
+
 export function useCreateB2CRevenueMutation() {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: DailyB2CRevenueWrite) => cashFlowService.createB2CRevenue(data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: cashFlowKeys.dashboard(companyId) });
+      void queryClient.invalidateQueries({ queryKey: cashFlowKeys.b2cRevenue(companyId) });
+    },
+  });
+}
+
+export function useDeleteB2CRevenueMutation() {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => cashFlowService.deleteB2CRevenue(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: cashFlowKeys.dashboard(companyId) });
       void queryClient.invalidateQueries({ queryKey: cashFlowKeys.b2cRevenue(companyId) });
@@ -200,6 +241,39 @@ export function useDeleteOpexCategoryMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: cashFlowKeys.opexCategories(companyId) });
     },
+  });
+}
+
+export function usePeriodSummaryQuery(dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<CashFlowPeriodSummary>({
+    queryKey: cashFlowKeys.periodSummary(companyId, dateFrom, dateTo),
+    queryFn: () => cashFlowService.fetchPeriodSummary({ date_from: dateFrom, date_to: dateTo }),
+    enabled: Boolean(companyId) && Boolean(dateFrom) && Boolean(dateTo),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useHistoryQuery() {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<CashFlowHistoryMonth[]>({
+    queryKey: cashFlowKeys.history(companyId),
+    queryFn: () => cashFlowService.fetchHistory(),
+    enabled: Boolean(companyId),
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export function useHarmonogramQuery(month?: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<HarmonogramData>({
+    queryKey: cashFlowKeys.harmonogram(companyId, month),
+    queryFn: () => cashFlowService.fetchHarmonogram(month),
+    enabled: Boolean(companyId),
+    staleTime: 30_000,
   });
 }
 

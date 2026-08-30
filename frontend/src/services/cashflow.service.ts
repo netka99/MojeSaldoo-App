@@ -1,11 +1,14 @@
 import { api } from './api';
 import type {
   CashFlowDashboard,
+  CashFlowHistoryMonth,
+  CashFlowPeriodSummary,
   CompanyTaxConfig,
   CompanyTaxConfigWrite,
   DailyB2CRevenue,
   DailyB2CRevenueWrite,
   ExpenseChartPeriod,
+  HarmonogramData,
   OpexCategory,
   QuickExpense,
   QuickExpenseWrite,
@@ -57,4 +60,15 @@ export const cashFlowService = {
 
   fetchExpenseChart: (params: { months?: number; date_from?: string; date_to?: string }) =>
     api.get<ExpenseChartPeriod[]>(`${BASE}/expense-chart/`, { params }),
+
+  fetchPeriodSummary: (params: { date_from: string; date_to: string }) =>
+    api.get<CashFlowPeriodSummary>(`${BASE}/period-summary/`, { params }),
+
+  fetchHistory: () =>
+    api.get<CashFlowHistoryMonth[]>(`${BASE}/history/`),
+
+  fetchHarmonogram: (month?: string) =>
+    api.get<HarmonogramData>(`${BASE}/harmonogram/`, {
+      params: month ? { month } : undefined,
+    }),
 };

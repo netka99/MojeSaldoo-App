@@ -91,6 +91,19 @@ class CompanyTaxConfig(models.Model):
         (VAT_METHOD_KASOWA, "Kasowa (od daty zapłaty)"),
     ]
 
+    ZUS_ULGA_NA_START = 'ulga_na_start'
+    ZUS_PREFERENCYJNY = 'preferencyjny'
+    ZUS_MALY_ZUS_PLUS = 'maly_zus_plus'
+    ZUS_PELNY = 'pelny_zus'
+    ZUS_ETAT_JDG = 'etat_plus_jdg'
+    ZUS_STATUS_CHOICES = [
+        (ZUS_ULGA_NA_START, 'Ulga na start (bez składek społ.)'),
+        (ZUS_PREFERENCYJNY, 'Preferencyjny ZUS'),
+        (ZUS_MALY_ZUS_PLUS, 'Mały ZUS Plus (kwota zmienna)'),
+        (ZUS_PELNY, 'Pełny ZUS'),
+        (ZUS_ETAT_JDG, 'Etat + JDG (etat ≥ min. wynagrodzenie)'),
+    ]
+
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.OneToOneField(
         "users.Company",
@@ -121,6 +134,16 @@ class CompanyTaxConfig(models.Model):
     zus_due_day = models.IntegerField(
         default=20,
         help_text="Dzień miesiąca, do którego należy zapłacić ZUS (domyślnie 20).",
+    )
+    zus_status = models.CharField(
+        max_length=20,
+        choices=ZUS_STATUS_CHOICES,
+        default=ZUS_PELNY,
+        help_text='Status ZUS przedsiębiorcy.',
+    )
+    has_sick_insurance = models.BooleanField(
+        default=False,
+        help_text='Czy opłaca dobrowolną składkę chorobową (2,45%)?',
     )
     cash_balance = models.DecimalField(
         max_digits=14,
@@ -169,11 +192,15 @@ class QuickExpense(models.Model):
 
     DOC_PARAGON = "paragon"
     DOC_FAKTURA = "faktura_vat"
+    DOC_FAKTURA_PDF = "faktura_pdf"
+    DOC_FAKTURA_RR = "faktura_rr"
     DOC_WZ = "wz"
     DOC_OTHER = "inne"
     DOCUMENT_TYPE_CHOICES = [
         ("paragon", "Paragon"),
         ("faktura_vat", "Faktura VAT"),
+        ("faktura_pdf", "Faktura PDF"),
+        ("faktura_rr", "Faktura RR (rolnicza)"),
         ("wz", "WZ / dokument magazynowy"),
         ("inne", "Inny dokument"),
     ]
@@ -185,7 +212,15 @@ class QuickExpense(models.Model):
         related_name="quick_expenses",
     )
     date = models.DateField(default=datetime.date.today)
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)  # brutto (gross)
+    amount_net = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Kwota netto — wypełniana gdy dokument ma VAT do odliczenia.",
+    )
+    vat_rate = models.CharField(
+        max_length=5, blank=True, default="",
+        help_text="Stawka VAT: 23, 8, 5, 0 (pusty = nie dotyczy).",
+    )
     category = models.CharField(
         max_length=20,
         choices=OPEX_CATEGORY_CHOICES,
@@ -206,6 +241,14 @@ class QuickExpense(models.Model):
         max_length=20,
         choices=DOCUMENT_TYPE_CHOICES,
         default="paragon",
+    )
+    lines = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Line items: [{name, quantity, unit, unit_price, vat_rate, line_net, line_gross}]. "
+            "When present, amount/amount_net are derived from line totals."
+        ),
     )
     product_name = models.CharField(
         max_length=255,
@@ -249,6 +292,26 @@ class DailyB2CRevenue(models.Model):
         help_text="Stawka VAT w % (np. 23.00).",
     )
     notes = models.CharField(max_length=500, blank=True)
+    # Product-based sale fields
+    SALE_TYPE_MANUAL = "manual"
+    SALE_TYPE_PRODUCTS = "products"
+    sale_type = models.CharField(
+        max_length=20,
+        default=SALE_TYPE_MANUAL,
+        help_text="'manual' = kwota z kasy, 'products' = wpisane produkty",
+    )
+    lines = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Snapshot linii sprzedaży: [{product_id, name, qty, unit_price, unit_cost, line_revenue, line_cost}]",
+    )
+    cost_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Suma kosztów własnych ze sprzedaży (qty × avg_cost). Tylko dla sale_type='products'.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

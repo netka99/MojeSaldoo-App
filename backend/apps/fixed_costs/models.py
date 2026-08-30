@@ -34,6 +34,11 @@ class FixedCost(models.Model):
     )
     description = models.CharField(max_length=255, blank=True)
     amount_monthly = models.DecimalField(max_digits=12, decimal_places=2)
+    due_day = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Dzień miesiąca, do którego należy opłacić (1–31). Puste = brak określonego terminu.",
+    )
     # First month this cost applies — always store as the 1st of the month.
     active_from = models.DateField(
         help_text="Pierwszy miesiąc, od którego koszt obowiązuje (YYYY-MM-01)."

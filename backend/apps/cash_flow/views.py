@@ -18,7 +18,8 @@ from .serializers import (
     DailyB2CRevenueSerializer,
     QuickExpenseSerializer,
 )
-from .services import compute_dashboard, _get_expense_breakdown
+from .harmonogram import compute_harmonogram
+from .services import compute_dashboard, compute_history, compute_period_summary, _get_expense_breakdown
 
 
 class CompanyTaxConfigView(APIView):
@@ -214,4 +215,58 @@ class CashFlowDashboardView(APIView):
     def get(self, request):
         month_str = request.query_params.get("month")
         data = compute_dashboard(request.user.current_company, month_str)
+        return Response(data)
+
+
+class CashFlowHistoryView(APIView):
+    """Monthly history list — all months with any data, newest first.
+
+    Returns lightweight summaries: period, revenue, costs, really_yours, is_loss, margin_pct.
+    """
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        data = compute_history(request.user.current_company)
+        return Response(data)
+
+
+class CashFlowPeriodSummaryView(APIView):
+    """Aggregate summary for an arbitrary date range.
+
+    Query params:
+        date_from: YYYY-MM-DD (default: Jan 1 of current year)
+        date_to:   YYYY-MM-DD (default: today)
+    """
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        today = datetime.date.today()
+        try:
+            date_from_str = request.query_params.get("date_from") or f"{today.year}-01-01"
+            date_to_str = request.query_params.get("date_to") or str(today)
+            date_from = datetime.date.fromisoformat(date_from_str)
+            date_to = datetime.date.fromisoformat(date_to_str)
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+
+        if date_from > date_to:
+            return Response({"error": "date_from must be <= date_to."}, status=400)
+
+        data = compute_period_summary(request.user.current_company, date_from, date_to)
+        return Response(data)
+
+
+class CashFlowHarmonogramView(APIView):
+    """Payment schedule for a given month.
+
+    Optional query param: ``?month=YYYY-MM`` (defaults to current month).
+
+    Returns a day-by-day list of confirmed and scheduled cash events with a
+    running balance, plus a summary (opening balance, total in/out, min balance).
+    """
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        month_str = request.query_params.get("month")
+        data = compute_harmonogram(request.user.current_company, month_str)
         return Response(data)

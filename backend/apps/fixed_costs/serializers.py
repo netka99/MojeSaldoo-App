@@ -11,6 +11,7 @@ class FixedCostSerializer(UUIDModelSerializer):
             "category",
             "description",
             "amount_monthly",
+            "due_day",
             "active_from",
             "is_active",
             "created_at",

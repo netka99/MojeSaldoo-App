@@ -5,6 +5,13 @@
 
 - Nie wprowadzone - Faktury zaliczkowe (ZAL) i rozliczeniowe (ROZ) - sprawdzic czy potrzebne!
 
+- Poprawić magazyny, FIFO nie widoczne, lista produktow, lot, data
+- Jak rozwiązać wpisywanie faktur z pdf - scan - AI?
+- 
+
+- Raporty dla ksiegowych - z jednego miejsca
+
+
 2.  Recorded / Replay Testing (E2E Tests)
 What you're thinking of is End-to-End (E2E) testing. The idea: you interact with the app like a real user, the tool records those interactions, then replays them automatically on every change.
 
@@ -55,3 +62,11 @@ When business sales start climbing, owners are happy and often stop paying close
 How to build it with your modules: Compare the monthly growth rate of issued sales invoices against the growth rate of incoming KSeF purchase invoices.
 
 The Pocket Analyst Insight: A simple visual trend metric showing Margin Efficiency. The app alerts the user: "Your sales revenue grew by 10% this month, but your operational spending via KSeF grew by 18%. Your business is becoming more expensive to run as it expands—look at your vendor pricing tags to locate the creep."
+
+
+Rok 2027 (do zrobienia w styczniu 2027)
+ Sprawdzić nowe min. wynagrodzenie
+ Sprawdzić prognozowane śr. wynagrodzenie ZUS
+ Sprawdzić śr. wynagrodzenie Q4 2026 (GUS)
+ Zaktualizować services.py
+ Przejść testy

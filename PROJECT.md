@@ -1838,3 +1838,41 @@ Raporty P&L
 Always ON
 Raporty Produkcja
 🛠️
+
+
+========================================
+##### Stałe systemowe (Ustawowe — aktualizacja co rok w styczniu)
+
+Wartości są hardcoded w `backend/apps/cash_flow/services.py` (linia ~23).
+Żeby sprawdzić aktualne wartości i instrukcję aktualizacji, uruchom:
+
+```bash
+python manage.py check_zus_constants
+```
+
+**Rok 2026 — wartości źródłowe:**
+
+| Stała | Wartość | Źródło |
+|---|---|---|
+| Minimalne wynagrodzenie | 4 806,00 zł | Rozporządzenie RM |
+| Prognozowane śr. wynagrodzenie (duży ZUS) | 9 420,00 zł | GUS/ZUS |
+| Śr. wynagrodzenie Q4 2025 (ryczałt zdrowotna) | 9 228,64 zł | GUS |
+
+**Wyliczone składki miesięczne:**
+
+| Stała w kodzie | Wartość | Wzór |
+|---|---|---|
+| `_ZUS_FULL_SOCIAL_SICK` | 1 926,76 zł | 0,2093 × 9 420 |
+| `_ZUS_FULL_SOCIAL_NO_SICK` | 1 788,27 zł | 0,1953 × 9 420 |
+| `_ZUS_PREF_SOCIAL_SICK` | 456,18 zł | preferencyjny z chorobowym |
+| `_ZUS_PREF_SOCIAL_NO_SICK` | 420,86 zł | preferencyjny bez chorobowego |
+| `_MIN_HEALTH_2026` | 432,54 zł | 4 806 × 9% |
+| `_RYCZALT_HEALTH_TIER1` | 498,35 zł | ~5,4% × 9 228,64 (przychód <60k) |
+| `_RYCZALT_HEALTH_TIER2` | 830,58 zł | ~9,0% × 9 228,64 (60–300k) |
+| `_RYCZALT_HEALTH_TIER3` | 1 495,04 zł | ~16,2% × 9 228,64 (>300k) |
+| `_HEALTH_LINIOWY_MAX_MONTHLY` | 1 175,00 zł | 14 100 / 12 (roczny limit liniowy) |
+| `_PIT_FREE_MONTHLY` | 300,00 zł | 12% × 30 000 / 12 (kwota wolna) |
+
+**Gdzie sprawdzić nowe stawki:**
+- [zus.pl → składki → wysokość składek](https://www.zus.pl/baza-wiedzy/skladki-wskazniki-odsetki/skladki/wysokosc-skladek-na-ubezpieczenia-spoleczne)
+- [stat.gov.pl](https://stat.gov.pl) → średnie wynagrodzenie Q4 poprzedniego roku

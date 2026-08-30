@@ -156,6 +156,61 @@ class QuickExpenseViewSetTests(TestCase):
         resp = self.client.get(f"/api/cash-flow/quick-expenses/{exp.uuid}/")
         self.assertEqual(resp.status_code, 404)
 
+    def test_create_expense_with_lines(self):
+        """Expense with line items stores amount_net, vat_rate, lines."""
+        lines = [
+            {
+                "name": "Mąka pszenna",
+                "quantity": "50",
+                "unit": "kg",
+                "unit_price": "2.50",
+                "vat_rate": "8",
+                "line_net": "125.00",
+                "line_gross": "135.00",
+            }
+        ]
+        resp = self.client.post(
+            "/api/cash-flow/quick-expenses/",
+            {
+                "amount": "135.00",
+                "amount_net": "125.00",
+                "vat_rate": "8",
+                "lines": lines,
+                "category": "raw_materials",
+                "has_vat": True,
+                "vendor": "Mlyn Kujawski",
+                "document_type": "faktura_vat",
+                "date": str(datetime.date.today()),
+                "cost_type": "indirect",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data["amount"], "135.00")
+        self.assertEqual(data["amount_net"], "125.00")
+        self.assertEqual(data["vat_rate"], "8")
+        self.assertEqual(len(data["lines"]), 1)
+        self.assertEqual(data["lines"][0]["name"], "Mąka pszenna")
+        self.assertTrue(data["has_vat"])
+
+    def test_create_expense_with_new_doc_types(self):
+        """faktura_pdf and faktura_rr are valid document_type values."""
+        for doc_type in ("faktura_pdf", "faktura_rr"):
+            resp = self.client.post(
+                "/api/cash-flow/quick-expenses/",
+                {
+                    "amount": "200.00",
+                    "category": "services",
+                    "document_type": doc_type,
+                    "date": str(datetime.date.today()),
+                    "cost_type": "indirect",
+                },
+                format="json",
+            )
+            self.assertEqual(resp.status_code, 201, msg=f"Failed for {doc_type}")
+            self.assertEqual(resp.json()["document_type"], doc_type)
+
 
 # ---------------------------------------------------------------------------
 # B2C Revenue
@@ -244,3 +299,136 @@ class CashFlowDashboardViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         expected = datetime.date.today().strftime("%Y-%m")
         self.assertEqual(resp.json()["month"]["period"], expected)
+
+
+# ---------------------------------------------------------------------------
+# Period Summary
+# ---------------------------------------------------------------------------
+
+
+class CashFlowPeriodSummaryViewTests(TestCase):
+    def setUp(self):
+        self.user, self.company = _make_user_with_company("period_user")
+        self.client = _auth_client(self.user)
+
+    def test_returns_200_authenticated(self):
+        resp = self.client.get("/api/cash-flow/period-summary/")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_unauthenticated_returns_401(self):
+        resp = APIClient().get("/api/cash-flow/period-summary/")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_required_fields_in_response(self):
+        resp = self.client.get("/api/cash-flow/period-summary/")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        for field in [
+            "date_from", "date_to",
+            "revenue_total", "revenue_b2b_paid", "revenue_b2c",
+            "costs_suppliers", "costs_quick", "costs_fixed_total",
+            "taxes_vat", "taxes_zus_social", "taxes_zus_health", "taxes_pit",
+            "taxes_total", "profit_net",
+        ]:
+            self.assertIn(field, data, msg=f"Missing field: {field}")
+
+    def test_invalid_date_returns_400(self):
+        resp = self.client.get("/api/cash-flow/period-summary/?date_from=not-a-date")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_date_from_after_date_to_returns_400(self):
+        resp = self.client.get(
+            "/api/cash-flow/period-summary/?date_from=2026-12-31&date_to=2026-01-01"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_custom_date_range_accepted(self):
+        resp = self.client.get(
+            "/api/cash-flow/period-summary/?date_from=2026-01-01&date_to=2026-06-30"
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["date_from"], "2026-01-01")
+
+
+# ---------------------------------------------------------------------------
+# History
+# ---------------------------------------------------------------------------
+
+
+class CashFlowHistoryViewTests(TestCase):
+    def setUp(self):
+        self.user, self.company = _make_user_with_company("history_user")
+        self.client = _auth_client(self.user)
+
+    def test_unauthenticated_returns_401(self):
+        resp = APIClient().get("/api/cash-flow/history/")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_empty_history_returns_empty_list(self):
+        resp = self.client.get("/api/cash-flow/history/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), [])
+
+    def test_history_includes_month_with_quick_expense(self):
+        today = datetime.date.today()
+        QuickExpense.objects.create(
+            company=self.company,
+            date=today,
+            amount=Decimal("250.00"),
+            category="fuel",
+            cost_type="direct",
+            document_type="paragon",
+        )
+        resp = self.client.get("/api/cash-flow/history/")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(len(data), 1)
+        period = f"{today.year}-{today.month:02d}"
+        self.assertEqual(data[0]["period"], period)
+
+    def test_history_item_has_required_fields(self):
+        today = datetime.date.today()
+        QuickExpense.objects.create(
+            company=self.company,
+            date=today,
+            amount=Decimal("100.00"),
+            category="fuel",
+            cost_type="direct",
+            document_type="paragon",
+        )
+        resp = self.client.get("/api/cash-flow/history/")
+        item = resp.json()[0]
+        for field in ("period", "revenue_total", "costs_total", "really_yours", "is_loss", "margin_pct"):
+            self.assertIn(field, item, f"Missing field: {field}")
+
+    def test_history_newest_first(self):
+        # Two expenses in different months
+        today = datetime.date.today()
+        prev_month = (today.replace(day=1) - datetime.timedelta(days=1))
+        QuickExpense.objects.create(
+            company=self.company, date=today,
+            amount=Decimal("100.00"), category="fuel",
+            cost_type="direct", document_type="paragon",
+        )
+        QuickExpense.objects.create(
+            company=self.company, date=prev_month,
+            amount=Decimal("50.00"), category="fuel",
+            cost_type="direct", document_type="paragon",
+        )
+        resp = self.client.get("/api/cash-flow/history/")
+        data = resp.json()
+        self.assertEqual(len(data), 2)
+        # Newest first
+        self.assertGreater(data[0]["period"], data[1]["period"])
+
+    def test_empty_months_not_included(self):
+        # Only one month has data — history should not include gap months
+        QuickExpense.objects.create(
+            company=self.company,
+            date=datetime.date.today(),
+            amount=Decimal("100.00"), category="fuel",
+            cost_type="direct", document_type="paragon",
+        )
+        resp = self.client.get("/api/cash-flow/history/")
+        self.assertEqual(len(resp.json()), 1)

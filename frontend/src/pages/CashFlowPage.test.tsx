@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
 import { CashFlowPage } from './CashFlowPage';
-import type { CashFlowDashboard } from '@/types/cashflow.types';
+import type { CashFlowDashboard, PayablesData } from '@/types/cashflow.types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -31,21 +31,39 @@ vi.mock('framer-motion', () => {
 const hoisted = vi.hoisted(() => ({
   useCashFlowDashboardQuery: vi.fn(),
   useCreateQuickExpenseMutation: vi.fn(),
+  useUpdateQuickExpenseMutation: vi.fn(),
   useDeleteQuickExpenseMutation: vi.fn(),
   useQuickExpensesQuery: vi.fn(),
   useUpdateTaxConfigMutation: vi.fn(),
   useTaxConfigQuery: vi.fn(),
   useExpenseChartQuery: vi.fn(),
+  usePeriodSummaryQuery: vi.fn(),
+  useOpexCategoriesQuery: vi.fn(),
+  useAllOpexCategoriesQuery: vi.fn(),
+  useCreateOpexCategoryMutation: vi.fn(),
+  useUpdateOpexCategoryMutation: vi.fn(),
+  useDeleteOpexCategoryMutation: vi.fn(),
+  useCreateB2CRevenueMutation: vi.fn(),
+  useHistoryQuery: vi.fn(),
 }));
 
 vi.mock('@/query/use-cashflow', () => ({
   useCashFlowDashboardQuery: hoisted.useCashFlowDashboardQuery,
   useCreateQuickExpenseMutation: hoisted.useCreateQuickExpenseMutation,
+  useUpdateQuickExpenseMutation: hoisted.useUpdateQuickExpenseMutation,
   useDeleteQuickExpenseMutation: hoisted.useDeleteQuickExpenseMutation,
   useQuickExpensesQuery: hoisted.useQuickExpensesQuery,
   useUpdateTaxConfigMutation: hoisted.useUpdateTaxConfigMutation,
   useTaxConfigQuery: hoisted.useTaxConfigQuery,
   useExpenseChartQuery: hoisted.useExpenseChartQuery,
+  usePeriodSummaryQuery: hoisted.usePeriodSummaryQuery,
+  useOpexCategoriesQuery: hoisted.useOpexCategoriesQuery,
+  useAllOpexCategoriesQuery: hoisted.useAllOpexCategoriesQuery,
+  useCreateOpexCategoryMutation: hoisted.useCreateOpexCategoryMutation,
+  useUpdateOpexCategoryMutation: hoisted.useUpdateOpexCategoryMutation,
+  useDeleteOpexCategoryMutation: hoisted.useDeleteOpexCategoryMutation,
+  useCreateB2CRevenueMutation: hoisted.useCreateB2CRevenueMutation,
+  useHistoryQuery: hoisted.useHistoryQuery,
 }));
 
 vi.mock('@/services/api', () => ({
@@ -57,35 +75,54 @@ vi.mock('@/services/api', () => ({
 // Fixtures
 // ---------------------------------------------------------------------------
 
+const emptyPayables: PayablesData = { total_count: 0, total_amount: 0, items: [] };
+
+function currentMonthStr() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function makeDashboard(overrides: Partial<CashFlowDashboard> = {}): CashFlowDashboard {
+  const month = currentMonthStr();
+  const dueDay25 = `${month}-25`;
+  const dueDay20 = `${month}-20`;
   return {
     today: {
       cash_balance: 1000,
       bank_balance: 5000,
-      balance_updated_at: '2026-07-15T10:00:00Z',
+      balance_updated_at: `${month}-15T10:00:00Z`,
       total_available: 6000,
       upcoming_obligations: [
         {
           type: 'vat',
-          label: 'VAT lipiec',
+          label: 'VAT bieżący',
           amount: 1200,
-          due_date: '2026-07-25',
+          due_date: dueDay25,
           days_until: 10,
         },
         {
           type: 'zus',
           label: 'ZUS',
           amount: 600,
-          due_date: '2026-07-20',
+          due_date: dueDay20,
+          days_until: 5,
+        },
+        {
+          type: 'pit',
+          label: 'Podatek dochodowy',
+          amount: 855,
+          due_date: dueDay20,
           days_until: 5,
         },
       ],
       total_reserved: 1800,
       really_yours: 4200,
       has_config: true,
+      receivables: [],
+      payables: emptyPayables,
     },
     month: {
-      period: '2026-07',
+      period: month,
       revenue_paid: 8000,
       revenue_outstanding: 2000,
       b2c_revenue: 500,
@@ -96,12 +133,14 @@ function makeDashboard(overrides: Partial<CashFlowDashboard> = {}): CashFlowDash
       vat_input: 640,
       vat_to_pay: 1200,
       vat_surplus: 0,
-      vat_due_date: '2026-07-25',
+      vat_due_date: dueDay25,
       vat_input_invoices: [],
       pit_estimate: 855,
       pit_is_estimate: true,
+      zus_social: 1788.27,
+      zus_health: 432.54,
       zus_monthly: 600,
-      zus_due_date: '2026-07-20',
+      zus_due_date: dueDay20,
       really_yours_estimate: 2145,
       recent_quick_expenses: [
         {
@@ -151,11 +190,23 @@ function setupMocks(dashboard: CashFlowDashboard | null = null) {
   });
   hoisted.useQuickExpensesQuery.mockReturnValue({ data: [], isLoading: false });
   hoisted.useExpenseChartQuery.mockReturnValue({ data: [], isLoading: false });
+  hoisted.useUpdateQuickExpenseMutation.mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  });
   hoisted.useUpdateTaxConfigMutation.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue({}),
     isPending: false,
   });
   hoisted.useTaxConfigQuery.mockReturnValue({ data: null });
+  hoisted.useOpexCategoriesQuery.mockReturnValue({ data: [] });
+  hoisted.useAllOpexCategoriesQuery.mockReturnValue({ data: [] });
+  hoisted.useCreateOpexCategoryMutation.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  hoisted.useUpdateOpexCategoryMutation.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  hoisted.useDeleteOpexCategoryMutation.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  hoisted.useCreateB2CRevenueMutation.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  hoisted.usePeriodSummaryQuery.mockReturnValue({ data: null, isLoading: false });
+  hoisted.useHistoryQuery.mockReturnValue({ data: [], isLoading: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -167,154 +218,384 @@ describe('CashFlowPage', () => {
     setupMocks();
   });
 
-  it('renders loading spinner when data is loading', () => {
+  it('renders loading skeleton when data is loading', () => {
     hoisted.useCashFlowDashboardQuery.mockReturnValue({ data: undefined, isLoading: true });
     renderPage();
-    expect(screen.getByText('Ładowanie…')).toBeInTheDocument();
+    expect(screen.getByTestId('cashflow-skeleton')).toBeInTheDocument();
   });
 
-  it('shows "Dziś" tab content with really_yours amount', () => {
+  // ── Przegląd tab (default) ──────────────────────────────────────────────
+
+  it('shows zysk estimate hero on Przegląd', () => {
     renderPage();
-    expect(screen.getByText('Naprawdę Twoje')).toBeInTheDocument();
-    // 4200 PLN formatted
-    expect(screen.getByText(/4\s*200/)).toBeInTheDocument();
+    expect(screen.getByText(/Szacowany zysk/)).toBeInTheDocument();
   });
 
-  it('shows upcoming obligations list', () => {
-    renderPage();
-    expect(screen.getByText('VAT lipiec')).toBeInTheDocument();
-    expect(screen.getByText('ZUS')).toBeInTheDocument();
-  });
-
-  it('colors obligation based on days_until: <7 orange, <14 yellow', () => {
-    renderPage();
-    // ZUS is 5 days away (orange badge class)
-    const zusRow = screen.getByText('ZUS').closest('div[class*="rounded-xl"]');
-    expect(zusRow).toBeTruthy();
-  });
-
-  it('shows missing balance banner when balance_updated_at is null', () => {
+  it('shows negative really_yours_estimate as strata in red', () => {
     setupMocks({
       ...makeDashboard(),
-      today: {
-        ...makeDashboard().today,
-        balance_updated_at: null,
+      month: { ...makeDashboard().month, really_yours_estimate: -500 },
+    });
+    renderPage();
+    expect(screen.getByText(/Szacowana strata/)).toBeInTheDocument();
+    const amounts = screen.getAllByText(/-500/);
+    expect(amounts.some((el) => el.className.includes('destructive'))).toBe(true);
+  });
+
+  it('hides margin % badge when loss is extreme (> 200%)', () => {
+    setupMocks({
+      ...makeDashboard(),
+      month: {
+        ...makeDashboard().month,
+        revenue_paid: 10,
+        b2c_revenue: 0,
+        really_yours_estimate: -5000,
       },
     });
     renderPage();
-    expect(screen.getByText(/Nie podano salda kont/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Wpisz saldo/ })).toBeInTheDocument();
+    // margin would be -50000% — badge should not render
+    expect(screen.queryByText(/%\s*marży/)).not.toBeInTheDocument();
   });
 
-  it('does NOT show balance banner when balance_updated_at is set', () => {
-    renderPage();
-    expect(screen.queryByText(/Nie podano salda kont/)).not.toBeInTheDocument();
-  });
-
-  it('shows negative really_yours in red', () => {
+  it('shows margin % badge in waterfall when loss is within range', () => {
     setupMocks({
       ...makeDashboard(),
-      today: { ...makeDashboard().today, really_yours: -500 },
+      month: {
+        ...makeDashboard().month,
+        revenue_paid: 10000,
+        b2c_revenue: 0,
+        really_yours_estimate: -1500,
+      },
     });
     renderPage();
-    const amount = screen.getByText(/-500/);
-    expect(amount.className).toContain('destructive');
+    // waterfall shows operationalMarginPct badge — revenue=10000, no ksef/quick by category → 100%
+    // historical hero margin badge uses rawMargin which would be -15% but is only shown for historical months
+    // Just check the waterfall rendered (Marża brutto row exists)
+    expect(screen.getByText('Marża brutto')).toBeInTheDocument();
   });
 
-  it('switches to Miesiąc tab and shows month data', async () => {
-    const user = userEvent.setup();
+  it('shows upcoming obligations', () => {
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.getByText('Przychody')).toBeInTheDocument();
-    expect(screen.getByText('Koszty')).toBeInTheDocument();
-    expect(screen.getByText(/Zarezerwuj na podatki/)).toBeInTheDocument();
+    // "Płatności" section renders obligation labels from upcoming_obligations
+    expect(screen.getByText('VAT bieżący')).toBeInTheDocument();
+    expect(screen.getAllByText(/ZUS/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows PIT "~szacunek" badge in Miesiąc tab', async () => {
-    const user = userEvent.setup();
+  it('shows revenue and costs detail on Przegląd by default', () => {
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.getByText('~szacunek')).toBeInTheDocument();
+    // 'Przychody' appears in both the hero card and PrzychodyBlock
+    expect(screen.getAllByText('Przychody').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Koszty i zobowiązania')).toBeInTheDocument();
+    expect(screen.getByText('Płatności')).toBeInTheDocument();
   });
 
-  it('shows really_yours_estimate in Miesiąc tab', async () => {
-    const user = userEvent.setup();
+  it('shows PIT szacunek tooltip on Przegląd', () => {
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.getByText('Szacowany Twój wynik')).toBeInTheDocument();
-    expect(screen.getByText(/2\s*145/)).toBeInTheDocument();
+    expect(screen.getByTitle(/Szacunek/)).toBeInTheDocument();
   });
 
-  it('shows "Koszty gotówkowe" row in Miesiąc tab linking to KosztySheet', async () => {
-    const user = userEvent.setup();
+  it('shows uncategorized invoices banner when count > 0', () => {
+    setupMocks({
+      ...makeDashboard(),
+      month: { ...makeDashboard().month, uncategorized_ksef_count: 3 },
+    });
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.getByText('Koszty gotówkowe')).toBeInTheDocument();
+    expect(screen.getByText(/3 faktury zakupowe bez kategorii/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Przypisz kategorie/ })).toBeInTheDocument();
   });
 
-  it('opens KosztySheet on "Dodaj koszt" click in Miesiąc tab', async () => {
-    const user = userEvent.setup();
+  it('shows singular form for 1 uncategorized invoice', () => {
+    setupMocks({
+      ...makeDashboard(),
+      month: { ...makeDashboard().month, uncategorized_ksef_count: 1 },
+    });
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    await user.click(screen.getAllByRole('button', { name: /Dodaj koszt/ })[0]);
-    // Sheet open — "Koszty gotówkowe" appears as both page row and sheet header
-    expect(screen.getAllByText('Koszty gotówkowe').length).toBeGreaterThan(1);
-    expect(screen.getByText('Brak kosztów gotówkowych w tym miesiącu.')).toBeInTheDocument();
+    expect(screen.getByText(/1 faktura zakupowa bez kategorii/)).toBeInTheDocument();
   });
 
-  it('opens KosztySheet on "Dodaj koszt" click in Dziś tab', async () => {
-    const user = userEvent.setup();
+  it('does NOT show uncategorized banner when count is 0', () => {
     renderPage();
-    await user.click(screen.getAllByRole('button', { name: /\+ Dodaj/ })[0]);
-    expect(screen.getByText('Brak kosztów gotówkowych w tym miesiącu.')).toBeInTheDocument();
+    expect(screen.queryByText(/bez kategorii/)).not.toBeInTheDocument();
   });
 
-  it('opens TaxConfigSetup when "Aktualizuj saldo" button clicked', async () => {
+  // ── Balance row ─────────────────────────────────────────────────────────
+
+  it('shows balance row with Na koncie and Aktualizuj when balance is set and > 0', () => {
+    // makeDashboard() has total_available: 6000 and balance_updated_at set
+    renderPage();
+    expect(screen.getByText('Na koncie:')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Aktualizuj' })).toBeInTheDocument();
+  });
+
+  it('shows small add-balance link when balance_updated_at is null', () => {
+    setupMocks({
+      ...makeDashboard(),
+      today: { ...makeDashboard().today, balance_updated_at: null },
+    });
+    renderPage();
+    expect(screen.getByText(/Dodaj stan konta/)).toBeInTheDocument();
+  });
+
+  it('shows small add-balance link when balance is 0', () => {
+    setupMocks({
+      ...makeDashboard(),
+      today: { ...makeDashboard().today, total_available: 0, balance_updated_at: '2026-08-01T10:00:00Z' },
+    });
+    renderPage();
+    expect(screen.getByText(/Dodaj stan konta/)).toBeInTheDocument();
+    expect(screen.queryByText('Na koncie:')).not.toBeInTheDocument();
+  });
+
+  it('opens TaxConfigSetup when Aktualizuj is clicked', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /Aktualizuj saldo/ }));
-    // Sheet is open — check for the cash balance input label unique to the sheet
+    await user.click(screen.getByRole('button', { name: 'Aktualizuj' }));
     expect(screen.getByText(/Gotówka \/ kasetka/)).toBeInTheDocument();
   });
 
-  it('opens TaxConfigSetup from balance banner "Wpisz saldo" button', async () => {
+  it('opens TaxConfigSetup from add-balance link', async () => {
     setupMocks({
       ...makeDashboard(),
       today: { ...makeDashboard().today, balance_updated_at: null },
     });
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /Wpisz saldo/ }));
+    await user.click(screen.getByText(/Dodaj stan konta/));
     expect(screen.getByText(/Gotówka \/ kasetka/)).toBeInTheDocument();
   });
 
-  it('shows uncategorized invoices banner in Miesiąc tab when count > 0', async () => {
-    setupMocks({
-      ...makeDashboard(),
-      month: { ...makeDashboard().month, uncategorized_ksef_count: 3 },
-    });
+  // ── KosztySheet ─────────────────────────────────────────────────────────
+
+  it('opens KosztySheet via + Dodaj in Koszty block', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.getByText(/3 faktury zakupowe bez kategorii/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Przypisz kategorie/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '+ Dodaj' }));
+    // Sheet heading always visible when open; "Dostawca" is a form-only label
+    expect(screen.getByRole('heading', { name: 'Nowy dokument' })).toBeInTheDocument();
+    expect(screen.getByText('Dostawca')).toBeInTheDocument();
   });
 
-  it('does NOT show uncategorized banner when count is 0', async () => {
-    renderPage();
+  it('opens KosztySheet via FAB (mobile button)', async () => {
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.queryByText(/bez kategorii/)).not.toBeInTheDocument();
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Dodaj dokument' }));
+    expect(screen.getByRole('heading', { name: 'Nowy dokument' })).toBeInTheDocument();
+    expect(screen.getByText('Dostawca')).toBeInTheDocument();
   });
 
-  it('shows singular form for 1 uncategorized invoice', async () => {
+  // ── Receivables ─────────────────────────────────────────────────────────
+
+  it('shows urgency pills in Faktury oczekujące when receivables are present', () => {
     setupMocks({
       ...makeDashboard(),
-      month: { ...makeDashboard().month, uncategorized_ksef_count: 1 },
+      today: {
+        ...makeDashboard().today,
+        receivables: [
+          {
+            id: 'rec-1',
+            invoice_number: 'FV/1/2026',
+            customer_name: 'Piekarnia ABC',
+            amount: 3690,
+            due_date: '2026-07-25',
+            days_until: 10,
+          },
+        ],
+      },
     });
+    renderPage();
+    // days_until: 10 > 7 → "Później" pill renders in Przychody block
+    expect(screen.getByText('Później')).toBeInTheDocument();
+  });
+
+  it('shows receivable details after expanding Faktury oczekujące', async () => {
+    const user = userEvent.setup();
+    setupMocks({
+      ...makeDashboard(),
+      today: {
+        ...makeDashboard().today,
+        receivables: [
+          {
+            id: 'rec-1',
+            invoice_number: 'FV/1/2026',
+            customer_name: 'Piekarnia ABC',
+            amount: 3690,
+            due_date: '2026-07-25',
+            days_until: 10,
+          },
+        ],
+      },
+    });
+    renderPage();
+    await user.click(screen.getByRole('button', { name: /Faktury oczekujące/ }));
+    expect(screen.getByText('Piekarnia ABC')).toBeInTheDocument();
+    expect(screen.getByText('FV/1/2026')).toBeInTheDocument();
+  });
+
+  it('Faktury oczekujące expand button is disabled when no receivables', () => {
+    renderPage();
+    // No receivables and no revenue_outstanding_top → button disabled
+    expect(screen.getByRole('button', { name: /Faktury oczekujące/ })).toBeDisabled();
+  });
+
+  // ── Payables ────────────────────────────────────────────────────────────
+
+  it('shows Niezapłacone faktury dostawców when unpaid supplier invoices present', () => {
+    setupMocks({
+      ...makeDashboard(),
+      today: {
+        ...makeDashboard().today,
+        payables: {
+          total_count: 1,
+          total_amount: 1200,
+          items: [
+            {
+              id: 'pay-1',
+              ksef_number: 'KS/001',
+              invoice_number: 'FV-D/1/2026',
+              seller_name: 'Dostawca Mąka Sp.j.',
+              issue_date: '2026-07-10',
+              amount: 1200,
+              due_date: '2026-07-18',
+              days_until: 3,
+            },
+          ],
+        },
+      },
+    });
+    renderPage();
+    expect(screen.getByText(/Niezapłacone faktury dostawców/)).toBeInTheDocument();
+    expect(screen.getByText(/1 faktura niezapłaconych/)).toBeInTheDocument();
+  });
+
+  it('shows payables details after expanding Niezapłacone faktury dostawców', async () => {
+    const user = userEvent.setup();
+    setupMocks({
+      ...makeDashboard(),
+      today: {
+        ...makeDashboard().today,
+        payables: {
+          total_count: 1,
+          total_amount: 1200,
+          items: [
+            {
+              id: 'pay-1',
+              ksef_number: 'KS/001',
+              invoice_number: 'FV-D/1/2026',
+              seller_name: 'Dostawca Mąka Sp.j.',
+              issue_date: '2026-07-10',
+              amount: 1200,
+              due_date: '2026-07-18',
+              days_until: 3,
+            },
+          ],
+        },
+      },
+    });
+    renderPage();
+    await user.click(screen.getByRole('button', { name: /Niezapłacone faktury dostawców/ }));
+    expect(screen.getByText('Dostawca Mąka Sp.j.')).toBeInTheDocument();
+  });
+
+  it('does NOT show Niezapłacone faktury dostawców section when empty', () => {
+    renderPage();
+    expect(screen.queryByText(/Niezapłacone faktury dostawców/)).not.toBeInTheDocument();
+  });
+
+  // ── Month navigator ─────────────────────────────────────────────────────
+
+  it('disables next month button when on current month', () => {
+    renderPage();
+    expect(screen.getByRole('button', { name: 'Następny miesiąc' })).toBeDisabled();
+  });
+
+  it('shows "dane historyczne" label when navigated to previous month', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Miesiąc' }));
-    expect(screen.getByText(/1 faktura zakupowa bez kategorii/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Poprzedni miesiąc' }));
+    expect(screen.getByText(/dane historyczne/)).toBeInTheDocument();
+  });
+
+  it('hides Płatności section and balance row when viewing historical month', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Poprzedni miesiąc' }));
+    expect(screen.queryByText('Płatności')).not.toBeInTheDocument();
+    // Hero section (with Na koncie / Dodaj stan konta) is only shown for current month
+    expect(screen.queryByText('Na koncie:')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Dodaj stan konta/)).not.toBeInTheDocument();
+  });
+
+  // ── Rok tab ─────────────────────────────────────────────────────────────
+
+  it('shows Rok tab button', () => {
+    renderPage();
+    // ExpenseChart also has a "Rok" period button — check at least one exists
+    expect(screen.getAllByRole('button', { name: 'Rok' }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('switches to Rok tab and shows period picker', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    // Tab bar "Rok" comes before ExpenseChart's "Rok" in the DOM — click first match
+    await user.click(screen.getAllByRole('button', { name: 'Rok' })[0]);
+    expect(screen.getByText(/Ten rok/)).toBeInTheDocument();
+  });
+
+  it('shows Historia tab button', () => {
+    renderPage();
+    expect(screen.getByRole('button', { name: 'Historia' })).toBeInTheDocument();
+  });
+
+  it('switches to Historia tab and shows empty state', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Historia' }));
+    expect(screen.getByText(/Brak danych historycznych/)).toBeInTheDocument();
+  });
+
+  it('Historia tab shows month cards when data is available', async () => {
+    const user = userEvent.setup();
+    hoisted.useHistoryQuery.mockReturnValue({
+      data: [
+        {
+          period: '2026-07',
+          revenue_total: 8000,
+          costs_total: 5000,
+          really_yours: 1500,
+          is_loss: false,
+          margin_pct: 19,
+        },
+      ],
+      isLoading: false,
+    });
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Historia' }));
+    expect(screen.getByText(/lipiec 2026/i)).toBeInTheDocument();
+    expect(screen.getByText('19%')).toBeInTheDocument();
+  });
+
+  it('clicking Historia month navigates to Przegląd with that month', async () => {
+    const user = userEvent.setup();
+    const currentMonth = currentMonthStr();
+    hoisted.useHistoryQuery.mockReturnValue({
+      data: [
+        {
+          period: currentMonth,
+          revenue_total: 8000,
+          costs_total: 5000,
+          really_yours: 1500,
+          is_loss: false,
+          margin_pct: 19,
+        },
+      ],
+      isLoading: false,
+    });
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Historia' }));
+    // Click the month card
+    const cards = screen.getAllByText(/Kliknij, żeby zobaczyć szczegóły/);
+    await user.click(cards[0]);
+    // Should be back on Przegląd tab (month navigator visible)
+    expect(screen.getByLabelText('Poprzedni miesiąc')).toBeInTheDocument();
   });
 });

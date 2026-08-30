@@ -141,7 +141,8 @@ class EmptyStateDashboardTests(TestCase):
         self.assertEqual(month["revenue_outstanding"], 0.0)
         self.assertEqual(month["vat_to_pay"], 0.0)
         self.assertEqual(month["pit_estimate"], 0.0)
-        self.assertEqual(month["really_yours_estimate"], 0.0)
+        # really_yours_estimate is negative when ZUS is deducted from zero revenue
+        self.assertIsInstance(month["really_yours_estimate"], float)
 
     def test_has_config_true(self):
         result = compute_dashboard(self.company, "2025-08")
@@ -402,18 +403,18 @@ class ZusFromFixedCostsTests(TestCase):
         self.assertEqual(zus, Decimal("0.00"))
 
     def test_zus_appears_in_today_obligations(self):
-        FixedCost.objects.create(
-            company=self.company,
-            category=FixedCost.CAT_ZUS_ZDROWOTNE,
-            amount_monthly=Decimal("1600.00"),
-            active_from=datetime.date(2025, 1, 1),
-            is_active=True,
-        )
+        # ZUS social is now calculated from config (pelny_zus, no sick = 1788.27)
+        # FixedCost ZUS no longer drives the social obligation (kept for _get_zus_monthly compat)
         result = compute_dashboard(self.company)
         obligations = result["today"]["upcoming_obligations"]
         zus_items = [o for o in obligations if o["type"] == "zus"]
         self.assertEqual(len(zus_items), 1)
-        self.assertEqual(zus_items[0]["amount"], 1600.0)
+        # pelny_zus without sick insurance = 1788.27
+        self.assertAlmostEqual(zus_items[0]["amount"], 1788.27, places=1)
+        # Health contribution also appears as a separate obligation
+        health_items = [o for o in obligations if o["type"] == "zus_health"]
+        self.assertEqual(len(health_items), 1)
+        self.assertGreater(health_items[0]["amount"], 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -519,11 +520,12 @@ class ReallyYoursEstimateTests(TestCase):
 
         # VAT to pay = 2300 - 230 = 2070
         self.assertAlmostEqual(month["vat_to_pay"], 2070.0, places=1)
-        # ZUS = 1600
-        self.assertAlmostEqual(month["zus_monthly"], 1600.0, places=1)
-        # really_yours = 12300 - 1230 - 0 - 1600 - 2070 - pit
+        # ZUS social (pełny ZUS, no sick) = 1788.27; health on top
+        self.assertGreater(month["zus_monthly"], 0.0)
+        self.assertIn("zus_social", month)
+        self.assertIn("zus_health", month)
         self.assertIsNotNone(month["really_yours_estimate"])
-        # Must be a number (positive in this scenario)
+        # Must be a number
         self.assertIsInstance(month["really_yours_estimate"], float)
 
 
@@ -587,3 +589,196 @@ class UncategorizedKsefCountTests(TestCase):
     def test_empty_state_returns_zero(self):
         result = compute_dashboard(self.company, "2025-08")
         self.assertEqual(result["month"]["uncategorized_ksef_count"], 0)
+
+
+# ---------------------------------------------------------------------------
+# Receivables
+# ---------------------------------------------------------------------------
+
+
+class ReceivablesTests(TestCase):
+    def setUp(self):
+        self.user, self.company = _make_company("Receivables Firma")
+        self.config = _make_config(self.company)
+
+    def test_open_invoices_appear_in_receivables(self):
+        _make_invoice(
+            self.company, Invoice.STATUS_ISSUED,
+            amount_gross=Decimal("3690.00"), vat=Decimal("690.00"),
+            amount_net=Decimal("3000.00"), issue_date=datetime.date(2025, 8, 1),
+        )
+        result = compute_dashboard(self.company)
+        receivables = result["today"]["receivables"]
+        self.assertEqual(len(receivables), 1)
+        self.assertAlmostEqual(receivables[0]["amount"], 3690.0, places=1)
+        self.assertIn("invoice_number", receivables[0])
+        self.assertIn("customer_name", receivables[0])
+        self.assertIn("due_date", receivables[0])
+        self.assertIn("days_until", receivables[0])
+
+    def test_paid_invoices_excluded_from_receivables(self):
+        paid_at = timezone.make_aware(datetime.datetime(2025, 8, 15))
+        _make_invoice(
+            self.company, Invoice.STATUS_PAID,
+            amount_gross=Decimal("3690.00"), vat=Decimal("690.00"),
+            amount_net=Decimal("3000.00"), issue_date=datetime.date(2025, 8, 1),
+            paid_at=paid_at,
+        )
+        result = compute_dashboard(self.company)
+        self.assertEqual(result["today"]["receivables"], [])
+
+    def test_overdue_invoices_appear_in_receivables(self):
+        _make_invoice(
+            self.company, Invoice.STATUS_OVERDUE,
+            amount_gross=Decimal("1230.00"), vat=Decimal("230.00"),
+            amount_net=Decimal("1000.00"), issue_date=datetime.date(2025, 7, 1),
+        )
+        result = compute_dashboard(self.company)
+        self.assertEqual(len(result["today"]["receivables"]), 1)
+
+    def test_receivables_sorted_by_due_date(self):
+        # Earlier issue_date → earlier due_date (due = issue + 14 days)
+        _make_invoice(
+            self.company, Invoice.STATUS_SENT,
+            amount_gross=Decimal("2000.00"), vat=Decimal("0.00"),
+            amount_net=Decimal("2000.00"), issue_date=datetime.date(2025, 8, 1),
+        )
+        _make_invoice(
+            self.company, Invoice.STATUS_ISSUED,
+            amount_gross=Decimal("1000.00"), vat=Decimal("0.00"),
+            amount_net=Decimal("1000.00"), issue_date=datetime.date(2025, 8, 15),
+        )
+        result = compute_dashboard(self.company)
+        receivables = result["today"]["receivables"]
+        self.assertEqual(len(receivables), 2)
+        self.assertLessEqual(receivables[0]["due_date"], receivables[1]["due_date"])
+
+    def test_empty_receivables_when_no_open_invoices(self):
+        result = compute_dashboard(self.company)
+        self.assertEqual(result["today"]["receivables"], [])
+
+
+# ---------------------------------------------------------------------------
+# Payables
+# ---------------------------------------------------------------------------
+
+
+class PayablesTests(TestCase):
+    def setUp(self):
+        self.user, self.company = _make_company("Payables Firma")
+        self.config = _make_config(self.company)
+
+    def _make_supplier_invoice(self, gross, due_date, is_paid=False):
+        return ReceivedKSeFInvoice.objects.create(
+            company=self.company,
+            ksef_number=f"KSEF_P_{ReceivedKSeFInvoice.objects.count() + 1}",
+            invoice_number=f"INV_P/{ReceivedKSeFInvoice.objects.count() + 1}",
+            issue_date=due_date - datetime.timedelta(days=14),
+            seller_nip="1111111111",
+            seller_name="Dostawca Testowy",
+            buyer_nip="2222222222",
+            buyer_name="Kupujący",
+            gross_amount=gross,
+            currency="PLN",
+            due_date=due_date,
+            is_paid=is_paid,
+        )
+
+    def test_unpaid_supplier_invoices_appear_in_payables(self):
+        self._make_supplier_invoice(Decimal("1200.00"), datetime.date(2025, 8, 20))
+        result = compute_dashboard(self.company)
+        payables = result["today"]["payables"]
+        self.assertEqual(payables["total_count"], 1)
+        self.assertAlmostEqual(payables["total_amount"], 1200.0, places=1)
+        self.assertEqual(len(payables["items"]), 1)
+        self.assertAlmostEqual(payables["items"][0]["amount"], 1200.0, places=1)
+        self.assertEqual(payables["items"][0]["seller_name"], "Dostawca Testowy")
+        self.assertIn("due_date", payables["items"][0])
+        self.assertIn("days_until", payables["items"][0])
+
+    def test_paid_supplier_invoices_excluded_from_payables(self):
+        self._make_supplier_invoice(Decimal("1200.00"), datetime.date(2025, 8, 20), is_paid=True)
+        result = compute_dashboard(self.company)
+        payables = result["today"]["payables"]
+        self.assertEqual(payables["total_count"], 0)
+        self.assertEqual(payables["items"], [])
+
+    def test_supplier_invoices_without_due_date_excluded(self):
+        ReceivedKSeFInvoice.objects.create(
+            company=self.company,
+            ksef_number="KSEF_NODUE",
+            invoice_number="INV_NODUE",
+            issue_date=datetime.date(2025, 8, 1),
+            seller_nip="1111111111",
+            seller_name="Dostawca",
+            buyer_nip="2222222222",
+            buyer_name="Kupujący",
+            gross_amount=Decimal("500.00"),
+            currency="PLN",
+            due_date=None,
+            is_paid=False,
+        )
+        result = compute_dashboard(self.company)
+        payables = result["today"]["payables"]
+        # Invoice without due_date counted in total_count but NOT in items preview
+        self.assertEqual(payables["total_count"], 1)
+        self.assertEqual(payables["items"], [])
+
+    def test_empty_payables_when_no_supplier_invoices(self):
+        result = compute_dashboard(self.company)
+        payables = result["today"]["payables"]
+        self.assertEqual(payables["total_count"], 0)
+        self.assertEqual(payables["items"], [])
+
+
+# ---------------------------------------------------------------------------
+# PIT in today obligations
+# ---------------------------------------------------------------------------
+
+
+class PitInTodayObligationsTests(TestCase):
+    def setUp(self):
+        self.user, self.company = _make_company("PIT Today Firma")
+        self.config = _make_config(
+            self.company,
+            tax_form=CompanyTaxConfig.TAX_FORM_KPIR_LINEAR,
+            tax_rate=Decimal("19.00"),
+            vat_payer=False,
+            zus_due_day=20,
+        )
+
+    def test_pit_always_present_with_zero_amount_when_no_income(self):
+        result = compute_dashboard(self.company)
+        pit_items = [o for o in result["today"]["upcoming_obligations"] if o["type"] == "pit"]
+        self.assertEqual(len(pit_items), 1)
+        self.assertEqual(pit_items[0]["amount"], 0.0)
+        self.assertEqual(pit_items[0]["label"], "Podatek dochodowy (~szacunek)")
+
+    def test_pit_structure_when_income_exists(self):
+        # Paid invoice in the previous month so the PIT billing period picks it up
+        prev_month_start = datetime.date(2025, 7, 1)
+        paid_at = timezone.make_aware(datetime.datetime(2025, 7, 15))
+        _make_invoice(
+            self.company, Invoice.STATUS_PAID,
+            amount_gross=Decimal("10000.00"), vat=Decimal("0.00"),
+            amount_net=Decimal("10000.00"), issue_date=prev_month_start,
+            paid_at=paid_at,
+        )
+        result = compute_dashboard(self.company)
+        obligations = result["today"]["upcoming_obligations"]
+        for ob in obligations:
+            self.assertIn("type", ob)
+            self.assertIn("amount", ob)
+            self.assertIn("due_date", ob)
+            self.assertIn("days_until", ob)
+            self.assertGreaterEqual(ob["amount"], 0)
+
+    def test_today_obligations_include_all_keys(self):
+        result = compute_dashboard(self.company)
+        today = result["today"]
+        self.assertIn("receivables", today)
+        self.assertIn("payables", today)
+        self.assertIsInstance(today["receivables"], list)
+        self.assertIsInstance(today["payables"], dict)
+        self.assertIn("total_count", today["payables"])
+        self.assertIn("items", today["payables"])

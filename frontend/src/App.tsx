@@ -173,6 +173,21 @@ const ActivityPage = lazy(() =>
 const CashFlowPage = lazy(() =>
   import('./pages/CashFlowPage').then((m) => ({ default: m.CashFlowPage })),
 );
+const HarmonogramPage = lazy(() =>
+  import('./pages/HarmonogramPage').then((m) => ({ default: m.HarmonogramPage })),
+);
+const B2CSalesPage = lazy(() =>
+  import('./pages/B2CSalesPage').then((m) => ({ default: m.B2CSalesPage })),
+);
+const SalesReportsPage = lazy(() =>
+  import('./pages/SalesReportsPage').then((m) => ({ default: m.SalesReportsPage })),
+);
+const SalesReportCreatePage = lazy(() =>
+  import('./pages/SalesReportCreatePage').then((m) => ({ default: m.SalesReportCreatePage })),
+);
+const SalesReportEditPage = lazy(() =>
+  import('./pages/SalesReportEditPage').then((m) => ({ default: m.SalesReportEditPage })),
+);
 
 function RouteFallback() {
   return (
@@ -607,6 +622,11 @@ function App() {
                   element={<FixedCostsPage />}
                 />
                 <Route path="/cash-flow" element={<CashFlowPage />} />
+                <Route path="/cash-flow/harmonogram" element={<HarmonogramPage />} />
+                <Route path="/cash-flow/sprzedaz" element={<B2CSalesPage />} />
+                <Route path="/sprzedaz" element={<SalesReportsPage />} />
+                <Route path="/sprzedaz/nowy" element={<SalesReportCreatePage />} />
+                <Route path="/sprzedaz/:id" element={<SalesReportEditPage />} />
                 <Route path="/activity" element={<ActivityPage />} />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />

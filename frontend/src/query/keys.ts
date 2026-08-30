@@ -102,6 +102,7 @@ export const invoiceKeys = {
   detail: (id: string) => [...invoiceKeys.details(), id] as const,
   previews: () => [...invoiceKeys.all, 'preview'] as const,
   preview: (id: string) => [...invoiceKeys.previews(), id] as const,
+  summary: (companyId: string) => [...invoiceKeys.all, 'summary', companyId] as const,
 };
 
 export type ReportRangeKeyParams = {
@@ -161,6 +162,12 @@ export const warehouseStockKeys = {
   all: ['warehouse-stock'] as const,
   byWarehouse: (warehouseId: string, params?: object) =>
     [...warehouseStockKeys.all, warehouseId, params ?? {}] as const,
+};
+
+export const warehouseBatchKeys = {
+  all: ['warehouse-batches'] as const,
+  byWarehouseProduct: (warehouseId: string, productId: string) =>
+    [...warehouseBatchKeys.all, warehouseId, productId] as const,
 };
 
 export type StockMovementParams = {
