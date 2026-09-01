@@ -27,27 +27,51 @@ const pln = new Intl.NumberFormat('pl-PL', {
 });
 
 const CATEGORY_COLORS: Record<string, string> = {
-  raw_materials:       '#f59e0b',
-  packaging:           '#10b981',
-  fuel:                '#3b82f6',
-  transport:           '#6366f1',
-  utilities:           '#8b5cf6',
-  rent:                '#ec4899',
-  services:            '#14b8a6',
-  marketing:           '#f97316',
-  salaries:            '#ef4444',
-  repair:              '#84cc16',
-  other:               '#64748b',
-  fixed_wynagrodzenia: '#ef4444',
-  fixed_zus_zdrowotne: '#f97316',
-  fixed_czynsz:        '#ec4899',
-  fixed_leasing:       '#8b5cf6',
-  fixed_ubezpieczenia: '#6366f1',
-  fixed_ksiegowosc:    '#14b8a6',
-  fixed_subskrypcje:   '#10b981',
-  fixed_paliwo:        '#3b82f6',
+  raw_materials:       '#fb923c',
+  packaging:           '#bef264',
+  fuel:                '#60a5fa',
+  transport:           '#a78bfa',
+  utilities:           '#c084fc',
+  rent:                '#f472b6',
+  services:            '#2dd4bf',
+  marketing:           '#fb7185',
+  salaries:            '#f87171',
+  repair:              '#a3e635',
+  other:               '#94a3b8',
+  // FixedCost categories — standard
+  fixed_wynagrodzenia: '#f87171',
+  fixed_zus_zdrowotne: '#fdba74',
+  fixed_czynsz:        '#f472b6',
+  fixed_leasing:       '#c084fc',
+  fixed_ubezpieczenia: '#818cf8',
+  fixed_ksiegowosc:    '#34d399',
+  fixed_subskrypcje:   '#5eead4',
+  fixed_paliwo:        '#60a5fa',
   fixed_inne:          '#94a3b8',
+  // FixedCost categories — common non-standard keys
+  fixed_pracownicy:    '#fca5a5',
+  fixed_wynajem:       '#e879f9',
+  fixed_energia:       '#fbbf24',
+  fixed_prad:          '#fde68a',
+  fixed_gaz:           '#38bdf8',
+  fixed_woda:          '#67e8f9',
+  fixed_internet:      '#4ade80',
+  fixed_telefon:       '#86efac',
+  fixed_ubezp:         '#a5b4fc',
+  fixed_serwis:        '#a3e635',
+  fixed_media:         '#7dd3fc',
 };
+
+const FALLBACK_PALETTE = [
+  '#a78bfa', '#60a5fa', '#34d399', '#fb923c',
+  '#f472b6', '#2dd4bf', '#a3e635', '#fb7185', '#818cf8',
+];
+
+function colorForCat(cat: string): string {
+  if (CATEGORY_COLORS[cat]) return CATEGORY_COLORS[cat];
+  const hash = cat.split('').reduce((acc, c, i) => acc + c.charCodeAt(0) * (i + 1), 0);
+  return FALLBACK_PALETTE[hash % FALLBACK_PALETTE.length];
+}
 
 const CATEGORY_LABELS: Record<string, string> = {
   ...QUICK_EXPENSE_CATEGORY_LABELS,
@@ -119,7 +143,6 @@ function TrendChart({ from, to }: TrendChartProps) {
 
   if (isLoading) return <div className="py-8 text-center text-sm text-muted-foreground">Ładowanie…</div>;
 
-  // filter to period
   const filtered = history
     .filter((m) => m.period >= from.slice(0, 7) && m.period <= to.slice(0, 7))
     .sort((a, b) => a.period.localeCompare(b.period));
@@ -162,98 +185,84 @@ function TrendChart({ from, to }: TrendChartProps) {
             return [pln.format(Number(value ?? 0)), labels[String(name)] ?? String(name)];
           }}
         />
-        <Bar dataKey="przychod" fill="#22c55e" radius={[3, 3, 0, 0]} opacity={0.7} />
-        <Bar dataKey="koszty" fill="#f97316" radius={[3, 3, 0, 0]} opacity={0.7} />
-        <Bar dataKey="wynik" radius={[3, 3, 0, 0]}>
-          {chartData.map((entry, i) => (
-            <Cell key={i} fill={entry.isLoss ? '#ef4444' : '#16a34a'} />
-          ))}
-        </Bar>
+        <Bar dataKey="przychod" fill="#4ade80" radius={[3, 3, 0, 0]} />
+        <Bar dataKey="koszty" fill="#f87171" radius={[3, 3, 0, 0]} />
+        <Bar dataKey="wynik" fill="#818cf8" radius={[3, 3, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Expense breakdown trend chart (stacked bars by category)
+// Top-5 cost breakdown (horizontal bars)
 // ---------------------------------------------------------------------------
 
-interface ExpenseTrendChartProps {
+interface TopCostsProps {
   from: string;
   to: string;
 }
 
-function ExpenseTrendChart({ from, to }: ExpenseTrendChartProps) {
+function TopCosts({ from, to }: TopCostsProps) {
   const months = monthsInRange(from, to);
-  const multiParams = { months: Math.min(months, 12) };
-  const { data = [], isLoading } = useExpenseChartQuery(multiParams);
+  const { data = [], isLoading } = useExpenseChartQuery({ months: Math.min(months, 12) });
 
   if (isLoading) return <div className="py-8 text-center text-sm text-muted-foreground">Ładowanie…</div>;
 
   if (data.length === 0) {
     return (
       <p className="py-6 text-center text-sm text-muted-foreground">
-        Brak danych kosztów w tym okresie.
+        Brak skategoryzowanych kosztów w tym okresie.
       </p>
     );
   }
 
   const allCats = Array.from(
     new Set(data.flatMap((d) => Object.keys(d).filter((k) => k !== 'period' && k !== 'total'))),
-  ).sort();
+  );
 
-  // aggregate totals per category across all periods for legend ordering
-  const catTotals = allCats.map((cat) => ({
-    cat,
-    total: data.reduce((s, d) => s + ((d[cat] as number) ?? 0), 0),
-  })).sort((a, b) => b.total - a.total);
+  const allTotals = allCats
+    .map((cat) => ({
+      category: cat,
+      name: labelForCat(cat),
+      value: data.reduce((s, d) => s + ((d[cat] as number) ?? 0), 0),
+    }))
+    .filter((c) => c.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const top5 = allTotals.slice(0, 5);
+  const restValue = allTotals.slice(5).reduce((s, c) => s + c.value, 0);
+  const items = restValue > 0 ? [...top5, { category: 'other_rest', name: 'Inne', value: restValue }] : top5;
+
+  const total = items.reduce((s, c) => s + c.value, 0);
+  const max = Math.max(...items.map((c) => c.value), 1);
 
   return (
     <div className="space-y-3">
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart
-          data={data.map((d) => ({ ...d, period: shortMonth(d.period as string) }))}
-          margin={{ left: 0, right: 0, top: 4, bottom: 0 }}
-        >
-          <XAxis dataKey="period" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-          <YAxis
-            width={52}
-            tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
-            tick={{ fontSize: 11 }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            formatter={(value: ValueType, name: NameType) => [
-              pln.format(Number(value ?? 0)),
-              labelForCat(String(name)),
-            ]}
-          />
-          {catTotals.map(({ cat }) => (
-            <Bar
-              key={cat}
-              dataKey={cat}
-              stackId="a"
-              fill={CATEGORY_COLORS[cat] ?? '#94a3b8'}
-              radius={cat === catTotals[catTotals.length - 1].cat ? [3, 3, 0, 0] : undefined}
-            />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
-
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-        {catTotals.filter((c) => c.total > 0).map(({ cat, total }) => (
-          <div key={cat} className="flex items-center gap-1.5 text-xs">
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: CATEGORY_COLORS[cat] ?? '#94a3b8' }}
-            />
-            <span className="text-muted-foreground">{labelForCat(cat)}</span>
-            <span className="font-medium tabular-nums">{pln.format(total)}</span>
+      {items.map((item) => {
+        const barPct = Math.max((item.value / max) * 100, 2);
+        const totalPct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+        const color = item.category === 'other_rest' ? '#94a3b8' : colorForCat(item.category);
+        return (
+          <div key={item.category} className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                <span className="text-muted-foreground">{item.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {totalPct > 0 && <span className="text-muted-foreground/60">{totalPct}%</span>}
+                <span className="font-semibold tabular-nums">{pln.format(item.value)}</span>
+              </div>
+            </div>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${barPct}%`, backgroundColor: color }}
+              />
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -270,6 +279,19 @@ export function PeriodSummaryTab() {
   const { from, to } = getPeriodDates(mode, customFrom, customTo);
   const enabled = mode !== 'custom' || (Boolean(customFrom) && Boolean(customTo));
   const { data, isLoading } = usePeriodSummaryQuery(enabled ? from : '', enabled ? to : '');
+
+  // Best / worst month from history
+  const { data: history = [] } = useHistoryQuery();
+  const periodMonths = history
+    .filter((m) => m.period >= from.slice(0, 7) && m.period <= to.slice(0, 7))
+    .sort((a, b) => a.period.localeCompare(b.period));
+  const bestMonth = periodMonths.length >= 2
+    ? periodMonths.reduce((best, m) => m.really_yours > best.really_yours ? m : best, periodMonths[0])
+    : null;
+  const worstMonth = periodMonths.length >= 2
+    ? periodMonths.reduce((worst, m) => m.really_yours < worst.really_yours ? m : worst, periodMonths[0])
+    : null;
+  const showBestWorst = bestMonth && worstMonth && bestMonth.period !== worstMonth.period;
 
   const tabClass = (m: PeriodMode) =>
     `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -319,10 +341,8 @@ export function PeriodSummaryTab() {
         </div>
       )}
 
-      {/* Loading */}
       {isLoading && <CashFlowSkeleton variant="month" />}
 
-      {/* Waiting for custom range */}
       {!isLoading && !data && mode === 'custom' && !(customFrom && customTo) && (
         <p className="text-center text-sm text-muted-foreground py-8">
           Wybierz datę początkową i końcową, żeby zobaczyć podsumowanie.
@@ -372,9 +392,23 @@ export function PeriodSummaryTab() {
                       <p className="mt-2 text-xs text-muted-foreground">Po kosztach i podatkach</p>
                     </div>
                     {margin !== null && (
-                      <div className={`rounded-xl px-3 py-1.5 text-center ${isLoss ? 'bg-red-100' : 'bg-primary/10'}`}>
+                      <div className={`group relative cursor-help rounded-xl px-3 py-1.5 text-center ${isLoss ? 'bg-red-100' : 'bg-primary/10'}`}>
                         <p className={`text-xl font-bold ${isLoss ? 'text-destructive' : 'text-primary'}`}>{margin}%</p>
-                        <p className="text-[10px] text-muted-foreground">marży</p>
+                        <p className="text-[10px] text-muted-foreground">marży netto</p>
+                        <div className="pointer-events-none absolute bottom-full right-0 z-20 mb-2 w-64 rounded-xl border border-border bg-card p-3 text-left shadow-xl opacity-0 transition-opacity group-hover:opacity-100 text-xs space-y-1.5">
+                          <p className="font-semibold text-foreground">Jak liczymy marżę?</p>
+                          <div className="space-y-1 text-muted-foreground">
+                            <p>Zysk netto = Przychód</p>
+                            <p className="pl-2">− Koszty (faktury, zakupy, stałe)</p>
+                            <p className="pl-2">− VAT do zapłaty</p>
+                            <p className="pl-2">− ZUS społeczny + zdrowotny</p>
+                            <p className="pl-2">− Podatek dochodowy (PIT)</p>
+                            <p className="pt-1 font-medium text-foreground">Marża = Zysk netto ÷ Przychód × 100%</p>
+                          </div>
+                          <p className="text-muted-foreground/70 text-[10px] pt-1 border-t border-border">
+                            Pokazuje ile ze każdej złotówki przychodu zostaje po wszystkich kosztach i podatkach.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -436,7 +470,31 @@ export function PeriodSummaryTab() {
             </div>
           </div>
 
-          {/* Trend: przychód vs koszty vs wynik */}
+          {/* Best / worst month */}
+          {showBestWorst && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-border bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">Najlepszy miesiąc</p>
+                <p className="mt-0.5 font-semibold capitalize text-sm">
+                  {format(parseISO(`${bestMonth!.period}-01`), 'LLLL yyyy', { locale: pl })}
+                </p>
+                <p className="text-sm font-bold tabular-nums" style={{ color: '#4ade80' }}>
+                  +{pln.format(bestMonth!.really_yours)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">Najgorszy miesiąc</p>
+                <p className="mt-0.5 font-semibold capitalize text-sm">
+                  {format(parseISO(`${worstMonth!.period}-01`), 'LLLL yyyy', { locale: pl })}
+                </p>
+                <p className="text-sm font-bold tabular-nums" style={{ color: '#f87171' }}>
+                  {pln.format(worstMonth!.really_yours)}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Trend chart */}
           <div className="overflow-hidden rounded-xl border border-border">
             <div className="border-b border-border bg-muted/20 px-4 py-3">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -444,18 +502,17 @@ export function PeriodSummaryTab() {
               </h3>
             </div>
             <div className="px-4 pb-4 pt-3 space-y-3">
-              {/* Legend */}
               <div className="flex gap-4 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-green-500 opacity-70" />
+                  <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: '#4ade80' }} />
                   Przychód
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-orange-500 opacity-70" />
+                  <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: '#f87171' }} />
                   Koszty
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-green-700" />
+                  <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: '#818cf8' }} />
                   Wynik
                 </span>
               </div>
@@ -463,15 +520,15 @@ export function PeriodSummaryTab() {
             </div>
           </div>
 
-          {/* Expense breakdown by category */}
+          {/* Top 5 cost breakdown */}
           <div className="overflow-hidden rounded-xl border border-border">
             <div className="border-b border-border bg-muted/20 px-4 py-3">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Na co idą pieniądze — miesiąc do miesiąca
+                Największe koszty
               </h3>
             </div>
             <div className="px-4 pb-4 pt-3">
-              <ExpenseTrendChart from={from} to={to} />
+              <TopCosts from={from} to={to} />
             </div>
           </div>
         </>

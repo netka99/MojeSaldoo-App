@@ -16,12 +16,16 @@ export function TaxConfigSetup({ open, onClose }: TaxConfigSetupProps) {
 
   const [cashBalance, setCashBalance] = useState('');
   const [bankBalance, setBankBalance] = useState('');
+  const [vatBalance, setVatBalance] = useState('');
+  const [balanceDate, setBalanceDate] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (config) {
       setCashBalance(config.cash_balance);
       setBankBalance(config.bank_balance);
+      setVatBalance(config.vat_balance);
+      setBalanceDate(config.balance_date ?? new Date().toISOString().slice(0, 10));
     }
   }, [config]);
 
@@ -40,6 +44,8 @@ export function TaxConfigSetup({ open, onClose }: TaxConfigSetupProps) {
       await mutation.mutateAsync({
         cash_balance: cashBalance || '0',
         bank_balance: bankBalance || '0',
+        vat_balance: vatBalance || '0',
+        balance_date: balanceDate || new Date().toISOString().slice(0, 10),
       });
       onClose();
     } catch {
@@ -81,20 +87,24 @@ export function TaxConfigSetup({ open, onClose }: TaxConfigSetupProps) {
                   </button>
                 </div>
 
+                {/* Date field */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-muted-foreground">
+                    Stan na dzień
+                  </label>
+                  <input
+                    type="date"
+                    value={balanceDate}
+                    onChange={(e) => setBalanceDate(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-base font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Harmonogram pokaże przepływy od tej daty. Zdarzenia wcześniejsze są już uwzględnione w saldzie.
+                  </p>
+                </div>
+
+                {/* Balance fields */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-muted-foreground">
-                      Gotówka / kasetka (PLN)
-                    </label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      value={cashBalance}
-                      onChange={(e) => setCashBalance(e.target.value)}
-                      className="w-full rounded-xl border border-input bg-background px-3 py-3 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-muted-foreground">
                       Konto firmowe (PLN)
@@ -108,6 +118,37 @@ export function TaxConfigSetup({ open, onClose }: TaxConfigSetupProps) {
                       className="w-full rounded-xl border border-input bg-background px-3 py-3 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-muted-foreground">
+                      Gotówka / kasetka (PLN)
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={cashBalance}
+                      onChange={(e) => setCashBalance(e.target.value)}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-3 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+
+                {/* VAT account */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-muted-foreground">
+                    Rachunek VAT (PLN)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={vatBalance}
+                    onChange={(e) => setVatBalance(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-3 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Środki zablokowane przez split payment (MPP) — niedostępne do swobodnego użycia.
+                  </p>
                 </div>
 
                 {error && <p className="text-sm text-destructive">{error}</p>}

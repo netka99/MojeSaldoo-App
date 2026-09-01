@@ -224,75 +224,193 @@ describe('CashFlowPage', () => {
     expect(screen.getByTestId('cashflow-skeleton')).toBeInTheDocument();
   });
 
-  // ── Przegląd tab (default) ──────────────────────────────────────────────
+  // ── 3-column summary ────────────────────────────────────────────────────
 
-  it('shows zysk estimate hero on Przegląd', () => {
+  it('shows 3-column summary cards on Przegląd', () => {
     renderPage();
-    expect(screen.getByText(/Szacowany zysk/)).toBeInTheDocument();
+    // Cards: Wpłynęło, Koszty, Wynik (each appears in card + accordion button)
+    expect(screen.getAllByText('Wpłynęło').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Koszty').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Wynik')).toBeInTheDocument();
   });
 
-  it('shows negative really_yours_estimate as strata in red', () => {
+  it('shows positive wynik card when revenue exceeds costs', () => {
+    renderPage();
+    // revenue=8500, costs=5000 → wynik=+3500, Wynik heading present
+    expect(screen.getByText('Wynik')).toBeInTheDocument();
+  });
+
+  it('shows negative wynik when costs exceed revenue', () => {
     setupMocks({
       ...makeDashboard(),
-      month: { ...makeDashboard().month, really_yours_estimate: -500 },
+      month: { ...makeDashboard().month, costs_fixed: 15000 },
     });
     renderPage();
-    expect(screen.getByText(/Szacowana strata/)).toBeInTheDocument();
-    const amounts = screen.getAllByText(/-500/);
-    expect(amounts.some((el) => el.className.includes('destructive'))).toBe(true);
+    // wynik = 8500 - 18400 = -9900 → Wynik card shown in red; Zarezerwuj still visible
+    expect(screen.getByText('Wynik')).toBeInTheDocument();
+    expect(screen.getByText('Zarezerwuj na podatki')).toBeInTheDocument();
   });
 
-  it('hides margin % badge when loss is extreme (> 200%)', () => {
+  // ── Accordion sections ──────────────────────────────────────────────────
+
+  it('shows accordion section headings on Przegląd', () => {
+    renderPage();
+    expect(screen.getByText('Zarezerwuj na podatki')).toBeInTheDocument();
+    // Wpłynęło and Koszty also visible as accordion buttons
+    const allButtons = screen.getAllByRole('button');
+    expect(allButtons.some(b => b.textContent?.startsWith('Wpłynęło'))).toBe(true);
+    expect(allButtons.some(b => b.textContent?.startsWith('Koszty'))).toBe(true);
+  });
+
+  it('shows ZUS społeczny row after expanding ZAREZERWUJ section', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByText('Zarezerwuj na podatki').closest('button')!);
+    expect(screen.getByText('ZUS społeczny')).toBeInTheDocument();
+    expect(screen.getByText('Składka zdrowotna')).toBeInTheDocument();
+    expect(screen.getByText('PIT')).toBeInTheDocument();
+  });
+
+  it('shows due date badges in ZAREZERWUJ section for current month', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByText('Zarezerwuj na podatki').closest('button')!);
+    // DueBadge renders "za X dni" or "→ do D MMM"
+    expect(screen.getAllByText(/za \d+ dni|→ do/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows B2B and B2C rows after expanding WPŁYNĘŁO section', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const wplyneloBtn = screen.getAllByRole('button').find(b => b.textContent?.startsWith('Wpłynęło'));
+    await user.click(wplyneloBtn!);
+    expect(screen.getByText('Faktury B2B opłacone')).toBeInTheDocument();
+    expect(screen.getByText('Sprzedaż gotówkowa B2C')).toBeInTheDocument();
+  });
+
+  it('shows cost rows after expanding KOSZTY section', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const kosztyBtn = screen.getAllByRole('button').find(b => b.textContent?.startsWith('Koszty'));
+    await user.click(kosztyBtn!);
+    expect(screen.getByText('Faktury dostawców (KSeF)')).toBeInTheDocument();
+    expect(screen.getByText('Inne wydatki')).toBeInTheDocument();
+    expect(screen.getByText('Koszty stałe')).toBeInTheDocument();
+  });
+
+  it('shows breakeven insight in KOSZTY when wynik is negative', async () => {
+    const user = userEvent.setup();
     setupMocks({
       ...makeDashboard(),
-      month: {
-        ...makeDashboard().month,
-        revenue_paid: 10,
-        b2c_revenue: 0,
-        really_yours_estimate: -5000,
+      month: { ...makeDashboard().month, costs_fixed: 15000 },
+    });
+    renderPage();
+    const kosztyBtn = screen.getAllByRole('button').find(b => b.textContent?.startsWith('Koszty'));
+    await user.click(kosztyBtn!);
+    expect(screen.getByText(/potrzebujesz jeszcze/i)).toBeInTheDocument();
+  });
+
+  // ── Outstanding banner ──────────────────────────────────────────────────
+
+  it('shows outstanding banner when receivables present', () => {
+    setupMocks({
+      ...makeDashboard(),
+      today: {
+        ...makeDashboard().today,
+        receivables: [
+          {
+            id: 'rec-1',
+            invoice_number: 'FV/1/2026',
+            customer_name: 'Piekarnia ABC',
+            amount: 3690,
+            due_date: '2026-07-25',
+            days_until: 10,
+          },
+        ],
       },
     });
     renderPage();
-    // margin would be -50000% — badge should not render
-    expect(screen.queryByText(/%\s*marży/)).not.toBeInTheDocument();
+    expect(screen.getByText(/oczekuje/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Przypomnij klientom/i })).toBeInTheDocument();
   });
 
-  it('shows margin % badge in waterfall when loss is within range', () => {
+  it('shows overdue amount in outstanding banner', () => {
     setupMocks({
       ...makeDashboard(),
-      month: {
-        ...makeDashboard().month,
-        revenue_paid: 10000,
-        b2c_revenue: 0,
-        really_yours_estimate: -1500,
+      today: {
+        ...makeDashboard().today,
+        receivables: [
+          {
+            id: 'rec-1',
+            invoice_number: 'FV/1/2026',
+            customer_name: 'Piekarnia ABC',
+            amount: 1500,
+            due_date: '2026-07-01',
+            days_until: -5,
+          },
+        ],
       },
     });
     renderPage();
-    // waterfall shows operationalMarginPct badge — revenue=10000, no ksef/quick by category → 100%
-    // historical hero margin badge uses rawMargin which would be -15% but is only shown for historical months
-    // Just check the waterfall rendered (Marża brutto row exists)
-    expect(screen.getByText('Marża brutto')).toBeInTheDocument();
+    expect(screen.getByText(/zaległe/i)).toBeInTheDocument();
   });
 
-  it('shows upcoming obligations', () => {
+  it('shows outstanding section in WPŁYNĘŁO accordion when receivables present', async () => {
+    const user = userEvent.setup();
+    setupMocks({
+      ...makeDashboard(),
+      today: {
+        ...makeDashboard().today,
+        receivables: [
+          {
+            id: 'rec-1',
+            invoice_number: 'FV/1/2026',
+            customer_name: 'Piekarnia ABC',
+            amount: 3690,
+            due_date: '2026-07-25',
+            days_until: 10,
+          },
+        ],
+      },
+    });
     renderPage();
-    // "Płatności" section renders obligation labels from upcoming_obligations
-    expect(screen.getByText('VAT bieżący')).toBeInTheDocument();
-    expect(screen.getAllByText(/ZUS/).length).toBeGreaterThanOrEqual(1);
+    const wplyneloBtn = screen.getAllByRole('button').find(b => b.textContent?.startsWith('Wpłynęło'));
+    await user.click(wplyneloBtn!);
+    expect(screen.getByText(/Oczekuje/)).toBeInTheDocument();
   });
 
-  it('shows revenue and costs detail on Przegląd by default', () => {
+  it('does NOT show outstanding banner when no receivables', () => {
     renderPage();
-    // 'Przychody' appears in both the hero card and PrzychodyBlock
-    expect(screen.getAllByText('Przychody').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Koszty i zobowiązania')).toBeInTheDocument();
-    expect(screen.getByText('Płatności')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Przypomnij klientom/i })).not.toBeInTheDocument();
   });
 
-  it('shows PIT szacunek tooltip on Przegląd', () => {
+  // ── KosztySheet ─────────────────────────────────────────────────────────
+
+  it('opens KosztySheet via + button in KOSZTY accordion', async () => {
+    const user = userEvent.setup();
     renderPage();
-    expect(screen.getByTitle(/Szacunek/)).toBeInTheDocument();
+    // Expand KOSZTY section (its button textContent starts with "Koszty" + amount)
+    const allButtons = screen.getAllByRole('button');
+    const kosztySection = allButtons.find(b => {
+      const text = b.textContent ?? '';
+      return /^Koszty/.test(text) && text.includes('zł');
+    });
+    await user.click(kosztySection!);
+    // The "Dodaj wydatek" action button is now visible in the "Inne wydatki" row
+    await user.click(screen.getByRole('button', { name: 'Dodaj wydatek' }));
+    expect(screen.getByRole('heading', { name: 'Nowy dokument' })).toBeInTheDocument();
+    expect(screen.getByText('Dostawca')).toBeInTheDocument();
   });
+
+  it('opens KosztySheet via FAB (mobile button)', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Dodaj dokument' }));
+    expect(screen.getByRole('heading', { name: 'Nowy dokument' })).toBeInTheDocument();
+    expect(screen.getByText('Dostawca')).toBeInTheDocument();
+  });
+
+  // ── Uncategorized KSeF alerts ───────────────────────────────────────────
 
   it('shows uncategorized invoices banner when count > 0', () => {
     setupMocks({
@@ -321,7 +439,6 @@ describe('CashFlowPage', () => {
   // ── Balance row ─────────────────────────────────────────────────────────
 
   it('shows balance row with Na koncie and Aktualizuj when balance is set and > 0', () => {
-    // makeDashboard() has total_available: 6000 and balance_updated_at set
     renderPage();
     expect(screen.getByText('Na koncie:')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Aktualizuj' })).toBeInTheDocument();
@@ -364,143 +481,6 @@ describe('CashFlowPage', () => {
     expect(screen.getByText(/Gotówka \/ kasetka/)).toBeInTheDocument();
   });
 
-  // ── KosztySheet ─────────────────────────────────────────────────────────
-
-  it('opens KosztySheet via + Dodaj in Koszty block', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await user.click(screen.getByRole('button', { name: '+ Dodaj' }));
-    // Sheet heading always visible when open; "Dostawca" is a form-only label
-    expect(screen.getByRole('heading', { name: 'Nowy dokument' })).toBeInTheDocument();
-    expect(screen.getByText('Dostawca')).toBeInTheDocument();
-  });
-
-  it('opens KosztySheet via FAB (mobile button)', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await user.click(screen.getByRole('button', { name: 'Dodaj dokument' }));
-    expect(screen.getByRole('heading', { name: 'Nowy dokument' })).toBeInTheDocument();
-    expect(screen.getByText('Dostawca')).toBeInTheDocument();
-  });
-
-  // ── Receivables ─────────────────────────────────────────────────────────
-
-  it('shows urgency pills in Faktury oczekujące when receivables are present', () => {
-    setupMocks({
-      ...makeDashboard(),
-      today: {
-        ...makeDashboard().today,
-        receivables: [
-          {
-            id: 'rec-1',
-            invoice_number: 'FV/1/2026',
-            customer_name: 'Piekarnia ABC',
-            amount: 3690,
-            due_date: '2026-07-25',
-            days_until: 10,
-          },
-        ],
-      },
-    });
-    renderPage();
-    // days_until: 10 > 7 → "Później" pill renders in Przychody block
-    expect(screen.getByText('Później')).toBeInTheDocument();
-  });
-
-  it('shows receivable details after expanding Faktury oczekujące', async () => {
-    const user = userEvent.setup();
-    setupMocks({
-      ...makeDashboard(),
-      today: {
-        ...makeDashboard().today,
-        receivables: [
-          {
-            id: 'rec-1',
-            invoice_number: 'FV/1/2026',
-            customer_name: 'Piekarnia ABC',
-            amount: 3690,
-            due_date: '2026-07-25',
-            days_until: 10,
-          },
-        ],
-      },
-    });
-    renderPage();
-    await user.click(screen.getByRole('button', { name: /Faktury oczekujące/ }));
-    expect(screen.getByText('Piekarnia ABC')).toBeInTheDocument();
-    expect(screen.getByText('FV/1/2026')).toBeInTheDocument();
-  });
-
-  it('Faktury oczekujące expand button is disabled when no receivables', () => {
-    renderPage();
-    // No receivables and no revenue_outstanding_top → button disabled
-    expect(screen.getByRole('button', { name: /Faktury oczekujące/ })).toBeDisabled();
-  });
-
-  // ── Payables ────────────────────────────────────────────────────────────
-
-  it('shows Niezapłacone faktury dostawców when unpaid supplier invoices present', () => {
-    setupMocks({
-      ...makeDashboard(),
-      today: {
-        ...makeDashboard().today,
-        payables: {
-          total_count: 1,
-          total_amount: 1200,
-          items: [
-            {
-              id: 'pay-1',
-              ksef_number: 'KS/001',
-              invoice_number: 'FV-D/1/2026',
-              seller_name: 'Dostawca Mąka Sp.j.',
-              issue_date: '2026-07-10',
-              amount: 1200,
-              due_date: '2026-07-18',
-              days_until: 3,
-            },
-          ],
-        },
-      },
-    });
-    renderPage();
-    expect(screen.getByText(/Niezapłacone faktury dostawców/)).toBeInTheDocument();
-    expect(screen.getByText(/1 faktura niezapłaconych/)).toBeInTheDocument();
-  });
-
-  it('shows payables details after expanding Niezapłacone faktury dostawców', async () => {
-    const user = userEvent.setup();
-    setupMocks({
-      ...makeDashboard(),
-      today: {
-        ...makeDashboard().today,
-        payables: {
-          total_count: 1,
-          total_amount: 1200,
-          items: [
-            {
-              id: 'pay-1',
-              ksef_number: 'KS/001',
-              invoice_number: 'FV-D/1/2026',
-              seller_name: 'Dostawca Mąka Sp.j.',
-              issue_date: '2026-07-10',
-              amount: 1200,
-              due_date: '2026-07-18',
-              days_until: 3,
-            },
-          ],
-        },
-      },
-    });
-    renderPage();
-    await user.click(screen.getByRole('button', { name: /Niezapłacone faktury dostawców/ }));
-    expect(screen.getByText('Dostawca Mąka Sp.j.')).toBeInTheDocument();
-  });
-
-  it('does NOT show Niezapłacone faktury dostawców section when empty', () => {
-    renderPage();
-    expect(screen.queryByText(/Niezapłacone faktury dostawców/)).not.toBeInTheDocument();
-  });
-
   // ── Month navigator ─────────────────────────────────────────────────────
 
   it('disables next month button when on current month', () => {
@@ -515,28 +495,33 @@ describe('CashFlowPage', () => {
     expect(screen.getByText(/dane historyczne/)).toBeInTheDocument();
   });
 
-  it('hides Płatności section and balance row when viewing historical month', async () => {
+  it('hides balance row when viewing historical month', async () => {
     const user = userEvent.setup();
     renderPage();
     await user.click(screen.getByRole('button', { name: 'Poprzedni miesiąc' }));
-    expect(screen.queryByText('Płatności')).not.toBeInTheDocument();
-    // Hero section (with Na koncie / Dodaj stan konta) is only shown for current month
     expect(screen.queryByText('Na koncie:')).not.toBeInTheDocument();
     expect(screen.queryByText(/Dodaj stan konta/)).not.toBeInTheDocument();
+  });
+
+  it('hides outstanding banner when viewing historical month', async () => {
+    const user = userEvent.setup();
+    // Even if month.revenue_outstanding > 0, no outstanding banner for historical
+    // (banner uses today.receivables which is only shown isCurrentMonth)
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Poprzedni miesiąc' }));
+    expect(screen.queryByRole('link', { name: /Przypomnij klientom/i })).not.toBeInTheDocument();
   });
 
   // ── Rok tab ─────────────────────────────────────────────────────────────
 
   it('shows Rok tab button', () => {
     renderPage();
-    // ExpenseChart also has a "Rok" period button — check at least one exists
     expect(screen.getAllByRole('button', { name: 'Rok' }).length).toBeGreaterThanOrEqual(1);
   });
 
   it('switches to Rok tab and shows period picker', async () => {
     const user = userEvent.setup();
     renderPage();
-    // Tab bar "Rok" comes before ExpenseChart's "Rok" in the DOM — click first match
     await user.click(screen.getAllByRole('button', { name: 'Rok' })[0]);
     expect(screen.getByText(/Ten rok/)).toBeInTheDocument();
   });
@@ -592,10 +577,8 @@ describe('CashFlowPage', () => {
     });
     renderPage();
     await user.click(screen.getByRole('button', { name: 'Historia' }));
-    // Click the month card
     const cards = screen.getAllByText(/Kliknij, żeby zobaczyć szczegóły/);
     await user.click(cards[0]);
-    // Should be back on Przegląd tab (month navigator visible)
     expect(screen.getByLabelText('Poprzedni miesiąc')).toBeInTheDocument();
   });
 });

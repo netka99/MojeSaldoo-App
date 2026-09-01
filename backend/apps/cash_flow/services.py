@@ -315,6 +315,8 @@ def compute_dashboard(company, month_str: str | None = None) -> dict:
 def _build_today(company, config: CompanyTaxConfig, today: datetime.date) -> dict:
     cash = config.cash_balance or _ZERO
     bank = config.bank_balance or _ZERO
+    vat_locked = config.vat_balance or _ZERO
+    # total_available = freely spendable funds; vat_balance is locked (split payment)
     total_available = cash + bank
 
     obligations = []
@@ -483,6 +485,7 @@ def _build_today(company, config: CompanyTaxConfig, today: datetime.date) -> dic
     return {
         "cash_balance": float(cash),
         "bank_balance": float(bank),
+        "vat_balance": float(vat_locked.quantize(_CENT, rounding=ROUND_HALF_UP)),
         "balance_updated_at": (
             config.balance_updated_at.isoformat() if config.balance_updated_at else None
         ),
@@ -794,7 +797,7 @@ def _build_month(
         company=company,
         date__gte=period_start,
         date__lte=period_end,
-    )[:10]
+    ).order_by("-date")[:10]
     # Use a plain serialiser-less representation to avoid circular imports
     recent_expenses = [
         {
@@ -808,6 +811,37 @@ def _build_month(
         }
         for e in recent_expenses_qs
     ]
+
+    # --- Top 5 B2C entries ---
+    b2c_entries_qs = DailyB2CRevenue.objects.filter(
+        company=company,
+        date__gte=period_start,
+        date__lte=period_end,
+    ).order_by("-date")[:5]
+    b2c_top = [
+        {
+            "uuid": str(e.uuid),
+            "date": str(e.date),
+            "amount": float(e.amount),
+            "notes": e.notes or "",
+            "sale_type": e.sale_type,
+            # lines: [{name, qty, unit_price, line_revenue}] for product sales
+            "lines": [
+                {
+                    "name": line.get("name", ""),
+                    "qty": line.get("qty", 1),
+                    "unit_price": float(line.get("unit_price", 0)),
+                    "line_revenue": float(line.get("line_revenue", 0)),
+                }
+                for line in (e.lines or [])
+                if line.get("name")
+            ] if e.sale_type == "products" else [],
+        }
+        for e in b2c_entries_qs
+    ]
+
+    # --- Top 5 KSeF supplier invoices (categorized only, same set as costs_ksef_count) ---
+    costs_ksef_items = _get_costs_ksef_items(company, period_start, period_end)
 
     return {
         "period": str(period_start)[:7],  # "YYYY-MM"
@@ -842,8 +876,10 @@ def _build_month(
         "revenue_outstanding_count": revenue_outstanding_summary["count"],
         "revenue_outstanding_top": revenue_outstanding_summary["top"],
         "b2c_entries_count": b2c_count,
+        "b2c_top": b2c_top,
         "costs_ksef_count": costs_ksef_count,
         "costs_ksef_by_category": costs_ksef_by_category,
+        "costs_ksef_items": costs_ksef_items,
         "costs_quick_by_category": costs_quick_by_category,
         "costs_fixed_items": costs_fixed_items,
         "recent_quick_expenses": recent_expenses,
@@ -858,7 +894,7 @@ def _build_month(
 
 
 def _get_revenue_paid_summary(company, period_start, period_end) -> dict:
-    """Count + top 3 customers for paid invoices."""
+    """Count + top 5 paid invoices with full details."""
     qs = Invoice.objects.filter(
         company=company,
         status=Invoice.STATUS_PAID,
@@ -867,24 +903,37 @@ def _get_revenue_paid_summary(company, period_start, period_end) -> dict:
     ).select_related("customer").order_by("-total_gross")
     count = qs.count()
     top = [
-        {"name": inv.customer.name if inv.customer else "—", "amount": float(inv.total_gross)}
-        for inv in qs[:3]
+        {
+            "id": inv.pk,
+            "name": inv.customer.name if inv.customer else "—",
+            "invoice_number": inv.invoice_number,
+            "date": inv.paid_at.date().isoformat() if inv.paid_at else inv.issue_date.isoformat(),
+            "amount": float(inv.total_gross),
+        }
+        for inv in qs[:5]
     ]
     return {"count": count, "top": top}
 
 
 def _get_revenue_outstanding_summary(company, period_start, period_end) -> dict:
-    """Count + top 3 customers for outstanding invoices."""
+    """Count + top 5 outstanding invoices with full details."""
+    today = datetime.date.today()
     qs = Invoice.objects.filter(
         company=company,
         status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_SENT, Invoice.STATUS_OVERDUE],
-        issue_date__gte=period_start,
-        issue_date__lte=period_end,
-    ).select_related("customer").order_by("-total_gross")
+        due_date__isnull=False,
+    ).select_related("customer").order_by("due_date")
     count = qs.count()
     top = [
-        {"name": inv.customer.name if inv.customer else "—", "amount": float(inv.total_gross)}
-        for inv in qs[:3]
+        {
+            "id": inv.pk,
+            "name": inv.customer.name if inv.customer else "—",
+            "invoice_number": inv.invoice_number,
+            "due_date": inv.due_date.isoformat(),
+            "days_overdue": (today - inv.due_date).days if inv.due_date < today else 0,
+            "amount": float(inv.total_gross),
+        }
+        for inv in qs[:5]
     ]
     return {"count": count, "top": top}
 
@@ -905,6 +954,58 @@ def _get_costs_ksef_count(company, period_start, period_end) -> int:
         if has_lines or inv.opex_category:
             count += 1
     return count
+
+
+def _get_costs_ksef_items(company, period_start, period_end) -> list:
+    """Top 5 categorized KSeF invoices with full detail for the dashboard list."""
+    from apps.cost_allocation.models import InvoiceLineAnnotation
+
+    invoices_qs = ReceivedKSeFInvoice.objects.filter(
+        company=company,
+        issue_date__gte=period_start,
+        issue_date__lte=period_end,
+    ).order_by("-gross_amount")
+
+    items = []
+    for inv in invoices_qs:
+        annotated_lines = list(
+            InvoiceLineAnnotation.objects.filter(
+                line__invoice=inv, opex_category__isnull=False
+            ).select_related("line")
+        )
+        is_categorized = bool(annotated_lines) or bool(inv.opex_category)
+        if not is_categorized:
+            continue
+
+        # Collect categories applied to this invoice
+        if annotated_lines:
+            category_labels = list(dict.fromkeys(
+                ann.get_opex_category_display() if hasattr(ann, 'get_opex_category_display')
+                else str(ann.opex_category)
+                for ann in annotated_lines
+            ))
+        elif inv.opex_category:
+            label = dict(OPEX_CATEGORY_CHOICES).get(inv.opex_category, inv.opex_category)
+            category_labels = [label]
+        else:
+            category_labels = []
+
+        items.append({
+            "id": inv.pk,
+            "seller_name": inv.seller_name,
+            "invoice_number": inv.invoice_number,
+            "issue_date": str(inv.issue_date),
+            "due_date": str(inv.due_date) if inv.due_date else None,
+            "net_amount": float(inv.net_amount) if inv.net_amount else None,
+            "vat_amount": float(inv.vat_amount) if inv.vat_amount else None,
+            "amount": float(inv.gross_amount),
+            "category_labels": category_labels,
+            "is_paid": inv.is_paid,
+        })
+        if len(items) >= 5:
+            break
+
+    return items
 
 
 def _get_costs_quick_by_category(company, period_start, period_end) -> list:

@@ -11,17 +11,15 @@ import { HistoriaTab } from '@/components/features/cashflow/HistoriaTab';
 import { PeriodSummaryTab } from '@/components/features/cashflow/PeriodSummaryTab';
 import { TaxConfigSetup } from '@/components/features/cashflow/TaxConfigSetup';
 import { TaxSettingsModal } from '@/components/features/cashflow/TaxSettingsModal';
-import type { CashFlowMonth, TaxObligation, Receivable, PayablesData } from '@/types/cashflow.types';
+import { PageExplainer } from '@/components/ui/PageExplainer';
+import type { TaxObligation } from '@/types/cashflow.types';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 2 });
-
-function formatPln(value: number): string {
-  return pln.format(value);
-}
+function formatPln(value: number): string { return pln.format(value); }
 
 function obligationBadge(daysUntil: number): string {
   if (daysUntil < 3) return 'bg-destructive/10 text-destructive';
@@ -30,33 +28,6 @@ function obligationBadge(daysUntil: number): string {
   return 'bg-green-500/10 text-green-700';
 }
 
-function obligationBorderColor(daysUntil: number, amount: number): string {
-  if (amount === 0) return '#e2e8f0';
-  if (daysUntil < 3) return '#ef4444';
-  if (daysUntil < 7) return '#f97316';
-  if (daysUntil < 14) return '#eab308';
-  return '#22c55e';
-}
-
-function daysBadge(days: number): string {
-  if (days < 0) return 'bg-destructive/10 text-destructive';
-  if (days < 3) return 'bg-destructive/10 text-destructive';
-  if (days < 7) return 'bg-orange-500/10 text-orange-600';
-  if (days < 14) return 'bg-yellow-500/10 text-yellow-600';
-  return 'bg-green-500/10 text-green-700';
-}
-
-function daysLabel(days: number): string {
-  if (days < 0) return `${Math.abs(days)} dni po terminie`;
-  if (days === 0) return 'Dziś!';
-  return `za ${days} dni`;
-}
-
-// Categories treated as variable/operational costs for the waterfall
-const VARIABLE_COST_SLUGS = new Set([
-  'raw_materials', 'packaging', 'fuel', 'transport',
-]);
-
 function plFaktura(n: number): string {
   if (n === 1) return 'faktura';
   if (n >= 2 && n <= 4) return 'faktury';
@@ -64,731 +35,117 @@ function plFaktura(n: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// TaxPaymentRow — expandable tax obligation row
+// Shared sub-components
 // ---------------------------------------------------------------------------
 
-interface TaxPaymentRowProps {
-  label: React.ReactNode;
-  amount: number;
-  dueDate?: string | null;
-  daysUntil?: number;
-  surplus?: number;
-  children?: React.ReactNode;
+function DueBadge({ daysUntil, dueDate }: { daysUntil: number; dueDate?: string | null }) {
+  const label = dueDate
+    ? `→ do ${format(parseISO(dueDate), 'd MMM', { locale: pl })}`
+    : daysUntil < 0
+      ? `${Math.abs(daysUntil)} dni po terminie`
+      : daysUntil === 0
+        ? 'Dziś!'
+        : `za ${daysUntil} dni`;
+
+  return (
+    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${obligationBadge(daysUntil)}`}>
+      {label}
+    </span>
+  );
 }
 
-function TaxPaymentRow({ label, amount, dueDate, daysUntil, surplus, children }: TaxPaymentRowProps) {
-  const [open, setOpen] = useState(false);
-  const hasDue = daysUntil !== undefined;
-  const borderColor = hasDue ? obligationBorderColor(daysUntil!, amount) : '#e2e8f0';
+// ---------------------------------------------------------------------------
+// Section — collapsible accordion panel
+// ---------------------------------------------------------------------------
 
+interface SectionProps {
+  title: string;
+  total: number;
+  totalColor?: string;
+  children: React.ReactNode;
+}
+
+function Section({ title, total, totalColor = 'text-foreground', children }: SectionProps) {
+  const [open, setOpen] = useState(false);
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <button
         type="button"
-        className="w-full flex items-start justify-between p-3 border-l-4 bg-card hover:bg-muted/40 transition-colors text-left"
-        style={{ borderLeftColor: borderColor }}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3.5 bg-card hover:bg-muted/40 transition-colors text-left"
       >
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">{label}</p>
-          {dueDate && (
-            <p className="text-xs text-muted-foreground">
-              Termin: {format(parseISO(dueDate), 'd MMM yyyy', { locale: pl })}
-            </p>
-          )}
-          {surplus !== undefined && surplus > 0 && (
-            <p className="text-xs text-green-600">nadpłata {formatPln(surplus)}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0 ml-2">
-          <div className="text-right">
-            <p className="text-sm font-semibold">{formatPln(amount)}</p>
-            {hasDue && (
-              <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${obligationBadge(daysUntil!)}`}>
-                {daysUntil === 0
-                  ? 'Dziś!'
-                  : daysUntil! < 0
-                    ? `${Math.abs(daysUntil!)} dni po terminie`
-                    : `za ${daysUntil} dni`}
-              </span>
-            )}
-          </div>
-          {children && (
-            <span className="text-xs text-muted-foreground">{open ? '▲' : '▼'}</span>
-          )}
+        <span className="text-sm font-bold uppercase tracking-wide text-foreground">{title}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`text-base font-bold tabular-nums ${totalColor}`}>{formatPln(total)}</span>
+          <span className="text-[10px] text-muted-foreground">{open ? '▲' : '▼'}</span>
         </div>
       </button>
-      {open && children && (
-        <div className="border-t border-border bg-muted/20 px-4 py-3 space-y-1.5">
+      {open && <div className="border-t border-border">{children}</div>}
+    </div>
+  );
+}
+
+
+function SectionDivider({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <div className="mx-4 border-t border-dashed border-border/70" />
+      <div className="px-4 py-3 bg-muted/30">{children}</div>
+    </>
+  );
+}
+
+// Expandable inner row — for showing sub-lists within an accordion section
+interface InnerExpandableProps {
+  label: React.ReactNode;
+  sub?: string;
+  amount: number;
+  amountColor?: string;
+  badge?: React.ReactNode;
+  action?: React.ReactNode;
+  disabled?: boolean;
+  children?: React.ReactNode;
+}
+
+function InnerExpandable({ label, sub, amount, amountColor = 'text-foreground', badge, action, disabled, children }: InnerExpandableProps) {
+  const [open, setOpen] = useState(false);
+  const hasChildren = !!children;
+  const canToggle = hasChildren && !disabled;
+
+  return (
+    <>
+      <div className="w-full flex items-center justify-between border-b border-border/50 last:border-0 px-4 py-3 text-left">
+        <button
+          type="button"
+          disabled={!canToggle}
+          onClick={() => canToggle && setOpen(v => !v)}
+          className="min-w-0 flex-1 pr-3 text-left hover:opacity-80 transition-opacity disabled:cursor-default"
+        >
+          <p className="text-sm font-medium">{label}</p>
+          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {badge}
+          {action}
+          <button
+            type="button"
+            disabled={!canToggle}
+            onClick={() => canToggle && setOpen(v => !v)}
+            className="flex items-center gap-2 disabled:cursor-default"
+          >
+            <span className={`text-sm font-semibold tabular-nums ${amountColor}`}>{formatPln(amount)}</span>
+            {canToggle && (
+              <span className="text-[10px] text-muted-foreground w-3">{open ? '▲' : '▼'}</span>
+            )}
+          </button>
+        </div>
+      </div>
+      {open && hasChildren && (
+        <div className="border-b border-border/50 bg-muted/20 px-4 py-2.5 space-y-1.5">
           {children}
         </div>
       )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// PrzychodyBlock
-// ---------------------------------------------------------------------------
-
-interface PrzychodyBlockProps {
-  month: CashFlowMonth;
-  receivables?: Receivable[];
-}
-
-function PrzychodyBlock({ month, receivables }: PrzychodyBlockProps) {
-  const [paidOpen, setPaidOpen] = useState(false);
-  const [outstandingOpen, setOutstandingOpen] = useState(false);
-
-  // When receivables[] is provided (current month), use live data for count+total.
-  // month.revenue_outstanding includes only THIS month's issued invoices,
-  // while receivables[] contains ALL unpaid invoices (incl. older months).
-  const outstandingCount = receivables ? receivables.length : (month.revenue_outstanding_count ?? 0);
-  const outstandingTotal = receivables
-    ? receivables.reduce((s, r) => s + r.amount, 0)
-    : month.revenue_outstanding;
-
-  const overdue = receivables?.filter((r) => (r.days_until ?? 0) < 0).reduce((s, r) => s + r.amount, 0) ?? 0;
-  const soon = receivables?.filter((r) => { const d = r.days_until ?? 0; return d >= 0 && d <= 7; }).reduce((s, r) => s + r.amount, 0) ?? 0;
-  const later = receivables?.filter((r) => (r.days_until ?? 0) > 7).reduce((s, r) => s + r.amount, 0) ?? 0;
-
-  const hasPaidDetails = (month.revenue_paid_top?.length ?? 0) > 0;
-  const hasOutstandingDetails = outstandingCount > 0 || (month.revenue_outstanding_top?.length ?? 0) > 0;
-  const hasUrgencyPills = receivables && receivables.length > 0 && (overdue > 0 || soon > 0 || later > 0);
-
-  const cashReceived = month.revenue_paid + month.b2c_revenue;
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-border border-t-[3px] border-t-green-500">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border bg-green-50/60 px-4 py-3 dark:bg-green-950/20">
-        <h3 className="text-sm font-bold uppercase tracking-wide text-green-800 dark:text-green-300">
-          Przychody
-        </h3>
-        <Link to="/invoices" className="text-xs font-medium text-green-700 hover:underline underline-offset-2 dark:text-green-400">
-          Faktury →
-        </Link>
-      </div>
-
-      {/* Faktury opłacone */}
-      <button
-        type="button"
-        disabled={!hasPaidDetails}
-        className="w-full flex items-start justify-between px-4 py-3.5 hover:bg-green-50/40 dark:hover:bg-green-950/10 transition-colors text-left disabled:cursor-default disabled:hover:bg-transparent"
-        onClick={() => hasPaidDetails && setPaidOpen((v) => !v)}
-      >
-        <div>
-          <p className="text-sm font-medium">Faktury opłacone</p>
-          <p className="text-xs text-muted-foreground">
-            {month.revenue_paid_count ?? 0} {plFaktura(month.revenue_paid_count ?? 0)}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`text-base font-bold ${month.revenue_paid > 0 ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground'}`}>
-            {formatPln(month.revenue_paid)}
-          </span>
-          {hasPaidDetails && (
-            <span className="text-xs text-muted-foreground">{paidOpen ? '▲' : '▼'}</span>
-          )}
-        </div>
-      </button>
-      {paidOpen && hasPaidDetails && (
-        <div className="mx-4 mb-3 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
-          <p className="text-xs font-medium text-muted-foreground">Największe wpłaty:</p>
-          {month.revenue_paid_top!.map((item, i) => (
-            <div key={i} className="flex justify-between text-xs">
-              <span className="max-w-[60%] truncate text-muted-foreground">{item.name}</span>
-              <span className="font-medium tabular-nums">{formatPln(item.amount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Faktury oczekujące */}
-      <div className="border-t-2 border-border/60">
-        <button
-          type="button"
-          disabled={!hasOutstandingDetails}
-          className="w-full flex items-start justify-between px-4 py-3.5 hover:bg-yellow-50/40 dark:hover:bg-yellow-950/10 transition-colors text-left disabled:cursor-default disabled:hover:bg-transparent"
-          onClick={() => hasOutstandingDetails && setOutstandingOpen((v) => !v)}
-        >
-          <div>
-            <p className="text-sm font-medium">Faktury oczekujące</p>
-            <p className="text-xs text-muted-foreground">
-              {outstandingCount} {plFaktura(outstandingCount)}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className={`text-base font-bold ${outstandingTotal > 0 ? 'text-yellow-600' : 'text-muted-foreground'}`}>
-              {formatPln(outstandingTotal)}
-            </span>
-            {hasOutstandingDetails && (
-              <span className="text-xs text-muted-foreground">{outstandingOpen ? '▲' : '▼'}</span>
-            )}
-          </div>
-        </button>
-
-        {/* Urgency pills */}
-        {hasUrgencyPills && (
-          <div className="flex gap-2 px-4 pb-3">
-            {overdue > 0 && (
-              <div className="flex-1 rounded-lg bg-destructive/10 px-2 py-2 text-center">
-                <p className="text-xs font-semibold text-destructive">{formatPln(overdue)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Zaległe</p>
-              </div>
-            )}
-            {soon > 0 && (
-              <div className="flex-1 rounded-lg bg-orange-500/10 px-2 py-2 text-center">
-                <p className="text-xs font-semibold text-orange-600">{formatPln(soon)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Do 7 dni</p>
-              </div>
-            )}
-            {later > 0 && (
-              <div className="flex-1 rounded-lg bg-green-500/10 px-2 py-2 text-center">
-                <p className="text-xs font-semibold text-green-700 dark:text-green-400">{formatPln(later)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Później</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Expanded: current month — individual invoices */}
-        {outstandingOpen && receivables && receivables.length > 0 && (
-          <div className="divide-y divide-border border-t border-border">
-            {receivables.map((r) => (
-              <Link
-                key={r.id}
-                to={`/invoices/${r.id}`}
-                className="flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
-              >
-                <div className="min-w-0 flex-1 pr-3">
-                  <p className="truncate text-sm font-medium">{r.customer_name || r.invoice_number}</p>
-                  {r.customer_name && r.invoice_number && (
-                    <p className="text-xs text-muted-foreground">{r.invoice_number}</p>
-                  )}
-                  {r.due_date && (
-                    <p className="text-xs text-muted-foreground">
-                      Termin: {format(parseISO(r.due_date), 'd MMM', { locale: pl })}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-yellow-600">{formatPln(r.amount)}</p>
-                    {r.days_until !== null && (
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${daysBadge(r.days_until)}`}>
-                        {daysLabel(r.days_until)}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-muted-foreground text-xs">→</span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-
-        {/* Expanded: historical — top outstanding */}
-        {outstandingOpen && !receivables && (month.revenue_outstanding_top?.length ?? 0) > 0 && (
-          <div className="mx-4 mb-3 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
-            <p className="text-xs font-medium text-muted-foreground">Czekasz na zapłatę od:</p>
-            {month.revenue_outstanding_top!.map((item, i) => (
-              <div key={i} className="flex justify-between text-xs">
-                <span className="max-w-[60%] truncate text-muted-foreground">{item.name}</span>
-                <span className="font-medium tabular-nums text-yellow-600">{formatPln(item.amount)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Sprzedaż gotówkowa */}
-      <div className="flex items-center justify-between border-t-2 border-border/60 px-4 py-3.5">
-        <div>
-          <p className="text-sm font-medium">Sprzedaż gotówkowa / B2C</p>
-          {(month.b2c_entries_count ?? 0) > 0 ? (
-            <p className="text-xs text-muted-foreground">{month.b2c_entries_count} wpisów</p>
-          ) : (
-            <Link
-              to={`/cash-flow/sprzedaz?month=${month.period}`}
-              className="text-xs text-primary hover:underline"
-            >
-              + Dodaj wpis
-            </Link>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-base font-bold">{formatPln(month.b2c_revenue)}</span>
-          <Link
-            to={`/cash-flow/sprzedaz?month=${month.period}`}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-sm font-bold leading-none"
-            aria-label="Zarządzaj sprzedażą gotówkową"
-          >
-            +
-          </Link>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border bg-green-50/60 px-4 py-3 dark:bg-green-950/20">
-        <span className="text-xs text-muted-foreground">
-          Wpłynęło:{' '}
-          <span className={`text-sm font-bold ${cashReceived > 0 ? 'text-green-700 dark:text-green-400' : 'text-foreground'}`}>
-            {formatPln(cashReceived)}
-          </span>
-        </span>
-        {outstandingTotal > 0 && (
-          <span className="text-xs text-muted-foreground">
-            Oczekuje:{' '}
-            <span className="text-sm font-bold text-yellow-600">{formatPln(outstandingTotal)}</span>
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// KosztyBlock
-// ---------------------------------------------------------------------------
-
-interface KosztyBlockProps {
-  month: CashFlowMonth;
-  payables?: PayablesData;
-  onAddKoszty: () => void;
-}
-
-function KosztyBlock({ month, payables, onAddKoszty }: KosztyBlockProps) {
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [fixedOpen, setFixedOpen] = useState(false);
-  const [payablesOpen, setPayablesOpen] = useState(false);
-
-  const totalCosts = month.costs_ksef + month.costs_quick + month.costs_fixed;
-  const overduePayables = payables?.items.filter((p) => p.days_until < 0).reduce((s, p) => s + p.amount, 0) ?? 0;
-  const soonPayables = payables?.items.filter((p) => p.days_until >= 0 && p.days_until <= 7).reduce((s, p) => s + p.amount, 0) ?? 0;
-  const laterPayables = payables?.items.filter((p) => p.days_until > 7).reduce((s, p) => s + p.amount, 0) ?? 0;
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-border border-t-[3px] border-t-orange-500">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border bg-orange-50/60 px-4 py-3 dark:bg-orange-950/20">
-        <h3 className="text-sm font-bold uppercase tracking-wide text-orange-800 dark:text-orange-300">
-          Koszty i zobowiązania
-        </h3>
-        <button
-          onClick={onAddKoszty}
-          className="text-xs font-medium text-orange-700 hover:underline underline-offset-2 dark:text-orange-400"
-        >
-          + Dodaj
-        </button>
-      </div>
-
-      {/* Faktury od dostawców (KSeF) */}
-      <div className="flex items-start justify-between px-4 py-3.5">
-        <div>
-          <p className="text-sm font-medium">Faktury od dostawców (KSeF)</p>
-          <p className="text-xs text-muted-foreground">
-            {month.costs_ksef_count ?? 0}{' '}
-            {(month.costs_ksef_count ?? 0) === 1
-              ? 'faktura skategoryzowana'
-              : (month.costs_ksef_count ?? 0) <= 4
-                ? 'faktury skategoryzowane'
-                : 'faktur skategoryzowanych'}
-          </p>
-        </div>
-        <span className="text-base font-bold shrink-0 ml-2">{formatPln(month.costs_ksef)}</span>
-      </div>
-
-      {/* Inne zakupy i wydatki */}
-      <div className="border-t-2 border-border/60">
-        <button
-          type="button"
-          disabled={(month.costs_quick_by_category?.length ?? 0) === 0}
-          className="w-full flex items-start justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors text-left disabled:cursor-default disabled:hover:bg-transparent"
-          onClick={() => setQuickOpen((v) => !v)}
-        >
-          <div>
-            <p className="text-sm font-medium">Inne zakupy i wydatki</p>
-            <p className="text-xs text-muted-foreground">paliwo, materiały itp.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-base font-bold">{formatPln(month.costs_quick)}</span>
-            {(month.costs_quick_by_category?.length ?? 0) > 0 && (
-              <span className="text-xs text-muted-foreground">{quickOpen ? '▲' : '▼'}</span>
-            )}
-          </div>
-        </button>
-        {quickOpen && (month.costs_quick_by_category?.length ?? 0) > 0 && (
-          <div className="mx-4 mb-3 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
-            {month.costs_quick_by_category!.map((cat, i) => (
-              <div key={i} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-muted-foreground">{cat.label}</span>
-                  <span className="text-muted-foreground/60">
-                    · {cat.count} {cat.count === 1 ? 'wpis' : 'wpisy'}
-                  </span>
-                </div>
-                <span className="font-medium tabular-nums">{formatPln(cat.total)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Koszty stałe */}
-      <div className="border-t-2 border-border/60">
-        <button
-          type="button"
-          disabled={(month.costs_fixed_items?.length ?? 0) === 0}
-          className="w-full flex items-start justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors text-left disabled:cursor-default disabled:hover:bg-transparent"
-          onClick={() => setFixedOpen((v) => !v)}
-        >
-          <div>
-            <p className="text-sm font-medium">Koszty stałe</p>
-            {month.costs_fixed_items !== undefined && (
-              <p className="text-xs text-muted-foreground">
-                {month.costs_fixed_items.length}{' '}
-                {month.costs_fixed_items.length === 1 ? 'pozycja' : 'pozycji'}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-base font-bold">{formatPln(month.costs_fixed)}</span>
-            {(month.costs_fixed_items?.length ?? 0) > 0 && (
-              <span className="text-xs text-muted-foreground">{fixedOpen ? '▲' : '▼'}</span>
-            )}
-          </div>
-        </button>
-        {fixedOpen && (month.costs_fixed_items?.length ?? 0) > 0 && (
-          <div className="mx-4 mb-3 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
-            {month.costs_fixed_items!.map((item, i) => (
-              <div key={i} className="flex justify-between text-xs">
-                <span className="text-muted-foreground">{item.description}</span>
-                <span className="font-medium tabular-nums">{formatPln(item.amount)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Niezapłacone faktury dostawców */}
-      {payables && payables.total_count > 0 && (
-        <div className="border-t-2 border-orange-200 dark:border-orange-800">
-          {/* Sub-header */}
-          <div className="flex items-center justify-between bg-orange-50/80 px-4 py-2 dark:bg-orange-950/30">
-            <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-400">
-              Do zapłaty dostawcom
-            </p>
-            <button
-              type="button"
-              onClick={() => setPayablesOpen((v) => !v)}
-              className="text-xs font-medium text-orange-700 dark:text-orange-400"
-            >
-              {payablesOpen ? 'Zwiń ▲' : 'Szczegóły ▼'}
-            </button>
-          </div>
-          <button
-            type="button"
-            className="w-full flex items-start justify-between px-4 py-3.5 hover:bg-orange-50/40 dark:hover:bg-orange-950/20 transition-colors text-left"
-            onClick={() => setPayablesOpen((v) => !v)}
-          >
-            <div>
-              <p className="text-sm font-medium">Niezapłacone faktury dostawców</p>
-              <p className="text-xs text-muted-foreground">
-                {payables.total_count} {plFaktura(payables.total_count)} niezapłaconych
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-base font-bold text-orange-700 dark:text-orange-400">
-                −{formatPln(payables.total_amount)}
-              </span>
-            </div>
-          </button>
-
-          {(overduePayables > 0 || soonPayables > 0 || laterPayables > 0) && (
-            <div className="flex gap-2 px-4 pb-3">
-              {overduePayables > 0 && (
-                <div className="flex-1 rounded-lg bg-destructive/10 px-2 py-2 text-center">
-                  <p className="text-xs font-semibold text-destructive">−{formatPln(overduePayables)}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Zaległe</p>
-                </div>
-              )}
-              {soonPayables > 0 && (
-                <div className="flex-1 rounded-lg bg-orange-500/10 px-2 py-2 text-center">
-                  <p className="text-xs font-semibold text-orange-600">−{formatPln(soonPayables)}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Do 7 dni</p>
-                </div>
-              )}
-              {laterPayables > 0 && (
-                <div className="flex-1 rounded-lg bg-muted px-2 py-2 text-center">
-                  <p className="text-xs font-semibold">−{formatPln(laterPayables)}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Później</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {payablesOpen && (
-            <div className="divide-y divide-border border-t border-border">
-              {payables.items.map((p) => (
-                <Link
-                  key={p.id}
-                  to="/ksef/inbox?is_paid=false"
-                  className="flex items-center justify-between px-4 py-3 hover:bg-orange-50/40 dark:hover:bg-orange-950/20 transition-colors"
-                >
-                  <div className="min-w-0 flex-1 pr-3">
-                    <p className="truncate text-sm font-medium">{p.seller_name}</p>
-                    {p.invoice_number && (
-                      <p className="text-xs text-muted-foreground">{p.invoice_number}</p>
-                    )}
-                    {p.issue_date && (
-                      <p className="text-xs text-muted-foreground">
-                        {format(parseISO(p.issue_date), 'd MMM yyyy', { locale: pl })}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">
-                        −{formatPln(p.amount)}
-                      </p>
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${daysBadge(p.days_until)}`}>
-                        {daysLabel(p.days_until)}
-                      </span>
-                    </div>
-                    <span className="text-muted-foreground text-xs">→</span>
-                  </div>
-                </Link>
-              ))}
-              <Link
-                to="/ksef/inbox?is_paid=false"
-                className="flex items-center justify-center gap-1 px-4 py-2.5 text-xs font-medium text-orange-700 dark:text-orange-400 hover:bg-orange-50/40 dark:hover:bg-orange-950/20 transition-colors"
-              >
-                Zobacz wszystkie niezapłacone ({payables.total_count}) →
-              </Link>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Footer */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border bg-orange-50/60 px-4 py-3 dark:bg-orange-950/20">
-        <span className="text-xs text-muted-foreground">
-          Koszty:{' '}
-          <span className="text-sm font-bold text-foreground">{formatPln(totalCosts)}</span>
-        </span>
-        {payables && payables.total_count > 0 && (
-          <span className="text-xs text-muted-foreground">
-            Do zapłaty dostawcom:{' '}
-            <span className="text-sm font-bold text-orange-700 dark:text-orange-400">
-              {formatPln(payables.total_amount)}
-            </span>
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// WaterfallCard
-// ---------------------------------------------------------------------------
-
-interface WaterfallCardProps {
-  grossMargin: number;
-  grossMarginPct: number | null;
-  variableCatEntries: [string, { label: string; total: number }][];
-  overheadCosts: number;
-  overheadCatEntries: [string, { label: string; total: number }][];
-  fixedCosts: number;
-  fixedItems?: { description: string; category: string; amount: number }[];
-  taxTotal: number;
-  vatToPay: number;
-  zusSocial: number;
-  zusHealth: number;
-  pitEstimate: number;
-  est: number;
-  isLoss: boolean;
-  uncategorizedKsefCount: number;
-}
-
-function WaterfallCard({
-  grossMargin, grossMarginPct, variableCatEntries, overheadCosts, overheadCatEntries,
-  fixedCosts, fixedItems, taxTotal, vatToPay, zusSocial, zusHealth, pitEstimate,
-  est, isLoss, uncategorizedKsefCount,
-}: WaterfallCardProps) {
-  const [marginOpen, setMarginOpen] = useState(false);
-  const [overheadOpen, setOverheadOpen] = useState(false);
-  const [fixedOpen, setFixedOpen] = useState(false);
-  const [taxOpen, setTaxOpen] = useState(false);
-
-  const hasMarginDetail = variableCatEntries.length > 0 || uncategorizedKsefCount > 0;
-  const hasOverheadDetail = overheadCatEntries.length > 0;
-  const hasFixedDetail = (fixedItems?.length ?? 0) > 0;
-  const hasTaxDetail = taxTotal > 0;
-
-  return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      {/* Row: Marża brutto */}
-      <button
-        type="button"
-        disabled={!hasMarginDetail}
-        onClick={() => hasMarginDetail && setMarginOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 border-b border-border/60 text-left hover:bg-muted/30 transition-colors disabled:hover:bg-transparent disabled:cursor-default"
-      >
-        <div>
-          <p className="text-xs font-medium">Marża brutto</p>
-          <p className="text-[11px] text-muted-foreground">przychody − surowce, materiały, transport</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {grossMarginPct !== null && (
-            <span className={`rounded-md px-1.5 py-0.5 text-xs font-bold ${
-              grossMargin < 0 ? 'bg-red-100 text-destructive' : 'bg-green-100 text-green-700'
-            }`}>
-              {grossMarginPct}%
-            </span>
-          )}
-          <span className={`text-sm font-bold tabular-nums ${grossMargin < 0 ? 'text-destructive' : 'text-green-700 dark:text-green-400'}`}>
-            {formatPln(grossMargin)}
-          </span>
-          {hasMarginDetail && <span className="text-[10px] text-muted-foreground">{marginOpen ? '▲' : '▼'}</span>}
-        </div>
-      </button>
-      {marginOpen && variableCatEntries.length > 0 && (
-        <div className="border-b border-border/60 bg-muted/20 px-4 py-2.5 space-y-1">
-          {variableCatEntries.map(([slug, { label, total }]) => (
-            <div key={slug} className="flex justify-between text-xs">
-              <span className="text-muted-foreground">{label}</span>
-              <span className="font-medium tabular-nums">{formatPln(total)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {marginOpen && uncategorizedKsefCount > 0 && (
-        <Link
-          to="/ksef/inbox?categorized=false"
-          className="flex items-center justify-between border-b border-border/60 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-2.5 hover:bg-amber-100/60 transition-colors"
-        >
-          <span className="text-xs text-amber-700 dark:text-amber-400">
-            ⚠ {uncategorizedKsefCount === 1
-              ? '1 faktura bez kategorii — nie jest wliczona'
-              : `${uncategorizedKsefCount} faktury bez kategorii — nie są wliczone`}
-          </span>
-          <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Przypisz →</span>
-        </Link>
-      )}
-
-      {/* Row: Inne koszty operacyjne (media, usługi, naprawa...) */}
-      {overheadCosts > 0 && (
-        <>
-          <button
-            type="button"
-            disabled={!hasOverheadDetail}
-            onClick={() => hasOverheadDetail && setOverheadOpen(v => !v)}
-            className="w-full flex items-center justify-between px-4 py-2.5 border-b border-border/60 text-left hover:bg-muted/30 transition-colors disabled:hover:bg-transparent disabled:cursor-default"
-          >
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">− Inne koszty</p>
-              <p className="text-[11px] text-muted-foreground">media, usługi, naprawa, czynsz KSeF</p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-sm tabular-nums text-muted-foreground">{formatPln(overheadCosts)}</span>
-              {hasOverheadDetail && <span className="text-[10px] text-muted-foreground">{overheadOpen ? '▲' : '▼'}</span>}
-            </div>
-          </button>
-          {overheadOpen && hasOverheadDetail && (
-            <div className="border-b border-border/60 bg-muted/20 px-4 py-2.5 space-y-1">
-              {overheadCatEntries.map(([slug, { label, total }]) => (
-                <div key={slug} className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className="font-medium tabular-nums">{formatPln(total)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Row: Koszty stałe */}
-      <button
-        type="button"
-        disabled={!hasFixedDetail}
-        onClick={() => hasFixedDetail && setFixedOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 border-b border-border/60 text-left hover:bg-muted/30 transition-colors disabled:hover:bg-transparent disabled:cursor-default"
-      >
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">− Koszty stałe</p>
-          <p className="text-[11px] text-muted-foreground">czynsz, pracownicy, leasing</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm tabular-nums text-muted-foreground">{formatPln(fixedCosts)}</span>
-          {hasFixedDetail && <span className="text-[10px] text-muted-foreground">{fixedOpen ? '▲' : '▼'}</span>}
-        </div>
-      </button>
-      {fixedOpen && hasFixedDetail && (
-        <div className="border-b border-border/60 bg-muted/20 px-4 py-2.5 space-y-1">
-          {fixedItems!.map((item, i) => (
-            <div key={i} className="flex justify-between text-xs">
-              <span className="text-muted-foreground">{item.description}</span>
-              <span className="font-medium tabular-nums">{formatPln(item.amount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Row: Podatki i ZUS */}
-      <button
-        type="button"
-        disabled={!hasTaxDetail}
-        onClick={() => hasTaxDetail && setTaxOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 border-b border-border/60 text-left hover:bg-muted/30 transition-colors disabled:hover:bg-transparent disabled:cursor-default"
-      >
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">− Podatki i ZUS</p>
-          <p className="text-[11px] text-muted-foreground">VAT, ZUS, PIT</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm tabular-nums text-muted-foreground">{formatPln(taxTotal)}</span>
-          {hasTaxDetail && <span className="text-[10px] text-muted-foreground">{taxOpen ? '▲' : '▼'}</span>}
-        </div>
-      </button>
-      {taxOpen && hasTaxDetail && (
-        <div className="border-b border-border/60 bg-muted/20 px-4 py-2.5 space-y-1">
-          {vatToPay > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">VAT do zapłaty</span>
-              <span className="font-medium tabular-nums">{formatPln(vatToPay)}</span>
-            </div>
-          )}
-          {zusSocial > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">ZUS społeczny</span>
-              <span className="font-medium tabular-nums">{formatPln(zusSocial)}</span>
-            </div>
-          )}
-          {zusHealth > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Składka zdrowotna</span>
-              <span className="font-medium tabular-nums">{formatPln(zusHealth)}</span>
-            </div>
-          )}
-          {pitEstimate > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Podatek dochodowy</span>
-              <span className="font-medium tabular-nums">{formatPln(pitEstimate)}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Row: Wynik końcowy */}
-      <div className={`flex items-center justify-between px-4 py-3 ${isLoss ? 'bg-red-50 dark:bg-red-950/20' : 'bg-green-50/50 dark:bg-green-950/10'}`}>
-        <p className="text-sm font-semibold">{isLoss ? 'Szacowana strata' : 'Szacowany zysk'}</p>
-        <span className={`text-base font-bold tabular-nums ${isLoss ? 'text-destructive' : 'text-green-700 dark:text-green-400'}`}>
-          {formatPln(est)}
-        </span>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -806,6 +163,7 @@ interface PrzegladTabProps {
 function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig }: PrzegladTabProps) {
   const now = new Date();
   const { data, isLoading } = useCashFlowDashboardQuery(currentMonth);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { data: _expenses = [] } = useQuickExpensesQuery(currentMonth);
   const today = data?.today;
   const month = data?.month;
@@ -821,55 +179,50 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
   if (isLoading) return <CashFlowSkeleton variant="month" />;
   if (!today || !month) return null;
 
-  const est = month.really_yours_estimate;
-  const isLoss = est < 0;
+  // ── Key numbers ──
   const totalRevenue = month.revenue_paid + month.b2c_revenue;
-
-  // Hero section computed values
-  const outstandingForHero = today.receivables.reduce((s, r) => s + r.amount, 0);
-  const taxTotalForHero = today.upcoming_obligations.reduce((s, ob) => s + ob.amount, 0);
-  const payablesTotal = today.payables.total_amount;
-
-  // Waterfall: variable costs from ksef+quick by category, fixed = costs_fixed
-  const ksefByCat = month.costs_ksef_by_category ?? [];
-  const quickByCat = month.costs_quick_by_category ?? [];
-
-  // Merge ksef + quick by category slug
-  const allCatMap = new Map<string, { label: string; total: number }>();
-  for (const item of [...ksefByCat, ...quickByCat]) {
-    const existing = allCatMap.get(item.category);
-    allCatMap.set(item.category, {
-      label: item.label,
-      total: (existing?.total ?? 0) + item.total,
-    });
-  }
-
-  // Variable costs: raw materials, packaging, fuel, transport → reduce gross margin
-  const variableCatEntries = Array.from(allCatMap.entries())
-    .filter(([slug]) => VARIABLE_COST_SLUGS.has(slug))
-    .sort((a, b) => b[1].total - a[1].total);
-  const variableCosts = variableCatEntries.reduce((s, [, v]) => s + v.total, 0);
-
-  // Overhead KSeF/quick costs: rent, utilities, services, repair etc. → separate row
-  const overheadCatEntries = Array.from(allCatMap.entries())
-    .filter(([slug]) => !VARIABLE_COST_SLUGS.has(slug))
-    .sort((a, b) => b[1].total - a[1].total);
-  const overheadCosts = overheadCatEntries.reduce((s, [, v]) => s + v.total, 0);
-
-  const grossMargin = totalRevenue - variableCosts;
-  const grossMarginPct = totalRevenue > 0 ? Math.round((grossMargin / totalRevenue) * 100) : null;
-  const fixedCosts = month.costs_fixed;
+  const totalCosts = month.costs_ksef + month.costs_quick + month.costs_fixed;
   const taxTotal = month.vat_to_pay + month.zus_social + month.zus_health + month.pit_estimate;
+  // Wynik = po wszystkim: koszty operacyjne + zarezerwowane podatki
+  const wynik = month.really_yours_estimate;
+  const isLoss = wynik < 0;
+  // breakEven — ile brakuje do pokrycia kosztów operacyjnych (bez podatków, to osobna sekcja)
+  const operatingResult = totalRevenue - totalCosts;
+  const breakEven = operatingResult < 0 ? Math.abs(operatingResult) : 0;
 
+  // Outstanding receivables
+  const outstandingTotal = isCurrentMonth
+    ? today.receivables.reduce((s, r) => s + r.amount, 0)
+    : month.revenue_outstanding;
+  const outstandingCount = isCurrentMonth
+    ? today.receivables.length
+    : (month.revenue_outstanding_count ?? 0);
+  const overdueAmount = isCurrentMonth
+    ? today.receivables.filter(r => (r.days_until ?? 0) < 0).reduce((s, r) => s + r.amount, 0)
+    : 0;
+  const soonAmount = isCurrentMonth
+    ? today.receivables.filter(r => { const d = r.days_until ?? 0; return d >= 0 && d <= 7; }).reduce((s, r) => s + r.amount, 0)
+    : 0;
 
-  const hasTaxes =
-    month.vat_to_pay > 0 ||
-    month.zus_social > 0 ||
-    month.zus_health > 0 ||
-    month.pit_estimate > 0;
+  const zusTotal = month.zus_social + month.zus_health;
+
+  // VAT period label
+  const [periodYYYY, periodMM] = currentMonth.split('-');
+  const vatLabel = `VAT ${parseInt(periodMM)}/${periodYYYY}`;
+
+  // Obligations from today (current month only)
+  const vatOb  = today.upcoming_obligations.find((ob: TaxObligation) => ob.type === 'vat');
+  const zusOb  = today.upcoming_obligations.find((ob: TaxObligation) => ob.type === 'zus');
+  const zusHOb = today.upcoming_obligations.find((ob: TaxObligation) => ob.type === 'zus_health');
+  const pitOb  = today.upcoming_obligations.find((ob: TaxObligation) => ob.type === 'pit');
+
+  const monthLabel = format(parseISO(`${currentMonth}-01`), 'LLLL yyyy', { locale: pl });
+
+  // Fixed costs labels
+  const fixedSub = month.costs_fixed_items?.slice(0, 3).map(i => i.description).join(', ');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* ── Month navigator ── */}
       <div className="flex items-center justify-between">
         <button
@@ -879,8 +232,8 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
         >
           ←
         </button>
-        <span className="text-sm font-semibold">
-          {format(parseISO(`${currentMonth}-01`), 'LLLL yyyy', { locale: pl })}
+        <span className="text-sm font-semibold capitalize">
+          {monthLabel}
           {!isCurrentMonth && (
             <span className="ml-2 text-xs font-normal text-muted-foreground">· dane historyczne</span>
           )}
@@ -895,112 +248,89 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
         </button>
       </div>
 
-      {/* ── Hero — only current month ── */}
-      {isCurrentMonth && (
-        <div className="space-y-3">
-          {/* Income + Obligations cards */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* LEFT: Income */}
-            <div className="rounded-2xl border border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-950/20 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">
-                Przychody
-              </p>
-              <p className="mt-1 text-xl font-bold tracking-tight text-green-700 dark:text-green-400 leading-tight">
-                {formatPln(totalRevenue)}
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">wpłynęło w tym miesiącu</p>
-              {outstandingForHero > 0 && (
-                <div className="mt-2 border-t border-green-200/60 dark:border-green-800/60 pt-2">
-                  <p className="text-xs text-muted-foreground">
-                    Oczekuje:{' '}
-                    <span className="font-semibold text-yellow-600">{formatPln(outstandingForHero)}</span>
-                  </p>
-                </div>
-              )}
-            </div>
+      {/* ── 3-column summary ── */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-xl border border-border bg-card p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Wpłynęło</p>
+          <p className="mt-1 text-base font-bold tabular-nums text-green-700">{formatPln(totalRevenue)}</p>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Koszty</p>
+          <p className="mt-1 text-base font-bold tabular-nums text-foreground">{formatPln(totalCosts)}</p>
+        </div>
+        <div className={`rounded-xl border p-3 ${isLoss ? 'border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20' : 'border-green-200 bg-green-50/40 dark:border-green-900 dark:bg-green-950/20'}`}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Wynik</p>
+          <p className={`mt-1 text-base font-bold tabular-nums ${isLoss ? 'text-destructive' : 'text-green-700'}`}>
+            {formatPln(wynik)}
+          </p>
+        </div>
+      </div>
 
-            {/* RIGHT: Obligations */}
-            <div className={`rounded-2xl p-4 ${
-              taxTotalForHero + payablesTotal > 0
-                ? 'border border-orange-200 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/20'
-                : 'border border-border bg-muted/20'
-            }`}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-400">
-                Do zapłaty
-              </p>
-              <p className="mt-1 text-xl font-bold tracking-tight text-orange-700 dark:text-orange-400 leading-tight">
-                {formatPln(taxTotalForHero + payablesTotal)}
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">podatki i zobowiązania</p>
-              {taxTotalForHero > 0 && payablesTotal > 0 && (
-                <div className="mt-2 border-t border-orange-200/60 dark:border-orange-800/60 pt-2 space-y-0.5">
-                  <p className="text-xs text-muted-foreground">
-                    Podatki: <span className="font-medium">{formatPln(taxTotalForHero)}</span>
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Dostawcy: <span className="font-medium">{formatPln(payablesTotal)}</span>
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Balance row — only if balance was actually set and > 0 */}
-          {today.balance_updated_at && today.total_available > 0 ? (
-            <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-2.5">
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span>
-                  Na koncie:{' '}
-                  <span className="font-semibold text-foreground">{formatPln(today.total_available)}</span>
-                </span>
-                <span>
-                  Wolne:{' '}
-                  <span className={`font-semibold ${today.really_yours < 0 ? 'text-destructive' : 'text-green-600'}`}>
-                    {today.really_yours < 0
-                      ? `brakuje ${formatPln(Math.abs(today.really_yours))}`
-                      : formatPln(today.really_yours)}
-                  </span>
-                </span>
-              </div>
-              <button
-                onClick={onOpenConfig}
-                className="shrink-0 ml-2 text-xs font-medium text-primary hover:underline underline-offset-2"
-              >
-                Aktualizuj
-              </button>
-            </div>
-          ) : (
-            <div className="px-1">
-              <button
-                onClick={onOpenConfig}
-                className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline transition-colors"
-              >
-                + Dodaj stan konta, żeby widzieć ile zostaje po podatkach
-              </button>
-            </div>
-          )}
-
+      {/* ── Outstanding banner — current month only ── */}
+      {isCurrentMonth && outstandingTotal > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-yellow-200 bg-yellow-50/60 px-4 py-3 dark:border-yellow-800 dark:bg-yellow-950/20">
+          <p className="text-sm text-yellow-800 dark:text-yellow-300">
+            <span className="font-semibold">+{formatPln(outstandingTotal)}</span> oczekuje
+            {overdueAmount > 0 && (
+              <span className="ml-2 text-xs font-medium text-destructive">
+                · {formatPln(overdueAmount)} zaległe
+              </span>
+            )}
+            {soonAmount > 0 && overdueAmount === 0 && (
+              <span className="ml-2 text-xs font-medium text-orange-600">
+                · {formatPln(soonAmount)} do 7 dni
+              </span>
+            )}
+          </p>
+          <Link
+            to="/invoices"
+            className="shrink-0 rounded-lg bg-yellow-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-yellow-700 transition-colors"
+          >
+            Przypomnij klientom
+          </Link>
         </div>
       )}
 
-      {/* ── Waterfall — shown for all months ── */}
-      <WaterfallCard
-        grossMargin={grossMargin}
-        grossMarginPct={grossMarginPct}
-        variableCatEntries={variableCatEntries}
-        overheadCosts={overheadCosts}
-        overheadCatEntries={overheadCatEntries}
-        fixedCosts={fixedCosts}
-        fixedItems={month.costs_fixed_items}
-        taxTotal={taxTotal}
-        vatToPay={month.vat_to_pay}
-        zusSocial={month.zus_social}
-        zusHealth={month.zus_health}
-        pitEstimate={month.pit_estimate}
-        uncategorizedKsefCount={month.uncategorized_ksef_count}
-        est={est}
-        isLoss={isLoss}
-      />
+      {/* ── Bank balance row ── */}
+      {isCurrentMonth && (
+        today.balance_updated_at && today.total_available > 0 ? (
+          <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-2.5">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>
+                Na koncie:{' '}
+                <span className="font-semibold text-foreground">{formatPln(today.total_available)}</span>
+              </span>
+              {today.vat_balance > 0 && (
+                <span title="Środki zablokowane na rachunku VAT (split payment) — niedostępne do swobodnego użycia">
+                  🔒 VAT:{' '}
+                  <span className="font-semibold text-amber-600">{formatPln(today.vat_balance)}</span>
+                </span>
+              )}
+              <span>
+                Wolne:{' '}
+                <span className={`font-semibold ${today.really_yours < 0 ? 'text-destructive' : 'text-green-600'}`}>
+                  {today.really_yours < 0
+                    ? `brakuje ${formatPln(Math.abs(today.really_yours))}`
+                    : formatPln(today.really_yours)}
+                </span>
+              </span>
+            </div>
+            <button
+              onClick={onOpenConfig}
+              className="shrink-0 ml-2 text-xs font-medium text-primary hover:underline underline-offset-2"
+            >
+              Aktualizuj
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={onOpenConfig}
+            className="px-1 text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline transition-colors"
+          >
+            + Dodaj stan konta, żeby widzieć ile zostaje po podatkach
+          </button>
+        )
+      )}
 
       {/* ── Alerts ── */}
       {month.tax_threshold_alert && (
@@ -1046,221 +376,498 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
         </div>
       )}
 
-      {/* ── Przychody ── */}
-      <PrzychodyBlock
-        month={month}
-        receivables={isCurrentMonth ? today.receivables : undefined}
-      />
-
-      {/* ── Koszty i zobowiązania ── */}
-      <KosztyBlock
-        month={month}
-        payables={isCurrentMonth && today.payables.total_count > 0 ? today.payables : undefined}
-        onAddKoszty={onAddKoszty}
-      />
-
-      {/* ── Płatności (bieżący miesiąc) ── */}
-      {isCurrentMonth && today.upcoming_obligations.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 dark:text-slate-300">
-              Płatności
-            </h3>
-            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+      {/* ── Accordion: WPŁYNĘŁO ── */}
+      <Section title="Wpłynęło" total={totalRevenue} totalColor="text-green-700">
+        {/* B2B paid — expandable invoice list */}
+        <InnerExpandable
+          label="Faktury B2B opłacone"
+          sub={`${month.revenue_paid_count ?? 0} ${plFaktura(month.revenue_paid_count ?? 0)}`}
+          amount={month.revenue_paid}
+          amountColor={month.revenue_paid > 0 ? 'text-green-700' : 'text-muted-foreground'}
+          disabled={(month.revenue_paid_top?.length ?? 0) === 0}
+        >
+          {(month.revenue_paid_top?.length ?? 0) > 0 && month.revenue_paid_top!.map(item => (
+            <Link
+              key={item.id}
+              to={`/invoices/${item.id}`}
+              className="flex items-center justify-between -mx-2 px-2 py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+            >
+              <div className="min-w-0 flex-1 pr-2">
+                <p className="truncate text-xs font-medium">{item.name}</p>
+                <p className="text-[10px] text-muted-foreground">{item.invoice_number}</p>
+                {item.date && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Opłacono: {format(parseISO(item.date), 'd MMM', { locale: pl })}
+                  </p>
+                )}
+              </div>
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-green-700">{formatPln(item.amount)}</span>
+            </Link>
+          ))}
+          <div className="pt-1 border-t border-border/40 mt-1">
+            <Link
+              to={`/invoices?status=paid&month=${month.period}`}
+              className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+            >
+              <svg viewBox="0 0 16 16" className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 8h10M9 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Wszystkie faktury opłacone ({month.revenue_paid_count ?? 0})
+            </Link>
           </div>
+        </InnerExpandable>
 
-          {today.upcoming_obligations.map((ob: TaxObligation, i) => {
-            const breakdown: React.ReactNode =
-              ob.type === 'vat' ? (
-                <>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">VAT należny (ze sprzedaży)</span>
-                    <span className="font-medium tabular-nums">{formatPln(month.vat_output)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">VAT naliczony (odliczenie)</span>
-                    <span className="font-medium tabular-nums text-muted-foreground">− {formatPln(month.vat_input)}</span>
-                  </div>
-                  <div className="flex justify-between border-t border-border pt-1.5 text-xs">
-                    <span className="font-medium">VAT do zapłaty</span>
-                    <span className="font-semibold tabular-nums">{formatPln(month.vat_to_pay)}</span>
-                  </div>
-                  {month.vat_input_invoices.length > 0 && (
-                    <details className="mt-1">
-                      <summary className="list-none cursor-pointer text-xs text-primary hover:underline underline-offset-2">
-                        Faktury odliczające VAT ({month.vat_input_invoices.length}) ▾
-                      </summary>
-                      <div className="mt-1 space-y-1 rounded-lg bg-muted/50 p-2">
-                        {month.vat_input_invoices.map((inv) => (
-                          <div key={inv.id} className="flex items-center justify-between text-xs">
-                            <span className="truncate text-muted-foreground">
-                              {inv.vendor || 'Nieznany dostawca'} ·{' '}
-                              {format(parseISO(inv.issue_date), 'd MMM', { locale: pl })}
-                            </span>
-                            <span className="ml-2 shrink-0 font-medium">{formatPln(inv.vat_amount)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  )}
-                  {month.vat_surplus > 0 && (
-                    <p className="text-xs text-green-600">Nadpłata VAT: {formatPln(month.vat_surplus)}</p>
-                  )}
-                </>
-              ) : ob.type === 'zus' ? (
-                <>
-                  {month.zus_breakdown?.map((row, j) => (
-                    <div key={j} className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-medium tabular-nums">{row.value}</span>
+        {/* B2C */}
+        <InnerExpandable
+          label="Sprzedaż gotówkowa B2C"
+          sub={(month.b2c_entries_count ?? 0) > 0 ? `${month.b2c_entries_count} wpisów` : undefined}
+          amount={month.b2c_revenue}
+          amountColor={month.b2c_revenue > 0 ? 'text-green-700' : 'text-muted-foreground'}
+          disabled={(month.b2c_top?.length ?? 0) === 0}
+          action={
+            <Link
+              to={`/cash-flow/sprzedaz?month=${month.period}`}
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-sm font-bold leading-none"
+              aria-label="Dodaj sprzedaż B2C"
+            >
+              +
+            </Link>
+          }
+        >
+          {(month.b2c_top?.length ?? 0) > 0 && month.b2c_top!.map(item => (
+            <div key={item.uuid} className="py-1.5 border-b border-border/30 last:border-0">
+              <div className="flex items-start justify-between">
+                <p className="text-xs text-muted-foreground">
+                  {format(parseISO(item.date), 'EEEE d MMM', { locale: pl })}
+                </p>
+                <span className="shrink-0 text-xs font-semibold tabular-nums text-green-700 ml-2">{formatPln(item.amount)}</span>
+              </div>
+              {/* Product lines breakdown */}
+              {item.lines.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {item.lines.map((line, i) => (
+                    <div key={i} className="flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span className="truncate max-w-[65%]">
+                        {line.qty > 1 ? `${line.qty} × ` : ''}{line.name}
+                      </span>
+                      <span className="tabular-nums">{formatPln(line.line_revenue)}</span>
                     </div>
                   ))}
-                </>
-              ) : ob.type === 'zus_health' ? (
-                <>
-                  {month.health_breakdown?.map((row, j) => (
-                    <div key={j} className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-medium tabular-nums">{row.value}</span>
-                    </div>
-                  ))}
-                </>
-              ) : ob.type === 'pit' ? (
-                <>
-                  {month.pit_breakdown?.map((row, j) => (
-                    <div
-                      key={j}
-                      className={`flex justify-between text-xs ${
-                        row.label.startsWith('=') || row.label === 'Zaliczka podatku dochodowego'
-                          ? 'border-t border-border pt-1.5 font-semibold'
-                          : ''
-                      }`}
-                    >
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-medium tabular-nums">{row.value}</span>
-                    </div>
-                  ))}
-                </>
-              ) : ob.breakdown ? (
-                <>
-                  {ob.breakdown.map((row, j) => (
-                    <div key={j} className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-medium tabular-nums">{row.value}</span>
-                    </div>
-                  ))}
-                </>
-              ) : null;
+                </div>
+              )}
+              {/* Manual entry note */}
+              {item.sale_type === 'manual' && item.notes && (
+                <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">{item.notes}</p>
+              )}
+            </div>
+          ))}
+          <div className="pt-1 border-t border-border/40 mt-1">
+            <Link
+              to={`/cash-flow/sprzedaz?month=${month.period}`}
+              className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+            >
+              <svg viewBox="0 0 16 16" className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 8h10M9 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Wszystkie wpisy B2C ({month.b2c_entries_count ?? 0})
+            </Link>
+          </div>
+        </InnerExpandable>
 
-            const label: React.ReactNode =
-              ob.type === 'zus' ? (
-                <span className="flex items-center gap-1">
-                  {ob.label}
-                  <span title="ZUS społeczny obniża podstawę opodatkowania PIT." className="cursor-help text-xs text-muted-foreground/60">ⓘ</span>
-                </span>
-              ) : ob.type === 'zus_health' ? (
-                <span className="flex items-center gap-1">
-                  {ob.label}
-                  <span title="Na skali: 9% dochodu. Na liniówce: 4,9% dochodu." className="cursor-help text-xs text-muted-foreground/60">ⓘ</span>
-                </span>
-              ) : ob.type === 'pit' ? (
-                <span className="flex items-center gap-1">
-                  {ob.label}
-                  {month.pit_is_estimate && (
-                    <span title="Szacunek — rzeczywista zaliczka może się różnić." className="cursor-help text-xs text-muted-foreground/60">ⓘ</span>
-                  )}
-                </span>
-              ) : ob.label;
+        {/* Outstanding — expandable receivables list */}
+        {outstandingTotal > 0 && (
+          <>
+            <div className="mx-4 border-t border-dashed border-border/70" />
+            <InnerExpandable
+              label={`⏳ Oczekuje (${outstandingCount} ${plFaktura(outstandingCount)})`}
+              sub={[
+                overdueAmount > 0 ? `${formatPln(overdueAmount)} po terminie` : '',
+                soonAmount > 0 ? `${formatPln(soonAmount)} do 7 dni` : '',
+              ].filter(Boolean).join(' · ') || undefined}
+              amount={outstandingTotal}
+              amountColor="text-yellow-600"
+              disabled={isCurrentMonth ? today.receivables.length === 0 : (month.revenue_outstanding_top?.length ?? 0) === 0}
+            >
+              {/* Current month: individual receivable links */}
+              {isCurrentMonth && today.receivables.length > 0 && today.receivables.map(r => (
+                <Link
+                  key={r.id}
+                  to={`/invoices/${r.id}`}
+                  className="flex items-center justify-between -mx-2 px-2 py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+                >
+                  <div className="min-w-0 flex-1 pr-2">
+                    <p className="truncate text-xs font-medium">{r.customer_name || r.invoice_number}</p>
+                    {r.customer_name && r.invoice_number && (
+                      <p className="text-[10px] text-muted-foreground">{r.invoice_number}</p>
+                    )}
+                    {r.due_date && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Termin: {format(parseISO(r.due_date), 'd MMM', { locale: pl })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs font-semibold text-yellow-600">{formatPln(r.amount)}</p>
+                    {r.days_until !== null && (
+                      <span className={`text-[10px] font-medium ${r.days_until < 0 ? 'text-destructive' : r.days_until <= 7 ? 'text-orange-600' : 'text-muted-foreground'}`}>
+                        {r.days_until < 0 ? `${Math.abs(r.days_until)} dni po terminie` : r.days_until === 0 ? 'Dziś!' : `za ${r.days_until} dni`}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              ))}
+              {/* Historical: top outstanding with invoice details */}
+              {!isCurrentMonth && (month.revenue_outstanding_top?.length ?? 0) > 0 && (
+                month.revenue_outstanding_top!.map(item => (
+                  <Link
+                    key={item.id}
+                    to={`/invoices/${item.id}`}
+                    className="flex items-center justify-between -mx-2 px-2 py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+                  >
+                    <div className="min-w-0 flex-1 pr-2">
+                      <p className="truncate text-xs font-medium">{item.name}</p>
+                      <p className="text-[10px] text-muted-foreground">{item.invoice_number}</p>
+                      {item.due_date && (
+                        <p className="text-[10px] text-muted-foreground">
+                          Termin: {format(parseISO(item.due_date), 'd MMM', { locale: pl })}
+                        </p>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-xs font-semibold tabular-nums text-yellow-600">{formatPln(item.amount)}</p>
+                      {(item.days_overdue ?? 0) > 0 && (
+                        <p className="text-[10px] text-destructive">{item.days_overdue} dni po terminie</p>
+                      )}
+                    </div>
+                  </Link>
+                ))
+              )}
+              <div className="pt-1 border-t border-border/40 mt-1">
+                <Link
+                  to="/invoices?status=outstanding"
+                  className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+                >
+                  <svg viewBox="0 0 16 16" className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 8h10M9 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Wszystkie nierozliczone ({outstandingCount})
+                </Link>
+              </div>
+            </InnerExpandable>
+          </>
+        )}
+      </Section>
 
-            return (
-              <TaxPaymentRow
-                key={i}
-                label={label}
-                amount={ob.amount}
-                dueDate={ob.due_date}
-                daysUntil={ob.days_until}
+      {/* ── Accordion: KOSZTY ── */}
+      <Section title="Koszty" total={totalCosts}>
+        {/* KSeF invoices — expandable: invoice list + category breakdown */}
+        <InnerExpandable
+          label="Faktury dostawców (KSeF)"
+          sub={`${month.costs_ksef_count ?? 0} ${
+            (month.costs_ksef_count ?? 0) === 1 ? 'faktura' :
+            (month.costs_ksef_count ?? 0) <= 4 ? 'faktury' : 'faktur'
+          }`}
+          amount={month.costs_ksef}
+          disabled={(month.costs_ksef_items?.length ?? 0) === 0 && (month.costs_ksef_by_category?.length ?? 0) === 0}
+        >
+          {/* Individual invoice list */}
+          {(month.costs_ksef_items?.length ?? 0) > 0 && month.costs_ksef_items!.map(inv => (
+            <Link
+              key={inv.id}
+              to={`/ksef/inbox/${inv.id}`}
+              className="flex items-start justify-between -mx-2 px-2 py-2 rounded-lg hover:bg-muted/40 transition-colors"
+            >
+              <div className="min-w-0 flex-1 pr-2">
+                <p className="truncate text-xs font-medium">{inv.seller_name}</p>
+                <p className="text-[10px] text-muted-foreground">{inv.invoice_number} · {format(parseISO(inv.issue_date), 'd MMM', { locale: pl })}</p>
+                {inv.category_labels.length > 0 && (
+                  <p className="text-[10px] text-primary/80 mt-0.5">{inv.category_labels.join(', ')}</p>
+                )}
+                {inv.net_amount != null && inv.vat_amount != null && (
+                  <p className="text-[10px] text-muted-foreground/70">
+                    netto {formatPln(inv.net_amount)} + VAT {formatPln(inv.vat_amount)}
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-xs font-semibold tabular-nums">{formatPln(inv.amount)}</p>
+                {inv.due_date && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {inv.is_paid ? '✓ opłacone' : `→ ${format(parseISO(inv.due_date), 'd MMM', { locale: pl })}`}
+                  </p>
+                )}
+              </div>
+            </Link>
+          ))}
+          {/* Category breakdown if available */}
+          {(month.costs_ksef_by_category?.length ?? 0) > 0 && (
+            <>
+              <p className="text-[10px] font-medium text-muted-foreground mt-1 mb-0.5 uppercase tracking-wide">Wg kategorii</p>
+              {month.costs_ksef_by_category!.map((cat, i) => (
+                <div key={i} className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">{cat.label}</span>
+                  <span className="font-medium tabular-nums">{formatPln(cat.total)}</span>
+                </div>
+              ))}
+            </>
+          )}
+          <div className="pt-1 border-t border-border/40 mt-1">
+            <Link
+              to="/ksef/inbox"
+              className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+            >
+              <svg viewBox="0 0 16 16" className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 8h10M9 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Wszystkie faktury dostawców ({month.costs_ksef_count ?? 0})
+            </Link>
+          </div>
+        </InnerExpandable>
+
+        {/* Other quick expenses — expandable: individual list + category summary */}
+        <InnerExpandable
+          label="Inne wydatki"
+          sub={(month.costs_quick_by_category?.length ?? 0) > 0
+            ? month.costs_quick_by_category!.map(c => c.label).join(', ')
+            : 'paliwo, materiały, usługi...'}
+          amount={month.costs_quick}
+          action={
+            <button
+              onClick={onAddKoszty}
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-sm font-bold leading-none"
+              aria-label="Dodaj wydatek"
+            >
+              +
+            </button>
+          }
+          disabled={month.recent_quick_expenses.length === 0}
+        >
+          {/* Individual expense rows */}
+          {month.recent_quick_expenses.map(exp => (
+            <div key={exp.id} className="flex items-center justify-between py-1">
+              <div className="min-w-0 flex-1 pr-2">
+                <p className="text-xs font-medium truncate">{exp.vendor || exp.category_label}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {exp.category_label}{exp.vendor ? ` · ${format(parseISO(exp.date), 'd MMM', { locale: pl })}` : ` · ${format(parseISO(exp.date), 'd MMM', { locale: pl })}`}
+                </p>
+              </div>
+              <span className="shrink-0 text-xs font-semibold tabular-nums">{formatPln(parseFloat(exp.amount))}</span>
+            </div>
+          ))}
+          {/* Category summary */}
+          {(month.costs_quick_by_category?.length ?? 0) > 0 && (
+            <>
+              <p className="text-[10px] font-medium text-muted-foreground mt-1 mb-0.5 uppercase tracking-wide">Wg kategorii</p>
+              {month.costs_quick_by_category!.map((cat, i) => (
+                <div key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">
+                    {cat.label}
+                    <span className="ml-1 text-muted-foreground/60">· {cat.count} {cat.count === 1 ? 'wpis' : 'wpisy'}</span>
+                  </span>
+                  <span className="font-medium tabular-nums">{formatPln(cat.total)}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </InnerExpandable>
+
+        {/* Fixed costs — expandable item list */}
+        <InnerExpandable
+          label="Koszty stałe"
+          sub={fixedSub || 'wynajem, płace, leasing...'}
+          amount={month.costs_fixed}
+          disabled={(month.costs_fixed_items?.length ?? 0) === 0}
+        >
+          {(month.costs_fixed_items?.length ?? 0) > 0 && month.costs_fixed_items!.map((item, i) => (
+            <div key={i} className="flex justify-between text-xs">
+              <span className="text-muted-foreground">{item.description}</span>
+              <span className="font-medium tabular-nums">{formatPln(item.amount)}</span>
+            </div>
+          ))}
+        </InnerExpandable>
+
+        {/* Unpaid supplier invoices (payables) */}
+        {isCurrentMonth && today.payables.total_count > 0 && (
+          <>
+            <div className="mx-4 border-t border-dashed border-border/70" />
+            <InnerExpandable
+              label="Niezapłacone faktury dostawców"
+              sub={`${today.payables.total_count} ${plFaktura(today.payables.total_count)} niezapłaconych`}
+              amount={today.payables.total_amount}
+              amountColor="text-orange-700"
+              disabled={today.payables.items.length === 0}
+            >
+              {today.payables.items.map(p => (
+                <Link
+                  key={p.id}
+                  to="/ksef/inbox?is_paid=false"
+                  className="flex items-center justify-between -mx-2 px-2 py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+                >
+                  <div className="min-w-0 flex-1 pr-2">
+                    <p className="truncate text-xs font-medium">{p.seller_name}</p>
+                    {p.invoice_number && <p className="text-[10px] text-muted-foreground">{p.invoice_number}</p>}
+                    {p.issue_date && <p className="text-[10px] text-muted-foreground">{format(parseISO(p.issue_date), 'd MMM yyyy', { locale: pl })}</p>}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs font-semibold text-orange-700">−{formatPln(p.amount)}</p>
+                    <span className={`text-[10px] font-medium ${p.days_until < 0 ? 'text-destructive' : p.days_until <= 7 ? 'text-orange-600' : 'text-muted-foreground'}`}>
+                      {p.days_until < 0 ? `${Math.abs(p.days_until)} dni po terminie` : p.days_until === 0 ? 'Dziś!' : `za ${p.days_until} dni`}
+                    </span>
+                  </div>
+                </Link>
+              ))}
+              <Link
+                to="/ksef/inbox?is_paid=false"
+                className="mt-1 block text-center text-xs font-medium text-orange-700 hover:underline"
               >
-                {breakdown}
-              </TaxPaymentRow>
-            );
-          })}
-        </div>
-      )}
+                Zobacz wszystkie ({today.payables.total_count}) →
+              </Link>
+            </InnerExpandable>
+          </>
+        )}
 
-      {/* ── Podatki i ZUS (miesiące historyczne) ── */}
-      {!isCurrentMonth && hasTaxes && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 dark:text-slate-300">
-              Podatki i ZUS
-            </h3>
-            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-          </div>
+        {/* Breakeven insight */}
+        {breakEven > 0 && (
+          <SectionDivider>
+            <p className="text-xs text-amber-800 dark:text-amber-400">
+              💡 Żeby wyjść na zero potrzebujesz jeszcze{' '}
+              <span className="font-semibold">{formatPln(breakEven)}</span>{' '}
+              przychodów w tym miesiącu
+            </p>
+          </SectionDivider>
+        )}
+      </Section>
 
+      {/* ── Accordion: ZAREZERWUJ NA PODATKI ── */}
+      {taxTotal > 0 && (
+        <Section title="Zarezerwuj na podatki" total={taxTotal}>
+          {/* VAT — expandable breakdown */}
           {month.vat_to_pay > 0 && (
-            <TaxPaymentRow
-              label="VAT do zapłaty"
+            <InnerExpandable
+              label={vatLabel}
               amount={month.vat_to_pay}
-              surplus={month.vat_surplus > 0 ? month.vat_surplus : undefined}
+              badge={vatOb && isCurrentMonth ? <DueBadge daysUntil={vatOb.days_until} dueDate={vatOb.due_date} /> : undefined}
+              disabled={month.vat_output === 0}
             >
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">VAT należny (ze sprzedaży)</span>
                 <span className="font-medium tabular-nums">{formatPln(month.vat_output)}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">VAT naliczony (odliczenie z zakupów)</span>
+                <span className="text-muted-foreground">VAT naliczony (odliczenie)</span>
                 <span className="font-medium tabular-nums text-muted-foreground">− {formatPln(month.vat_input)}</span>
               </div>
               <div className="flex justify-between border-t border-border pt-1.5 text-xs">
                 <span className="font-medium">VAT do zapłaty</span>
                 <span className="font-semibold tabular-nums">{formatPln(month.vat_to_pay)}</span>
               </div>
-            </TaxPaymentRow>
+              {(month.vat_input_invoices?.length ?? 0) > 0 && (
+                <details className="mt-1">
+                  <summary className="list-none cursor-pointer text-xs text-primary hover:underline underline-offset-2">
+                    Faktury odliczające VAT ({month.vat_input_invoices.length}) ▾
+                  </summary>
+                  <div className="mt-1 space-y-1 rounded-lg bg-muted/50 p-2">
+                    {month.vat_input_invoices.map(inv => (
+                      <div key={inv.id} className="flex items-center justify-between text-xs">
+                        <span className="truncate text-muted-foreground">
+                          {inv.vendor || 'Nieznany dostawca'} · {format(parseISO(inv.issue_date), 'd MMM', { locale: pl })}
+                        </span>
+                        <span className="ml-2 shrink-0 font-medium">{formatPln(inv.vat_amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+              {month.vat_surplus > 0 && (
+                <p className="text-xs text-green-600">Nadpłata VAT: {formatPln(month.vat_surplus)}</p>
+              )}
+            </InnerExpandable>
           )}
 
+          {/* ZUS społeczny — expandable breakdown */}
           {month.zus_social > 0 && (
-            <TaxPaymentRow label="ZUS społeczny" amount={month.zus_social}>
+            <InnerExpandable
+              label="ZUS społeczny"
+              amount={month.zus_social}
+              badge={zusOb && isCurrentMonth ? <DueBadge daysUntil={zusOb.days_until} dueDate={zusOb.due_date} /> : undefined}
+              disabled={(month.zus_breakdown?.length ?? 0) === 0}
+            >
               {month.zus_breakdown?.map((row, i) => (
                 <div key={i} className="flex justify-between text-xs">
                   <span className="text-muted-foreground">{row.label}</span>
                   <span className="font-medium tabular-nums">{row.value}</span>
                 </div>
               ))}
-            </TaxPaymentRow>
+            </InnerExpandable>
           )}
 
+          {/* Składka zdrowotna — expandable breakdown */}
           {month.zus_health > 0 && (
-            <TaxPaymentRow label="Składka zdrowotna" amount={month.zus_health}>
+            <InnerExpandable
+              label="Składka zdrowotna"
+              amount={month.zus_health}
+              badge={zusHOb && isCurrentMonth ? <DueBadge daysUntil={zusHOb.days_until} dueDate={zusHOb.due_date} /> : undefined}
+              disabled={(month.health_breakdown?.length ?? 0) === 0}
+            >
               {month.health_breakdown?.map((row, i) => (
                 <div key={i} className="flex justify-between text-xs">
                   <span className="text-muted-foreground">{row.label}</span>
                   <span className="font-medium tabular-nums">{row.value}</span>
                 </div>
               ))}
-            </TaxPaymentRow>
+            </InnerExpandable>
           )}
 
-          {month.pit_estimate > 0 && (
-            <TaxPaymentRow label="Podatek dochodowy" amount={month.pit_estimate}>
-              {month.pit_breakdown?.map((row, i) => (
-                <div
-                  key={i}
-                  className={`flex justify-between text-xs ${
-                    row.label.startsWith('=') || row.label === 'Zaliczka podatku dochodowego'
-                      ? 'border-t border-border pt-1.5 font-semibold'
-                      : ''
-                  }`}
-                >
-                  <span className="text-muted-foreground">{row.label}</span>
-                  <span className="font-medium tabular-nums">{row.value}</span>
-                </div>
-              ))}
-            </TaxPaymentRow>
+          {/* PIT — expandable breakdown */}
+          <InnerExpandable
+            label={
+              <span className="flex items-center gap-1">
+                PIT
+                {month.pit_is_estimate && (
+                  <span title="Szacunek — rzeczywista zaliczka może się różnić." className="cursor-help text-xs text-muted-foreground/60">ⓘ</span>
+                )}
+              </span>
+            }
+            amount={month.pit_estimate}
+            badge={pitOb && isCurrentMonth && month.pit_estimate > 0 ? <DueBadge daysUntil={pitOb.days_until} dueDate={pitOb.due_date} /> : undefined}
+            disabled={(month.pit_breakdown?.length ?? 0) === 0}
+          >
+            {month.pit_breakdown?.map((row, i) => (
+              <div key={i} className={`flex justify-between text-xs ${row.label.startsWith('=') || row.label === 'Zaliczka podatku dochodowego' ? 'border-t border-border pt-1.5 font-semibold' : ''}`}>
+                <span className="text-muted-foreground">{row.label}</span>
+                <span className="font-medium tabular-nums">{row.value}</span>
+              </div>
+            ))}
+          </InnerExpandable>
+
+          {/* Smart insight — only for current month with live receivables */}
+          {isCurrentMonth && outstandingTotal > 0 && zusTotal > 0 && (
+            <SectionDivider>
+              {outstandingTotal >= zusTotal ? (
+                <p className="text-xs text-blue-800 dark:text-blue-300">
+                  💡 Oczekujące faktury (
+                  <span className="font-semibold">{formatPln(outstandingTotal)}</span>
+                  ) pokryją ZUS (
+                  <span className="font-semibold">{formatPln(zusTotal)}</span>
+                  ){zusOb?.due_date && ` przed terminem ${format(parseISO(zusOb.due_date), 'd MMM', { locale: pl })}`}
+                  {' '}— warto przypomnieć klientom o płatności.
+                </p>
+              ) : (
+                <p className="text-xs text-blue-800 dark:text-blue-300">
+                  💡 Oczekujące faktury (
+                  <span className="font-semibold">{formatPln(outstandingTotal)}</span>
+                  ) częściowo pokryją ZUS (
+                  <span className="font-semibold">{formatPln(zusTotal)}</span>
+                  ) — brakuje jeszcze{' '}
+                  <span className="font-semibold">{formatPln(zusTotal - outstandingTotal)}</span>.
+                </p>
+              )}
+            </SectionDivider>
           )}
-        </div>
+        </Section>
       )}
 
-      {/* ── Wykresy ── */}
+      {/* ── Chart ── */}
       <div className="space-y-5">
         <ExpenseChart month={currentMonth} />
       </div>
@@ -1286,7 +893,7 @@ export function CashFlowPage() {
   const [taxSettingsOpen, setTaxSettingsOpen] = useState(false);
 
   const tabClass = (tab: 'today' | 'historia' | 'year') =>
-    `flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
+    `rounded-lg px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${
       activeTab === tab
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground'
@@ -1305,8 +912,36 @@ export function CashFlowPage() {
           </button>
         </div>
 
+        <PageExplainer
+          summary="Jak są liczone te kwoty?"
+          items={[
+            {
+              icon: '📊',
+              label: 'Przychód = faktury już opłacone',
+              description: 'Tylko pieniądze które realnie wpłynęły. Faktury wystawione ale nieopłacone nie są liczone — widać je w sekcji "Oczekuje".',
+            },
+            {
+              icon: '🧾',
+              label: 'Koszty = wg daty wystawienia faktury',
+              description: 'Faktura kosztowa wystawiona w sierpniu zalicza się do sierpnia — nawet jeśli termin płatności jest we wrześniu.',
+            },
+            {
+              icon: '🏛️',
+              label: 'Podatki i ZUS',
+              description: 'Szacunki na podstawie Twoich ustawień podatkowych. PIT to przybliżenie — ostateczną kwotę wylicza księgowy.',
+            },
+            {
+              icon: '💡',
+              label: '"Zostaje dla Ciebie"',
+              description: 'Przychód minus koszty minus podatki i ZUS. To ile realnie możesz wypłacić jako wynagrodzenie lub reinwestować.',
+            },
+          ]}
+          example="Wystawiłaś fakturę 28 sierpnia za 5000 zł z terminem płatności 15 września. Klient zapłacił 2 września. W sierpniu: 0 zł przychodu (nieopłacona). We wrześniu: +5000 zł przychodu (wpłynęła). Koszt faktury od dostawcy wystawionej w sierpniu → sierpień, niezależnie kiedy zapłacisz."
+          exampleLabel="Przykład"
+        />
+
         <div className="mb-5 flex items-center gap-3">
-          <div className="flex rounded-xl bg-muted p-1">
+          <div className="flex rounded-xl bg-muted p-1 gap-1">
             <button onClick={() => setActiveTab('today')} className={tabClass('today')}>
               Przegląd
             </button>

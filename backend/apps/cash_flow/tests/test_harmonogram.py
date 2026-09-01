@@ -276,6 +276,198 @@ class HarmonogramServiceTest(TestCase):
         result = compute_harmonogram(self.company, self.month)
         self.assertTrue(result["has_balance"])
 
+    # ── Anchor date tests ─────────────────────────────────────────────────────
+
+    def test_anchor_date_returned_in_response(self):
+        """anchor_date in response matches balance_updated_at date."""
+        anchor = datetime.datetime(2026, 9, 10, 12, 0, 0)
+        self.config.balance_updated_at = timezone.make_aware(anchor)
+        self.config.save(update_fields=["balance_updated_at"])
+        result = compute_harmonogram(self.company, self.month)
+        self.assertEqual(result["anchor_date"], "2026-09-10")
+
+    def test_anchor_at_start_of_month_includes_all_events(self):
+        """When anchor is on the 1st, all events chain normally (no before_anchor)."""
+        anchor = datetime.datetime(2026, 9, 1, 8, 0, 0)
+        self.config.balance_updated_at = timezone.make_aware(anchor)
+        self.config.save(update_fields=["balance_updated_at"])
+        self._make_b2c(datetime.date(2026, 9, 5), 500)
+        result = compute_harmonogram(self.company, self.month)
+        b2c = [e for e in result["events"] if e["type"] == "b2c_incoming"]
+        self.assertEqual(len(b2c), 1)
+        self.assertFalse(b2c[0]["before_anchor"])
+        self.assertIsNotNone(b2c[0]["running_balance"])
+
+    def test_anchor_mid_month_excludes_before_events_from_chain(self):
+        """Events before anchor date have before_anchor=True and running_balance=None."""
+        # anchor = Sep 15; B2C entry Sep 5 → before anchor
+        anchor = datetime.datetime(2026, 9, 15, 8, 0, 0)
+        self.config.balance_updated_at = timezone.make_aware(anchor)
+        self.config.save(update_fields=["balance_updated_at"])
+        self._make_b2c(datetime.date(2026, 9, 5), 800)
+        self._make_fixed_cost("Czynsz", 2000, due_day=20)  # Sep 20 → after anchor
+        result = compute_harmonogram(self.company, self.month)
+
+        b2c = [e for e in result["events"] if e["type"] == "b2c_incoming"]
+        self.assertEqual(len(b2c), 1)
+        self.assertTrue(b2c[0]["before_anchor"])
+        self.assertIsNone(b2c[0]["running_balance"])
+
+        fc = [e for e in result["events"] if e["type"] == "fixed_cost"]
+        self.assertEqual(len(fc), 1)
+        self.assertFalse(fc[0]["before_anchor"])
+        self.assertIsNotNone(fc[0]["running_balance"])
+        # running_balance should be opening_balance - 2000 (b2c not counted)
+        expected = result["opening_balance"] - 2000
+        self.assertAlmostEqual(fc[0]["running_balance"], expected, places=2)
+
+    def test_no_balance_running_starts_from_zero(self):
+        """When has_balance is False, opening_balance is 0 and chain runs from 0."""
+        _make_config(self.company, bank_balance=Decimal("0.00"), cash_balance=Decimal("0.00"))
+        self._make_b2c(datetime.date(2026, 9, 10), 500)
+        result = compute_harmonogram(self.company, self.month)
+        self.assertFalse(result["has_balance"])
+        self.assertEqual(result["opening_balance"], 0.0)
+        b2c = [e for e in result["events"] if e["type"] == "b2c_incoming"]
+        self.assertEqual(len(b2c), 1)
+        self.assertAlmostEqual(b2c[0]["running_balance"], 500.0, places=2)
+
+    def test_quick_expense_appears_as_outgoing_paid(self):
+        """QuickExpense entries show as paid outgoing events on their date."""
+        from apps.cash_flow.models import QuickExpense
+        QuickExpense.objects.create(
+            company=self.company,
+            date=datetime.date(2026, 9, 12),
+            amount=Decimal("350.00"),
+            category="fuel",
+            vendor="Orlen",
+            has_vat=False,
+        )
+        result = compute_harmonogram(self.company, self.month)
+        qe_events = [e for e in result["events"] if e["type"] == "quick_expense"]
+        self.assertEqual(len(qe_events), 1)
+        self.assertEqual(qe_events[0]["date"], "2026-09-12")
+        self.assertEqual(qe_events[0]["direction"], "out")
+        self.assertEqual(qe_events[0]["status"], "paid")
+        self.assertAlmostEqual(qe_events[0]["amount"], 350.0, places=2)
+        self.assertEqual(qe_events[0]["label"], "Orlen")
+
+    def test_quick_expense_outside_period_excluded(self):
+        """QuickExpense from a different month is not included."""
+        from apps.cash_flow.models import QuickExpense
+        QuickExpense.objects.create(
+            company=self.company,
+            date=datetime.date(2026, 8, 20),  # previous month
+            amount=Decimal("200.00"),
+            category="fuel",
+            has_vat=False,
+        )
+        result = compute_harmonogram(self.company, self.month)
+        qe_events = [e for e in result["events"] if e["type"] == "quick_expense"]
+        self.assertEqual(len(qe_events), 0)
+
+    def test_quick_expense_included_in_total_out(self):
+        """total_out includes quick expenses alongside other outgoing events."""
+        from apps.cash_flow.models import QuickExpense
+        # Disable ZUS to isolate the quick expense cost
+        self.config.zus_status = CompanyTaxConfig.ZUS_ETAT_JDG
+        self.config.vat_payer = False
+        self.config.save(update_fields=["zus_status", "vat_payer"])
+        QuickExpense.objects.create(
+            company=self.company,
+            date=datetime.date(2026, 9, 5),
+            amount=Decimal("400.00"),
+            category="other",
+            has_vat=False,
+        )
+        result = compute_harmonogram(self.company, self.month)
+        self.assertAlmostEqual(result["total_out"], 400.0, places=2)
+
+    # ── Month-to-month carryover tests ────────────────────────────────────────
+
+    def test_next_month_opening_balance_carries_over_from_anchor(self):
+        """Viewing a month after the anchor: opening_balance = anchor + net flow since anchor."""
+        # Anchor Aug 28 with balance 8000
+        # B2C income on Aug 30: +500
+        # Fixed cost on Aug 31 (due_day=31): -1000
+        # Net flow Aug 28-31 = +500 - 1000 = -500
+        # October opening_balance = 8000 + net(Aug 28 → Sep 30) = 8000 - 500 + whatever Sep has
+        # We test September which is simpler: net Aug 28-31 = -500 → Sep opening = 7500
+        _make_config(
+            self.company,
+            bank_balance=Decimal("8000.00"),
+            cash_balance=Decimal("0.00"),
+            vat_payer=False,
+            zus_status=CompanyTaxConfig.ZUS_ETAT_JDG,
+            balance_date=datetime.date(2026, 8, 28),
+        )
+        self._make_b2c(datetime.date(2026, 8, 30), Decimal("500.00"))
+        self._make_fixed_cost("Koszt sierpień", Decimal("1000.00"), due_day=31)
+        result = compute_harmonogram(self.company, "2026-09")
+        # Aug 28-31: +500 B2C - 1000 fixed = -500 net
+        # Sep opening = 8000 - 500 = 7500
+        self.assertAlmostEqual(result["opening_balance"], 7500.0, places=2)
+
+    def test_next_month_opening_balance_anchor_same_month_unchanged(self):
+        """Viewing the anchor month itself: opening_balance equals the entered balance."""
+        _make_config(
+            self.company,
+            bank_balance=Decimal("12000.00"),
+            cash_balance=Decimal("0.00"),
+            vat_payer=False,
+            zus_status=CompanyTaxConfig.ZUS_ETAT_JDG,
+            balance_date=datetime.date(2026, 9, 1),
+        )
+        result = compute_harmonogram(self.company, "2026-09")
+        self.assertAlmostEqual(result["opening_balance"], 12000.0, places=2)
+
+    def test_previous_month_opening_balance_carries_back_from_anchor(self):
+        """Viewing a month before the anchor: opening_balance = anchor - net flow until anchor."""
+        # Anchor Sep 1 with balance 7500
+        # In August there were no events (no B2C, no fixed costs for Aug, zus etat_jdg)
+        # → Aug opening = 7500 - 0 = 7500
+        _make_config(
+            self.company,
+            bank_balance=Decimal("7500.00"),
+            cash_balance=Decimal("0.00"),
+            vat_payer=False,
+            zus_status=CompanyTaxConfig.ZUS_ETAT_JDG,
+            balance_date=datetime.date(2026, 9, 1),
+        )
+        result = compute_harmonogram(self.company, "2026-08")
+        # No events in Aug → net flow(Aug 1 → Aug 31) = 0 → Aug opening = 7500
+        self.assertAlmostEqual(result["opening_balance"], 7500.0, places=2)
+
+    def test_previous_month_opening_balance_subtracts_net_flow(self):
+        """Viewing July with anchor Sep 1: July opening = anchor - net(Jul-Aug)."""
+        # Anchor Sep 1 = 5000; B2C in Aug = +2000
+        # Jul opening = 5000 - 2000 = 3000
+        _make_config(
+            self.company,
+            bank_balance=Decimal("5000.00"),
+            cash_balance=Decimal("0.00"),
+            vat_payer=False,
+            zus_status=CompanyTaxConfig.ZUS_ETAT_JDG,
+            balance_date=datetime.date(2026, 9, 1),
+        )
+        self._make_b2c(datetime.date(2026, 8, 15), Decimal("2000.00"))
+        result = compute_harmonogram(self.company, "2026-07")
+        # net(Jul 1 → Aug 31) = +2000 → Jul opening = 5000 - 2000 = 3000
+        self.assertAlmostEqual(result["opening_balance"], 3000.0, places=2)
+
+    def test_no_anchor_opening_balance_always_zero(self):
+        """Without anchor (no balance entered) opening_balance is always 0 for every month."""
+        _make_config(
+            self.company,
+            bank_balance=Decimal("0.00"),
+            cash_balance=Decimal("0.00"),
+            vat_payer=False,
+            zus_status=CompanyTaxConfig.ZUS_ETAT_JDG,
+        )
+        for m in ("2026-07", "2026-08", "2026-09", "2026-10"):
+            result = compute_harmonogram(self.company, m)
+            self.assertAlmostEqual(result["opening_balance"], 0.0, places=2, msg=f"month={m}")
+
 
 class HarmonogramAPITest(TestCase):
     """Integration tests for GET /api/cash-flow/harmonogram/."""

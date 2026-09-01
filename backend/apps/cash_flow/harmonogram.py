@@ -11,6 +11,7 @@ Outgoing (scheduled):
   - VAT obligation — calculated from tax config, due on vat_due_day of next month
   - ZUS social + health — placed on zus_due_day of current month
   - ReceivedKSeFInvoice (unpaid) — by their due_date
+  - QuickExpense — cash expenses by their date (always paid)
 
 Returns a list of day dicts sorted by date, plus a summary.
 """
@@ -25,7 +26,7 @@ from apps.fixed_costs.models import FixedCost
 from apps.invoices.models import Invoice
 from apps.ksef.models import ReceivedKSeFInvoice
 
-from .models import CompanyTaxConfig, DailyB2CRevenue
+from .models import CompanyTaxConfig, DailyB2CRevenue, QuickExpense
 from .services import (
     _calc_health_contribution,
     _calc_zus_social,
@@ -45,11 +46,131 @@ TYPE_VAT = "vat"
 TYPE_ZUS_SOCIAL = "zus_social"
 TYPE_ZUS_HEALTH = "zus_health"
 TYPE_SUPPLIER_INVOICE = "supplier_invoice"
+TYPE_QUICK_EXPENSE = "quick_expense"
 
 # Status constants
 STATUS_PAID = "paid"          # money already moved
 STATUS_EXPECTED = "expected"  # scheduled, not yet
 STATUS_OVERDUE = "overdue"    # past due date, not received/paid
+
+
+def _compute_period_net_flow(
+    company, config, date_from: datetime.date, date_to: datetime.date
+) -> Decimal:
+    """Return net cash (in − out) for all harmonogram events in [date_from, date_to].
+
+    Used to project the opening balance when the viewed month differs from the
+    anchor month.  Mirrors the event logic in compute_harmonogram exactly so
+    the two are always in sync.
+    """
+    if date_from > date_to:
+        return _ZERO
+
+    net = _ZERO
+
+    # B2B paid — actual receipt date
+    agg = Invoice.objects.filter(
+        company=company,
+        status=Invoice.STATUS_PAID,
+        paid_at__date__gte=date_from,
+        paid_at__date__lte=date_to,
+    ).aggregate(s=Sum("total_gross"))
+    net += agg["s"] or _ZERO
+
+    # B2B unpaid — by due_date
+    agg = Invoice.objects.filter(
+        company=company,
+        status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_SENT, Invoice.STATUS_OVERDUE],
+        due_date__gte=date_from,
+        due_date__lte=date_to,
+    ).aggregate(s=Sum("total_gross"))
+    net += agg["s"] or _ZERO
+
+    # B2C
+    agg = DailyB2CRevenue.objects.filter(
+        company=company,
+        date__gte=date_from,
+        date__lte=date_to,
+    ).aggregate(s=Sum("amount"))
+    net += agg["s"] or _ZERO
+
+    # Fixed costs — recurring by due_day, iterate month by month
+    y, m = date_from.year, date_from.month
+    while True:
+        m_end = datetime.date(y, m, calendar.monthrange(y, m)[1])
+        fixed_costs = FixedCost.objects.filter(
+            company=company,
+            is_active=True,
+            active_from__lte=m_end,
+        )
+        for fc in fixed_costs:
+            if fc.due_day is None:
+                continue
+            day = min(fc.due_day, m_end.day)
+            fc_date = datetime.date(y, m, day)
+            if date_from <= fc_date <= date_to:
+                net -= fc.amount_monthly
+        if m == 12:
+            y, m = y + 1, 1
+        else:
+            m += 1
+        if datetime.date(y, m, 1) > date_to:
+            break
+
+    # VAT — event placed on last day of the billing month
+    if config.vat_payer:
+        y, m = date_from.year, date_from.month
+        while True:
+            m_start = datetime.date(y, m, 1)
+            m_end = datetime.date(y, m, calendar.monthrange(y, m)[1])
+            if date_from <= m_end <= date_to:
+                vat_out = _get_vat_nalezny(company, config, m_start, m_end)
+                vat_in = _get_vat_naliczony(company, config, m_start, m_end)
+                net -= max(vat_out - vat_in, _ZERO)
+            if m == 12:
+                y, m = y + 1, 1
+            else:
+                m += 1
+            if datetime.date(y, m, 1) > date_to:
+                break
+
+    # ZUS — on zus_due_day of each month
+    y, m = date_from.year, date_from.month
+    while True:
+        try:
+            zus_due = datetime.date(y, m, config.zus_due_day)
+        except ValueError:
+            zus_due = datetime.date(y, m, calendar.monthrange(y, m)[1])
+        if date_from <= zus_due <= date_to:
+            zus_social = _calc_zus_social(config)
+            ytd = _get_ytd_revenue(company, config, zus_due)
+            zus_health = _calc_health_contribution(config, _ZERO, ytd)
+            net -= zus_social + zus_health
+        if m == 12:
+            y, m = y + 1, 1
+        else:
+            m += 1
+        if datetime.date(y, m, 1) > date_to:
+            break
+
+    # Supplier invoices (unpaid) by due_date
+    agg = ReceivedKSeFInvoice.objects.filter(
+        company=company,
+        is_paid=False,
+        due_date__gte=date_from,
+        due_date__lte=date_to,
+    ).aggregate(s=Sum("gross_amount"))
+    net -= agg["s"] or _ZERO
+
+    # Quick expenses
+    agg = QuickExpense.objects.filter(
+        company=company,
+        date__gte=date_from,
+        date__lte=date_to,
+    ).aggregate(s=Sum("amount"))
+    net -= agg["s"] or _ZERO
+
+    return net
 
 
 def compute_harmonogram(company, month_str: str | None = None) -> dict:
@@ -257,6 +378,25 @@ def compute_harmonogram(company, month_str: str | None = None) -> dict:
             "status": ev_status,
         })
 
+    # ── 7. QUICK EXPENSES — cash expenses by their date ──────────────────────
+
+    quick_expenses = QuickExpense.objects.filter(
+        company=company,
+        date__gte=period_start,
+        date__lte=period_end,
+    ).order_by("date")
+
+    for qe in quick_expenses:
+        events.append({
+            "date": str(qe.date),
+            "type": TYPE_QUICK_EXPENSE,
+            "label": qe.vendor or qe.get_category_display(),
+            "sublabel": qe.get_category_display() if qe.vendor else "",
+            "amount": float(qe.amount.quantize(_CENT, rounding=ROUND_HALF_UP)),
+            "direction": "out",
+            "status": STATUS_PAID,  # cash expenses are always already paid
+        })
+
     # ── Sort all events by date ───────────────────────────────────────────────
 
     events.sort(key=lambda e: (e["date"], e["direction"]))  # out before in on same day? No — in first
@@ -267,22 +407,76 @@ def compute_harmonogram(company, month_str: str | None = None) -> dict:
 
     bank = config.bank_balance or _ZERO
     cash = config.cash_balance or _ZERO
-    opening_balance = float((bank + cash).quantize(_CENT, rounding=ROUND_HALF_UP))
+    vat = config.vat_balance or _ZERO
+    anchor_balance = bank + cash  # freely available (VAT account is locked)
+    vat_balance = float(vat.quantize(_CENT, rounding=ROUND_HALF_UP))
+    has_balance = bank > _ZERO or cash > _ZERO or vat > _ZERO
+
+    # Anchor date: the date the user says the balance is valid for.
+    # Use balance_date if explicitly set by the user; fall back to balance_updated_at.
+    # Events BEFORE anchor are already baked into the entered balance — exclude
+    # them from the running_balance chain to avoid double-counting.
+    # Anchor logic only applies when there is an actual balance set (has_balance=True).
+    # Without a real balance, all events chain from 0 — no exclusions.
+    if config.balance_date:
+        anchor_date = config.balance_date
+    elif config.balance_updated_at:
+        anchor_date = config.balance_updated_at.date()
+    else:
+        anchor_date = None
+    anchor_in_month = bool(
+        has_balance and anchor_date and period_start <= anchor_date <= period_end
+    )
+
+    # Compute opening balance for the viewed month, carrying over from the anchor.
+    # When the viewed month differs from the anchor month we project forward/backward
+    # using _compute_period_net_flow so July → August → September are all connected.
+    # If no anchor_date is known we cannot project — fall back to the entered balance as-is.
+    if not has_balance:
+        opening_balance_d = _ZERO
+    elif not anchor_date:
+        # Balance entered but no anchor date — use it directly (no carryover possible)
+        opening_balance_d = anchor_balance
+    else:
+        anchor_ym = (anchor_date.year, anchor_date.month)
+        viewed_ym = (year, month)
+        if viewed_ym == anchor_ym:
+            # Same month — anchor balance is the starting point as-is
+            opening_balance_d = anchor_balance
+        elif viewed_ym > anchor_ym:
+            # Later month — carry forward: add net flow from anchor_date to day before this month
+            flow_end = period_start - datetime.timedelta(days=1)
+            net = _compute_period_net_flow(company, config, anchor_date, flow_end)
+            opening_balance_d = anchor_balance + net
+        else:
+            # Earlier month — carry backward: subtract net flow from this month start to day before anchor
+            flow_end = anchor_date - datetime.timedelta(days=1)
+            net = _compute_period_net_flow(company, config, period_start, flow_end)
+            opening_balance_d = anchor_balance - net
+
+    opening_balance = float(opening_balance_d.quantize(_CENT, rounding=ROUND_HALF_UP))
 
     running = Decimal(str(opening_balance))
     min_balance = running
     min_balance_date = None
 
     for ev in events:
-        amount = Decimal(str(ev["amount"]))
-        if ev["direction"] == "in":
-            running += amount
+        ev_date = datetime.date.fromisoformat(ev["date"])
+        if anchor_in_month and ev_date < anchor_date:
+            # Before anchor: already included in the entered balance, show for context only
+            ev["before_anchor"] = True
+            ev["running_balance"] = None
         else:
-            running -= amount
-        ev["running_balance"] = float(running.quantize(_CENT, rounding=ROUND_HALF_UP))
-        if running < min_balance:
-            min_balance = running
-            min_balance_date = ev["date"]
+            ev["before_anchor"] = False
+            amount = Decimal(str(ev["amount"]))
+            if ev["direction"] == "in":
+                running += amount
+            else:
+                running -= amount
+            ev["running_balance"] = float(running.quantize(_CENT, rounding=ROUND_HALF_UP))
+            if running < min_balance:
+                min_balance = running
+                min_balance_date = ev["date"]
 
     # ── Summary ───────────────────────────────────────────────────────────────
 
@@ -308,7 +502,9 @@ def compute_harmonogram(company, month_str: str | None = None) -> dict:
     return {
         "period": f"{year}-{month:02d}",
         "opening_balance": opening_balance,
-        "has_balance": config.bank_balance > _ZERO or config.cash_balance > _ZERO,
+        "vat_balance": vat_balance,
+        "has_balance": has_balance,
+        "anchor_date": anchor_date.isoformat() if anchor_date else None,
         "balance_updated_at": (
             config.balance_updated_at.isoformat() if config.balance_updated_at else None
         ),

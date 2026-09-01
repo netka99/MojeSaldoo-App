@@ -54,7 +54,8 @@ class CompanyTaxConfigView(APIView):
         serializer.is_valid(raise_exception=True)
 
         # Set balance_updated_at when balance fields are being updated
-        if "cash_balance" in request.data or "bank_balance" in request.data:
+        balance_fields = {"cash_balance", "bank_balance", "balance_date"}
+        if balance_fields & set(request.data.keys()):
             serializer.save(balance_updated_at=timezone.now())
         else:
             serializer.save()

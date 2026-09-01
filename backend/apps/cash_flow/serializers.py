@@ -26,6 +26,8 @@ class CompanyTaxConfigSerializer(UUIDModelSerializer):
             "has_sick_insurance",
             "cash_balance",
             "bank_balance",
+            "vat_balance",
+            "balance_date",
             "balance_updated_at",
             "updated_at",
         ]

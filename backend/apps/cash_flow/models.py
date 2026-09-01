@@ -157,6 +157,17 @@ class CompanyTaxConfig(models.Model):
         default=Decimal("0.00"),
         help_text="Stan konta bankowego (wpisany ręcznie).",
     )
+    vat_balance = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Stan rachunku VAT (środki zablokowane — mechanizm podzielonej płatności).",
+    )
+    balance_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Na jaki dzień podano salda (kotwica harmonogramu).",
+    )
     balance_updated_at = models.DateTimeField(
         null=True,
         blank=True,

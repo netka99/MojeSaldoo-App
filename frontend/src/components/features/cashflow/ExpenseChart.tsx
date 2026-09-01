@@ -7,27 +7,38 @@ import { QUICK_EXPENSE_CATEGORY_LABELS } from '@/types/cashflow.types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   // QuickExpense categories
-  raw_materials:       '#f59e0b',
-  packaging:           '#10b981',
-  fuel:                '#3b82f6',
-  transport:           '#6366f1',
-  utilities:           '#8b5cf6',
-  rent:                '#ec4899',
-  services:            '#14b8a6',
-  marketing:           '#f97316',
-  salaries:            '#ef4444',
-  repair:              '#84cc16',
-  other:               '#64748b',
-  // FixedCost categories (prefixed fixed_)
-  fixed_wynagrodzenia: '#ef4444',
-  fixed_zus_zdrowotne: '#f97316',
-  fixed_czynsz:        '#ec4899',
-  fixed_leasing:       '#8b5cf6',
-  fixed_ubezpieczenia: '#6366f1',
-  fixed_ksiegowosc:    '#14b8a6',
-  fixed_subskrypcje:   '#10b981',
-  fixed_paliwo:        '#3b82f6',
+  raw_materials:       '#fb923c',
+  packaging:           '#34d399',
+  fuel:                '#60a5fa',
+  transport:           '#a78bfa',
+  utilities:           '#c084fc',
+  rent:                '#f472b6',
+  services:            '#2dd4bf',
+  marketing:           '#fb7185',
+  salaries:            '#f87171',
+  repair:              '#a3e635',
+  other:               '#94a3b8',
+  // FixedCost categories (prefixed fixed_) — standard
+  fixed_wynagrodzenia: '#f87171',
+  fixed_zus_zdrowotne: '#fb923c',
+  fixed_czynsz:        '#f472b6',
+  fixed_leasing:       '#c084fc',
+  fixed_ubezpieczenia: '#a78bfa',
+  fixed_ksiegowosc:    '#2dd4bf',
+  fixed_subskrypcje:   '#34d399',
+  fixed_paliwo:        '#60a5fa',
   fixed_inne:          '#94a3b8',
+  // FixedCost categories — common non-standard keys
+  fixed_pracownicy:    '#fca5a5',
+  fixed_wynajem:       '#e879f9',
+  fixed_energia:       '#fbbf24',
+  fixed_prad:          '#fde68a',
+  fixed_gaz:           '#38bdf8',
+  fixed_woda:          '#67e8f9',
+  fixed_internet:      '#4ade80',
+  fixed_telefon:       '#86efac',
+  fixed_ubezp:         '#818cf8',
+  fixed_serwis:        '#a3e635',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -49,6 +60,18 @@ const pln = new Intl.NumberFormat('pl-PL', {
   currency: 'PLN',
   maximumFractionDigits: 0,
 });
+
+const FALLBACK_PALETTE = [
+  '#a78bfa', '#60a5fa', '#34d399', '#fb923c',
+  '#f472b6', '#2dd4bf', '#a3e635', '#fb7185', '#818cf8',
+];
+
+function colorForCat(cat: string): string {
+  if (CATEGORY_COLORS[cat]) return CATEGORY_COLORS[cat];
+  // Positional hash avoids collisions for strings sharing the same characters
+  const hash = cat.split('').reduce((acc, c, i) => acc + c.charCodeAt(0) * (i + 1), 0);
+  return FALLBACK_PALETTE[hash % FALLBACK_PALETTE.length];
+}
 
 function labelForCat(cat: string): string {
   if (CATEGORY_LABELS[cat]) return CATEGORY_LABELS[cat];
@@ -126,7 +149,7 @@ export function ExpenseChart({ month }: ExpenseChartProps) {
                 <div className="flex items-center gap-1.5">
                   <span
                     className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: CATEGORY_COLORS[item.category] ?? '#94a3b8' }}
+                    style={{ backgroundColor: colorForCat(item.category) }}
                   />
                   <span className="text-muted-foreground">{item.name}</span>
                 </div>
@@ -142,7 +165,7 @@ export function ExpenseChart({ month }: ExpenseChartProps) {
                   className="h-full rounded-full transition-all"
                   style={{
                     width: `${pct}%`,
-                    backgroundColor: CATEGORY_COLORS[item.category] ?? '#94a3b8',
+                    backgroundColor: colorForCat(item.category),
                   }}
                 />
               </div>

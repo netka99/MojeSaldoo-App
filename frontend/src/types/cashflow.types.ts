@@ -69,6 +69,8 @@ export interface CompanyTaxConfig {
   has_sick_insurance: boolean;
   cash_balance: string;
   bank_balance: string;
+  vat_balance: string;
+  balance_date: string | null;
   balance_updated_at: string | null;
   updated_at: string;
 }
@@ -215,6 +217,7 @@ export interface PayablesData {
 export interface CashFlowToday {
   cash_balance: number;
   bank_balance: number;
+  vat_balance: number;
   balance_updated_at: string | null;
   total_available: number;
   upcoming_obligations: TaxObligation[];
@@ -250,8 +253,43 @@ export interface BreakdownItem {
 }
 
 export interface RevenueTopItem {
+  id: number;
   name: string;
+  invoice_number: string;
   amount: number;
+  // paid items have `date`; outstanding items have `due_date` + `days_overdue`
+  date?: string;
+  due_date?: string;
+  days_overdue?: number;
+}
+
+export interface B2CLineItem {
+  name: string;
+  qty: number;
+  unit_price: number;
+  line_revenue: number;
+}
+
+export interface B2CTopItem {
+  uuid: string;
+  date: string;
+  amount: number;
+  notes: string;
+  sale_type: 'manual' | 'products';
+  lines: B2CLineItem[];
+}
+
+export interface KSeFInvoiceItem {
+  id: number;
+  seller_name: string;
+  invoice_number: string;
+  issue_date: string;
+  due_date: string | null;
+  net_amount: number | null;
+  vat_amount: number | null;
+  amount: number;
+  category_labels: string[];
+  is_paid: boolean;
 }
 
 export interface QuickExpenseCategorySummary {
@@ -297,8 +335,10 @@ export interface CashFlowMonth {
   revenue_outstanding_count?: number;
   revenue_outstanding_top?: RevenueTopItem[];
   b2c_entries_count?: number;
+  b2c_top?: B2CTopItem[];
   costs_ksef_count?: number;
   costs_ksef_by_category?: QuickExpenseCategorySummary[];
+  costs_ksef_items?: KSeFInvoiceItem[];
   costs_quick_by_category?: QuickExpenseCategorySummary[];
   costs_fixed_items?: FixedCostItem[];
   recent_quick_expenses: RecentQuickExpense[];
@@ -375,7 +415,8 @@ export type HarmonogramEventType =
   | 'vat'
   | 'zus_social'
   | 'zus_health'
-  | 'supplier_invoice';
+  | 'supplier_invoice'
+  | 'quick_expense';
 
 export type HarmonogramEventStatus = 'paid' | 'expected' | 'overdue';
 
@@ -387,13 +428,16 @@ export interface HarmonogramEvent {
   amount: number;
   direction: 'in' | 'out';
   status: HarmonogramEventStatus;
-  running_balance: number;
+  running_balance: number | null;
+  before_anchor: boolean;
 }
 
 export interface HarmonogramData {
   period: string;
   opening_balance: number;
+  vat_balance: number;
   has_balance: boolean;
+  anchor_date: string | null;
   balance_updated_at: string | null;
   total_in: number;
   confirmed_in: number;
