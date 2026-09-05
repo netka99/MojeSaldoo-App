@@ -1072,7 +1072,21 @@ function PurchaseDocSection({
                           {doc.doc_type !== 'PAR' && <PurchaseDocPzButton doc={doc} />}
                           <button
                             type="button"
-                            onClick={() => setExpandedId(isExpanded ? null : doc.id)}
+                            onClick={() => {
+                              const next = isExpanded ? null : doc.id;
+                              setExpandedId(next);
+                              // On expand: seed from backend line_categories (index-keyed → id-keyed)
+                              if (next && !allLineCategories[doc.id] && doc.items.length > 0) {
+                                const seed: Record<string, string> = {};
+                                doc.items.forEach((it, i) => {
+                                  const cat = doc.line_categories?.[String(i)];
+                                  if (cat) seed[it.id] = cat;
+                                });
+                                if (Object.keys(seed).length > 0) {
+                                  setAllLineCategories((prev) => ({ ...prev, [doc.id]: seed }));
+                                }
+                              }
+                            }}
                             title={isExpanded ? 'Zwiń pozycje' : 'Pokaż pozycje'}
                             className={cn(
                               'inline-flex items-center justify-center h-7 w-7 rounded-md text-xs text-gray-400 border border-transparent hover:border-gray-200 hover:bg-gray-50 transition-colors',
@@ -1108,6 +1122,15 @@ function PurchaseDocSection({
                           if (allSame) {
                             patch.mutate({ id: doc.id, data: { opex_category: slug } });
                           }
+                          // Build index-keyed line_categories from updated item-id-keyed state
+                          const updatedDocLines = { ...(allLineCategories[doc.id] ?? {}) };
+                          itemIds.forEach((id) => { updatedDocLines[id] = slug; });
+                          const indexKeyed: Record<string, string> = {};
+                          doc.items.forEach((it, i) => {
+                            if (updatedDocLines[it.id]) indexKeyed[String(i)] = updatedDocLines[it.id];
+                          });
+                          purchaseDocumentService.setLineCategories(doc.id, indexKeyed);
+                          // (fire and forget — no await needed for UX)
                         }}
                       />
                     )}

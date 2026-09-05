@@ -94,6 +94,7 @@ class PurchaseDocumentSerializer(UUIDModelSerializer):
             "delivery_document_id",
             "notes",
             "ocr_raw_filename",
+            "line_categories",
             "items",
             "items_write",
             "created_at",

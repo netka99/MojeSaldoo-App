@@ -176,6 +176,9 @@ class PurchaseDocument(models.Model):
 
     notes = models.TextField(blank=True, default="")
 
+    # --- Per-line cost categories (index-keyed: "0", "1", … → opex slug) ---
+    line_categories = models.JSONField(default=dict, blank=True)
+
     # --- OCR metadata ---
     ocr_raw_filename = models.CharField(
         max_length=255,

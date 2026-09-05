@@ -39,6 +39,7 @@ export interface PurchaseDocument {
   total_gross: string;
   notes: string;
   ocr_raw_filename: string;
+  line_categories?: Record<string, string>;
   items: PurchaseDocumentItem[];
   created_at: string;
   updated_at: string;
@@ -63,6 +64,7 @@ export interface PurchaseDocumentWrite {
   total_gross?: string;
   notes?: string;
   ocr_raw_filename?: string;
+  line_categories?: Record<string, string>;
   delivery_document_id?: string | null;
   items_write?: Array<{
     product_id?: string | null;
@@ -125,4 +127,7 @@ export const purchaseDocumentService = {
 
   linkPz: (id: string, pzId: string) =>
     api.post<PurchaseDocument>(`${basePath}${id}/link-pz/`, { pz_id: pzId }),
+
+  setLineCategories: (id: string, line_categories: Record<string, string>) =>
+    api.patch<PurchaseDocument>(`${basePath}${id}/set-line-categories/`, { line_categories }),
 };

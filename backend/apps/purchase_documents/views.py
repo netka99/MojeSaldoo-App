@@ -85,6 +85,15 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
         instance.save(update_fields=["is_paid", "paid_at"])
         return Response(PurchaseDocumentSerializer(instance).data)
 
+    @action(detail=True, methods=["patch"], url_path="set-line-categories")
+    def set_line_categories(self, request, uuid=None):
+        """PATCH /purchase-documents/{uuid}/set-line-categories/ — persist per-line cost categories."""
+        doc = self.get_object()
+        cats = request.data.get("line_categories", {})
+        doc.line_categories = cats
+        doc.save(update_fields=["line_categories"])
+        return Response({"line_categories": doc.line_categories})
+
     @action(detail=True, methods=["patch"], url_path="set-category")
     def set_category(self, request, uuid=None):
         """PATCH /purchase-documents/{uuid}/set-category/ — set opex_category."""
