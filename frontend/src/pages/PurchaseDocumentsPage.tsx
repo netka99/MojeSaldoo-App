@@ -946,6 +946,26 @@ function PurchaseDocSection({
   const totalPages = data ? Math.ceil(data.count / 20) : 1;
   const totalCount = data?.count ?? items.length;
 
+  // Seed allLineCategories from backend line_categories when list loads
+  useEffect(() => {
+    if (!items.length) return;
+    setAllLineCategories((prev) => {
+      const next = { ...prev };
+      items.forEach((doc) => {
+        if (!next[doc.id] && doc.line_categories && Object.keys(doc.line_categories).length > 0) {
+          const seed: Record<string, string> = {};
+          doc.items.forEach((it, i) => {
+            const cat = doc.line_categories?.[String(i)];
+            if (cat) seed[it.id] = cat;
+          });
+          if (Object.keys(seed).length > 0) next[doc.id] = seed;
+        }
+      });
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     setSearch(searchInput.trim());
