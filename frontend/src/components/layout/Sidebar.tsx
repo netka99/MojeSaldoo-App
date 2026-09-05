@@ -130,14 +130,9 @@ function NavSectionEFaktury() {
     <div className="space-y-1">
       <NavGroupTitle>E-Faktury (KSeF)</NavGroupTitle>
       <div className="space-y-0.5">
-        {canInvoices && (
-          <ModuleNavItem module="ksef" to="/ksef">
-            KSeF
-          </ModuleNavItem>
-        )}
         {canKsefInbox && (
-          <ModuleNavItem module="ksef" to="/ksef/inbox">
-            Odebrane faktury
+          <ModuleNavItem module="ksef" to="/purchase-documents">
+            Dokumenty zakupowe
           </ModuleNavItem>
         )}
         {canInvoices && (

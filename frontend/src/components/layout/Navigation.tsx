@@ -378,7 +378,6 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 <div className="space-y-1">
                   <NavGroupTitle>E-Faktury (KSeF)</NavGroupTitle>
                   <div className="space-y-0.5">
-                    <AppNavItemLink to="/ksef">KSeF</AppNavItemLink>
                     <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>
                     <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>
                   </div>

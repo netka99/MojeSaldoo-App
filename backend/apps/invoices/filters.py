@@ -21,6 +21,9 @@ class InvoiceFilter(django_filters.FilterSet):
     # Allows filtering by multiple statuses: ?status__in=issued,sent
     status__in = django_filters.BaseInFilter(field_name="status", lookup_expr="in")
 
+    # Allows filtering by multiple KSeF statuses: ?ksef_status__in=accepted,sent
+    ksef_status__in = django_filters.BaseInFilter(field_name="ksef_status", lookup_expr="in")
+
     class Meta:
         model = Invoice
-        fields = ["status", "status__in", "ksef_status", "customer", "is_correction"]
+        fields = ["status", "status__in", "ksef_status", "ksef_status__in", "customer", "is_correction"]

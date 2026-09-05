@@ -156,6 +156,7 @@ export interface PaperScanLine {
   quantity: string;
   unit: string;
   unit_price: string;
+  vat_rate?: string;
 }
 
 export interface PaperScanResult {
@@ -166,6 +167,8 @@ export interface PaperScanResult {
   total_gross: string;
   raw_text: string;
   lines: PaperScanLine[];
+  stored_filename?: string;
+  doc_type?: 'faktura' | 'paragon';
 }
 
 const ksefPath = '/ksef/session/';

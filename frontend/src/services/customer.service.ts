@@ -1,6 +1,17 @@
 import { api } from './api';
 import type { Customer, CustomerProductPrice, CustomerProductPriceUpdate, CustomerProductPriceWrite, CustomerWrite } from '../types';
 
+export type NipLookupResult = {
+  name: string;
+  company_name: string;
+  nip: string;
+  regon?: string;
+  street?: string;
+  postal_code?: string;
+  city?: string;
+  source: 'mf' | 'krs';
+};
+
 interface PaginatedResponse<T> {
   count: number;
   next: string | null;
@@ -46,6 +57,9 @@ export const customerService = {
     a.click();
     URL.revokeObjectURL(url);
   },
+
+  lookupNip: (nip: string) =>
+    api.get<NipLookupResult>('/customers/lookup-nip/', { params: { nip } }),
 
   importCustomers: async (file: File, dryRun: boolean): Promise<ImportCustomersResult> => {
     const form = new FormData();

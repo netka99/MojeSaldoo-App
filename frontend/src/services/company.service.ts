@@ -35,6 +35,7 @@ function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
   if (data.taxation_form !== undefined) body.taxation_form = data.taxation_form;
   if (data.ryczalt_category !== undefined) body.ryczalt_category = data.ryczalt_category;
   if (data.is_vat_payer !== undefined) body.is_vat_payer = data.is_vat_payer;
+  if (data.ksef_usage !== undefined) body.ksef_usage = data.ksef_usage;
   return body;
 }
 

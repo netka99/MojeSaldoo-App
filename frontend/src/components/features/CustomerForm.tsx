@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { IosToggle } from '@/components/ui/IosToggle';
 import { cn } from '@/lib/utils';
 import type { Customer, CustomerWrite } from '@/types';
+import { useNipLookupMutation } from '@/query/use-customers';
 
 /** Polish NIP checksum (matches backend `CustomerSerializer.validate_nip_format`). */
 export function validateNipChecksum(nip: string): boolean {
@@ -284,10 +285,34 @@ export function CustomerForm({
     handleSubmit,
     control,
     reset,
+    setValue,
+    getValues,
     formState: { errors, isSubmitted },
   } = form;
 
   const hasSubmitErrors = isSubmitted && Object.keys(errors).length > 0;
+
+  const nipLookup = useNipLookupMutation();
+  const [nipLookupError, setNipLookupError] = useState<string | null>(null);
+
+  const handleNipLookup = async () => {
+    const nip = getValues('nip').trim();
+    if (!validateNipChecksum(nip)) {
+      setNipLookupError('Wpisz poprawny NIP (10 cyfr) przed wyszukiwaniem.');
+      return;
+    }
+    setNipLookupError(null);
+    try {
+      const result = await nipLookup.mutateAsync(nip);
+      if (!getValues('name')) setValue('name', result.name, { shouldDirty: true });
+      if (!getValues('company_name')) setValue('company_name', result.company_name, { shouldDirty: true });
+      if (result.street) setValue('street', result.street, { shouldDirty: true });
+      if (result.postal_code) setValue('postal_code', result.postal_code, { shouldDirty: true });
+      if (result.city) setValue('city', result.city, { shouldDirty: true });
+    } catch {
+      setNipLookupError('Nie znaleziono firmy o podanym NIP w rejestrach publicznych.');
+    }
+  };
 
   useEffect(() => {
     reset(customer ? customerToFormDefaults(customer) : EMPTY_CUSTOMER_DEFAULTS);
@@ -331,15 +356,39 @@ export function CustomerForm({
               className={inField('company_name')}
             />
           </div>
-          <Input
-            label="NIP"
-            placeholder="10 cyfr"
-            maxLength={10}
-            {...register('nip')}
-            error={errors.nip?.message}
-            helperText="Polski NIP z sumą kontrolną lub puste."
-            className={inField('nip')}
-          />
+          <div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  label="NIP"
+                  placeholder="10 cyfr"
+                  maxLength={10}
+                  {...register('nip')}
+                  error={errors.nip?.message}
+                  helperText="Polski NIP z sumą kontrolną lub puste."
+                  className={inField('nip')}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="mb-[1px] h-11 shrink-0 px-3 text-sm"
+                onClick={handleNipLookup}
+                loading={nipLookup.isPending}
+                disabled={nipLookup.isPending}
+              >
+                Szukaj po NIP
+              </Button>
+            </div>
+            {nipLookupError && (
+              <p className="mt-1 text-xs text-destructive">{nipLookupError}</p>
+            )}
+            {nipLookup.isSuccess && !nipLookupError && (
+              <p className="mt-1 text-xs text-green-600">
+                Dane pobrane z {nipLookup.data.source === 'mf' ? 'MF Biała Lista' : 'KRS'} — sprawdź i popraw jeśli potrzeba.
+              </p>
+            )}
+          </div>
         </FormSection>
 
         <FormSection title="Kontakt" Icon={IconPhone}>

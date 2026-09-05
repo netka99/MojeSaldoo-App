@@ -16,11 +16,15 @@ import { cn } from '@/lib/utils';
 import { useCreatePzMutation } from '@/query/use-delivery';
 import { useAllSuppliersQuery } from '@/query/use-suppliers';
 import { useKsefScanPaperMutation } from '@/query/use-invoices';
+import { useCreatePurchaseDocumentMutation } from '@/query/use-purchase-documents';
 import { productService } from '@/services/product.service';
 import { supplierService } from '@/services/supplier.service';
 import { warehouseService } from '@/services/warehouse.service';
 import type { PaperScanLine } from '@/services/ksef.service';
+import type { PurchaseDocDocType } from '@/services/purchase-document.service';
 import type { Product } from '@/types';
+
+type ScanMode = 'pz' | 'doc';  // 'doc' covers FZ + PAR + PAR_VAT, auto-detected from OCR
 
 const PAGE_SIZE = 30;
 const DEBOUNCE_MS = 300;
@@ -58,6 +62,16 @@ interface PzLine {
 /** A line parsed from OCR that hasn't been matched to a product yet. */
 interface RawOcrLine extends PaperScanLine {
   id: number; // stable index for keying
+}
+
+/** Editable line item for PAR / FZ — no product matching required. */
+interface SimpleDocLine {
+  id: number;
+  product_name: string;
+  quantity: string;
+  unit: string;
+  unit_price_gross: string;
+  vat_rate: string;
 }
 
 /* ── icons ───────────────────────────────────────────────────────── */
@@ -170,6 +184,7 @@ function RawLineRow({
         avg_cost_updated_at: null,
         last_cost: null,
         is_active: true,
+        is_service: false,
       });
       onAssign(newProduct, line.quantity, line.unit_price);
     } catch {
@@ -270,6 +285,10 @@ function PaperScannerPageInner() {
   const companyId = user?.current_company ?? '';
   const createPz = useCreatePzMutation();
   const scanMutation = useKsefScanPaperMutation();
+  const createPurchaseDoc = useCreatePurchaseDocumentMutation();
+
+  /* ── doc-type step ───────────────────────────────────────────── */
+  const [scanMode, setScanMode] = useState<ScanMode | null>(null);
 
   /* ── image state ─────────────────────────────────────────────── */
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -283,6 +302,13 @@ function PaperScannerPageInner() {
   const [sellerName, setSellerName] = useState('');
   const [sellerNip, setSellerNip] = useState('');
   const [notes, setNotes] = useState('');
+  const [storedFilename, setStoredFilename] = useState('');
+
+  /* ── purchase-doc specific state ────────────────────────────── */
+  const [totalGross, setTotalGross] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'cash' | 'card'>('cash');
+  // Detected or manually overridden sub-type for 'doc' mode (fz=faktura, par=paragon)
+  const [docSubType, setDocSubType] = useState<'fz' | 'par'>('par');
 
   /* ── PZ form state ───────────────────────────────────────────── */
   const [toWarehouseId, setToWarehouseId] = useState('');
@@ -293,6 +319,7 @@ function PaperScannerPageInner() {
   const supplierRef = useRef<HTMLDivElement>(null);
   const [lines, setLines] = useState<PzLine[]>([]);
   const [rawLines, setRawLines] = useState<RawOcrLine[]>([]);
+  const [simpleLines, setSimpleLines] = useState<SimpleDocLine[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [showProductSearch, setShowProductSearch] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -400,11 +427,26 @@ function PaperScannerPageInner() {
       if (result.seller_name) setSellerName(result.seller_name);
       if (result.seller_nip) setSellerNip(result.seller_nip);
       if (result.issue_date) setIssueDate(result.issue_date);
-      if (result.invoice_number) setNotes(`Faktura papierowa: ${result.invoice_number}`);
+      if (result.invoice_number && scanMode === 'pz') setNotes(`Faktura papierowa: ${result.invoice_number}`);
       if (result.seller_name) setSupplierSearch(result.seller_name);
+      if (result.total_gross) setTotalGross(result.total_gross);
+      if (result.stored_filename) setStoredFilename(result.stored_filename);
+      // Auto-detect doc sub-type from OCR result
+      if (result.doc_type) setDocSubType(result.doc_type === 'faktura' ? 'fz' : 'par');
       // Pre-fill raw OCR lines (unmatched yet)
       if (result.lines?.length) {
         setRawLines(result.lines.map((l, i) => ({ ...l, id: i })));
+        // For par/fz — also pre-fill simple editable lines
+        if (scanMode !== 'pz') {
+          setSimpleLines(result.lines.map((l, i) => ({
+            id: i,
+            product_name: l.name,
+            quantity: l.quantity || '1',
+            unit: l.unit || 'szt',
+            unit_price_gross: l.unit_price || '',
+            vat_rate: l.vat_rate || '23',
+          })));
+        }
       }
     } catch {
       setScanError('Nie udało się przetworzyć obrazu. Wypełnij pola ręcznie.');
@@ -438,6 +480,42 @@ function PaperScannerPageInner() {
     setLines((prev) =>
       prev.map((l) => (l.product.id === productId ? { ...l, [field]: value } : l)),
     );
+  };
+
+  /* ── purchase doc submit ─────────────────────────────────────── */
+  const onSubmitPurchaseDoc = async () => {
+    setSubmitError(null);
+    const nipDigits = sellerNip.replace(/[\s\-]/g, '');
+    const isParWithNip = docSubType === 'par' && /^\d{10}$/.test(nipDigits);
+    const docType: PurchaseDocDocType = docSubType === 'par' ? (isParWithNip ? 'PAR_VAT' : 'PAR') : 'FZ';
+    const filledLines = simpleLines.filter((l) => l.product_name.trim());
+    try {
+      await createPurchaseDoc.mutateAsync({
+        doc_type: docType,
+        supplier_name: sellerName,
+        supplier_nip: sellerNip,
+        document_number: invoiceNumber,
+        issue_date: issueDate || null,
+        payment_method: paymentMethod,
+        total_gross: totalGross || '0.00',
+        total_net: '0.00',
+        total_vat: '0.00',
+        notes: notes.trim(),
+        ocr_raw_filename: storedFilename || imageFile?.name || '',
+        ...(filledLines.length > 0 && {
+          items_write: filledLines.map((l) => ({
+            product_name: l.product_name,
+            unit: l.unit || 'szt',
+            quantity: l.quantity || '1',
+            unit_price_gross: l.unit_price_gross || '0',
+            vat_rate: l.vat_rate || '23',
+          })),
+        }),
+      });
+      navigate('/purchase-documents');
+    } catch {
+      setSubmitError('Nie udało się zapisać dokumentu.');
+    }
   };
 
   /* ── PZ submit ───────────────────────────────────────────────── */
@@ -509,9 +587,35 @@ function PaperScannerPageInner() {
       </header>
 
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-5">
-        {/* ── image upload ────────────────────────────────────────── */}
+        {/* ── step 0: choose document type ────────────────────────── */}
         <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-          <h2 className="mb-4 text-[15px] font-semibold text-foreground">Zdjęcie faktury</h2>
+          <h2 className="mb-3 text-[15px] font-semibold text-foreground">Rodzaj dokumentu</h2>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { mode: 'pz' as ScanMode, label: 'WZ / PZ', sub: 'Dokument magazynowy' },
+              { mode: 'doc' as ScanMode, label: 'Dokument zakupowy', sub: 'Faktura, paragon — OCR wykryje typ' },
+            ] as const).map(({ mode, label, sub }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setScanMode(mode)}
+                className={cn(
+                  'flex flex-col items-center justify-center rounded-xl border-2 px-3 py-4 text-center transition-all',
+                  scanMode === mode
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border bg-secondary text-foreground hover:border-primary/40',
+                )}
+              >
+                <span className="text-[14px] font-semibold">{label}</span>
+                <span className="mt-0.5 text-[11px] text-muted-foreground">{sub}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* ── image upload ────────────────────────────────────────── */}
+        <section className={cn('rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]', !scanMode && 'opacity-40 pointer-events-none')}>
+          <h2 className="mb-4 text-[15px] font-semibold text-foreground">Zdjęcie dokumentu</h2>
 
           {imagePreviewUrl ? (
             <div className="space-y-3">
@@ -520,6 +624,12 @@ function PaperScannerPageInner() {
                 alt="Podgląd faktury"
                 className="max-h-64 w-full rounded-xl object-contain border border-border bg-muted"
               />
+              {imageFile && (
+                <p className="text-[12px] text-muted-foreground truncate">
+                  <span className="font-medium">Plik:</span> {imageFile.name}
+                  <span className="ml-2 text-muted-foreground/60">({(imageFile.size / 1024).toFixed(0)} KB)</span>
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -543,6 +653,9 @@ function PaperScannerPageInner() {
               {scanMutation.isSuccess && (
                 <p className="text-[13px] text-green-600">Dane odczytane — sprawdź i uzupełnij poniżej.</p>
               )}
+              <p className="text-[11px] text-muted-foreground/70">
+                Zdjęcie jest używane wyłącznie do odczytu danych i nie jest przechowywane na serwerze.
+              </p>
             </div>
           ) : (
             <button
@@ -587,7 +700,8 @@ function PaperScannerPageInner() {
               <h2 className="mb-4 text-[15px] font-semibold text-foreground">Dane dokumentu</h2>
 
               <div className="space-y-4">
-                {/* warehouse */}
+                {/* warehouse — PZ only */}
+                {scanMode === 'pz' && (
                 <div>
                   <label htmlFor="to_warehouse" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                     Magazyn docelowy <span className="text-destructive">*</span>
@@ -607,6 +721,7 @@ function PaperScannerPageInner() {
                     ))}
                   </select>
                 </div>
+                )}
 
                 {/* supplier combobox */}
                 <div>
@@ -734,6 +849,14 @@ function PaperScannerPageInner() {
                     placeholder="10 cyfr"
                     className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
+                  {scanMode === 'doc' && docSubType === 'par' && (
+                    <p className="mt-1 text-[11px]">
+                      {/^\d{10}$/.test(sellerNip.replace(/[\s\-]/g, ''))
+                        ? <span className="font-medium text-orange-600">→ Zostanie zapisany jako PAR z NIP — znajdziesz go w zakładce <strong>Faktury i PAR z NIP</strong></span>
+                        : <span className="text-muted-foreground">→ Zostanie zapisany jako Paragon fiskalny — znajdziesz go w zakładce <strong>Paragony</strong>. Dodaj NIP, aby zmienić na PAR z NIP.</span>
+                      }
+                    </p>
+                  )}
                 </div>
 
                 {/* seller name (from OCR, editable) */}
@@ -765,11 +888,209 @@ function PaperScannerPageInner() {
                     className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
                 </div>
+
+                {/* purchase-doc specific fields */}
+                {scanMode === 'doc' && (
+                  <>
+                    <div>
+                      <label htmlFor="total_gross" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                        Kwota brutto (PLN) <span className="text-destructive">*</span>
+                      </label>
+                      <input
+                        id="total_gross"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={totalGross}
+                        onChange={(e) => setTotalGross(e.target.value)}
+                        placeholder="0.00"
+                        className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="payment_method" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                        Sposób płatności
+                      </label>
+                      <select
+                        id="payment_method"
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value as 'transfer' | 'cash' | 'card')}
+                        className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      >
+                        <option value="transfer">Przelew</option>
+                        <option value="cash">Gotówka</option>
+                        <option value="card">Karta</option>
+                      </select>
+                    </div>
+                    {/* Doc sub-type override */}
+                    <div>
+                      <p className="mb-1.5 text-[13px] font-medium text-muted-foreground">Typ dokumentu</p>
+                      <div className="flex gap-2">
+                        {([
+                          { v: 'fz' as const, label: 'Faktura (FZ)' },
+                          { v: 'par' as const, label: 'Paragon' },
+                        ]).map(({ v, label }) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => setDocSubType(v)}
+                            className={cn(
+                              'flex-1 rounded-xl border px-3 py-2 text-[13px] font-medium transition-all',
+                              docSubType === v
+                                ? 'border-primary bg-primary/5 text-primary'
+                                : 'border-border bg-secondary text-foreground hover:border-primary/40',
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {docSubType === 'fz' && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">→ Faktura zakupowa — znajdziesz ją w zakładce <strong>Faktury i PAR z NIP</strong></p>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </section>
 
-            {/* ── raw OCR lines ────────────────────────────────────── */}
-            {rawLines.length > 0 && (
+            {/* ── pozycje dokumentu (PAR / FZ) ─────────────────────── */}
+            {scanMode === 'doc' && (
+              <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-[15px] font-semibold text-foreground">Pozycje</h2>
+                  <button
+                    type="button"
+                    onClick={() => setSimpleLines((prev) => [
+                      ...prev,
+                      { id: Date.now(), product_name: '', quantity: '1', unit: 'szt', unit_price_gross: '', vat_rate: '23' },
+                    ])}
+                    className="rounded-lg border border-dashed border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                  >
+                    + Dodaj pozycję
+                  </button>
+                </div>
+                {simpleLines.length === 0 ? (
+                  <p className="text-[13px] text-muted-foreground">Brak pozycji — kliknij „Odczytaj dane (OCR)" lub dodaj ręcznie.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                  <div className="min-w-[700px] space-y-2">
+                    <div className="grid grid-cols-[minmax(120px,1fr)_4rem_3.5rem_4.5rem_4rem_4.5rem_4rem_4.5rem_2rem] gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground px-1">
+                      <span>Nazwa</span>
+                      <span>Ilość</span>
+                      <span>J.m.</span>
+                      <span>Cena br.</span>
+                      <span>VAT %</span>
+                      <span className="text-right">Netto</span>
+                      <span className="text-right">VAT zł</span>
+                      <span className="text-right">Brutto</span>
+                      <span />
+                    </div>
+                    {simpleLines.map((line) => {
+                      const qty = parseFloat(line.quantity) || 0;
+                      const price = parseFloat(line.unit_price_gross) || 0;
+                      const vat = parseFloat(line.vat_rate) || 0;
+                      const lineTotal = qty * price;
+                      const lineNet = lineTotal / (1 + vat / 100);
+                      const lineVat = lineTotal - lineNet;
+                      const lineTotalStr = lineTotal > 0 ? lineTotal.toFixed(2) : '—';
+                      const lineNetStr = lineTotal > 0 ? lineNet.toFixed(2) : '—';
+                      const lineVatStr = lineTotal > 0 ? lineVat.toFixed(2) : '—';
+                      return (
+                        <div key={line.id} className="grid grid-cols-[minmax(120px,1fr)_4rem_3.5rem_4.5rem_4rem_4.5rem_4rem_4.5rem_2rem] gap-1.5 items-center">
+                          <input
+                            type="text"
+                            value={line.product_name}
+                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, product_name: e.target.value } : l))}
+                            placeholder="Nazwa produktu"
+                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            value={line.quantity}
+                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, quantity: e.target.value } : l))}
+                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          <input
+                            type="text"
+                            value={line.unit}
+                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, unit: e.target.value } : l))}
+                            placeholder="szt"
+                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={line.unit_price_gross}
+                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, unit_price_gross: e.target.value } : l))}
+                            placeholder="0.00"
+                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          <select
+                            value={line.vat_rate}
+                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, vat_rate: e.target.value } : l))}
+                            className="h-9 rounded-lg border border-border bg-secondary px-1 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          >
+                            <option value="0">0%</option>
+                            <option value="5">5%</option>
+                            <option value="8">8%</option>
+                            <option value="23">23%</option>
+                          </select>
+                          <span className="text-right text-[12px] tabular-nums text-muted-foreground">
+                            {lineNetStr}
+                          </span>
+                          <span className="text-right text-[12px] tabular-nums text-muted-foreground">
+                            {lineVatStr}
+                          </span>
+                          <span className="text-right text-[13px] font-semibold tabular-nums text-foreground pr-1">
+                            {lineTotalStr}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setSimpleLines((prev) => prev.filter((l) => l.id !== line.id))}
+                            className="flex h-9 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                            title="Usuń pozycję"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {/* Suma kontrolna */}
+                    {simpleLines.length > 0 && (() => {
+                      const totals = simpleLines.reduce((acc, l) => {
+                        const qty = parseFloat(l.quantity) || 0;
+                        const price = parseFloat(l.unit_price_gross) || 0;
+                        const vat = parseFloat(l.vat_rate) || 0;
+                        const gross = qty * price;
+                        const net = gross / (1 + vat / 100);
+                        return { gross: acc.gross + gross, net: acc.net + net, vat: acc.vat + (gross - net) };
+                      }, { gross: 0, net: 0, vat: 0 });
+                      return (
+                        <div className="mt-2 flex justify-end gap-6 border-t border-border pt-2">
+                          <span className="text-[13px] text-muted-foreground">
+                            Netto: <span className="font-semibold tabular-nums text-foreground">{totals.net.toFixed(2)} PLN</span>
+                          </span>
+                          <span className="text-[13px] text-muted-foreground">
+                            VAT: <span className="font-semibold tabular-nums text-foreground">{totals.vat.toFixed(2)} PLN</span>
+                          </span>
+                          <span className="text-[13px] text-muted-foreground">
+                            Brutto: <span className="font-bold tabular-nums text-foreground">{totals.gross.toFixed(2)} PLN</span>
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* ── raw OCR lines (PZ only) ──────────────────────────── */}
+            {rawLines.length > 0 && scanMode === 'pz' && (
               <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
                 <h2 className="mb-1 text-[15px] font-semibold text-foreground">Pozycje z paragonu</h2>
                 <p className="mb-4 text-[12px] text-muted-foreground">
@@ -789,7 +1110,8 @@ function PaperScannerPageInner() {
               </section>
             )}
 
-            {/* ── line items ───────────────────────────────────────── */}
+            {/* ── line items — PZ only ─────────────────────────────── */}
+            {scanMode === 'pz' && (
             <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
               <h2 className="mb-4 text-[15px] font-semibold text-foreground">Pozycje</h2>
 
@@ -921,6 +1243,7 @@ function PaperScannerPageInner() {
                 </p>
               )}
             </section>
+            )} {/* end scanMode === 'pz' */}
 
             {/* ── submit ───────────────────────────────────────────── */}
             <div className="flex gap-3">
@@ -931,14 +1254,32 @@ function PaperScannerPageInner() {
               >
                 Anuluj
               </button>
-              <button
-                type="button"
-                onClick={() => void onSubmit()}
-                disabled={createPz.isPending || lines.length === 0 || !toWarehouseId}
-                className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
-              >
-                {createPz.isPending ? 'Tworzę PZ…' : 'Utwórz PZ'}
-              </button>
+              {scanMode === 'pz' && (
+                <button
+                  type="button"
+                  onClick={() => void onSubmit()}
+                  disabled={createPz.isPending || lines.length === 0 || !toWarehouseId}
+                  className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
+                >
+                  {createPz.isPending ? 'Tworzę PZ…' : 'Utwórz PZ'}
+                </button>
+              )}
+              {scanMode === 'doc' && (
+                <button
+                  type="button"
+                  onClick={() => void onSubmitPurchaseDoc()}
+                  disabled={createPurchaseDoc.isPending}
+                  className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
+                >
+                  {createPurchaseDoc.isPending
+                    ? 'Zapisuję…'
+                    : docSubType === 'par' && /^\d{10}$/.test(sellerNip.replace(/[\s\-]/g, ''))
+                      ? 'Zapisz PAR z NIP'
+                      : docSubType === 'par'
+                        ? 'Zapisz paragon'
+                        : 'Zapisz fakturę'}
+                </button>
+              )}
             </div>
           </>
         )}

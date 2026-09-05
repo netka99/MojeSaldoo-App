@@ -234,6 +234,7 @@ function ExpenseForm({ initialValues, onSaved, onCancel }: ExpenseFormProps) {
 
   const [error, setError] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scannedFileName, setScannedFileName] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scanMutation = useKsefScanPaperMutation();
@@ -299,6 +300,7 @@ function ExpenseForm({ initialValues, onSaved, onCancel }: ExpenseFormProps) {
     const file = e.target.files?.[0];
     if (!file) return;
     setScanError(null);
+    setScannedFileName(file.name);
     try {
       const result = await scanMutation.mutateAsync(file);
       if (result.seller_name && !vendor) setVendor(result.seller_name);
@@ -388,6 +390,11 @@ function ExpenseForm({ initialValues, onSaved, onCancel }: ExpenseFormProps) {
           className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 px-4 py-3 text-sm font-medium text-primary transition-colors hover:bg-primary/10 disabled:opacity-60">
           {scanMutation.isPending ? <><span className="animate-spin">⟳</span> Skanuję…</> : <><span>📷</span> Skanuj dokument (OCR)</>}
         </button>
+        {scannedFileName && !scanMutation.isPending && (
+          <p className="mt-1.5 truncate text-xs text-muted-foreground">
+            <span className="font-medium">Plik:</span> {scannedFileName}
+          </p>
+        )}
         {scanError && <p className="mt-1.5 text-xs text-destructive">{scanError}</p>}
       </div>
 

@@ -106,6 +106,8 @@ export interface AuthUser {
   modules?: Record<string, boolean>;
   /** True when the company is a VAT payer — shows VAT breakdown in sales reports. */
   is_vat_payer?: boolean;
+  /** KSeF usage mode for the company: mandatory | voluntary | exempt | none. */
+  ksef_usage?: 'mandatory' | 'voluntary' | 'exempt' | 'none' | null;
 }
 
 export interface AuthResponse {

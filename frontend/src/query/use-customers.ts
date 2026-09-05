@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { customerPriceService, customerService } from '@/services/customer.service';
-import type { ImportCustomersResult } from '@/services/customer.service';
+import type { ImportCustomersResult, NipLookupResult } from '@/services/customer.service';
 import type { CustomerProductPriceUpdate, CustomerProductPriceWrite, CustomerWrite } from '@/types';
 import { customerKeys, customerPriceKeys } from './keys';
 
@@ -114,6 +114,12 @@ export function useUpdateCustomerPriceMutation(customerId: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: customerPriceKeys.byCustomer(customerId) });
     },
+  });
+}
+
+export function useNipLookupMutation() {
+  return useMutation<NipLookupResult, Error, string>({
+    mutationFn: (nip: string) => customerService.lookupNip(nip),
   });
 }
 

@@ -25,6 +25,8 @@ export type InvoiceListParams = {
   /** Comma-separated list of statuses, e.g. "issued,sent" — maps to status__in on backend */
   'status__in'?: string;
   ksef_status?: string;
+  /** Comma-separated KSeF statuses, e.g. "accepted,sent" — maps to ksef_status__in on backend */
+  'ksef_status__in'?: string;
   customer?: string;
   issue_date_after?: string;
   issue_date_before?: string;

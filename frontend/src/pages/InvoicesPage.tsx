@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermission';
 import {
   INVOICE_KSEF_STATUS_LABELS_PL,
@@ -105,6 +105,8 @@ const STATUS_TABS: StatusTab[] = [
   { label: 'Szkice',          key: 'draft',        filterStatus: 'draft' },
 ];
 
+type SourceTab = 'all' | 'ksef' | 'manual';
+
 export function buildInvoiceListFilters(
   tabKey: string,
   ksefStatus: '' | InvoiceKsefStatus,
@@ -112,12 +114,18 @@ export function buildInvoiceListFilters(
   dateFrom: string,
   dateTo: string,
   isCorrection?: boolean,
+  sourceTab?: SourceTab,
 ): InvoiceListFilters {
   const filters: InvoiceListFilters = {};
   const tab = STATUS_TABS.find(t => t.key === tabKey);
   if (tab?.filterStatusIn)            filters['status__in'] = tab.filterStatusIn;
   else if (tab?.filterStatus)         filters.status = tab.filterStatus;
-  if (ksefStatus)                     filters.ksef_status = ksefStatus;
+  if (sourceTab === 'ksef')           filters['ksef_status__in'] = 'pending,sent,accepted,rejected';
+  else if (sourceTab === 'manual')    filters.ksef_status = 'not_sent';
+  else if (ksefStatus)                filters.ksef_status = ksefStatus;
+  if (!sourceTab || sourceTab === 'all') {
+    if (ksefStatus)                   filters.ksef_status = ksefStatus;
+  }
   if (customerId)                     filters.customer = customerId;
   if (dateFrom)                       filters.issue_date_after = dateFrom;
   if (dateTo)                         filters.issue_date_before = dateTo;
@@ -291,6 +299,10 @@ export function InvoicesPage() {
 
 function InvoicesPageContent() {
   const canInvoices = usePermission('can_manage_invoices');
+  const navigate = useNavigate();
+
+  // source tab: all / ksef / manual
+  const [sourceTab, setSourceTab] = useState<SourceTab>('all');
 
   // primary tab
   const [activeTab, setActiveTab] = useState('');
@@ -383,7 +395,7 @@ function InvoicesPageContent() {
   }
 
   // data
-  const listFilters = buildInvoiceListFilters(activeTab, ksefStatus, customerId, dateFrom, dateTo, correctionFilter);
+  const listFilters = buildInvoiceListFilters(activeTab, ksefStatus, customerId, dateFrom, dateTo, correctionFilter, sourceTab);
   const { data, isFetching, isError, error, refetch } = useInvoiceListQuery(page, {
     ...listFilters,
     ...(ordering && { ordering }),
@@ -536,6 +548,40 @@ function InvoicesPageContent() {
               </button>
             );
           })}
+        </div>
+
+        {/* ── Source tabs ─────────────────────────────────────────────────── */}
+        <div className="mb-3 flex gap-1.5">
+          {([
+            { key: 'all' as SourceTab,    label: 'Wszystkie' },
+            { key: 'ksef' as SourceTab,   label: 'Z KSeF' },
+            { key: 'manual' as SourceTab, label: 'Wystawione lokalnie' },
+          ]).map(t => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => {
+                if (t.key === 'ksef') { navigate('/ksef/inbox'); return; }
+                setSourceTab(t.key);
+                resetPage();
+              }}
+              className={cn(
+                'rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-all',
+                sourceTab === t.key && t.key !== 'ksef'
+                  ? 'bg-[#5856D6] text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => navigate('/purchase-documents')}
+            className="rounded-full px-3.5 py-1.5 text-[13px] font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all"
+          >
+            Zakupowe / Paragony
+          </button>
         </div>
 
         {/* ── Status tabs ─────────────────────────────────────────────────── */}

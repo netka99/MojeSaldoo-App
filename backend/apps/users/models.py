@@ -102,6 +102,23 @@ class Company(models.Model):
         help_text="Czy firma jest czynnym podatnikiem VAT.",
     )
 
+    KSEF_MANDATORY = "mandatory"
+    KSEF_VOLUNTARY = "voluntary"
+    KSEF_EXEMPT = "exempt"
+    KSEF_NONE = "none"
+    KSEF_USAGE_CHOICES = [
+        (KSEF_MANDATORY, "Obowiązkowy KSeF"),
+        (KSEF_VOLUNTARY, "Dobrowolny KSeF"),
+        (KSEF_EXEMPT, "Zwolniony z KSeF (np. rolnik, do 200k/rok)"),
+        (KSEF_NONE, "Nie używam KSeF"),
+    ]
+    ksef_usage = models.CharField(
+        max_length=20,
+        choices=KSEF_USAGE_CHOICES,
+        default=KSEF_MANDATORY,
+        help_text="Czy firma używa KSeF. Wpływa na widoczność modułów i komunikaty.",
+    )
+
     # --- KSeF / invoice defaults ---
     # Default bank account pre-filled onto new invoices (can be overridden per invoice).
     bank_account_iban = models.CharField(

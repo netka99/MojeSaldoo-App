@@ -29,9 +29,8 @@ dependencies = [
     "gunicorn==21.2.0",
     "whitenoise==6.6.0",
     "openpyxl==3.1.5",
-    # OCR for paper invoice scanner — Google Cloud Vision API (1 000 free scans/month)
-    # Requires GOOGLE_APPLICATION_CREDENTIALS env var pointing to a service account JSON key.
-    "google-cloud-vision>=3.7",
+    # OCR for paper receipt/invoice scanner — Azure Document Intelligence (500 pages/month free, EU region)
+    "azure-ai-documentintelligence>=1.0.0",
 ]
 
 [project.optional-dependencies]

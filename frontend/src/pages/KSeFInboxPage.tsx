@@ -1219,7 +1219,7 @@ function todayIso(): string {
 
 type InboxFilter = 'all' | 'pz' | 'category' | 'unassigned';
 
-export function KSeFInboxPage() {
+export function KSeFInboxContent() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initDateFrom = searchParams.has('date_from') ? searchParams.get('date_from') ?? '' : lastMonthIso();
@@ -1286,20 +1286,16 @@ export function KSeFInboxPage() {
   const newCount = data?.new_count ?? 0;
 
   return (
-    <div className="max-w-7xl px-6 py-6 space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">
-          Odebrane faktury KSeF
-        </h1>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setCatManagerOpen((v) => !v)}
-            title="Zarządzaj kategoriami kosztów"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            ⚙
-          </button>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          type="button"
+          onClick={() => setCatManagerOpen((v) => !v)}
+          title="Zarządzaj kategoriami kosztów"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          ⚙
+        </button>
         {!session?.active && (
           <Link
             to="/settings/certificate"
@@ -1311,7 +1307,6 @@ export function KSeFInboxPage() {
             Zaloguj się do KSeF
           </Link>
         )}
-        </div>
       </div>
 
       <OpexCategoryManager open={catManagerOpen} onClose={() => setCatManagerOpen(false)} />
@@ -1573,6 +1568,17 @@ export function KSeFInboxPage() {
           )}
         </Card>
       )}
+    </div>
+  );
+}
+
+export function KSeFInboxPage() {
+  return (
+    <div className="max-w-7xl px-6 py-6">
+      <h1 className="mb-6 text-[1.5rem] font-semibold tracking-tight text-foreground">
+        Odebrane faktury KSeF
+      </h1>
+      <KSeFInboxContent />
     </div>
   );
 }

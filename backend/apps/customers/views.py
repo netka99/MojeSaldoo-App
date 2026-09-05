@@ -1,6 +1,9 @@
 import csv
 import io
+import re
+from datetime import date
 
+import requests as http_requests
 from django.db import transaction
 from django.db.models import QuerySet
 from django.http import HttpResponse
@@ -93,6 +96,96 @@ class CustomerViewSet(viewsets.ModelViewSet):
         from rest_framework import status
         from rest_framework.response import Response
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(
+        detail=False, methods=["get"], url_path="lookup-nip",
+        permission_classes=[IsAuthenticated, IsCompanyMember],
+    )
+    def lookup_nip(self, request):
+        """GET /api/customers/lookup-nip/?nip=1234567890
+        Searches MF Biała Lista first, then KRS, and returns pre-fill data.
+        """
+        nip = request.query_params.get("nip", "").strip().replace("-", "").replace(" ", "")
+        if not nip or not re.match(r"^\d{10}$", nip):
+            return Response(
+                {"detail": "Podaj poprawny 10-cyfrowy NIP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = self._fetch_from_mf(nip)
+        if result:
+            return Response({**result, "source": "mf"})
+
+        result = self._fetch_from_krs(nip)
+        if result:
+            return Response({**result, "source": "krs"})
+
+        return Response(
+            {"detail": "Nie znaleziono firmy o podanym NIP w rejestrach publicznych."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    def _fetch_from_mf(self, nip: str) -> dict | None:
+        """Query MF Biała Lista (Wykaz Podatników VAT)."""
+        today = date.today().isoformat()
+        url = f"https://wl-api.mf.gov.pl/api/search/nip/{nip}?date={today}"
+        try:
+            resp = http_requests.get(url, timeout=5, headers={"User-Agent": "MojeSaldoo/1.0"})
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            subject = data.get("result", {}).get("subject")
+            if not subject:
+                return None
+            address_raw = subject.get("workingAddress") or subject.get("residenceAddress") or ""
+            street, postal_code, city = self._parse_pl_address(address_raw)
+            name = subject.get("name", "")
+            return {
+                "name": name,
+                "company_name": name,
+                "nip": nip,
+                "regon": subject.get("regon", ""),
+                "street": street,
+                "postal_code": postal_code,
+                "city": city,
+            }
+        except Exception:
+            return None
+
+    def _fetch_from_krs(self, nip: str) -> dict | None:
+        """Query KRS API (Ministerstwo Sprawiedliwości) as fallback."""
+        url = f"https://api-krs.ms.gov.pl/api/krs/podmiotPrawny?nip={nip}&rejestr=P&format=json"
+        try:
+            resp = http_requests.get(url, timeout=5, headers={"User-Agent": "MojeSaldoo/1.0"})
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            wyniki = data.get("wyniki", [])
+            if not wyniki:
+                return None
+            first = wyniki[0]
+            name = first.get("nazwa") or first.get("nazwaSkrocona") or ""
+            address_raw = first.get("adres") or ""
+            street, postal_code, city = self._parse_pl_address(address_raw)
+            return {
+                "name": name,
+                "company_name": name,
+                "nip": nip,
+                "regon": first.get("regon", ""),
+                "street": street,
+                "postal_code": postal_code,
+                "city": city,
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_pl_address(address: str) -> tuple[str, str, str]:
+        """Parse 'ul. Przykładowa 1, 00-001 Warszawa' → (street, postal_code, city)."""
+        m = re.match(r"^(.*),\s*(\d{2}-\d{3})\s+(.+)$", address.strip())
+        if m:
+            return m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+        return address.strip(), "", ""
 
     _IMPORT_HEADERS = [
         "Nazwa", "Nazwa firmy", "NIP", "Telefon", "Email",

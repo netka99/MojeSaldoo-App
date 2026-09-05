@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { RequireCompanyForApp } from '@/components/auth/RequireCompanyForApp';
@@ -187,6 +187,12 @@ const SalesReportCreatePage = lazy(() =>
 );
 const SalesReportEditPage = lazy(() =>
   import('./pages/SalesReportEditPage').then((m) => ({ default: m.SalesReportEditPage })),
+);
+const PurchaseDocumentsPage = lazy(() =>
+  import('./pages/PurchaseDocumentsPage').then((m) => ({ default: m.PurchaseDocumentsPage })),
+);
+const PurchaseDocumentCreatePage = lazy(() =>
+  import('./pages/PurchaseDocumentCreatePage').then((m) => ({ default: m.PurchaseDocumentCreatePage })),
 );
 
 function RouteFallback() {
@@ -569,16 +575,11 @@ function App() {
                     </ModuleRouteGate>
                   }
                 />
+                <Route path="/ksef" element={<Navigate to="/purchase-documents" replace />} />
+                <Route path="/ksef/inbox" element={<Navigate to="/purchase-documents" replace />} />
+                {/* Kept for backward compat — renders the standalone version */}
                 <Route
-                  path="/ksef"
-                  element={
-                    <ModuleRouteGate module="ksef">
-                      <AppPlaceholderPage title="KSeF" />
-                    </ModuleRouteGate>
-                  }
-                />
-                <Route
-                  path="/ksef/inbox"
+                  path="/ksef/inbox/standalone"
                   element={
                     <ModuleRouteGate module="ksef">
                       <KSeFInboxPage />
@@ -627,6 +628,9 @@ function App() {
                 <Route path="/sprzedaz" element={<SalesReportsPage />} />
                 <Route path="/sprzedaz/nowy" element={<SalesReportCreatePage />} />
                 <Route path="/sprzedaz/:id" element={<SalesReportEditPage />} />
+                <Route path="/purchase-documents" element={<PurchaseDocumentsPage />} />
+                <Route path="/purchase-documents/new" element={<PurchaseDocumentCreatePage />} />
+                <Route path="/purchase-documents/:id/edit" element={<PurchaseDocumentCreatePage />} />
                 <Route path="/activity" element={<ActivityPage />} />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />

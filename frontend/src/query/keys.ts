@@ -201,3 +201,15 @@ export const supplierKeys = {
   details: () => [...supplierKeys.all, 'detail'] as const,
   detail: (id: string) => [...supplierKeys.details(), id] as const,
 };
+
+import type { PurchaseDocListParams } from '@/services/purchase-document.service';
+
+export type PurchaseDocListKeyParams = PurchaseDocListParams & { companyId: string };
+
+export const purchaseDocumentKeys = {
+  all: ['purchase-documents'] as const,
+  lists: () => [...purchaseDocumentKeys.all, 'list'] as const,
+  list: (params: PurchaseDocListKeyParams) => [...purchaseDocumentKeys.lists(), params] as const,
+  details: () => [...purchaseDocumentKeys.all, 'detail'] as const,
+  detail: (id: string) => [...purchaseDocumentKeys.details(), id] as const,
+};

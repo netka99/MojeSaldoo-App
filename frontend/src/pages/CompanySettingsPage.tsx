@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
@@ -68,19 +68,38 @@ function ModuleSwitch({
   );
 }
 
+type KsefUsage = 'mandatory' | 'voluntary' | 'exempt' | 'none';
+
+const KSEF_USAGE_OPTIONS: { value: KsefUsage; label: string; sub: string }[] = [
+  { value: 'mandatory', label: 'Obowiązkowy KSeF',  sub: 'Obrót ≥ 200 tys. PLN/rok lub po obowiązku ustawowym' },
+  { value: 'voluntary', label: 'Dobrowolny KSeF',   sub: 'Używam z własnej woli, bez ustawowego obowiązku' },
+  { value: 'exempt',    label: 'Zwolniony z KSeF',  sub: 'Rolnik ryczałtowy, podmiot zagraniczny lub obrót poniżej progu' },
+];
+
 type CompanySettingsModulesProps = {
   companyId: string;
   canChangeModules: boolean;
   onRefreshUser: () => Promise<void>;
   userRole: string | null | undefined;
+  currentKsefUsage?: KsefUsage | null;
 };
 
-function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, userRole }: CompanySettingsModulesProps) {
+function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, userRole, currentKsefUsage }: CompanySettingsModulesProps) {
   const { data: modules, isPending: modulesPending, isError: modulesError } = useCompanyModulesQuery(companyId);
   const toggleModule = useToggleModuleMutation(companyId);
+  const updateCompany = useUpdateCompanyMutation();
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<ModuleName | null>(null);
+  const [ksefUsage, setKsefUsage] = useState<KsefUsage>(
+    currentKsefUsage && currentKsefUsage !== 'none' ? currentKsefUsage : 'mandatory'
+  );
+  const [ksefUsageSaving, setKsefUsageSaving] = useState(false);
+
+  // sync if parent re-fetches user
+  useEffect(() => {
+    if (currentKsefUsage && currentKsefUsage !== 'none') setKsefUsage(currentKsefUsage);
+  }, [currentKsefUsage]);
 
   const moduleRows = useMemo(() => {
     return MODULE_DISPLAY_ORDER.map((module) => {
@@ -104,11 +123,30 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
     setPendingKey(module);
     try {
       await toggleModule.mutateAsync({ module, enabled: next });
+      // Sync ksef_usage with module state
+      if (module === 'ksef') {
+        const usageToSave = next ? ksefUsage : 'none';
+        await updateCompany.mutateAsync({ companyId, data: { name: '', ksef_usage: usageToSave } });
+      }
       await onRefreshUser();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Nie udało się zapisać modułu');
     } finally {
       setPendingKey(null);
+    }
+  };
+
+  const saveKsefUsage = async (value: KsefUsage) => {
+    setKsefUsage(value);
+    setKsefUsageSaving(true);
+    try {
+      await updateCompany.mutateAsync({ companyId, data: { name: '', ksef_usage: value } });
+      await onRefreshUser();
+    } catch {
+      // revert on error
+      setKsefUsage(currentKsefUsage && currentKsefUsage !== 'none' ? currentKsefUsage : 'mandatory');
+    } finally {
+      setKsefUsageSaving(false);
     }
   };
 
@@ -150,6 +188,7 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
         {moduleRows.map((row) => {
           const offVisual = !row.isEnabled;
           const switchDisabled = !canChangeModules || pendingKey !== null;
+          const isKsef = row.module === 'ksef';
           return (
             <li key={row.module}>
               <Card
@@ -176,6 +215,46 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
                 </CardHeader>
                 <CardContent className="pt-0 text-xs text-muted-foreground">
                   {row.enabledAt ? `Włączono: ${new Date(row.enabledAt).toLocaleString('pl-PL')}` : '—'}
+
+                  {/* KSeF usage — rozwijane gdy moduł jest włączony */}
+                  {isKsef && row.isEnabled && (
+                    <div className="mt-3 space-y-1.5 border-t border-border pt-3">
+                      <p className={cn('mb-2 text-[11px] font-semibold uppercase tracking-wide', ksefUsageSaving && 'opacity-50')}>
+                        Tryb użycia KSeF
+                      </p>
+                      {KSEF_USAGE_OPTIONS.map(opt => (
+                        <label
+                          key={opt.value}
+                          className={cn(
+                            'flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors text-foreground',
+                            ksefUsage === opt.value
+                              ? 'border-primary/50 bg-primary/5'
+                              : 'border-border hover:bg-muted/60',
+                            (!canChangeModules || ksefUsageSaving) && 'pointer-events-none opacity-50',
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            name="ksef_usage"
+                            value={opt.value}
+                            checked={ksefUsage === opt.value}
+                            disabled={!canChangeModules || ksefUsageSaving}
+                            onChange={() => void saveKsefUsage(opt.value)}
+                            className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0"
+                          />
+                          <div>
+                            <p className="text-xs font-medium leading-tight">{opt.label}</p>
+                            <p className="text-[10px] text-muted-foreground leading-snug">{opt.sub}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {isKsef && !row.isEnabled && (
+                    <p className="mt-2 text-[11px] text-muted-foreground/70">
+                      Włącz moduł, aby skonfigurować tryb KSeF.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </li>
@@ -830,6 +909,7 @@ export function CompanySettingsPage() {
         canChangeModules={canChangeModules}
         onRefreshUser={refreshUser}
         userRole={user?.current_company_role}
+        currentKsefUsage={user?.ksef_usage}
       />
 
       <WorkflowSettingsSection

@@ -1497,31 +1497,181 @@ class KorMatchView(APIView):
 # Paper invoice scanner (OCR)
 # ---------------------------------------------------------------------------
 
-def _ocr_image(image_file) -> str:
-    """Run Google Cloud Vision OCR on an uploaded image. Returns raw text, or empty string on failure.
+def _azure_client():
+    from azure.ai.documentintelligence import DocumentIntelligenceClient  # noqa: PLC0415
+    from azure.core.credentials import AzureKeyCredential  # noqa: PLC0415
+    endpoint = os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "")
+    key = os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_KEY", "")
+    if not endpoint or not key:
+        raise RuntimeError("Azure Document Intelligence credentials not configured.")
+    return DocumentIntelligenceClient(endpoint, AzureKeyCredential(key))
 
-    Requires the GOOGLE_APPLICATION_CREDENTIALS environment variable to point to a service account
-    JSON key file with the 'Cloud Vision API' enabled. Free tier: 1 000 scans/month.
+
+def _field_str(field) -> str:
+    if field is None:
+        return ""
+    return (field.value_string or field.content or "").strip()
+
+
+def _field_num(field):
+    if field is None:
+        return None
+    v = field.value_number
+    if v is None and field.content:
+        try:
+            return float(field.content.replace(",", ".").replace(" ", ""))
+        except ValueError:
+            return None
+    return v
+
+
+def _field_date(field) -> str:
+    if field is None:
+        return ""
+    if field.value_date:
+        return field.value_date.isoformat()
+    return (field.content or "").strip()
+
+
+# TODO: File storage disabled — re-enable when Azure Blob Storage (or S3) is configured.
+# At that point replace local disk save with a blob upload and store the blob URL/key.
+# def _save_scan_file(image_file) -> str:
+#     """Save an uploaded scan to MEDIA_ROOT/purchase_documents/YYYY/MM/ and return the relative path."""
+#     import os
+#     import re
+#     import uuid as _uuid
+#     from datetime import date
+#     from django.conf import settings
+#
+#     today = date.today()
+#     rel_dir = os.path.join("purchase_documents", str(today.year), f"{today.month:02d}")
+#     abs_dir = os.path.join(settings.MEDIA_ROOT, rel_dir)
+#     os.makedirs(abs_dir, exist_ok=True)
+#
+#     original = getattr(image_file, "name", "scan") or "scan"
+#     name_part, _, ext = original.rpartition(".")
+#     safe_name = re.sub(r"[^\w\-]", "_", name_part or "scan")[:40]
+#     filename = f"{_uuid.uuid4().hex[:8]}_{safe_name}.{ext}" if ext else f"{_uuid.uuid4().hex[:8]}_{safe_name}"
+#     abs_path = os.path.join(abs_dir, filename)
+#
+#     image_file.seek(0)
+#     with open(abs_path, "wb") as fh:
+#         for chunk in image_file.chunks():
+#             fh.write(chunk)
+#
+#     return os.path.join(rel_dir, filename).replace("\\", "/")
+
+
+def _ocr_image(image_file) -> str:
+    """Extract raw text using Azure prebuilt-layout (used as fallback for regex parsing)."""
+    try:
+        client = _azure_client()
+        content = image_file.read()
+        content_type = getattr(image_file, "content_type", "image/jpeg")
+        poller = client.begin_analyze_document("prebuilt-layout", body=content, content_type=content_type)
+        result = poller.result()
+        text = result.content or ""
+        logging.info("Azure layout OCR: %d chars", len(text))
+        return text
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Azure OCR failed: %s", exc, exc_info=True)
+        return ""
+
+
+def _analyze_invoice(image_file) -> dict | None:
+    """Use Azure prebuilt-invoice model — trained on millions of invoices/receipts.
+
+    Returns structured fields directly: vendor, date, total, lines[].
+    Falls back to None on failure so caller can use regex on raw text.
     """
     try:
-        from google.cloud import vision  # noqa: PLC0415
-
-        client = vision.ImageAnnotatorClient()
+        client = _azure_client()
         content = image_file.read()
-        image = vision.Image(content=content)
-        response = client.document_text_detection(image=image)
+        content_type = getattr(image_file, "content_type", "image/jpeg")
+        poller = client.begin_analyze_document("prebuilt-invoice", body=content, content_type=content_type)
+        result = poller.result()
 
-        if response.error.message:
-            logging.warning("Google Vision API error: %s", response.error.message)
-            return ""
+        if not result.documents:
+            logging.info("Azure invoice model: no documents found")
+            return None
 
-        return response.full_text_annotation.text or ""
-    except ImportError:
-        logging.warning("google-cloud-vision is not installed. Run: pip install google-cloud-vision")
-        return ""
+        doc = result.documents[0]
+        f = doc.fields or {}
+
+        # --- header fields ---
+        # Clean seller name: collapse newlines and extra spaces
+        seller_name = re.sub(r"\s+", " ", _field_str(f.get("VendorName"))).strip()
+        # Clean NIP: strip prefix "NIP:", spaces, dashes — keep only digits, max 10
+        raw_nip = re.sub(r"[^0-9]", "", _field_str(f.get("VendorTaxId")))
+        seller_nip = raw_nip[:10]
+        invoice_number = _field_str(f.get("InvoiceId"))
+
+        # Azure sometimes strips the document-type prefix (e.g. "2163//SUW" instead of "WZ 2163//SUW").
+        # If the raw text contains the Azure number preceded by a known Polish doc prefix, restore it.
+        raw_content = result.content or ""
+        if invoice_number and raw_content:
+            _PREFIX_RE = re.compile(
+                r"\b(WZ|FV|FA|FP|FS|NN|NNFV|NNZO|NNWZ|KOR|PAR|RK|ZAM|PZ|MM|RW|PW)\s*"
+                + re.escape(invoice_number),
+                re.IGNORECASE,
+            )
+            pm = _PREFIX_RE.search(raw_content)
+            if pm:
+                invoice_number = pm.group(0).strip()
+
+        issue_date = _field_date(f.get("InvoiceDate")) or _field_date(f.get("ServiceDate")) or _field_date(f.get("ServiceStartDate"))
+        # Fallback: parse date from raw OCR text if Azure model missed it
+        if not issue_date and raw_content:
+            _dm = re.search(r"\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b", raw_content)
+            if _dm:
+                issue_date = f"{_dm.group(1)}-{_dm.group(2)}-{_dm.group(3)}"
+            else:
+                _dm = re.search(r"\b(\d{2})[.](\d{2})[.](20\d{2})\b", raw_content)
+                if _dm:
+                    issue_date = f"{_dm.group(3)}-{_dm.group(2)}-{_dm.group(1)}"
+        total_num = _field_num(f.get("InvoiceTotal")) or _field_num(f.get("AmountDue"))
+        total_gross = f"{total_num:.2f}" if total_num else ""
+
+        # --- line items ---
+        lines = []
+        items_field = f.get("Items")
+        if items_field and items_field.value_array:
+            for item in items_field.value_array:
+                obj = item.value_object or {}
+                # Clean name: collapse newlines and extra spaces
+                name = re.sub(r"\s+", " ", _field_str(obj.get("Description"))).strip()
+                qty_num = _field_num(obj.get("Quantity")) or 1.0
+                # Prefer brutto unit price: Amount (line total brutto) / qty
+                # UnitPrice from Azure is typically netto — not useful for PZ cost tracking
+                amt = _field_num(obj.get("Amount"))
+                if amt and qty_num:
+                    price_num = round(amt / qty_num, 4)
+                else:
+                    price_num = _field_num(obj.get("UnitPrice"))
+                unit = _field_str(obj.get("Unit")) or "szt"
+                if name and price_num and price_num > 0:
+                    lines.append({
+                        "name": name,
+                        "quantity": str(qty_num),
+                        "unit": unit.lower(),
+                        "unit_price": str(price_num),
+                    })
+
+        logging.info(
+            "Azure invoice model: vendor=%r nip=%r inv=%r date=%r total=%r lines=%d",
+            seller_name, seller_nip, invoice_number, issue_date, total_gross, len(lines),
+        )
+        return {
+            "seller_name": seller_name,
+            "seller_nip": seller_nip,
+            "invoice_number": invoice_number,
+            "issue_date": issue_date,
+            "total_gross": total_gross,
+            "lines": lines,
+        }
     except Exception as exc:  # noqa: BLE001
-        logging.warning("OCR failed: %s", exc)
-        return ""
+        logging.warning("Azure invoice model failed: %s", exc, exc_info=True)
+        return None
 
 
 def _parse_invoice_fields(text: str) -> dict:
@@ -1559,10 +1709,20 @@ def _parse_invoice_fields(text: str) -> dict:
     if m:
         invoice_number = m.group(1).strip()
 
+    # Priority 1: "Faktura VAT: NNFV/01/..." — direct colon-number (BJANEX format)
     if not invoice_number:
+        m = re.search(r"Faktura\s+VAT\s*:\s*([A-Z0-9][A-Z0-9/\-]{3,30})", text, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip().rstrip("-/")
+            if not re.match(r"^\d{10}$", candidate):
+                invoice_number = candidate
+
+    if not invoice_number:
+        # Words that look like "nr X" but are NOT invoice numbers
+        _FALSE_NR = re.compile(r"^(konta|zam|wz|nip|bdo|tel|fax|regon|krs|vat|pesel)$", re.IGNORECASE)
         patterns = [
             r"(?:Nr\s*faktury|Faktura\s*VAT\s*[:\s]*nr|Faktura\s*nr)\s*[:\s]+([A-Z0-9][A-Z0-9/\-]{3,30})",
-            r"\bnr\s*[:\.]?\s*([A-Z0-9][A-Z0-9/\-]{4,30})\b",
+            r"\bnr\s*[:\.]?\s*([A-Z]{2,}[A-Z0-9/\-]{3,30})\b",
             r"\b([A-Z]{1,4}[/\-]\d{4}[/\-][\d/\-]+)\b",
             r"\bnr\s*[:\.]?\s*(\d{4,8})\b",
         ]
@@ -1570,8 +1730,9 @@ def _parse_invoice_fields(text: str) -> dict:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
                 candidate = m.group(1).strip().rstrip("-/")
-                # Skip if it looks like a NIP or date
-                if not re.match(r"^\d{10}$", candidate) and not re.match(r"^\d{4}-\d{2}-\d{2}$", candidate):
+                if (not re.match(r"^\d{10}$", candidate)
+                        and not re.match(r"^\d{4}-\d{2}-\d{2}$", candidate)
+                        and not _FALSE_NR.match(candidate)):
                     invoice_number = candidate
                     break
 
@@ -1633,13 +1794,28 @@ def _parse_invoice_fields(text: str) -> dict:
             total_gross = f"{running:.2f}"
 
     # --- Seller name ---
-    # Look for lines containing common Polish company legal-form keywords.
-    name_match = re.search(
-        r"^(.{3,80}(?:Sp\.?\s*z\s*o\.?o\.?|\bS\.?\s*A\.?\b|S-ka\s+jawna|spółka\s+jawna|partnerska|komandytowa|\bLtd\.?\b|\bGmbH\b|S-ka).{0,40})$",
+    # Priority: explicit "Sprzedawca: NAME" label (BJANEX and similar formats)
+    seller_name = ""
+    m = re.search(
+        r"Sprzedawca\s*:\s*(.+?)(?:\s+ul\.|\s+NIP\b|\s+BDO\b|\s+tel\.?|\s+\d{2}-\d{3}|\n|$)",
         text,
-        re.MULTILINE,  # no IGNORECASE — avoids "sa" in "Visa"
+        re.IGNORECASE,
     )
-    seller_name = name_match.group(1).strip() if name_match else ""
+    if m:
+        seller_name = m.group(1).strip()
+
+    # Fallback: look for lines containing common Polish company legal-form keywords.
+    if not seller_name:
+        name_match = re.search(
+            r"^(.{3,120}(?:Sp\.?\s*z\s*o\.?o\.?|\bS\.?\s*A\.?\b|S-ka\s+jawna|spółka\s+jawna|partnerska|komandytowa|\bLtd\.?\b|\bGmbH\b|S-ka).{0,60})$",
+            text,
+            re.MULTILINE,
+        )
+        if name_match:
+            raw_name = name_match.group(1).strip()
+            # Trim trailing address parts (ul., NIP, BDO, tel.)
+            raw_name = re.sub(r"\s+(?:ul\.|NIP|BDO|tel\.?|biuro@).+$", "", raw_name, flags=re.IGNORECASE)
+            seller_name = raw_name.strip()
 
     return {
         "seller_name": seller_name,
@@ -1944,7 +2120,9 @@ def _parse_paragon_lines(text: str) -> list:
             except ValueError:
                 pass
             pending_name = None
-        elif re.search(r"[A-Za-ząćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}", line) and not re.search(r"\d{4,}", line):
+        elif re.search(r"[A-Za-ząćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}", line) and not re.search(r"\d{5,}", line):
+            # Accept as product name if it has Polish letters and no long digit sequence
+            # (short digits like "20szt" in "Jaja Sc ol Nx20szt" are ok)
             pending_name = vat_suffix.sub("", line).strip()
         j += 1
 
@@ -2069,8 +2247,11 @@ def _parse_faktura_thermal_lines(text: str) -> list:
 def _parse_faktura_a4_lines(text: str) -> list:
     """Parse product lines from an A4 VAT invoice (BJANEX format) or BJANEX WZ.
 
-    Column order: Lp [Symbol] Nazwa JM Ilość Cena_netto Wartość_netto Cena_brutto Wartość_brutto
+    Handles two OCR layouts:
+    1. Single-line: Lp [Symbol] Nazwa JM Ilość Cena_netto Wartość_netto ...  (Google Vision style)
+    2. Multi-line: each column on a separate line                             (Azure OCR style)
     """
+    # --- Layout 1: single-line tabular ---
     row_re = re.compile(
         r"^\d+\s+"
         r"(?:\d{4,6}\s+)?"
@@ -2106,6 +2287,116 @@ def _parse_faktura_a4_lines(text: str) -> list:
                 })
         except ValueError:
             pass
+
+    if entries:
+        return entries
+
+    # --- Layout 2: Azure OCR multi-line (each column = separate line) ---
+    # Structure per product:
+    #   {Lp} {Symbol} [{Nazwa}]   ← Nazwa may be on this line or the next
+    #   {Nazwa}                    ← if not on previous line
+    #   {Kaucja}                   ← deposit number, skip
+    #   [{Rabat%}]                 ← optional discount number, skip
+    #   {JM}                       ← unit (KG/SZT/OP...)
+    #   {Ilość}                    ← quantity
+    #   {Cena_netto}               ← unit price net ← WE WANT THIS
+    #   {Wartość_netto}            ← skip
+    #   {VAT%}                     ← skip (e.g. "5%")
+    #   {Wartość_VAT}              ← skip
+    #   {Wartość_brutto}           ← skip
+    all_lines = [ln.strip() for ln in text.splitlines()]
+    lp_sym_re = re.compile(r"^(\d+)\s+(\d{4,6})\s*(.*)")
+    unit_re = re.compile(r"^(KG|SZT|OP|L|G|ML|M2|SZT\.)\.?$", re.IGNORECASE)
+    number_re = re.compile(r"^[\d,.]+$")
+    vat_pct_re = re.compile(r"^\d+%$")
+
+    i = 0
+    while i < len(all_lines):
+        line = all_lines[i]
+        m = lp_sym_re.match(line)
+        if not m:
+            i += 1
+            continue
+
+        name_inline = _PKWIU_RE.sub("", m.group(3)).strip()
+        i += 1
+
+        # Name on next line if not inline
+        if not name_inline and i < len(all_lines):
+            candidate = all_lines[i]
+            if not lp_sym_re.match(candidate) and not number_re.match(candidate):
+                name_inline = _PKWIU_RE.sub("", candidate).strip()
+                i += 1
+
+        if not name_inline or _SKIP_WORDS_RE.search(name_inline):
+            continue
+
+        # State machine: kaucja → [rabat] → JM → ilość → cena_netto → done
+        unit = "szt"
+        quantity: float | None = None
+        unit_price: float | None = None
+        state = 0  # 0=kaucja, 1=jm_or_rabat, 2=jm, 3=ilosc, 4=cena
+
+        while i < len(all_lines) and state < 5:
+            nxt = all_lines[i]
+            if lp_sym_re.match(nxt) or re.search(r"RAZEM|SUMA|Do\s+zap", nxt, re.IGNORECASE):
+                break
+            if state == 0:
+                if number_re.match(nxt):
+                    state = 1
+                    i += 1
+                else:
+                    break
+            elif state == 1:
+                if unit_re.match(nxt):
+                    unit = _norm_unit(nxt)
+                    state = 3
+                    i += 1
+                elif number_re.match(nxt):
+                    state = 2  # was rabat%, expect JM next
+                    i += 1
+                else:
+                    break
+            elif state == 2:
+                if unit_re.match(nxt):
+                    unit = _norm_unit(nxt)
+                    state = 3
+                    i += 1
+                else:
+                    break
+            elif state == 3:
+                try:
+                    quantity = _to_float(nxt)
+                    state = 4
+                    i += 1
+                except ValueError:
+                    break
+            elif state == 4:
+                try:
+                    unit_price = _to_float(nxt)
+                    state = 5
+                    i += 1
+                except ValueError:
+                    break
+
+        # Skip remaining trailing fields for this product
+        while i < len(all_lines):
+            nxt = all_lines[i]
+            if lp_sym_re.match(nxt) or re.search(r"RAZEM|SUMA|Do\s+zap", nxt, re.IGNORECASE):
+                break
+            if number_re.match(nxt) or vat_pct_re.match(nxt):
+                i += 1
+            else:
+                break
+
+        if quantity and unit_price and quantity > 0 and unit_price > 0:
+            entries.append({
+                "name": name_inline,
+                "quantity": str(quantity),
+                "unit": unit,
+                "unit_price": str(unit_price),
+            })
+
     return entries
 
 
@@ -2447,65 +2738,13 @@ def _parse_lines(text: str) -> list:
     return []
 
 
-def _parse_lines_with_gemini(text: str) -> list:
-    """Use Gemini Flash to extract product lines from OCR text.
-
-    Requires GEMINI_API_KEY environment variable.
-    Returns [{name, quantity, unit, unit_price}] or [] on failure.
-    Retries up to 3 times on 429 with 10s backoff.
-    """
-    import json  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    logging.info("Gemini API key prefix: %s", api_key[:20] if api_key else "MISSING")
-    if not api_key:
-        return []
-    try:
-        from google import genai  # noqa: PLC0415
-        client = genai.Client(api_key=api_key)
-
-        # Short prompt to minimize token usage
-        prompt = (
-            "Wyciągnij pozycje towarowe z poniższego tekstu OCR (faktura/paragon).\n"
-            "Zwróć TYLKO czysty JSON:\n"
-            '[{"name": "...", "quantity": "...", "unit": "...", "unit_price": "..."}]\n'
-            "Zasady:\n"
-            "- name: nazwa bez kodów/PKWiU\n"
-            "- quantity: liczba z kropką (np. '2.056')\n"
-            "- unit: lowercase (szt, kg, op, l, g)\n"
-            "- unit_price: cena po rabacie za jednostkę z kropką\n"
-            "- Pomiń nagłówki, podsumowania, linie OPUST/RABAT. Jeśli brak pozycji, zwróć [].\n\n"
-            f"Tekst OCR:\n{text[:3000]}"
-        )
-
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(
-                    model="gemini-flash-latest",
-                    contents=prompt,
-                )
-                raw = response.text.strip()
-                if raw.startswith("```"):
-                    raw = re.sub(r"^```[a-z]*\n?", "", raw)
-                    raw = re.sub(r"\n?```$", "", raw)
-                result = json.loads(raw)
-                return result if isinstance(result, list) else []
-            except Exception as exc:  # noqa: BLE001
-                if "429" in str(exc) and attempt < 2:
-                    logging.warning("Gemini 429, retry %d/3 in 10s", attempt + 1)
-                    time.sleep(10)
-                else:
-                    raise
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("Gemini parsing failed: %s", exc)
-        return []
-
-
 def _parse_lines(text: str) -> tuple[list, bool]:
-    """Detect document type, parse with regex, fallback to Gemini if 0 results.
+    """Detect document type and parse product lines with regex only.
 
-    Returns (lines, used_gemini).
+    Gemini removed — GDPR concern (data would leave EU).
+    For unknown formats lines will be empty and user fills in manually.
+
+    Returns (lines, used_gemini=False always).
     """
     doc_type = _detect_doc_type(text)
 
@@ -2523,9 +2762,7 @@ def _parse_lines(text: str) -> tuple[list, bool]:
         result = []
 
     if not result:
-        logging.info("Regex returned 0 lines for doc_type=%s, trying Gemini", doc_type)
-        result = _parse_lines_with_gemini(text)
-        return result, True
+        logging.info("Regex returned 0 lines for doc_type=%s — no AI fallback (GDPR)", doc_type)
 
     return result, False
 
@@ -2548,31 +2785,156 @@ class PaperScanView(APIView):
     Content-Type: multipart/form-data
     Body: image (file)
 
-    Response: { seller_name, seller_nip, invoice_number, issue_date, total_gross, doc_type, raw_text, lines }
-    OCR is best-effort: fields may be empty when extraction fails.
-    lines: [{name, quantity, unit, unit_price}] — product lines (may be empty for unknown formats).
+    Security:
+    - Max file size: 10 MB
+    - Allowed MIME types: JPEG, PNG, PDF, TIFF, BMP, HEIF
+    - Magic-byte validation (not just Content-Type header)
+    - Rate limit: 20 scans per user per hour (in-memory, resets on restart)
+    - raw_text stripped from response (no customer data leaked in API response)
     """
 
     required_permission = 'can_manage_invoices'
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
+    _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+    _ALLOWED_MIME = {
+        "image/jpeg", "image/png", "image/tiff",
+        "image/bmp", "image/heif", "image/heic",
+        "application/pdf",
+    }
+    # Magic bytes for allowed formats
+    _MAGIC = [
+        (b"\xff\xd8\xff", "image/jpeg"),
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"%PDF", "application/pdf"),
+        (b"II*\x00", "image/tiff"),   # TIFF little-endian
+        (b"MM\x00*", "image/tiff"),   # TIFF big-endian
+        (b"BM", "image/bmp"),
+    ]
+    # Simple in-memory rate limiter: {user_id: [timestamps]}
+    _rate_store: dict = {}
+    _RATE_LIMIT = 20      # max scans
+    _RATE_WINDOW = 3600   # per second window (1 hour)
+
+    def _check_rate_limit(self, user_id) -> bool:
+        """Returns True if request is allowed, False if rate limit exceeded."""
+        import time
+        now = time.time()
+        window_start = now - self._RATE_WINDOW
+        timestamps = [t for t in self._rate_store.get(user_id, []) if t > window_start]
+        if len(timestamps) >= self._RATE_LIMIT:
+            return False
+        timestamps.append(now)
+        self._rate_store[user_id] = timestamps
+        return True
+
+    def _validate_magic(self, header: bytes) -> bool:
+        """Check file magic bytes — prevents disguised files."""
+        for magic, _ in self._MAGIC:
+            if header.startswith(magic):
+                return True
+        # HEIF/HEIC: ftyp box at offset 4
+        if len(header) >= 12 and header[4:8] == b"ftyp":
+            return True
+        return False
+
     def post(self, request):
+        # --- rate limit ---
+        if not self._check_rate_limit(request.user.id):
+            logging.warning("OCR rate limit exceeded for user=%s", request.user)
+            return Response(
+                {"detail": "Przekroczono limit skanów (20/godz.). Spróbuj ponownie za jakiś czas."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        # --- file present ---
         image_file = request.FILES.get("image")
         if not image_file:
             return Response({"detail": "No image provided."}, status=status.HTTP_400_BAD_REQUEST)
 
-        raw_text = _ocr_image(image_file)
-        parsed = _parse_invoice_fields(raw_text)
-        parsed["raw_text"] = raw_text
-        parsed["doc_type"] = _detect_doc_type(raw_text)
-        lines, used_gemini = _parse_lines(raw_text)
-        parsed["lines"] = lines
-        if used_gemini:
-            logging.warning(
-                "GEMINI_USED user=%s doc_type=%s lines=%d",
-                request.user,
-                parsed.get("doc_type", "?"),
-                len(lines),
+        # --- file size ---
+        if image_file.size > self._MAX_FILE_SIZE:
+            return Response(
+                {"detail": f"Plik za duży. Maksymalny rozmiar: {self._MAX_FILE_SIZE // 1024 // 1024} MB."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # --- MIME type (header claim) ---
+        if image_file.content_type not in self._ALLOWED_MIME:
+            return Response(
+                {"detail": f"Nieobsługiwany format: {image_file.content_type}. Dozwolone: JPEG, PNG, PDF, TIFF, BMP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- magic byte validation (actual file content) ---
+        header = image_file.read(16)
+        image_file.seek(0)
+        if not self._validate_magic(header):
+            logging.warning("OCR magic byte mismatch user=%s claimed=%s", request.user, image_file.content_type)
+            return Response(
+                {"detail": "Plik nie jest prawidłowym obrazem lub PDF."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        logging.info("OCR scan started user=%s size=%d mime=%s", request.user, image_file.size, image_file.content_type)
+
+        # TODO: When blob storage is configured, call _save_scan_file(image_file) here
+        # and store the returned path in the PurchaseDocument.ocr_raw_filename field.
+
+        # Step 1: Azure prebuilt-layout — get raw text (used for doc_type detection and regex parsing)
+        image_file.seek(0)
+        raw_text = _ocr_image(image_file)
+        doc_type = _detect_doc_type(raw_text)
+
+        # Step 2: Azure prebuilt-invoice — structured header fields
+        image_file.seek(0)
+        structured = _analyze_invoice(image_file)
+
+        if structured and (structured.get("seller_name") or structured.get("invoice_number") or structured.get("total_gross")):
+            structured.pop("raw_text", "")
+            structured["doc_type"] = doc_type
+
+            # For receipts (paragon): Azure invoice model often misses lines with OPUST/rabat
+            # and gets NIP/invoice_number wrong on thermal paper. Use regex for those fields.
+            if doc_type == "paragon":
+                regex_fields = _parse_invoice_fields(raw_text)
+
+                # NIP: prefer regex (Azure often drops a digit on thermal receipts)
+                regex_nip = regex_fields.get("seller_nip", "")
+                if len(regex_nip) == 10:
+                    structured["seller_nip"] = regex_nip
+
+                # Invoice number: regex handles "Numer faktury uproszczonej" correctly
+                regex_inv = regex_fields.get("invoice_number", "")
+                if regex_inv:
+                    structured["invoice_number"] = regex_inv
+
+                # Lines: our parser handles OPUST/rabat correctly
+                regex_lines = _parse_paragon_lines(raw_text)
+                if regex_lines:
+                    structured["lines"] = regex_lines
+                    logging.info("OCR paragon: regex lines=%d (overriding Azure)", len(regex_lines))
+                else:
+                    logging.info("OCR paragon: regex found 0 lines, keeping Azure lines=%d", len(structured.get("lines", [])))
+            else:
+                # For invoices/WZ: if Azure returned 0 lines, try our regex parsers
+                if not structured.get("lines"):
+                    regex_lines, _ = _parse_lines(raw_text)
+                    if regex_lines:
+                        structured["lines"] = regex_lines
+                        logging.info("OCR invoice: regex lines=%d (Azure had 0)", len(regex_lines))
+
+            logging.info("OCR done (invoice model) user=%s doc_type=%s lines=%d", request.user, doc_type, len(structured.get("lines", [])))
+            structured["stored_filename"] = stored_filename
+            return Response(structured)
+
+        # Step 3: Azure returned nothing useful — use regex only
+        logging.info("Azure invoice model returned no useful data, using regex only")
+        parsed = _parse_invoice_fields(raw_text)
+        parsed["doc_type"] = doc_type
+        lines, _ = _parse_lines(raw_text)
+        parsed["lines"] = lines
+        logging.info("OCR done (regex fallback) user=%s doc_type=%s lines=%d", request.user, doc_type, len(lines))
+
+        parsed["stored_filename"] = stored_filename
         return Response(parsed)

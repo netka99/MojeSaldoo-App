@@ -158,4 +158,5 @@ export interface CompanyWrite {
   krs?: string
   bdo?: string
   is_vat_payer?: boolean
+  ksef_usage?: 'mandatory' | 'voluntary' | 'exempt' | 'none'
 }
