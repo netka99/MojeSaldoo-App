@@ -103,3 +103,14 @@ export function useLinkPzMutation() {
     },
   });
 }
+
+export function useSetLinecategoriesMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lineCategories }: { id: string; lineCategories: Record<string, string> }) =>
+      purchaseDocumentService.setLineCategories(id, lineCategories),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: purchaseDocumentKeys.all });
+    },
+  });
+}

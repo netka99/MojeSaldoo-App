@@ -108,7 +108,8 @@ function PurchaseDocumentFormInner({
       quantity: item.quantity,
       unit: item.unit,
       unit_price_gross: item.unit_price_gross,
-      vat_rate: item.vat_rate,
+      // vat_rate from backend is e.g. "5.00" — parse to int so it matches <option> values
+      vat_rate: String(Math.round(parseFloat(item.vat_rate) || 0)),
     }))
   );
   const [error, setError] = useState<string | null>(null);

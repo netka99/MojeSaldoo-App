@@ -27,6 +27,7 @@ import {
   useSetPurchaseDocCategoryMutation,
   useCreatePzFromPurchaseDocMutation,
   usePatchPurchaseDocumentMutation,
+  useSetLinecategoriesMutation,
   type PurchaseDocListFilters,
 } from '@/query/use-purchase-documents';
 import { useWarehouseListQuery } from '@/query/use-warehouses';
@@ -764,7 +765,7 @@ function ExpandedItemsRow({
                   <td className="py-1 pr-4 text-right tabular-nums">{item.quantity}</td>
                   <td className="py-1 pr-4 text-gray-400">{item.unit}</td>
                   <td className="py-1 pr-4 text-right tabular-nums">{net > 0 ? plMoney.format(net) : '—'}</td>
-                  <td className="py-1 pr-4 text-right tabular-nums text-gray-400">{item.vat_rate}%</td>
+                  <td className="py-1 pr-4 text-right tabular-nums text-gray-400">{Math.round(parseFloat(item.vat_rate) || 0)}%</td>
                   <td className="py-1 pr-4 text-right tabular-nums">{net > 0 ? plMoney.format(net) : '—'}</td>
                   <td className="py-1 pr-4">
                     {lineCategories[item.id] ? (
@@ -929,6 +930,7 @@ function PurchaseDocSection({
   const deleteMutation = useDeletePurchaseDocumentMutation();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const patch = usePatchPurchaseDocumentMutation();
+  const setLineCategories = useSetLinecategoriesMutation();
   const { data: categories = [] } = useOpexCategoriesQuery();
 
   const filters: PurchaseDocListFilters = {};
@@ -1122,15 +1124,14 @@ function PurchaseDocSection({
                           if (allSame) {
                             patch.mutate({ id: doc.id, data: { opex_category: slug } });
                           }
-                          // Build index-keyed line_categories from updated item-id-keyed state
+                          // Build index-keyed line_categories and persist to backend
                           const updatedDocLines = { ...(allLineCategories[doc.id] ?? {}) };
                           itemIds.forEach((id) => { updatedDocLines[id] = slug; });
                           const indexKeyed: Record<string, string> = {};
                           doc.items.forEach((it, i) => {
                             if (updatedDocLines[it.id]) indexKeyed[String(i)] = updatedDocLines[it.id];
                           });
-                          purchaseDocumentService.setLineCategories(doc.id, indexKeyed);
-                          // (fire and forget — no await needed for UX)
+                          setLineCategories.mutate({ id: doc.id, lineCategories: indexKeyed });
                         }}
                       />
                     )}
