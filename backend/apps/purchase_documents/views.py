@@ -106,10 +106,19 @@ def _build_proposals(invoice_items, delivery_items):
 class PurchaseDocumentFilter(django_filters.FilterSet):
     issue_date__gte = django_filters.DateFilter(field_name="issue_date", lookup_expr="gte")
     issue_date__lte = django_filters.DateFilter(field_name="issue_date", lookup_expr="lte")
+    opex_category = django_filters.CharFilter(field_name="opex_category", lookup_expr="exact")
+    no_category = django_filters.BooleanFilter(field_name="opex_category", lookup_expr="isnull")
+    is_paid = django_filters.BooleanFilter(field_name="is_paid")
+    has_pz = django_filters.BooleanFilter(method="filter_has_pz")
+
+    def filter_has_pz(self, queryset, name, value):
+        if value:
+            return queryset.filter(pz_documents__isnull=False).distinct()
+        return queryset.filter(pz_documents__isnull=True)
 
     class Meta:
         model = PurchaseDocument
-        fields = ["doc_type", "status", "payment_method"]
+        fields = ["doc_type", "status", "payment_method", "opex_category", "is_paid"]
 
 
 class PurchaseDocPagination(pagination.PageNumberPagination):
@@ -130,7 +139,7 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_class = PurchaseDocumentFilter
     search_fields = ["document_number", "supplier_name", "supplier_nip"]
-    ordering_fields = ["issue_date", "due_date", "total_gross", "created_at"]
+    ordering_fields = ["issue_date", "due_date", "total_gross", "created_at", "document_number", "supplier_name", "is_paid", "opex_category"]
     ordering = ["-issue_date", "-created_at"]
 
     def get_queryset(self):

@@ -159,8 +159,11 @@ export type PurchaseDocListParams = {
   payment_method?: PaymentMethod;
   search?: string;
   ordering?: string;
+  opex_category?: string;
   issue_date__gte?: string;
   issue_date__lte?: string;
+  is_paid?: boolean;
+  has_pz?: boolean;
 };
 
 const basePath = '/purchase-documents/';

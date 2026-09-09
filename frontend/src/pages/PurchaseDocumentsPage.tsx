@@ -11,7 +11,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { usePermission } from '@/hooks/usePermission';
@@ -25,7 +25,6 @@ import {
   useDeletePurchaseDocumentMutation,
   useMarkPurchaseDocPaidMutation,
   useSetPurchaseDocCategoryMutation,
-  useCreatePzFromPurchaseDocMutation,
   usePatchPurchaseDocumentMutation,
   useSetLinecategoriesMutation,
   useUnlinkPzMutation,
@@ -34,8 +33,8 @@ import {
   type PurchaseDocListFilters,
 } from '@/query/use-purchase-documents';
 import { useAllPzQuery } from '@/query/use-delivery';
-import { useWarehouseListQuery } from '@/query/use-warehouses';
 import { useOpexCategoriesQuery, useCreateOpexCategoryMutation } from '@/query/use-cashflow';
+import { OpexCategoryManager } from '@/components/features/cashflow/OpexCategoryManager';
 import type { PurchaseDocument, PurchaseDocDocType } from '@/services/purchase-document.service';
 import type { ReceivedInvoiceMeta } from '@/services/ksef.service';
 
@@ -446,22 +445,9 @@ function MatchPzPanelForDoc({ doc, onClose }: { doc: PurchaseDocument; onClose: 
 // ─── PurchaseDocPzButton ──────────────────────────────────────────────────────
 
 function PurchaseDocPzButton({ doc }: { doc: PurchaseDocument }) {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showMatchPanel, setShowMatchPanel] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const { data: warehousePage } = useWarehouseListQuery(1);
-  const warehouses = warehousePage?.results ?? [];
-  const createPz = useCreatePzFromPurchaseDocMutation();
+  const navigate = useNavigate();
   const unlinkPz = useUnlinkPzMutation();
-
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setDropdownOpen(false);
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [dropdownOpen]);
 
   // Only FZ and PAR_VAT make sense for PZ creation/matching
   if (doc.doc_type === 'PAR') return null;
@@ -507,97 +493,15 @@ function PurchaseDocPzButton({ doc }: { doc: PurchaseDocument }) {
     );
   }
 
-  const matchPanel = showMatchPanel ? (
-    <MatchPzPanelForDoc doc={doc} onClose={() => setShowMatchPanel(false)} />
-  ) : null;
-
-  // Single warehouse — split button: main creates PZ, arrow opens dropdown with "Dopasuj do PZ"
-  if (warehouses.length === 1) {
-    return (
-      <div className="flex flex-col gap-0.5">
-        <div className="relative inline-flex" ref={ref}>
-          <div className="inline-flex items-stretch h-7 rounded-md border border-dashed border-gray-300 overflow-hidden">
-            <button
-              type="button"
-              disabled={createPz.isPending}
-              onClick={() => createPz.mutate({ id: doc.id, warehouseId: warehouses[0].id })}
-              className="px-2.5 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap"
-            >
-              {createPz.isPending ? '…' : '+ Utwórz PZ'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDropdownOpen((v) => !v)}
-              className={cn(
-                'px-1.5 text-[10px] text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 border-l border-dashed border-gray-300 transition-colors',
-                dropdownOpen && 'bg-indigo-50 text-indigo-600',
-              )}
-            >
-              ▾
-            </button>
-          </div>
-          {dropdownOpen && (
-            <div className="absolute left-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-gray-200 bg-white shadow-lg">
-              <button
-                type="button"
-                onClick={() => { setShowMatchPanel(true); setDropdownOpen(false); }}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
-              >
-                Dopasuj do PZ
-              </button>
-            </div>
-          )}
-        </div>
-        {matchPanel}
-      </div>
-    );
-  }
-
-  // Multiple warehouses — dropdown with warehouse picker + "Dopasuj do PZ"
+  // No linked PZ — navigate to dedicated creation page (warehouse picker there)
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="relative inline-block" ref={ref}>
-        <button
-          type="button"
-          onClick={() => setDropdownOpen((v) => !v)}
-          className={cn(
-            'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap',
-            dropdownOpen && 'border-indigo-400 text-indigo-600 bg-indigo-50',
-          )}
-        >
-          + Utwórz PZ
-        </button>
-        {dropdownOpen && (
-          <div className="absolute left-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-gray-200 bg-white shadow-lg">
-            <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Wybierz magazyn</div>
-            {warehouses.map((wh) => (
-              <button
-                key={wh.id}
-                type="button"
-                disabled={createPz.isPending}
-                onClick={() => {
-                  setDropdownOpen(false);
-                  createPz.mutate({ id: doc.id, warehouseId: wh.id });
-                }}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40"
-              >
-                {wh.name ?? wh.code}
-              </button>
-            ))}
-            <div className="border-t border-gray-100">
-              <button
-                type="button"
-                onClick={() => { setShowMatchPanel(true); setDropdownOpen(false); }}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
-              >
-                Dopasuj do PZ
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-      {matchPanel}
-    </div>
+    <button
+      type="button"
+      onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
+      className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap"
+    >
+      + Utwórz PZ
+    </button>
   );
 }
 
@@ -808,11 +712,11 @@ function PurchaseDocCategoryTag({ doc }: { doc: PurchaseDocument }) {
 
   if (currentCat) {
     return (
-      <div className="relative inline-flex items-center h-7 rounded-md overflow-hidden border border-[#5856D6]/25" ref={ref}>
+      <div className="relative inline-flex items-center gap-1 group" ref={ref}>
         <button
           type="button"
           onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
-          className="inline-flex items-center h-full px-2 text-xs font-medium bg-[#5856D6]/8 text-[#5856D6] hover:bg-[#5856D6]/15 transition-colors"
+          className="text-[12px] text-gray-700 hover:text-gray-900 transition-colors leading-none"
         >
           {currentCat}
         </button>
@@ -820,7 +724,7 @@ function PurchaseDocCategoryTag({ doc }: { doc: PurchaseDocument }) {
           type="button"
           onClick={() => handleSelect(null)}
           disabled={setCategory.isPending}
-          className="inline-flex items-center justify-center h-full w-5 text-[10px] text-[#5856D6]/50 bg-[#5856D6]/8 hover:bg-red-50 hover:text-red-500 border-l border-[#5856D6]/20 transition-colors"
+          className="opacity-0 group-hover:opacity-100 text-[10px] text-gray-300 hover:text-red-400 transition-all leading-none"
           title="Usuń kategorię"
         >
           ✕
@@ -835,10 +739,7 @@ function PurchaseDocCategoryTag({ doc }: { doc: PurchaseDocument }) {
       <button
         type="button"
         onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
-        className={cn(
-          'inline-flex items-center h-7 px-2 rounded-md border border-dashed border-gray-300 text-xs text-gray-400 hover:border-[#5856D6]/40 hover:text-[#5856D6] transition-colors',
-          open && 'border-[#5856D6]/40 text-[#5856D6] bg-[#5856D6]/5',
-        )}
+        className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors leading-none"
       >
         + Kategoria
       </button>
@@ -1124,7 +1025,7 @@ function ExpandedItemsRow({
   if (doc.items.length === 0) {
     return (
       <tr className="border-b border-gray-100 bg-gray-50/40">
-        <td colSpan={6} className="px-8 py-2 text-[12px] italic text-gray-400">
+        <td colSpan={8} className="px-8 py-2 text-[12px] italic text-gray-400">
           Brak pozycji — edytuj dokument, aby dodać.
         </td>
       </tr>
@@ -1133,7 +1034,7 @@ function ExpandedItemsRow({
 
   return (
     <tr className="border-b border-gray-100 bg-gray-50/20">
-      <td colSpan={6} className="px-4 py-3">
+      <td colSpan={8} className="px-4 py-3">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-400">
@@ -1357,8 +1258,8 @@ function PurchaseDocActionsDropdown({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'inline-flex items-center justify-center h-7 w-7 rounded-md border border-gray-200 bg-white text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition-colors text-base leading-none',
-          open && 'bg-gray-50 text-gray-700',
+          'inline-flex items-center justify-center h-7 w-7 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors text-base leading-none',
+          open && 'bg-gray-100 text-gray-900',
         )}
         title="Więcej opcji"
       >
@@ -1379,7 +1280,7 @@ function PurchaseDocActionsDropdown({
               onClick={() => { setOpen(false); onMatchPz(); }}
               className="flex w-full items-center px-3.5 py-2 text-[13px] text-gray-700 hover:bg-gray-50 border-t border-gray-100"
             >
-              Dopasuj do PZ
+              Powiąż z PZ
             </button>
           )}
           <div className="border-t border-gray-100">
@@ -1414,6 +1315,12 @@ function PurchaseDocSection({
   const [searchInput, setSearchInput] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [matchingPzDocId, setMatchingPzDocId] = useState<string | null>(null);
+  const [ordering, setOrdering] = useState<string>('-issue_date');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<'' | 'paid' | 'unpaid'>('');
+  const [pzFilter, setPzFilter] = useState<'' | 'true' | 'false'>('');
+  const [dateFrom, setDateFrom] = useState(monthAgoIso());
+  const [dateTo, setDateTo] = useState(todayIso());
   // docId → { itemId → categorySlug } — persists across expand/collapse
   const [allLineCategories, setAllLineCategories] = useState<Record<string, Record<string, string>>>({});
   const deleteMutation = useDeletePurchaseDocumentMutation();
@@ -1422,9 +1329,28 @@ function PurchaseDocSection({
   const setLineCategories = useSetLinecategoriesMutation();
   const { data: categories = [] } = useOpexCategoriesQuery();
 
+  function toggleSort(field: string) {
+    setOrdering((prev) => prev === field ? `-${field}` : prev === `-${field}` ? field : `-${field}`);
+    setPage(1);
+  }
+
+  function SortIcon({ field }: { field: string }) {
+    if (ordering === field) return <span className="ml-1 text-[#5856D6] font-bold">↑</span>;
+    if (ordering === `-${field}`) return <span className="ml-1 text-[#5856D6] font-bold">↓</span>;
+    return <span className="ml-1 text-gray-400 group-hover:text-gray-600">⇅</span>;
+  }
+
   const filters: PurchaseDocListFilters = {};
   if (docTypes.length === 1) filters.doc_type = docTypes[0];
   if (search) filters.search = search;
+  if (ordering) filters.ordering = ordering;
+  if (categoryFilter) filters.opex_category = categoryFilter;
+  if (statusFilter === 'paid') filters.is_paid = true;
+  if (statusFilter === 'unpaid') filters.is_paid = false;
+  if (pzFilter === 'true') filters.has_pz = true;
+  if (pzFilter === 'false') filters.has_pz = false;
+  if (dateFrom) filters.issue_date__gte = dateFrom;
+  if (dateTo) filters.issue_date__lte = dateTo;
 
   const { data, isFetching, isError } = usePurchaseDocumentListQuery(page, filters);
 
@@ -1461,6 +1387,15 @@ function PurchaseDocSection({
     setPage(1);
   }
 
+  // Debounced auto-search
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 400);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
+
   async function handleDelete(id: string) {
     if (!confirm('Usunąć ten dokument?')) return;
     setDeletingId(id);
@@ -1472,27 +1407,54 @@ function PurchaseDocSection({
 
   return (
     <div>
-      <form onSubmit={handleSearch} className="mb-5">
-        <div className="flex gap-2">
+      <div className="mb-5 overflow-hidden rounded-2xl bg-white shadow-sm px-5 py-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-[13px] font-medium text-gray-600">Od</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+              className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[13px] font-medium text-gray-600">Do</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+              className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
+              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
+            >
+              Wyczyść daty
+            </button>
+          )}
+        </div>
+        <div className="relative">
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
           <input
             type="text"
             placeholder="Szukaj po numerze, dostawcy, NIP…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="h-10 flex-1 rounded-xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+            className="h-10 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-8 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
           />
-          <button type="submit" className="rounded-xl bg-[#5856D6] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#4744C4]">
-            Szukaj
-          </button>
-          {search && (
+          {searchInput && (
             <button
               type="button"
               onClick={() => { setSearch(''); setSearchInput(''); setPage(1); }}
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-500 hover:bg-gray-50"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
             >✕</button>
           )}
         </div>
-      </form>
+      </div>
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
         {isFetching && <div className="p-8 text-center text-sm text-gray-400">Ładowanie…</div>}
@@ -1517,12 +1479,73 @@ function PurchaseDocSection({
             </div>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-100 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                  <th className="px-5 py-3 text-left">Data</th>
-                  <th className="px-4 py-3 text-left">Nr faktury</th>
-                  <th className="px-4 py-3 text-left">Wystawca</th>
-                  <th className="px-4 py-3 text-right">Brutto</th>
-                  <th className="px-4 py-3 text-right">VAT</th>
+                <tr className="border-b border-gray-200 text-xs font-semibold text-gray-600">
+                  <th className="px-5 py-3 text-left">
+                    <button type="button" onClick={() => toggleSort('issue_date')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Data<SortIcon field="issue_date" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <button type="button" onClick={() => toggleSort('document_number')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Nr dokumentu<SortIcon field="document_number" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <button type="button" onClick={() => toggleSort('supplier_name')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Wystawca<SortIcon field="supplier_name" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-right">
+                    <button type="button" onClick={() => toggleSort('total_gross')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Kwota<SortIcon field="total_gross" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
+                      style={{ fontWeight: 600 }}
+                      className={cn(
+                        'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
+                        categoryFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
+                      )}
+                    >
+                      <option value="">Kategoria</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.slug}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => { setStatusFilter(e.target.value as '' | 'paid' | 'unpaid'); setPage(1); }}
+                      style={{ fontWeight: 600 }}
+                      className={cn(
+                        'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
+                        statusFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
+                      )}
+                    >
+                      <option value="">Status</option>
+                      <option value="paid">Opłacone</option>
+                      <option value="unpaid">Nieopłacone</option>
+                    </select>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <select
+                      value={pzFilter}
+                      onChange={(e) => { setPzFilter(e.target.value as '' | 'true' | 'false'); setPage(1); }}
+                      style={{ fontWeight: 600 }}
+                      className={cn(
+                        'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
+                        pzFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
+                      )}
+                    >
+                      <option value="">PZ</option>
+                      <option value="true">Z PZ</option>
+                      <option value="false">Bez PZ</option>
+                    </select>
+                  </th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
@@ -1533,6 +1556,7 @@ function PurchaseDocSection({
                   return (
                     <React.Fragment key={doc.id}>
                     <tr className="transition-colors hover:bg-gray-50/60">
+                      {/* DATA */}
                       <td className="px-5 py-3.5 whitespace-nowrap">
                         <div className="text-gray-600">{formatDate(doc.issue_date)}</div>
                         {doc.due_date && (
@@ -1541,46 +1565,75 @@ function PurchaseDocSection({
                           </div>
                         )}
                       </td>
+                      {/* NR DOKUMENTU */}
                       <td className="px-4 py-3.5">
                         <div className="font-semibold text-gray-900">{doc.document_number || '—'}</div>
                         <span className={cn('mt-0.5 inline-block rounded-full px-1.5 py-px text-[10px] font-semibold', docTypeBadge(doc.doc_type))}>
                           {docTypeLabel(doc.doc_type)}
                         </span>
                       </td>
+                      {/* WYSTAWCA */}
                       <td className="px-4 py-3.5">
                         <div className="text-gray-900">{doc.supplier_name || '—'}</div>
                         {doc.supplier_nip && <div className="text-[11px] text-gray-400">{doc.supplier_nip}</div>}
                       </td>
-                      <td className="px-4 py-3.5 text-right font-semibold tabular-nums text-gray-900 whitespace-nowrap">
-                        {formatGross(doc.total_gross)}
+                      {/* KWOTA */}
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                        <div className="font-semibold tabular-nums text-gray-900">{formatGross(doc.total_gross)}</div>
+                        <div className="text-[11px] tabular-nums text-gray-400">VAT {formatGross(doc.total_vat)}</div>
                       </td>
-                      <td className="px-4 py-3.5 text-right tabular-nums text-gray-500 whitespace-nowrap">
-                        {formatGross(doc.total_vat)}
-                      </td>
+                      {/* KATEGORIA */}
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {(() => {
-                            const docLineCats = allLineCategories[doc.id] ?? {};
-                            const uniqueSlugs = [...new Set(Object.values(docLineCats))];
-                            if (uniqueSlugs.length > 1) {
-                              // Multiple different line categories — show all as badges
-                              return (
-                                <div className="flex items-center gap-1 flex-wrap justify-end">
-                                  {uniqueSlugs.map((slug) => (
-                                    <span key={slug} className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium bg-[#5856D6]/10 text-[#5856D6] border border-[#5856D6]/20 whitespace-nowrap">
-                                      {categories.find((c) => c.slug === slug)?.name ?? slug}
-                                    </span>
-                                  ))}
-                                </div>
-                              );
-                            }
-                            // Single or no line category — use doc-level tag (which auto-syncs when all same)
-                            return <PurchaseDocCategoryTag doc={doc} />;
-                          })()}
-                          <div className="h-4 w-px bg-gray-200" />
-                          <PurchaseDocPayButton doc={doc} />
-                          <div className="h-4 w-px bg-gray-200" />
-                          {doc.doc_type !== 'PAR' && <PurchaseDocPzButton doc={doc} />}
+                        {(() => {
+                          const docLineCats = allLineCategories[doc.id] ?? {};
+                          const uniqueSlugs = [...new Set(Object.values(docLineCats))];
+                          if (uniqueSlugs.length > 1) {
+                            return (
+                              <div className="flex flex-col gap-0.5">
+                                {uniqueSlugs.map((slug) => (
+                                  <span key={slug} className="text-[12px] text-gray-700 leading-snug">
+                                    {categories.find((c) => c.slug === slug)?.name ?? slug}
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          }
+                          return <PurchaseDocCategoryTag doc={doc} />;
+                        })()}
+                      </td>
+                      {/* STATUS */}
+                      <td className="px-4 py-3.5">
+                        <PurchaseDocPayButton doc={doc} />
+                      </td>
+                      {/* PZ */}
+                      <td className="px-4 py-3.5">
+                        {(() => {
+                          const linkedPzs = doc.pz_documents ?? [];
+                          if (linkedPzs.length > 0) {
+                            return (
+                              <div className="flex flex-col gap-0.5">
+                                {linkedPzs.map((pz) => (
+                                  <Link
+                                    key={pz.id}
+                                    to={`/delivery/${pz.id}`}
+                                    className="text-[12px] text-emerald-600 hover:text-emerald-800 hover:underline transition-colors leading-snug whitespace-nowrap"
+                                    title="Przejdź do PZ"
+                                  >
+                                    {pz.document_number || pz.id.slice(0, 8)}
+                                  </Link>
+                                ))}
+                              </div>
+                            );
+                          }
+                          if (doc.doc_type !== 'PAR') {
+                            return <PurchaseDocPzButton doc={doc} />;
+                          }
+                          return <span className="text-gray-300">—</span>;
+                        })()}
+                      </td>
+                      {/* ··· */}
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center justify-end gap-1">
                           <button
                             type="button"
                             onClick={() => {
@@ -1600,8 +1653,8 @@ function PurchaseDocSection({
                             }}
                             title={isExpanded ? 'Zwiń pozycje' : 'Pokaż pozycje'}
                             className={cn(
-                              'inline-flex items-center justify-center h-7 w-7 rounded-md text-xs text-gray-400 border border-transparent hover:border-gray-200 hover:bg-gray-50 transition-colors',
-                              isExpanded && 'bg-gray-50 border-gray-200',
+                              'inline-flex items-center justify-center h-7 w-7 rounded-md text-sm text-gray-500 border border-gray-200 bg-white hover:bg-gray-50 hover:text-gray-800 transition-colors',
+                              isExpanded && 'bg-gray-100 text-gray-800',
                             )}
                           >
                             {isExpanded ? '▴' : '▾'}
@@ -1617,7 +1670,7 @@ function PurchaseDocSection({
                     </tr>
                     {matchingPzDocId === doc.id && (
                       <tr className="border-b border-gray-100 bg-gray-50/40">
-                        <td colSpan={6} className="px-5 py-3">
+                        <td colSpan={8} className="px-5 py-3">
                           <MatchPzPanelForDoc doc={doc} onClose={() => setMatchingPzDocId(null)} />
                         </td>
                       </tr>
@@ -1695,6 +1748,7 @@ export function PurchaseDocumentsPage() {
   const [activeTab, setActiveTab] = useState<MainTab>('all');
   const [dateFrom, setDateFrom] = useState(monthAgoIso());
   const [dateTo, setDateTo] = useState(todayIso());
+  const [catManagerOpen, setCatManagerOpen] = useState(false);
 
   return (
     <div
@@ -1710,6 +1764,13 @@ export function PurchaseDocumentsPage() {
             <p className="mt-0.5 text-[13px] text-gray-500">Faktury i paragony — z KSeF i spoza KSeF</p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCatManagerOpen(true)}
+              className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-[14px] font-medium text-gray-500 shadow-sm transition-all hover:bg-gray-50 hover:text-gray-700"
+            >
+              Kategorie kosztów
+            </button>
             <Link
               to="/ksef/scan-paper"
               className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-4 py-2 text-[14px] font-medium text-gray-700 shadow-sm transition-all hover:bg-gray-50"
@@ -1730,8 +1791,10 @@ export function PurchaseDocumentsPage() {
           </div>
         </div>
 
+        <OpexCategoryManager open={catManagerOpen} onClose={() => setCatManagerOpen(false)} />
+
         {/* Tabs */}
-        <div className="mb-5 flex gap-1.5 flex-wrap">
+        <div className="mb-3 flex gap-1.5 flex-wrap">
           {TAB_DEFS.filter((t) => !t.requiresKsef || ksefEnabled).map((t) => (
             <button
               key={t.key}
@@ -1749,36 +1812,6 @@ export function PurchaseDocumentsPage() {
           ))}
         </div>
 
-        {/* Date filter — shared between Wszystkie and Faktury */}
-        {(activeTab === 'all' || activeTab === 'fz') && (
-          <div className="mb-5 flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <label className="text-[13px] font-medium text-gray-600">Od</label>
-              <input
-                type="date" value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-[13px] font-medium text-gray-600">Do</label>
-              <input
-                type="date" value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
-              />
-            </div>
-            {(dateFrom || dateTo) && (
-              <button
-                type="button"
-                onClick={() => { setDateFrom(''); setDateTo(''); }}
-                className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
-              >
-                Wyczyść daty
-              </button>
-            )}
-          </div>
-        )}
 
         {/* Wszystkie — all sources merged */}
         {activeTab === 'all' && (
@@ -1786,7 +1819,7 @@ export function PurchaseDocumentsPage() {
         )}
 
         {/* Z KSeF — full KSeF inbox with all original features */}
-        {activeTab === 'ksef' && ksefEnabled && <KSeFInboxContent />}
+        {activeTab === 'ksef' && ksefEnabled && <KSeFInboxContent onOpenCatManager={() => setCatManagerOpen(true)} />}
 
         {/* Faktury i PAR z NIP — FZ + PAR_VAT (oba dają prawo do odliczenia VAT) */}
         {activeTab === 'fz' && (

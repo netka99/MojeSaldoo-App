@@ -4,11 +4,9 @@ import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, us
 import { useLinkInvoiceToPzMutation, useUnmatchedPzQuery, useDeliveryQuery } from '@/query/use-delivery';
 import { useCostProjectsQuery, useInvoiceAnnotationQuery, useSaveInvoiceAnnotationMutation } from '@/query/use-cost-allocation';
 import { useCreateOpexCategoryMutation, useOpexCategoriesQuery } from '@/query/use-cashflow';
-import { OpexCategoryManager } from '@/components/features/cashflow/OpexCategoryManager';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { authStorage, apiClient } from '@/services/api';
 import { cn } from '@/lib/utils';
 import type { OpexCategory, PzDocumentRef, ReceivedInvoiceMeta } from '@/services/ksef.service';
@@ -172,11 +170,11 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
 
   if (inv.opex_category) {
     return (
-      <div className="relative inline-flex items-center h-7 rounded-md overflow-hidden border border-primary/25" ref={ref}>
+      <div className="relative inline-flex items-center gap-1 group" ref={ref}>
         <button
           type="button"
           onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
-          className="inline-flex items-center h-full px-2 text-xs font-medium bg-primary/8 text-primary hover:bg-primary/15 transition-colors"
+          className="text-[12px] text-gray-700 hover:text-gray-900 transition-colors leading-none"
           title="Zmień kategorię"
         >
           {currentLabel}
@@ -185,7 +183,7 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
           type="button"
           onClick={() => handleTag(null)}
           disabled={tagMutation.isPending}
-          className="inline-flex items-center justify-center h-full w-5 text-[10px] text-primary/50 bg-primary/8 hover:bg-red-50 hover:text-red-500 border-l border-primary/20 transition-colors"
+          className="opacity-0 group-hover:opacity-100 text-[10px] text-gray-300 hover:text-red-400 transition-all leading-none"
           title="Usuń kategorię"
         >
           ✕
@@ -200,10 +198,7 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
       <button
         type="button"
         onClick={() => { setOpen((v) => !v); setAddingNew(false); setNewName(''); }}
-        className={cn(
-          'inline-flex items-center h-7 px-2 rounded-md border border-dashed border-border text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors',
-          open && 'border-primary/40 text-primary bg-primary/5',
-        )}
+        className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors leading-none"
         title="Przypisz kategorię kosztu"
       >
         + Kategoria
@@ -337,7 +332,7 @@ function MatchPzPanel({ inv, onClose }: { inv: ReceivedInvoiceMeta; onClose: () 
   return (
     <div className="mt-2 rounded-xl border border-border bg-muted/30 px-3 py-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[13px] font-semibold text-foreground">Dopasuj do istniejącego PZ</p>
+        <p className="text-[13px] font-semibold text-foreground">Powiąż z istniejącym PZ</p>
         <button type="button" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground">✕</button>
       </div>
       <p className="text-xs text-muted-foreground">
@@ -378,7 +373,7 @@ function MatchPzPanel({ inv, onClose }: { inv: ReceivedInvoiceMeta; onClose: () 
                   onClick={() => void handleLink(pz.id)}
                   className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50 hover:bg-primary/90"
                 >
-                  {linkM.isPending ? '…' : 'Dopasuj'}
+                  {linkM.isPending ? '…' : 'Powiąż'}
                 </button>
               </div>
               {expandedPzId === pz.id && (
@@ -881,8 +876,8 @@ function InvoiceActionsMenu({ inv, downloading, showMatchPanel, hasActivePz, onD
         onClick={() => setOpen((v) => !v)}
         title="Więcej opcji"
         className={cn(
-          'inline-flex items-center justify-center h-7 w-7 rounded-md text-xs text-muted-foreground border border-transparent hover:border-border hover:bg-muted transition-colors',
-          open && 'bg-muted border-border',
+          'inline-flex items-center justify-center h-7 w-7 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors text-base leading-none',
+          open && 'bg-gray-100 text-gray-900',
         )}
       >
         ⋯
@@ -925,7 +920,7 @@ function InvoiceActionsMenu({ inv, downloading, showMatchPanel, hasActivePz, onD
               onClick={() => { onToggleMatch(); setOpen(false); }}
               className={cn('w-full text-left px-3 py-1.5 text-xs hover:bg-muted', showMatchPanel && 'text-primary font-medium')}
             >
-              Dopasuj do PZ
+              Powiąż z PZ
             </button>
           )}
         </div>
@@ -1004,8 +999,8 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
 
   return (
     <>
-      <tr className={cn('border-b border-border hover:bg-muted/30 transition-colors', rowBg)}>
-        <td className="px-3 py-2 text-sm text-muted-foreground whitespace-nowrap">
+      <tr className={cn('border-b border-gray-100 hover:bg-gray-50/60 transition-colors', rowBg)}>
+        <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
           {isoToDisplay(inv.issueDate)}
           {inv.dueDate && isUnpaid && (
             <p className={cn('text-xs mt-0.5', isOverdue ? 'text-destructive font-medium' : 'text-orange-600')}>
@@ -1013,7 +1008,7 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
             </p>
           )}
         </td>
-        <td className="px-3 py-2 text-sm font-medium">
+        <td className="px-3 py-2 font-medium">
           <div className="flex items-center gap-1.5 flex-wrap">
             {inv.invoiceNumber || '—'}
             {isKor && (
@@ -1023,108 +1018,101 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
             )}
           </div>
         </td>
-        <td className="px-3 py-2 text-sm">
+        <td className="px-3 py-2">
           <div>{sellerName}</div>
           <div className="text-xs text-muted-foreground">{sellerNip}</div>
         </td>
-        <td className="px-3 py-2 text-sm text-right tabular-nums whitespace-nowrap">
-          {formatAmount(inv.grossAmount, inv.currency)}
+        <td className="px-4 py-3.5 text-right whitespace-nowrap">
+          <div className="font-semibold tabular-nums text-gray-900">{formatAmount(inv.grossAmount, inv.currency)}</div>
+          <div className="text-[11px] tabular-nums text-gray-400">VAT {formatAmount(inv.vatAmount, inv.currency)}</div>
         </td>
-        <td className="px-3 py-2 text-sm text-right tabular-nums text-muted-foreground whitespace-nowrap">
-          {formatAmount(inv.vatAmount, inv.currency)}
+        <td className="px-4 py-3.5">
+          <OpexTagButton inv={inv} onOpenManager={onOpenCatManager} />
         </td>
-        <td className="px-3 py-2">
-          {/* Tags row — only rendered when there's something to show */}
-          {(hasCostAllocation && annotationStatus || (inv.pzDocuments ?? []).length > 0) && (
-            <div className="flex items-center justify-end gap-1 flex-wrap mb-1.5">
-              {hasCostAllocation && annotationStatus && (
-                <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap', ACCOUNTING_STATUS_COLORS[annotationStatus as AccountingStatus])}>
-                  {ACCOUNTING_STATUS_LABELS[annotationStatus as AccountingStatus] ?? annotationStatus}
-                </span>
-              )}
-              {(inv.pzDocuments ?? []).map((pz: PzDocumentRef) => {
-                const cancelled = pz.status === 'cancelled';
-                return (
-                  <Link
-                    key={pz.id}
-                    to={`/delivery/${pz.id}`}
-                    className={cn(
-                      'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium hover:underline whitespace-nowrap',
-                      cancelled ? 'bg-muted text-muted-foreground line-through' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
-                    )}
-                    title={cancelled ? 'PZ anulowany' : 'Przejdź do dokumentu PZ'}
-                  >
-                    {pz.documentNumber}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Actions row — single line, consistent h-7 */}
-          <div className="flex items-center justify-end gap-1.5">
-            {/* Category tag */}
-            <OpexTagButton inv={inv} onOpenManager={onOpenCatManager} />
-
-            {/* Divider */}
-            <div className="h-4 w-px bg-border" />
-
-            {/* Payment status toggle */}
-            <button
-              type="button"
-              disabled={markPaidMutation.isPending}
-              onClick={() => markPaidMutation.mutate({ ksefNumber: inv.ksefNumber, isPaid: !inv.isPaid })}
-              title={inv.isPaid ? 'Kliknij aby cofnąć' : 'Oznacz jako opłacone'}
-              className={cn(
-                'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border transition-colors whitespace-nowrap',
-                inv.isPaid
-                  ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-800 dark:bg-green-950/30 dark:text-green-400'
-                  : isOverdue
-                    ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
-                    : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400',
-              )}
-            >
-              {markPaidMutation.isPending
-                ? '…'
-                : inv.isPaid
-                  ? '✓ Opłacono'
-                  : isOverdue
-                    ? '↑ Zaległe'
-                    : 'Opłać'}
-            </button>
-
-            {/* Divider */}
-            <div className="h-4 w-px bg-border" />
-
-            {/* Primary PZ action */}
-            <button
-              type="button"
-              onClick={() => isKor ? onCreatePzKor(inv.ksefNumber) : onCreatePz(inv.ksefNumber)}
-              title={isKor ? 'Utwórz korektę PZ' : 'Utwórz dokument przyjęcia'}
-              className="inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-primary/30 text-primary bg-primary/5 hover:bg-primary/10 transition-colors whitespace-nowrap"
-            >
-              {isKor ? 'PZ-KOR' : '+ PZ'}
-            </button>
-
-            {/* Expand toggle */}
+        <td className="px-4 py-3.5">
+          <button
+            type="button"
+            disabled={markPaidMutation.isPending}
+            onClick={() => markPaidMutation.mutate({ ksefNumber: inv.ksefNumber, isPaid: !inv.isPaid })}
+            title={inv.isPaid ? 'Kliknij aby cofnąć' : 'Oznacz jako opłacone'}
+            className={cn(
+              'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border transition-colors whitespace-nowrap',
+              inv.isPaid
+                ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                : isOverdue
+                  ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                  : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
+            )}
+          >
+            {markPaidMutation.isPending ? '…' : inv.isPaid ? '✓ Opłacono' : isOverdue ? '↑ Zaległe' : 'Opłać'}
+          </button>
+        </td>
+        <td className="px-4 py-3.5">
+          {(() => {
+            const pzDocs = inv.pzDocuments ?? [];
+            if (pzDocs.length > 0) {
+              return (
+                <div className="flex flex-col gap-0.5">
+                  {pzDocs.map((pz: PzDocumentRef) => {
+                    const cancelled = pz.status === 'cancelled';
+                    return (
+                      <Link
+                        key={pz.id}
+                        to={`/delivery/${pz.id}`}
+                        className={cn(
+                          'text-[12px] font-medium hover:underline whitespace-nowrap',
+                          cancelled ? 'text-gray-400 line-through' : 'text-emerald-600 hover:text-emerald-800',
+                        )}
+                        title={cancelled ? 'PZ anulowany' : 'Przejdź do dokumentu PZ'}
+                      >
+                        {pz.documentNumber}
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            }
+            if (!isKor) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => onCreatePz(inv.ksefNumber)}
+                  className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap"
+                >
+                  + Utwórz PZ
+                </button>
+              );
+            }
+            return <span className="text-gray-300">—</span>;
+          })()}
+        </td>
+        <td className="px-4 py-3.5">
+          <div className="flex items-center justify-end gap-1">
+            {isKor && (
+              <button
+                type="button"
+                onClick={() => onCreatePzKor(inv.ksefNumber)}
+                className="inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-primary/30 text-primary bg-primary/5 hover:bg-primary/10 transition-colors whitespace-nowrap"
+              >
+                PZ-KOR
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
               title={expanded ? 'Zwiń pozycje' : 'Pokaż pozycje'}
               className={cn(
-                'inline-flex items-center justify-center h-7 w-7 rounded-md text-xs text-muted-foreground border border-transparent hover:border-border hover:bg-muted transition-colors',
-                expanded && 'bg-muted border-border',
+                'inline-flex items-center justify-center h-7 w-7 rounded-md text-sm text-gray-500 border border-gray-200 bg-white hover:bg-gray-50 hover:text-gray-800 transition-colors',
+                expanded && 'bg-gray-100 text-gray-800',
               )}
             >
               {expanded ? '▴' : '▾'}
             </button>
-
-            {/* Secondary actions */}
             <InvoiceActionsMenu
               inv={inv}
               downloading={downloading}
               showMatchPanel={showMatchPanel}
-              hasActivePz={hasActivePz}
+              hasActivePz={(inv.pzDocuments ?? []).some((p: PzDocumentRef) => p.status !== 'cancelled')}
               onDownload={onDownload}
               onToggleMatch={() => setShowMatchPanel((v) => !v)}
             />
@@ -1133,14 +1121,14 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
       </tr>
       {showMatchPanel && (
         <tr className="border-b border-border">
-          <td colSpan={6} className="px-4 pb-3 pt-0">
+          <td colSpan={8} className="px-4 pb-3 pt-0">
             <MatchPzPanel inv={inv} onClose={() => setShowMatchPanel(false)} />
           </td>
         </tr>
       )}
       {expanded && (
-        <tr className="border-b border-border bg-muted/20">
-          <td colSpan={6} className="px-4 py-3">
+        <tr className="border-b border-gray-100 bg-gray-50/20">
+          <td colSpan={8} className="px-4 py-3">
             {linesLoading && <p className="text-sm text-muted-foreground">Pobieranie pozycji…</p>}
             {linesError && <p className="text-sm text-destructive">Błąd pobierania pozycji.</p>}
             {!linesLoading && !linesError && lines !== null && lines.length === 0 && (
@@ -1150,7 +1138,7 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
               <>
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-xs text-muted-foreground">
+                    <tr className="text-xs font-semibold text-gray-600">
                       {editingCategories && (
                         <th className="pb-1 pr-2 font-medium w-6">
                           <input
@@ -1359,9 +1347,8 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type InboxFilter = 'all' | 'pz' | 'category' | 'unassigned';
 
-export function KSeFInboxContent() {
+export function KSeFInboxContent({ onOpenCatManager }: { onOpenCatManager?: () => void }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initDateFrom = searchParams.has('date_from') ? searchParams.get('date_from') ?? '' : lastMonthIso();
@@ -1372,11 +1359,10 @@ export function KSeFInboxContent() {
   const [isPaidFilter, setIsPaidFilter] = useState<boolean | undefined>(initIsPaid);
   const [page, setPage] = useState(1);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [viewFilter, setViewFilter] = useState<InboxFilter>(initIsPaid === false ? 'all' : 'all');
-  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
-  const [catFilterOpen, setCatFilterOpen] = useState(false);
-  const catFilterRef = useRef<HTMLDivElement>(null);
-  const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const [ordering, setOrdering] = useState<string>('-issueDate');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [pzFilter, setPzFilter] = useState<'' | 'true' | 'false'>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const { data: allCategories = [] } = useOpexCategoriesQuery();
 
   const { data: session } = useKsefSessionQuery();
@@ -1390,18 +1376,6 @@ export function KSeFInboxContent() {
     isPaidFilter,
   );
 
-  // Close category filter dropdown on outside click
-  useEffect(() => {
-    if (!catFilterOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (catFilterRef.current && !catFilterRef.current.contains(e.target as Node)) {
-        setCatFilterOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [catFilterOpen]);
-
   const handleSync = () => {
     syncMutation.mutate({ dateFrom, dateTo });
   };
@@ -1413,81 +1387,84 @@ export function KSeFInboxContent() {
   };
 
   const allInvoices = data?.invoices ?? [];
-  const invoices = allInvoices.filter((inv) => {
-    const hasPz = (inv.pzDocuments ?? []).some((p) => p.status !== 'cancelled');
-    if (viewFilter === 'pz') return hasPz;
-    if (viewFilter === 'category') {
-      if (selectedCategories.size === 0) return !!inv.opex_category;
-      return !!inv.opex_category && selectedCategories.has(inv.opex_category);
-    }
-    if (viewFilter === 'unassigned') return !hasPz && !inv.opex_category;
-    return true;
-  });
+  const sq = searchQuery.trim().toLowerCase();
+  const invoices = allInvoices
+    .filter((inv) => {
+      const hasPz = (inv.pzDocuments ?? []).some((p) => p.status !== 'cancelled');
+      if (pzFilter === 'true' && !hasPz) return false;
+      if (pzFilter === 'false' && hasPz) return false;
+      if (categoryFilter && inv.opex_category !== categoryFilter) return false;
+      if (sq) {
+        const seller = inv.seller as { name?: string; nip?: string; identifier?: { value?: string } };
+        const sellerName = (seller?.name ?? '').toLowerCase();
+        const nip = (seller?.nip ?? seller?.identifier?.value ?? '').toLowerCase();
+        const num = (inv.invoiceNumber ?? '').toLowerCase();
+        if (!sellerName.includes(sq) && !nip.includes(sq) && !num.includes(sq)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const dir = ordering.startsWith('-') ? -1 : 1;
+      const field = ordering.replace(/^-/, '');
+      if (field === 'issueDate') return dir * a.issueDate.localeCompare(b.issueDate);
+      if (field === 'invoiceNumber') return dir * (a.invoiceNumber ?? '').localeCompare(b.invoiceNumber ?? '');
+      if (field === 'sellerName') return dir * ((a.sellerName ?? '').localeCompare(b.sellerName ?? ''));
+      if (field === 'grossAmount') return dir * (parseFloat(String(a.grossAmount)) - parseFloat(String(b.grossAmount)));
+      if (field === 'isPaid') return dir * (Number(a.isPaid) - Number(b.isPaid));
+      return 0;
+    });
   const total = data?.total ?? 0;
   const hasMore = data?.hasMore ?? false;
   const newCount = data?.new_count ?? 0;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-2 justify-end">
-        <button
-          type="button"
-          onClick={() => setCatManagerOpen((v) => !v)}
-          title="Zarządzaj kategoriami kosztów"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          ⚙
-        </button>
-        {!session?.active && (
-          <Link
-            to="/settings/certificate"
-            className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium',
-              'ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground',
-            )}
-          >
-            Zaloguj się do KSeF
-          </Link>
-        )}
-      </div>
-
-      <OpexCategoryManager open={catManagerOpen} onClose={() => setCatManagerOpen(false)} />
-
+    <div className="space-y-4">
       {/* Filter bar */}
       <Card>
         <CardContent className="pt-4 pb-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <Input
-              label="Od"
-              type="date"
-              value={dateFrom}
-              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-              className="w-40"
-            />
-            <Input
-              label="Do"
-              type="date"
-              value={dateTo}
-              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-              className="w-40"
-            />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-[13px] font-medium text-gray-600">Od</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[13px] font-medium text-gray-600">Do</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+              />
+            </div>
             {(dateFrom || dateTo) && (
-              <div className="pt-5">
-                <Button
-                  variant="outline"
-                  onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
-                >
-                  Wyczyść
-                </Button>
-              </div>
+              <button
+                type="button"
+                onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
+                className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
+              >
+                Wyczyść daty
+              </button>
             )}
-            {session?.active && (
-              <div className="pt-5">
-                <Button onClick={handleSync} loading={syncMutation.isPending}>
+            <div className="ml-auto flex items-center gap-2">
+              {!session?.active && (
+                <Link
+                  to="/settings/certificate"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#5856D6] px-4 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-[#4744C4]"
+                >
+                  🔑 Zaloguj się do KSeF
+                </Link>
+              )}
+              {session?.active && (
+                <Button onClick={handleSync} loading={syncMutation.isPending} size="sm">
                   Synchronizuj z KSeF
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
           {syncMutation.isSuccess && (syncMutation.data?.new_count ?? 0) > 0 && (
             <p className="mt-2 text-xs text-green-600 dark:text-green-400">
@@ -1502,124 +1479,22 @@ export function KSeFInboxContent() {
               {syncMutation.error instanceof Error ? syncMutation.error.message : 'Błąd synchronizacji'}
             </p>
           )}
-          {!session?.active && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Przeglądasz zapisane faktury. Aby pobrać nowe, zaloguj się do KSeF.
-            </p>
-          )}
-          {/* View filter */}
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => { setIsPaidFilter(undefined); setPage(1); }}
-              className={cn(
-                'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                isPaidFilter === undefined
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-background text-foreground hover:bg-muted',
-              )}
-            >
-              Wszystkie
-            </button>
-            <button
-              type="button"
-              onClick={() => { setIsPaidFilter(false); setPage(1); }}
-              className={cn(
-                'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                isPaidFilter === false
-                  ? 'border-orange-500 bg-orange-500 text-white'
-                  : 'border-border bg-background text-foreground hover:bg-muted',
-              )}
-            >
-              Nieopłacone
-            </button>
-            {([
-              { id: 'pz', label: 'Z PZ' },
-              { id: 'unassigned', label: 'Nieprzypisane' },
-            ] as { id: InboxFilter; label: string }[]).map(({ id, label }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => { setViewFilter(id); setIsPaidFilter(undefined); setSelectedCategories(new Set()); }}
-                className={cn(
-                  'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                  viewFilter === id && isPaidFilter === undefined
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background text-foreground hover:bg-muted',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-
-            {/* Category multi-filter dropdown */}
-            <div className="relative" ref={catFilterRef}>
+          <div className="mt-3 relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+            <input
+              type="text"
+              placeholder="Szukaj po numerze, wystawcy, NIP…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-10 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-8 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+            />
+            {searchQuery && (
               <button
                 type="button"
-                onClick={() => { setViewFilter('category'); setCatFilterOpen((v) => !v); }}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                  viewFilter === 'category'
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background text-foreground hover:bg-muted',
-                )}
-              >
-                Kategorie
-                {viewFilter === 'category' && selectedCategories.size > 0 && (
-                  <span className="ml-0.5 rounded-full bg-white/30 px-1.5 text-[10px] font-semibold">
-                    {selectedCategories.size}
-                  </span>
-                )}
-                <span className="ml-0.5 text-[10px]">▾</span>
-              </button>
-
-              {catFilterOpen && (
-                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-xl border border-border bg-background shadow-lg py-1">
-                  <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Filtruj według kategorii
-                  </p>
-                  {allCategories.length === 0 && (
-                    <p className="px-3 py-2 text-xs text-muted-foreground">Brak kategorii</p>
-                  )}
-                  {allCategories.map((cat) => {
-                    const checked = selectedCategories.has(cat.slug || cat.id);
-                    return (
-                      <label
-                        key={cat.id}
-                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => {
-                            const slug = cat.slug || cat.id;
-                            setSelectedCategories((prev) => {
-                              const next = new Set(prev);
-                              if (checked) next.delete(slug);
-                              else next.add(slug);
-                              return next;
-                            });
-                          }}
-                          className="rounded"
-                        />
-                        {cat.name}
-                      </label>
-                    );
-                  })}
-                  {selectedCategories.size > 0 && (
-                    <div className="border-t border-border mt-1 pt-1 px-3">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCategories(new Set())}
-                        className="text-xs text-muted-foreground hover:text-foreground"
-                      >
-                        Wyczyść zaznaczenie
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+              >✕</button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1653,15 +1528,84 @@ export function KSeFInboxContent() {
           {invoices.length > 0 && (
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-border bg-muted/40">
-                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Data</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Nr faktury</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Wystawca</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Brutto</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">VAT</th>
-                      <th className="px-3 py-2" />
+                    <tr className="border-b border-gray-200 text-xs font-semibold text-gray-600">
+                      {(
+                        [
+                          { label: 'Data', field: 'issueDate', align: 'left', px: 'px-5' },
+                          { label: 'Nr faktury', field: 'invoiceNumber', align: 'left', px: 'px-4' },
+                          { label: 'Wystawca', field: 'sellerName', align: 'left', px: 'px-4' },
+                          { label: 'Kwota', field: 'grossAmount', align: 'right', px: 'px-4' },
+                        ] as const
+                      ).map(({ label, field, align, px }) => (
+                        <th key={field} className={`${px} py-3 text-${align}`}>
+                          <button
+                            type="button"
+                            onClick={() => setOrdering((prev) => prev === field ? `-${field}` : prev === `-${field}` ? field : `-${field}`)}
+                            className="group inline-flex items-center hover:text-gray-900 transition-colors"
+                          >
+                            {label}
+                            {ordering === field
+                              ? <span className="ml-1 text-[#5856D6] font-bold">↑</span>
+                              : ordering === `-${field}`
+                                ? <span className="ml-1 text-[#5856D6] font-bold">↓</span>
+                                : <span className="ml-1 text-gray-400 group-hover:text-gray-600">⇅</span>
+                            }
+                          </button>
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 text-left">
+                        <select
+                          value={categoryFilter}
+                          onChange={(e) => setCategoryFilter(e.target.value)}
+                          style={{ fontWeight: 600 }}
+                          className={cn(
+                            'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
+                            categoryFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
+                          )}
+                        >
+                          <option value="">Kategoria</option>
+                          {allCategories.map((cat) => (
+                            <option key={cat.id} value={cat.slug}>{cat.name}</option>
+                          ))}
+                        </select>
+                      </th>
+                      <th className="px-4 py-3 text-left">
+                        <select
+                          value={isPaidFilter === undefined ? '' : isPaidFilter ? 'paid' : 'unpaid'}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setIsPaidFilter(v === '' ? undefined : v === 'paid' ? true : false);
+                            setPage(1);
+                          }}
+                          style={{ fontWeight: 600 }}
+                          className={cn(
+                            'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
+                            isPaidFilter !== undefined ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
+                          )}
+                        >
+                          <option value="">Status</option>
+                          <option value="paid">Opłacone</option>
+                          <option value="unpaid">Nieopłacone</option>
+                        </select>
+                      </th>
+                      <th className="px-4 py-3 text-left">
+                        <select
+                          value={pzFilter}
+                          onChange={(e) => { setPzFilter(e.target.value as '' | 'true' | 'false'); setPage(1); }}
+                          style={{ fontWeight: 600 }}
+                          className={cn(
+                            'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
+                            pzFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
+                          )}
+                        >
+                          <option value="">PZ</option>
+                          <option value="true">Z PZ</option>
+                          <option value="false">Bez PZ</option>
+                        </select>
+                      </th>
+                      <th className="px-4 py-3" />
                     </tr>
                   </thead>
                   <tbody>
@@ -1673,7 +1617,7 @@ export function KSeFInboxContent() {
                         onDownload={handleDownload}
                         onCreatePz={(ref) => navigate(`/ksef/inbox/${encodeURIComponent(ref)}/pz`)}
                         onCreatePzKor={(ref) => navigate(`/ksef/inbox/${encodeURIComponent(ref)}/pz-kor`)}
-                        onOpenCatManager={() => setCatManagerOpen(true)}
+                        onOpenCatManager={() => onOpenCatManager?.()}
                       />
                     ))}
                   </tbody>
