@@ -28,8 +28,12 @@ import {
   useCreatePzFromPurchaseDocMutation,
   usePatchPurchaseDocumentMutation,
   useSetLinecategoriesMutation,
+  useUnlinkPzMutation,
+  useMatchProposalsQuery,
+  useConfirmLineMatchesMutation,
   type PurchaseDocListFilters,
 } from '@/query/use-purchase-documents';
+import { useAllPzQuery } from '@/query/use-delivery';
 import { useWarehouseListQuery } from '@/query/use-warehouses';
 import { useOpexCategoriesQuery, useCreateOpexCategoryMutation } from '@/query/use-cashflow';
 import type { PurchaseDocument, PurchaseDocDocType } from '@/services/purchase-document.service';
@@ -105,86 +109,494 @@ function PurchaseDocPayButton({ doc }: { doc: PurchaseDocument }) {
   );
 }
 
+// ─── LineMatchConfirmTable — step 2: confirm auto-proposed line matches ────────
+
+function LineMatchConfirmTable({
+  doc,
+  pzId,
+  onConfirmed,
+  onCancel,
+}: {
+  doc: PurchaseDocument;
+  pzId: string;
+  onConfirmed: () => void;
+  onCancel: () => void;
+}) {
+  const { data, isPending, isError } = useMatchProposalsQuery(doc.id, pzId);
+  const confirmM = useConfirmLineMatchesMutation();
+
+  // editable quantities keyed by `${invoiceItemId}__${deliveryItemId}`
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  // manual pairings: invoice item id → delivery item id (for unmatched items)
+  const [manualPairs, setManualPairs] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  // initialise quantities when proposals load
+  useEffect(() => {
+    if (!data) return;
+    const init: Record<string, string> = {};
+    data.proposals.forEach((p) => {
+      init[`${p.invoice_item.id}__${p.delivery_item.id}`] = p.quantity_matched;
+    });
+    setQuantities(init);
+  }, [data]);
+
+  const handleConfirm = async () => {
+    if (!data) return;
+    setError(null);
+    const matches = [
+      ...data.proposals.map((p) => ({
+        invoice_item_id: p.invoice_item.id,
+        delivery_item_id: p.delivery_item.id,
+        quantity_matched: quantities[`${p.invoice_item.id}__${p.delivery_item.id}`] ?? p.quantity_matched,
+      })),
+      ...Object.entries(manualPairs)
+        .filter(([, delId]) => delId)
+        .map(([invId, delId]) => ({
+          invoice_item_id: invId,
+          delivery_item_id: delId,
+          quantity_matched: quantities[`${invId}__${delId}`] ?? '0',
+        })),
+    ].filter((m) => parseFloat(m.quantity_matched) > 0);
+
+    if (matches.length === 0) {
+      setError('Brak pozycji do powiązania — sprawdź ilości.');
+      return;
+    }
+
+    try {
+      await confirmM.mutateAsync({ id: doc.id, payload: { pz_id: pzId, matches } });
+      onConfirmed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się zatwierdzić.');
+    }
+  };
+
+  if (isPending) return <p className="text-[11px] text-gray-400 py-2">Ładowanie propozycji…</p>;
+  if (isError) return <p className="text-[11px] text-red-500 py-2">Błąd ładowania propozycji.</p>;
+  if (!data) return null;
+
+  const plNum = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+
+  return (
+    <div className="mt-2 space-y-3">
+      <p className="text-[11px] text-gray-500 leading-snug">
+        Sprawdź dopasowanie pozycji i skoryguj ilości jeśli potrzeba. Kliknij <strong>Zatwierdź</strong> aby zapisać.
+      </p>
+
+      {/* Matched proposals */}
+      {data.proposals.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+          <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Dopasowane automatycznie</p>
+          </div>
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-[10px] text-gray-400 border-b border-gray-100">
+                <th className="px-3 py-1.5 text-left font-medium">Pozycja faktury</th>
+                <th className="px-3 py-1.5 text-left font-medium">Pozycja PZ</th>
+                <th className="px-3 py-1.5 text-right font-medium">Fakt.</th>
+                <th className="px-3 py-1.5 text-right font-medium">PZ</th>
+                <th className="px-3 py-1.5 text-right font-medium">Powiąż</th>
+                <th className="px-2 py-1.5 text-center font-medium w-5"
+                    title={data.proposals[0]?.match_type === 'exact' ? 'Dokładne' : 'Przybliżone'}>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.proposals.map((p) => {
+                const key = `${p.invoice_item.id}__${p.delivery_item.id}`;
+                const isExact = p.match_type === 'exact' || p.confidence >= 1.0;
+                const confidencePct = Math.round(p.confidence * 100);
+                const matchLabel = p.match_type === 'exact'
+                  ? 'Dokładne dopasowanie (produkt z bazy)'
+                  : p.confidence >= 1.0
+                    ? 'Identyczna nazwa'
+                    : `Dopasowanie po nazwie (${confidencePct}%)`;
+                return (
+                  <tr key={key} className="border-b border-gray-50 last:border-0">
+                    <td className="px-3 py-1.5 text-gray-800 max-w-[140px] truncate" title={p.invoice_item.product_name}>
+                      {p.invoice_item.product_name}
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-600 max-w-[140px] truncate" title={p.delivery_item.product_name}>
+                      {p.delivery_item.product_name}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-gray-500 whitespace-nowrap">
+                      {plNum.format(parseFloat(p.invoice_item.quantity))} {p.invoice_item.unit}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-gray-500 whitespace-nowrap">
+                      {plNum.format(parseFloat(p.delivery_item.quantity_available))}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        value={quantities[key] ?? p.quantity_matched}
+                        onChange={(e) => setQuantities((prev) => ({ ...prev, [key]: e.target.value }))}
+                        className="w-20 rounded border border-gray-200 px-1.5 py-0.5 text-right text-[11px] tabular-nums focus:border-indigo-400 focus:outline-none"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      <span title={matchLabel} className={isExact ? 'text-emerald-500' : 'text-amber-500'}>
+                        {isExact ? '●' : `◐${confidencePct}%`}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Unmatched invoice items — allow manual pairing */}
+      {data.unmatched_invoice_items.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/30 overflow-hidden">
+          <div className="px-3 py-1.5 border-b border-amber-100 bg-amber-50">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+              Pozycje faktury bez dopasowania na PZ
+            </p>
+          </div>
+          <div className="divide-y divide-amber-50">
+            {data.unmatched_invoice_items.map((inv) => (
+              <div key={inv.id} className="px-3 py-2 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] text-gray-800 truncate">{inv.product_name}</p>
+                  <p className="text-[10px] text-gray-400">{plNum.format(parseFloat(inv.quantity))} {inv.unit}</p>
+                </div>
+                <select
+                  value={manualPairs[inv.id] ?? ''}
+                  onChange={(e) => {
+                    const delId = e.target.value;
+                    setManualPairs((prev) => ({ ...prev, [inv.id]: delId }));
+                    if (delId) {
+                      const delItem = data.unmatched_delivery_items.find((d) => d.id === delId);
+                      if (delItem) {
+                        const key = `${inv.id}__${delId}`;
+                        setQuantities((prev) => ({
+                          ...prev,
+                          [key]: String(Math.min(parseFloat(inv.quantity_unmatched), parseFloat(delItem.quantity_available))),
+                        }));
+                      }
+                    }
+                  }}
+                  className="text-[11px] rounded border border-gray-200 bg-white px-2 py-1 min-w-[160px]"
+                >
+                  <option value="">— wybierz pozycję PZ —</option>
+                  {data.unmatched_delivery_items.map((d) => (
+                    <option key={d.id} value={d.id}>{d.product_name} ({plNum.format(parseFloat(d.quantity_available))})</option>
+                  ))}
+                </select>
+                {manualPairs[inv.id] && (
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={quantities[`${inv.id}__${manualPairs[inv.id]}`] ?? ''}
+                    onChange={(e) => {
+                      const key = `${inv.id}__${manualPairs[inv.id]}`;
+                      setQuantities((prev) => ({ ...prev, [key]: e.target.value }));
+                    }}
+                    className="w-20 rounded border border-gray-200 px-1.5 py-0.5 text-right text-[11px] tabular-nums focus:border-indigo-400 focus:outline-none"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Unmatched delivery items — info only */}
+      {data.unmatched_delivery_items.length > 0 && data.unmatched_invoice_items.length === 0 && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50/30 px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-500 mb-1">Tylko na PZ (brak na fakturze)</p>
+          {data.unmatched_delivery_items.map((d) => (
+            <p key={d.id} className="text-[11px] text-gray-600">+ {d.product_name} ({plNum.format(parseFloat(d.quantity_available))})</p>
+          ))}
+        </div>
+      )}
+
+      {data.proposals.length === 0 && data.unmatched_invoice_items.length === 0 && (
+        <p className="text-[11px] text-gray-400 italic">Brak pozycji do dopasowania.</p>
+      )}
+
+      {error && <p className="text-[11px] text-red-500">{error}</p>}
+
+      <div className="flex items-center gap-2 justify-end">
+        <button type="button" onClick={onCancel}
+          className="text-[11px] text-gray-500 hover:text-gray-700 underline">
+          Anuluj
+        </button>
+        <button
+          type="button"
+          disabled={confirmM.isPending}
+          onClick={() => void handleConfirm()}
+          className="rounded-lg bg-indigo-600 px-4 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {confirmM.isPending ? '…' : 'Zatwierdź powiązanie'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── MatchPzPanelForDoc ───────────────────────────────────────────────────────
+
+function MatchPzPanelForDoc({ doc, onClose }: { doc: PurchaseDocument; onClose: () => void }) {
+  const { data: allPzs = [], isPending } = useAllPzQuery(true);
+  const [confirmingPzId, setConfirmingPzId] = useState<string | null>(null);
+  const [justLinkedIds, setJustLinkedIds] = useState<Set<string>>(new Set());
+
+  const alreadyLinkedIds = new Set((doc.pz_documents ?? []).map((p) => p.id));
+
+  return (
+    <div className="mt-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 space-y-2 min-w-[300px]">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-semibold text-gray-700">
+          {confirmingPzId ? 'Dopasuj pozycje' : 'Powiąż z dokumentem PZ'}
+        </p>
+        <button type="button" onClick={onClose} className="text-xs text-gray-400 hover:text-gray-700">✕</button>
+      </div>
+
+      {!confirmingPzId && (
+        <>
+          <p className="text-[11px] text-gray-500 leading-snug">
+            Kliknij <strong>Powiąż</strong> przy wybranym PZ — system pokaże propozycję dopasowania pozycji do zatwierdzenia.
+            Możesz powiązać kilka PZ do jednej faktury.
+          </p>
+
+          {justLinkedIds.size > 0 && (
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+              <p className="text-[11px] text-emerald-700 font-medium">
+                ✓ Powiązano {justLinkedIds.size} {justLinkedIds.size === 1 ? 'PZ' : 'PZ'}. Możesz dodać kolejne lub zamknąć panel.
+              </p>
+              <button type="button" onClick={onClose}
+                className="shrink-0 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 underline">
+                Zamknij
+              </button>
+            </div>
+          )}
+
+          {isPending && <p className="text-xs text-gray-400">Ładowanie…</p>}
+          {!isPending && allPzs.length === 0 && (
+            <p className="text-xs text-gray-400 italic">Brak dokumentów PZ.</p>
+          )}
+          {!isPending && allPzs.length > 0 && (
+            <div className="space-y-1.5">
+              {allPzs.map((pz) => {
+                const isLinked = alreadyLinkedIds.has(pz.id) || justLinkedIds.has(pz.id);
+                return (
+                  <div key={pz.id} className={cn(
+                    'rounded-lg border bg-white overflow-hidden',
+                    isLinked ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200',
+                  )}>
+                    <div className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-[12px] font-medium text-gray-800">
+                            {pz.document_number || pz.id.slice(0, 8)}
+                          </p>
+                          {isLinked && (
+                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              ✓ powiązano
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-gray-400">
+                          {pz.issue_date} · {pz.to_warehouse_name ?? '—'}
+                          {pz.supplier_name && ` · ${pz.supplier_name}`}
+                        </p>
+                      </div>
+                      {!isLinked ? (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingPzId(pz.id)}
+                          className="shrink-0 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+                        >
+                          Powiąż
+                        </button>
+                      ) : (
+                        <span className="shrink-0 text-[10px] text-emerald-600">✓</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {confirmingPzId && (
+        <LineMatchConfirmTable
+          doc={doc}
+          pzId={confirmingPzId}
+          onConfirmed={() => {
+            setJustLinkedIds((prev) => new Set([...prev, confirmingPzId]));
+            setConfirmingPzId(null);
+          }}
+          onCancel={() => setConfirmingPzId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── PurchaseDocPzButton ──────────────────────────────────────────────────────
 
 function PurchaseDocPzButton({ doc }: { doc: PurchaseDocument }) {
-  const [open, setOpen] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [showMatchPanel, setShowMatchPanel] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { data: warehousePage } = useWarehouseListQuery(1);
   const warehouses = warehousePage?.results ?? [];
   const createPz = useCreatePzFromPurchaseDocMutation();
+  const unlinkPz = useUnlinkPzMutation();
 
   useEffect(() => {
-    if (!open) return;
+    if (!dropdownOpen) return;
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) setDropdownOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
+  }, [dropdownOpen]);
 
-  // Already linked — show the PZ number
-  if (doc.pz_id) {
-    return (
-      <Link
-        to={`/delivery/${doc.pz_id}`}
-        className="inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 whitespace-nowrap"
-        title="Przejdź do PZ"
-      >
-        PZ: {doc.pz_number ?? '—'}
-      </Link>
-    );
-  }
-
-  // Only FZ and PAR_VAT make sense for PZ creation
+  // Only FZ and PAR_VAT make sense for PZ creation/matching
   if (doc.doc_type === 'PAR') return null;
 
-  // Single warehouse — one-click create
-  if (warehouses.length === 1) {
+  const linkedPzs = doc.pz_documents ?? [];
+
+  // Already has linked PZ — show tags with unlink + option to add more
+  if (linkedPzs.length > 0) {
     return (
-      <button
-        type="button"
-        disabled={createPz.isPending}
-        onClick={() => createPz.mutate({ id: doc.id, warehouseId: warehouses[0].id })}
-        className="inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap"
-      >
-        {createPz.isPending ? '…' : '+ Utwórz PZ'}
-      </button>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-1">
+          {linkedPzs.map((pz) => (
+            <div key={pz.id} className="inline-flex items-stretch h-7 rounded-md border border-indigo-200 bg-indigo-50 overflow-hidden">
+              <Link
+                to={`/delivery/${pz.id}`}
+                className="flex items-center px-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition-colors whitespace-nowrap"
+                title="Przejdź do PZ"
+              >
+                PZ: {pz.document_number || pz.id.slice(0, 8)}
+              </Link>
+              <button
+                type="button"
+                disabled={unlinkPz.isPending}
+                onClick={() => unlinkPz.mutate({ id: doc.id, pzId: pz.id })}
+                className="flex items-center px-1.5 text-[10px] text-indigo-400 border-l border-indigo-200 hover:bg-red-50 hover:text-red-500 transition-colors"
+                title="Odepnij PZ"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setShowMatchPanel((v) => !v)}
+            className="inline-flex items-center h-7 px-2 rounded-md border border-dashed border-indigo-300 text-[10px] text-indigo-500 hover:bg-indigo-50 transition-colors whitespace-nowrap"
+            title="Dodaj kolejne dopasowanie PZ"
+          >
+            + PZ
+          </button>
+        </div>
+        {showMatchPanel && <MatchPzPanelForDoc doc={doc} onClose={() => setShowMatchPanel(false)} />}
+      </div>
     );
   }
 
-  // Multiple warehouses — picker dropdown
-  return (
-    <div className="relative inline-block" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap',
-          open && 'border-indigo-400 text-indigo-600 bg-indigo-50',
-        )}
-      >
-        + Utwórz PZ
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-gray-200 bg-white shadow-lg">
-          <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Wybierz magazyn</div>
-          {warehouses.map((wh) => (
+  const matchPanel = showMatchPanel ? (
+    <MatchPzPanelForDoc doc={doc} onClose={() => setShowMatchPanel(false)} />
+  ) : null;
+
+  // Single warehouse — split button: main creates PZ, arrow opens dropdown with "Dopasuj do PZ"
+  if (warehouses.length === 1) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="relative inline-flex" ref={ref}>
+          <div className="inline-flex items-stretch h-7 rounded-md border border-dashed border-gray-300 overflow-hidden">
             <button
-              key={wh.id}
               type="button"
               disabled={createPz.isPending}
-              onClick={() => {
-                setOpen(false);
-                createPz.mutate({ id: doc.id, warehouseId: wh.id });
-              }}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40"
+              onClick={() => createPz.mutate({ id: doc.id, warehouseId: warehouses[0].id })}
+              className="px-2.5 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap"
             >
-              {wh.name ?? wh.code}
+              {createPz.isPending ? '…' : '+ Utwórz PZ'}
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setDropdownOpen((v) => !v)}
+              className={cn(
+                'px-1.5 text-[10px] text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 border-l border-dashed border-gray-300 transition-colors',
+                dropdownOpen && 'bg-indigo-50 text-indigo-600',
+              )}
+            >
+              ▾
+            </button>
+          </div>
+          {dropdownOpen && (
+            <div className="absolute left-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-gray-200 bg-white shadow-lg">
+              <button
+                type="button"
+                onClick={() => { setShowMatchPanel(true); setDropdownOpen(false); }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+              >
+                Dopasuj do PZ
+              </button>
+            </div>
+          )}
         </div>
-      )}
+        {matchPanel}
+      </div>
+    );
+  }
+
+  // Multiple warehouses — dropdown with warehouse picker + "Dopasuj do PZ"
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="relative inline-block" ref={ref}>
+        <button
+          type="button"
+          onClick={() => setDropdownOpen((v) => !v)}
+          className={cn(
+            'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap',
+            dropdownOpen && 'border-indigo-400 text-indigo-600 bg-indigo-50',
+          )}
+        >
+          + Utwórz PZ
+        </button>
+        {dropdownOpen && (
+          <div className="absolute left-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-gray-200 bg-white shadow-lg">
+            <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Wybierz magazyn</div>
+            {warehouses.map((wh) => (
+              <button
+                key={wh.id}
+                type="button"
+                disabled={createPz.isPending}
+                onClick={() => {
+                  setDropdownOpen(false);
+                  createPz.mutate({ id: doc.id, warehouseId: wh.id });
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40"
+              >
+                {wh.name ?? wh.code}
+              </button>
+            ))}
+            <div className="border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => { setShowMatchPanel(true); setDropdownOpen(false); }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+              >
+                Dopasuj do PZ
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      {matchPanel}
     </div>
   );
 }
@@ -679,6 +1091,7 @@ function ExpandedItemsRow({
   lineCategories: Record<string, string>;
   onAssign: (itemIds: string[], slug: string) => void;
 }) {
+  const [editingCategories, setEditingCategories] = useState(false);
   const [checkedLines, setCheckedLines] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState('');
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -690,6 +1103,13 @@ function ExpandedItemsRow({
   function handleBulkAssign() {
     if (!bulkCategory || bulkCategory === '__new__') return;
     onAssign(Array.from(checkedLines), bulkCategory);
+    setCheckedLines(new Set());
+    setBulkCategory('');
+    setEditingCategories(false);
+  }
+
+  function exitCategoryEdit() {
+    setEditingCategories(false);
     setCheckedLines(new Set());
     setBulkCategory('');
   }
@@ -717,24 +1137,41 @@ function ExpandedItemsRow({
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-400">
-              <th className="pb-1 pr-2 font-medium w-6">
-                <input
-                  type="checkbox"
-                  checked={checkedLines.size === doc.items.length}
-                  onChange={(e) => {
-                    setCheckedLines(e.target.checked ? new Set(doc.items.map((i) => i.id)) : new Set());
-                  }}
-                  className="rounded border-gray-300"
-                  title="Zaznacz wszystkie"
-                />
-              </th>
+              {editingCategories && (
+                <th className="pb-1 pr-2 font-medium w-6">
+                  <input
+                    type="checkbox"
+                    checked={checkedLines.size === doc.items.length}
+                    onChange={(e) => {
+                      setCheckedLines(e.target.checked ? new Set(doc.items.map((i) => i.id)) : new Set());
+                    }}
+                    className="rounded border-gray-300"
+                    title="Zaznacz wszystkie"
+                  />
+                </th>
+              )}
               <th className="text-left pb-1 pr-4 font-medium">Nazwa</th>
               <th className="text-right pb-1 pr-4 font-medium">Ilość</th>
               <th className="text-left pb-1 pr-4 font-medium">Jm.</th>
               <th className="text-right pb-1 pr-4 font-medium">Cena netto</th>
               <th className="text-right pb-1 pr-4 font-medium">VAT %</th>
               <th className="text-right pb-1 pr-4 font-medium">Wartość netto</th>
-              <th className="text-left pb-1 font-medium">Kategoria</th>
+              <th className="text-left pb-1 pr-4 font-medium">
+                <span className="inline-flex items-center gap-1.5">
+                  Kategoria
+                  {!editingCategories && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingCategories(true)}
+                      className="text-[10px] text-gray-400 hover:text-[#5856D6] underline underline-offset-2 font-normal"
+                      title="Zmień kategorię"
+                    >
+                      zmień
+                    </button>
+                  )}
+                </span>
+              </th>
+              <th className="text-left pb-1 font-medium">PZ</th>
             </tr>
           </thead>
           <tbody>
@@ -747,20 +1184,22 @@ function ExpandedItemsRow({
               const isChecked = checkedLines.has(item.id);
               return (
                 <tr key={item.id} className="border-t border-gray-100/70">
-                  <td className="py-1 pr-2">
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={(e) => {
-                        setCheckedLines((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(item.id); else next.delete(item.id);
-                          return next;
-                        });
-                      }}
-                      className="rounded border-gray-300"
-                    />
-                  </td>
+                  {editingCategories && (
+                    <td className="py-1 pr-2">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          setCheckedLines((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(item.id); else next.delete(item.id);
+                            return next;
+                          });
+                        }}
+                        className="rounded border-gray-300"
+                      />
+                    </td>
+                  )}
                   <td className="py-1 pr-4 text-gray-700">{item.product_name}</td>
                   <td className="py-1 pr-4 text-right tabular-nums">{item.quantity}</td>
                   <td className="py-1 pr-4 text-gray-400">{item.unit}</td>
@@ -768,13 +1207,48 @@ function ExpandedItemsRow({
                   <td className="py-1 pr-4 text-right tabular-nums text-gray-400">{Math.round(parseFloat(item.vat_rate) || 0)}%</td>
                   <td className="py-1 pr-4 text-right tabular-nums">{net > 0 ? plMoney.format(net) : '—'}</td>
                   <td className="py-1 pr-4">
-                    {lineCategories[item.id] ? (
-                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-[#5856D6]/10 text-[#5856D6] whitespace-nowrap">
-                        {categories.find((c) => c.slug === lineCategories[item.id])?.name ?? lineCategories[item.id]}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-gray-400">—</span>
-                    )}
+                    {(() => {
+                      const lineSlug = lineCategories[item.id];
+                      const effectiveSlug = lineSlug || doc.opex_category;
+                      if (!effectiveSlug) return <span className="text-xs text-gray-400">—</span>;
+                      const label = categories.find((c) => c.slug === effectiveSlug)?.name ?? effectiveSlug;
+                      return (
+                        <span className={cn(
+                          'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap',
+                          lineSlug ? 'bg-[#5856D6]/10 text-[#5856D6]' : 'bg-gray-100 text-gray-500',
+                        )}>
+                          {label}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td className="py-1">
+                    {(() => {
+                      const cov = item.coverage;
+                      const matched = parseFloat(cov?.quantity_matched_total ?? '0');
+                      const total = parseFloat(item.quantity) || 1;
+                      const pzNums = cov?.pz_numbers ?? [];
+                      if (matched === 0) return <span className="text-xs text-gray-300">—</span>;
+                      const remaining = total - matched;
+                      const fullyMatched = remaining <= 0;
+                      const pzLabel = pzNums.length > 0
+                        ? pzNums[0] + (pzNums.length > 1 ? ` +${pzNums.length - 1}` : '')
+                        : null;
+                      return (
+                        <div className="flex flex-col gap-0.5 leading-tight">
+                          {pzLabel && (
+                            <span className={cn('text-xs font-medium', fullyMatched ? 'text-emerald-600' : 'text-gray-700')} title={pzNums.join(', ')}>
+                              {pzLabel}
+                            </span>
+                          )}
+                          {!fullyMatched && (
+                            <span className="text-[10px] text-amber-600 whitespace-nowrap">
+                              brak {remaining % 1 === 0 ? remaining : remaining.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
               );
@@ -810,7 +1284,7 @@ function ExpandedItemsRow({
               </button>
               <button
                 type="button"
-                onClick={() => setCheckedLines(new Set())}
+                onClick={exitCategoryEdit}
                 className="text-sm text-gray-400 hover:text-gray-700"
               >
                 Anuluj
@@ -855,10 +1329,12 @@ function PurchaseDocActionsDropdown({
   doc,
   onDelete,
   deletingId,
+  onMatchPz,
 }: {
   doc: PurchaseDocument;
   onDelete: (id: string) => void;
   deletingId: string | null;
+  onMatchPz?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -871,6 +1347,9 @@ function PurchaseDocActionsDropdown({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
+
+  // M:M: can always add more PZ for FZ/PAR_VAT
+  const canMatchPz = doc.doc_type !== 'PAR';
 
   return (
     <div className="relative inline-block" ref={ref}>
@@ -894,6 +1373,15 @@ function PurchaseDocActionsDropdown({
           >
             Edytuj
           </Link>
+          {canMatchPz && onMatchPz && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onMatchPz(); }}
+              className="flex w-full items-center px-3.5 py-2 text-[13px] text-gray-700 hover:bg-gray-50 border-t border-gray-100"
+            >
+              Dopasuj do PZ
+            </button>
+          )}
           <div className="border-t border-gray-100">
             <button
               type="button"
@@ -925,6 +1413,7 @@ function PurchaseDocSection({
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [matchingPzDocId, setMatchingPzDocId] = useState<string | null>(null);
   // docId → { itemId → categorySlug } — persists across expand/collapse
   const [allLineCategories, setAllLineCategories] = useState<Record<string, Record<string, string>>>({});
   const deleteMutation = useDeletePurchaseDocumentMutation();
@@ -1121,10 +1610,18 @@ function PurchaseDocSection({
                             doc={doc}
                             onDelete={(id) => void handleDelete(id)}
                             deletingId={deletingId}
+                            onMatchPz={() => setMatchingPzDocId((prev) => prev === doc.id ? null : doc.id)}
                           />
                         </div>
                       </td>
                     </tr>
+                    {matchingPzDocId === doc.id && (
+                      <tr className="border-b border-gray-100 bg-gray-50/40">
+                        <td colSpan={6} className="px-5 py-3">
+                          <MatchPzPanelForDoc doc={doc} onClose={() => setMatchingPzDocId(null)} />
+                        </td>
+                      </tr>
+                    )}
                     {isExpanded && (
                       <ExpandedItemsRow
                         doc={doc}

@@ -375,10 +375,17 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
     linked_wz_number = serializers.SerializerMethodField()
     van_route_date = serializers.SerializerMethodField()
     supplier_nip = serializers.SerializerMethodField()
+    # New M:M read field
+    ksef_invoice_refs = serializers.SerializerMethodField()
+    # Backward-compat: first linked KSeF invoice (or None)
     ksef_invoice_ref = serializers.SerializerMethodField()
+
     corrects_pz_id = UUIDRelatedField(source="corrects_pz", read_only=True)
     corrects_pz_number = serializers.SerializerMethodField()
     corrections = serializers.SerializerMethodField()
+
+    # Legacy write field — still accepted for backward compat; creates a ksef_link.
+    # New code should use ksef_invoice_ids (list) via the patch endpoint.
     ksef_invoice_id = UUIDRelatedField(
         queryset=ReceivedKSeFInvoice.objects.all(),
         source="ksef_invoice",
@@ -423,6 +430,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             "locked_for_edit",
             "linked_invoices",
             "ksef_invoice_id",
+            "ksef_invoice_refs",
             "ksef_invoice_ref",
             "corrects_pz_id",
             "corrects_pz_number",
@@ -430,7 +438,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             "items",
             "return_documents",
         ]
-        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrections"]
+        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "ksef_invoice_refs", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrections"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -530,7 +538,30 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             for c in pz_kor + wz_kor
         ]
 
+    def get_ksef_invoice_refs(self, obj):
+        """All linked KSeF invoices (new M:M API). Requires ksef_links prefetch."""
+        links = obj.ksef_links.all()
+        return [
+            {
+                "id": str(link.ksef_invoice.id),
+                "ksef_number": link.ksef_invoice.ksef_number,
+                "invoice_number": link.ksef_invoice.invoice_number,
+            }
+            for link in links
+        ]
+
     def get_ksef_invoice_ref(self, obj):
+        """Backward-compat: first linked KSeF invoice (or None)."""
+        # Prefer M:M links; fall back to legacy FK for documents not yet migrated
+        link = obj.ksef_links.first()
+        if link:
+            inv = link.ksef_invoice
+            return {
+                "id": str(inv.id),
+                "ksef_number": inv.ksef_number,
+                "invoice_number": inv.invoice_number,
+            }
+        # Fallback to legacy FK (during transition period)
         if obj.ksef_invoice_id:
             inv = obj.ksef_invoice
             return {
@@ -615,6 +646,9 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
         return self._ensure_fk_company(route, "Van route")
 
     def update(self, instance, validated_data):
+        from django.db import IntegrityError
+        from .models import DeliveryDocumentKSeFLink
+
         if instance.is_locked_by_invoice():
             raise serializers.ValidationError(
                 {
@@ -626,4 +660,17 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
         request = self.context.get("request")
         if request and request.user.is_authenticated:
             instance.user = request.user
+
+        # Intercept legacy ksef_invoice write field — create M:M link instead of
+        # writing FK directly. Still update the legacy FK for backward compat.
+        ksef_invoice = validated_data.get("ksef_invoice", None)
+        if ksef_invoice is not None:
+            try:
+                DeliveryDocumentKSeFLink.objects.create(
+                    delivery_document=instance,
+                    ksef_invoice=ksef_invoice,
+                )
+            except IntegrityError:
+                pass  # Already linked — idempotent
+
         return super().update(instance, validated_data)

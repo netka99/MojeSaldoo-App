@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import {
   purchaseDocumentService,
+  type ConfirmLineMatchesPayload,
   type PurchaseDocListParams,
   type PurchaseDocumentWrite,
 } from '@/services/purchase-document.service';
@@ -98,6 +99,39 @@ export function useLinkPzMutation() {
   return useMutation({
     mutationFn: ({ id, pzId }: { id: string; pzId: string }) =>
       purchaseDocumentService.linkPz(id, pzId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: purchaseDocumentKeys.all });
+    },
+  });
+}
+
+export function useUnlinkPzMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pzId }: { id: string; pzId: string }) =>
+      purchaseDocumentService.unlinkPz(id, pzId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: purchaseDocumentKeys.all });
+    },
+  });
+}
+
+export function useMatchProposalsQuery(invoiceId: string | undefined, pzId: string | undefined) {
+  return useQuery({
+    queryKey: invoiceId && pzId
+      ? purchaseDocumentKeys.matchProposals(invoiceId, pzId)
+      : [...purchaseDocumentKeys.all, 'match-proposals', 'disabled'],
+    queryFn: () => purchaseDocumentService.getMatchProposals(invoiceId!, pzId!),
+    enabled: Boolean(invoiceId) && Boolean(pzId),
+    staleTime: 0, // always fresh — quantities change after each confirm
+  });
+}
+
+export function useConfirmLineMatchesMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: ConfirmLineMatchesPayload }) =>
+      purchaseDocumentService.confirmLineMatches(id, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: purchaseDocumentKeys.all });
     },

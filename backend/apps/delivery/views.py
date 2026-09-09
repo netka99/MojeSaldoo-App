@@ -125,6 +125,16 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
         )
 
+        # Always prefetch ksef_links so get_ksef_invoice_refs() / get_ksef_invoice_ref()
+        # have no N+1 queries regardless of action.
+        from .models import DeliveryDocumentKSeFLink
+        qs = qs.prefetch_related(
+            Prefetch(
+                "ksef_links",
+                queryset=DeliveryDocumentKSeFLink.objects.select_related("ksef_invoice"),
+            ),
+        )
+
         if self.action != "list" or self._wants_items():
             qs = qs.prefetch_related("items", "items__product", "items__order_item")
             qs = qs.prefetch_related(

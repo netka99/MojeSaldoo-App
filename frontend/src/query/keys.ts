@@ -212,4 +212,6 @@ export const purchaseDocumentKeys = {
   list: (params: PurchaseDocListKeyParams) => [...purchaseDocumentKeys.lists(), params] as const,
   details: () => [...purchaseDocumentKeys.all, 'detail'] as const,
   detail: (id: string) => [...purchaseDocumentKeys.details(), id] as const,
+  matchProposals: (invoiceId: string, pzId: string) =>
+    [...purchaseDocumentKeys.all, 'match-proposals', invoiceId, pzId] as const,
 };

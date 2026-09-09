@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefMarkPaidMutation, useKsefSessionQuery, useKsefTagOpexMutation, useKsefOpexLinesQuery, useKsefLineOpexMutation } from '@/query/use-invoices';
-import { useLinkInvoiceToPzMutation, useUnmatchedPzQuery } from '@/query/use-delivery';
+import { useLinkInvoiceToPzMutation, useUnmatchedPzQuery, useDeliveryQuery } from '@/query/use-delivery';
 import { useCostProjectsQuery, useInvoiceAnnotationQuery, useSaveInvoiceAnnotationMutation } from '@/query/use-cost-allocation';
 import { useCreateOpexCategoryMutation, useOpexCategoriesQuery } from '@/query/use-cashflow';
 import { OpexCategoryManager } from '@/components/features/cashflow/OpexCategoryManager';
@@ -213,12 +213,107 @@ function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpe
   );
 }
 
+function KSeFPzMatchComparison({ pzId, inv }: { pzId: string; inv: ReceivedInvoiceMeta }) {
+  const { data: pz, isPending: pzPending } = useDeliveryQuery(pzId, true);
+  const { data: parsed, isPending: parsePending } = useKsefInboxParseQuery(inv.ksefNumber, true);
+  const plNum = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  if (pzPending || parsePending) return <p className="text-[11px] text-muted-foreground py-1">Ładowanie…</p>;
+
+  type InvLine = { productId: string | null; name: string; qty: number; unit: string };
+  type PzLine = { productId: string; name: string; qty: number; unit: string; cost: number | null };
+
+  const invLines: InvLine[] = (parsed?.lines ?? []).map((l) => ({
+    productId: l.suggested_product_id,
+    name: l.name,
+    qty: l.quantity,
+    unit: l.unit,
+  }));
+  const pzLines: PzLine[] = (pz?.items ?? []).map((i) => ({
+    productId: i.product_id,
+    name: i.product_name ?? '—',
+    qty: Number(i.quantity_actual ?? i.quantity_planned),
+    unit: i.product_unit ?? '',
+    cost: i.unit_cost != null ? Number(i.unit_cost) : null,
+  }));
+
+  // merge: invoice lines first, annotated with matching PZ qty
+  type Row = { name: string; invQty: number | null; invUnit: string; pzQty: number | null; pzUnit: string; cost: number | null; status: 'match' | 'diff' | 'missing' | 'extra' };
+  const usedPzIds = new Set<string>();
+  const rows: Row[] = invLines.map((il) => {
+    const match = pzLines.find((p) =>
+      (il.productId && p.productId === il.productId) ||
+      (!il.productId && p.name.toLowerCase() === il.name.toLowerCase())
+    );
+    if (match) usedPzIds.add(match.productId);
+    const qtyMatch = match && Math.abs(match.qty - il.qty) < 0.001;
+    return {
+      name: il.name,
+      invQty: il.qty,
+      invUnit: il.unit,
+      pzQty: match?.qty ?? null,
+      pzUnit: match?.unit ?? '',
+      cost: match?.cost ?? null,
+      status: match ? (qtyMatch ? 'match' : 'diff') : 'missing',
+    };
+  });
+  // PZ lines not matched to any invoice line
+  pzLines.filter((p) => !usedPzIds.has(p.productId)).forEach((p) => {
+    rows.push({ name: p.name, invQty: null, invUnit: '', pzQty: p.qty, pzUnit: p.unit, cost: p.cost, status: 'extra' });
+  });
+
+  const icon = { match: '✓', diff: '≠', missing: '—', extra: '+' };
+  const rowCls = { match: 'text-emerald-600', diff: 'text-amber-600', missing: 'text-gray-400', extra: 'text-blue-500' };
+
+  return (
+    <div className="mt-1.5 rounded-md border border-border bg-background overflow-hidden">
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr className="border-b border-border text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <th className="px-2.5 py-1.5 text-left">Produkt</th>
+            <th className="px-2.5 py-1.5 text-right">Faktura</th>
+            <th className="px-2.5 py-1.5 text-right">PZ</th>
+            <th className="px-2.5 py-1.5 text-right">Cena jdn.</th>
+            <th className="px-2.5 py-1.5 text-center w-6" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b border-border last:border-0">
+              <td className="px-2.5 py-1.5 text-foreground">{r.name}</td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums text-muted-foreground whitespace-nowrap">
+                {r.invQty != null ? `${plNum.format(r.invQty)} ${r.invUnit}` : '—'}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums text-muted-foreground whitespace-nowrap">
+                {r.pzQty != null ? `${plNum.format(r.pzQty)} ${r.pzUnit}` : '—'}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums text-muted-foreground whitespace-nowrap">
+                {r.cost != null ? `${plNum.format(r.cost)} zł` : '—'}
+              </td>
+              <td className={cn('px-2.5 py-1.5 text-center font-bold', rowCls[r.status])}>
+                {icon[r.status]}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="px-2.5 py-1.5 text-[10px] text-muted-foreground border-t border-border flex gap-3">
+        <span className="text-emerald-600">✓ zgodne</span>
+        <span className="text-amber-600">≠ różna ilość</span>
+        <span className="text-gray-400">— brak na PZ</span>
+        <span className="text-blue-500">+ tylko na PZ</span>
+      </div>
+    </div>
+  );
+}
+
 function MatchPzPanel({ inv, onClose }: { inv: ReceivedInvoiceMeta; onClose: () => void }) {
   const supplierId = (inv.seller as { id?: string })?.id ?? undefined;
   const { data: unmatchedPzs = [], isPending } = useUnmatchedPzQuery(supplierId, true);
   const linkM = useLinkInvoiceToPzMutation();
   const [matchError, setMatchError] = useState<string | null>(null);
   const [matchedId, setMatchedId] = useState<string | null>(null);
+  const [expandedPzId, setExpandedPzId] = useState<string | null>(null);
 
   const handleLink = async (pzId: string) => {
     setMatchError(null);
@@ -257,23 +352,40 @@ function MatchPzPanel({ inv, onClose }: { inv: ReceivedInvoiceMeta; onClose: () 
       {!isPending && unmatchedPzs.length > 0 && (
         <div className="space-y-1.5">
           {unmatchedPzs.map((pz) => (
-            <div key={pz.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-foreground">
-                  {pz.document_number || pz.id.slice(0, 8)}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {pz.issue_date} · {pz.to_warehouse_name ?? '—'} · {pz.status}
-                </p>
+            <div key={pz.id} className="rounded-lg border border-border bg-background overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[13px] font-medium text-foreground">
+                      {pz.document_number || pz.id.slice(0, 8)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPzId((prev) => prev === pz.id ? null : pz.id)}
+                      className="text-[10px] text-primary hover:text-primary/70 underline"
+                    >
+                      {expandedPzId === pz.id ? 'Zwiń' : 'Pokaż pozycje'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {pz.issue_date} · {pz.to_warehouse_name ?? '—'}
+                    {pz.supplier_name && ` · ${pz.supplier_name}`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={linkM.isPending}
+                  onClick={() => void handleLink(pz.id)}
+                  className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50 hover:bg-primary/90"
+                >
+                  {linkM.isPending ? '…' : 'Dopasuj'}
+                </button>
               </div>
-              <button
-                type="button"
-                disabled={linkM.isPending}
-                onClick={() => void handleLink(pz.id)}
-                className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50 hover:bg-primary/90"
-              >
-                {linkM.isPending ? '…' : 'Dopasuj'}
-              </button>
+              {expandedPzId === pz.id && (
+                <div className="px-3 pb-2">
+                  <KSeFPzMatchComparison pzId={pz.id} inv={inv} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -828,6 +940,7 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
   const hasCostAllocation = useModuleGuard('cost_allocation');
 
   // OPEX line categorization state
+  const [editingCategories, setEditingCategories] = useState(false);
   const [checkedLines, setCheckedLines] = useState<Set<number>>(new Set());
   const [bulkCategory, setBulkCategory] = useState<string>('');
   const [newCategoryName, setNewCategoryName] = useState<string>('');
@@ -862,6 +975,13 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
       line_categories[String(pos)] = bulkCategory;
     });
     await lineOpexMutation.mutateAsync(line_categories);
+    setCheckedLines(new Set());
+    setBulkCategory('');
+    setEditingCategories(false);
+  };
+
+  const exitCategoryEdit = () => {
+    setEditingCategories(false);
     setCheckedLines(new Set());
     setBulkCategory('');
   };
@@ -1031,28 +1151,44 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground">
-                      <th className="pb-1 pr-2 font-medium w-6">
-                        <input
-                          type="checkbox"
-                          checked={checkedLines.size === lines.length}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setCheckedLines(new Set(lines.map((line) => line.position ?? 0)));
-                            } else {
-                              setCheckedLines(new Set());
-                            }
-                          }}
-                          className="rounded border-input"
-                          title="Zaznacz wszystkie"
-                        />
-                      </th>
+                      {editingCategories && (
+                        <th className="pb-1 pr-2 font-medium w-6">
+                          <input
+                            type="checkbox"
+                            checked={checkedLines.size === lines.length}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setCheckedLines(new Set(lines.map((line) => line.position ?? 0)));
+                              } else {
+                                setCheckedLines(new Set());
+                              }
+                            }}
+                            className="rounded border-input"
+                            title="Zaznacz wszystkie"
+                          />
+                        </th>
+                      )}
                       <th className="text-left pb-1 pr-4 font-medium">Nazwa</th>
                       <th className="text-right pb-1 pr-4 font-medium">Ilość</th>
                       <th className="text-left pb-1 pr-4 font-medium">Jm.</th>
                       <th className="text-right pb-1 pr-4 font-medium">Cena netto</th>
                       <th className="text-right pb-1 pr-4 font-medium">VAT %</th>
                       <th className="text-right pb-1 pr-4 font-medium">Wartość netto</th>
-                      <th className="text-left pb-1 pr-4 font-medium">Kategoria</th>
+                      <th className="text-left pb-1 pr-4 font-medium">
+                        <span className="inline-flex items-center gap-1.5">
+                          Kategoria
+                          {!editingCategories && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingCategories(true)}
+                              className="text-[10px] text-gray-400 hover:text-[#5856D6] underline underline-offset-2 font-normal"
+                              title="Zmień kategorię"
+                            >
+                              zmień
+                            </button>
+                          )}
+                        </span>
+                      </th>
                       <th className="text-left pb-1 font-medium">PZ</th>
                     </tr>
                   </thead>
@@ -1062,27 +1198,30 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
                       const linePzDocs = line.existing_pz_documents ?? [];
                       const hasActivePzLine = linePzDocs.some((p) => p.status !== 'cancelled');
                       const lineOpexCategory = opexData?.line_categories?.[String(linePos)] ?? null;
-                      const categoryObj = lineOpexCategory
-                        ? categories.find((c) => c.slug === lineOpexCategory)
+                      const effectiveSlug = lineOpexCategory ?? inv.opex_category ?? null;
+                      const categoryObj = effectiveSlug
+                        ? categories.find((c) => c.slug === effectiveSlug)
                         : null;
                       const isChecked = checkedLines.has(linePos);
                       return (
                         <tr key={linePos} className={cn('border-t border-border/50', hasActivePzLine && 'bg-emerald-50/50 dark:bg-emerald-950/20')}>
-                          <td className="py-1 pr-2">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                setCheckedLines((prev) => {
-                                  const next = new Set(prev);
-                                  if (e.target.checked) next.add(linePos);
-                                  else next.delete(linePos);
-                                  return next;
-                                });
-                              }}
-                              className="rounded border-input"
-                            />
-                          </td>
+                          {editingCategories && (
+                            <td className="py-1 pr-2">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  setCheckedLines((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(linePos);
+                                    else next.delete(linePos);
+                                    return next;
+                                  });
+                                }}
+                                className="rounded border-input"
+                              />
+                            </td>
+                          )}
                           <td className="py-1 pr-4">{line.name}</td>
                           <td className="py-1 pr-4 text-right tabular-nums">{line.quantity}</td>
                           <td className="py-1 pr-4 text-muted-foreground">{line.unit}</td>
@@ -1091,7 +1230,10 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
                           <td className="py-1 pr-4 text-right tabular-nums">{plMoney.format(line.line_net)}</td>
                           <td className="py-1 pr-4">
                             {categoryObj ? (
-                              <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary whitespace-nowrap">
+                              <span className={cn(
+                                'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap',
+                                lineOpexCategory ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500',
+                              )}>
                                 {categoryObj.name}
                               </span>
                             ) : (
@@ -1158,7 +1300,7 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
                       </button>
                       <button
                         type="button"
-                        onClick={() => setCheckedLines(new Set())}
+                        onClick={exitCategoryEdit}
                         className="text-sm text-muted-foreground hover:text-foreground"
                       >
                         Anuluj

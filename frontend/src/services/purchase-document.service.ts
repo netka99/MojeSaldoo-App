@@ -4,6 +4,11 @@ export type PurchaseDocDocType = 'FZ' | 'PAR' | 'PAR_VAT';
 export type PurchaseDocStatus = 'draft' | 'registered' | 'matched';
 export type PaymentMethod = 'transfer' | 'cash' | 'card';
 
+export interface ItemCoverage {
+  quantity_matched_total: string;
+  pz_numbers: string[];
+}
+
 export interface PurchaseDocumentItem {
   id: string;
   product: string | null;
@@ -14,14 +19,76 @@ export interface PurchaseDocumentItem {
   unit_price_gross: string;
   vat_rate: string;
   line_gross: string;
+  coverage: ItemCoverage;
   created_at: string;
+}
+
+// ─── 3-way matching types ─────────────────────────────────────────────────────
+
+export interface MatchProposalItem {
+  id: string;
+  product_name: string;
+  product_id: string | null;
+  quantity: string;
+  quantity_already_matched: string;
+  quantity_unmatched: string;
+  unit: string;
+  unit_price_gross: string;
+}
+
+export interface MatchProposalDeliveryItem {
+  id: string;
+  product_name: string;
+  product_id: string;
+  quantity_planned: string;
+  quantity_already_matched: string;
+  quantity_available: string;
+  unit_cost: string | null;
+}
+
+export interface MatchProposal {
+  invoice_item: MatchProposalItem;
+  delivery_item: MatchProposalDeliveryItem;
+  quantity_matched: string;
+  match_type: 'exact' | 'fuzzy';
+  confidence: number;
+}
+
+export interface MatchProposalsResponse {
+  invoice_id: string;
+  pz_id: string;
+  proposals: MatchProposal[];
+  unmatched_invoice_items: MatchProposalItem[];
+  unmatched_delivery_items: MatchProposalDeliveryItem[];
+}
+
+export interface LineMatchPayload {
+  invoice_item_id: string;
+  delivery_item_id: string;
+  quantity_matched: string;
+}
+
+export interface ConfirmLineMatchesPayload {
+  pz_id: string;
+  matches: LineMatchPayload[];
+}
+
+export interface PurchaseDocumentPzRef {
+  id: string;
+  document_number: string;
+  status: string;
+  issue_date: string | null;
 }
 
 export interface PurchaseDocument {
   id: string;
   doc_type: PurchaseDocDocType;
   status: PurchaseDocStatus;
+  /** M:M list of linked PZ documents. */
+  pz_documents: PurchaseDocumentPzRef[];
+  /** Backward-compat: first linked PZ UUID, or null. */
   pz_id: string | null;
+  /** Backward-compat: first linked PZ number, or null. */
   pz_number: string | null;
   supplier_name: string;
   supplier_nip: string;
@@ -128,6 +195,15 @@ export const purchaseDocumentService = {
   linkPz: (id: string, pzId: string) =>
     api.post<PurchaseDocument>(`${basePath}${id}/link-pz/`, { pz_id: pzId }),
 
+  unlinkPz: (id: string, pzId: string) =>
+    api.post<PurchaseDocument>(`${basePath}${id}/unlink-pz/`, { pz_id: pzId }),
+
   setLineCategories: (id: string, line_categories: Record<string, string>) =>
     api.patch<PurchaseDocument>(`${basePath}${id}/set-line-categories/`, { line_categories }),
+
+  getMatchProposals: (id: string, pzId: string) =>
+    api.get<MatchProposalsResponse>(`${basePath}${id}/match-proposals/`, { params: { pz_id: pzId } }),
+
+  confirmLineMatches: (id: string, payload: ConfirmLineMatchesPayload) =>
+    api.post<PurchaseDocument>(`${basePath}${id}/confirm-line-matches/`, payload),
 };

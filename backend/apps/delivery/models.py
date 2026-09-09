@@ -126,13 +126,16 @@ class DeliveryDocument(models.Model):
         related_name="delivery_documents",
         help_text="Van route (trip) this document belongs to.",
     )
+    # Legacy 1:1 FK — kept during transition; superseded by DeliveryDocumentKSeFLink M:M.
+    # DO NOT use this field in new code — read ksef_links instead.
+    # Will be removed after full M:M migration is deployed and verified.
     ksef_invoice = models.ForeignKey(
         "ksef.ReceivedKSeFInvoice",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="pz_documents",
-        help_text="KSeF invoice this PZ was created from.",
+        help_text="[LEGACY] KSeF invoice this PZ was created from — superseded by M:M ksef_links.",
     )
     corrects_pz = models.ForeignKey(
         "self",
@@ -229,6 +232,37 @@ class DeliveryDocument(models.Model):
                 name="delivery_document_company_document_number_uniq",
             ),
         ]
+
+
+class DeliveryDocumentKSeFLink(models.Model):
+    """
+    M:M link between a PZ DeliveryDocument and a KSeF ReceivedInvoice.
+
+    Replaces the legacy 1:1 FK DeliveryDocument.ksef_invoice, enabling:
+      - wiele PZ → 1 faktura KSeF  (zbiorczak: dostawa w partiach)
+      - 1 PZ → wiele faktur KSeF   (korekta: osobna faktura na brakujący produkt)
+    """
+
+    delivery_document = models.ForeignKey(
+        DeliveryDocument,
+        on_delete=models.CASCADE,
+        related_name="ksef_links",
+    )
+    ksef_invoice = models.ForeignKey(
+        "ksef.ReceivedKSeFInvoice",
+        on_delete=models.CASCADE,
+        related_name="pz_ksef_links",
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("delivery_document", "ksef_invoice")]
+        ordering = ["linked_at"]
+        verbose_name = "Powiązanie PZ–KSeF"
+        verbose_name_plural = "Powiązania PZ–KSeF"
+
+    def __str__(self):
+        return f"{self.delivery_document} ↔ {self.ksef_invoice}"
 
 
 class DeliveryItem(models.Model):

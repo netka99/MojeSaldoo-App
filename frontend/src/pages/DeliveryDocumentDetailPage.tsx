@@ -1324,17 +1324,25 @@ export function DeliveryDocumentDetailPage() {
                       <dd className="font-medium text-foreground">{doc.to_warehouse_name}</dd>
                     </>
                   )}
-                  {doc.ksef_invoice_ref && (
+                  {((doc.ksef_invoice_refs?.length ?? 0) > 0 || doc.ksef_invoice_ref) && (
                     <>
-                      <dt className="text-muted-foreground whitespace-nowrap">Faktura</dt>
-                      <dd>
-                        <Link
-                          to={`/ksef/inbox`}
-                          className="font-medium text-primary hover:underline"
-                          title={doc.ksef_invoice_ref.ksef_number}
-                        >
-                          {doc.ksef_invoice_ref.invoice_number || doc.ksef_invoice_ref.ksef_number}
-                        </Link>
+                      <dt className="text-muted-foreground whitespace-nowrap">
+                        {((doc.ksef_invoice_refs?.length ?? 0) > 1) ? 'Faktury KSeF' : 'Faktura'}
+                      </dt>
+                      <dd className="flex flex-col gap-0.5">
+                        {(doc.ksef_invoice_refs?.length
+                          ? doc.ksef_invoice_refs
+                          : doc.ksef_invoice_ref ? [doc.ksef_invoice_ref] : []
+                        ).map((ref) => (
+                          <Link
+                            key={ref.id}
+                            to={`/ksef/inbox`}
+                            className="font-medium text-primary hover:underline"
+                            title={ref.ksef_number}
+                          >
+                            {ref.invoice_number || ref.ksef_number}
+                          </Link>
+                        ))}
                       </dd>
                     </>
                   )}

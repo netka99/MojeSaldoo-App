@@ -123,6 +123,15 @@ function PurchaseDocumentFormInner({
       return;
     }
 
+    const validLines = lines.filter((l) => l.product_name.trim());
+    const lineTotals = validLines.length > 0
+      ? validLines.reduce((acc, l) => {
+          const gross = (parseFloat(l.quantity) || 0) * (parseFloat(l.unit_price_gross) || 0);
+          const net = gross > 0 ? gross / (1 + (parseFloat(l.vat_rate) || 0) / 100) : 0;
+          return { net: acc.net + net, vat: acc.vat + (gross - net) };
+        }, { net: 0, vat: 0 })
+      : null;
+
     const payload: PurchaseDocumentWrite = {
       doc_type: docType,
       supplier_name: supplierName,
@@ -132,8 +141,8 @@ function PurchaseDocumentFormInner({
       due_date: dueDate || null,
       payment_method: paymentMethod,
       total_gross: parseFloat(totalGross).toFixed(2),
-      total_net: totalNet ? parseFloat(totalNet).toFixed(2) : '0.00',
-      total_vat: totalVat ? parseFloat(totalVat).toFixed(2) : '0.00',
+      total_net: lineTotals ? lineTotals.net.toFixed(2) : (totalNet ? parseFloat(totalNet).toFixed(2) : '0.00'),
+      total_vat: lineTotals ? lineTotals.vat.toFixed(2) : (totalVat ? parseFloat(totalVat).toFixed(2) : '0.00'),
       notes: notes.trim(),
       ocr_raw_filename: scannerState.ocr_raw_filename ?? existingDoc?.ocr_raw_filename ?? '',
       ...(lines.length > 0 && {
@@ -332,6 +341,7 @@ function PurchaseDocumentFormInner({
               />
             </div>
 
+            {lines.filter((l) => l.product_name.trim()).length === 0 && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="total_net" className="mb-1.5 block text-[12px] font-medium text-gray-500">
@@ -343,14 +353,21 @@ function PurchaseDocumentFormInner({
                   min="0"
                   step="0.01"
                   value={totalNet}
-                  onChange={(e) => setTotalNet(e.target.value)}
+                  onChange={(e) => {
+                    setTotalNet(e.target.value);
+                    const net = parseFloat(e.target.value);
+                    const gross = parseFloat(totalGross);
+                    if (!isNaN(net) && !isNaN(gross) && gross >= net) {
+                      setTotalVat((gross - net).toFixed(2));
+                    }
+                  }}
                   placeholder="0.00"
                   className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
                 />
               </div>
               <div>
                 <label htmlFor="total_vat" className="mb-1.5 block text-[12px] font-medium text-gray-500">
-                  VAT (opcjonalnie)
+                  VAT
                 </label>
                 <input
                   id="total_vat"
@@ -364,6 +381,7 @@ function PurchaseDocumentFormInner({
                 />
               </div>
             </div>
+            )}
           </div>
 
           {/* Line items */}

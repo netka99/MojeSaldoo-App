@@ -23,13 +23,18 @@ class OrderIdsFilter(django_filters.CharFilter):
 
 
 class KsefUnlinkedFilter(django_filters.BooleanFilter):
-    """?ksef_unlinked=true → PZ documents with no linked KSeF invoice."""
+    """
+    ?ksef_unlinked=true → PZ documents with no linked KSeF invoice (M:M).
+
+    Uses LEFT JOIN through ksef_links — .distinct() prevents duplicate rows
+    when a PZ has multiple links.
+    """
 
     def filter(self, qs, value):
         if value is True:
-            return qs.filter(ksef_invoice__isnull=True)
+            return qs.filter(ksef_links__isnull=True).distinct()
         if value is False:
-            return qs.filter(ksef_invoice__isnull=False)
+            return qs.filter(ksef_links__isnull=False).distinct()
         return qs
 
 

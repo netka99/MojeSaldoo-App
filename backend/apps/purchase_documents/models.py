@@ -123,13 +123,16 @@ class PurchaseDocument(models.Model):
     )
 
     # --- Links to other documents ---
+    # Legacy 1:1 FK — kept during transition; superseded by PurchaseDocumentPzLink M:M.
+    # DO NOT use this field in new code — read pz_links instead.
+    # Will be removed after full M:M migration is deployed and verified.
     delivery_document = models.ForeignKey(
         "delivery.DeliveryDocument",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="purchase_documents",
-        help_text="PZ powiązane z tym dokumentem zakupowym.",
+        help_text="[LEGACY] PZ powiązane z tym dokumentem zakupowym — zastąpione przez M:M pz_links.",
     )
 
     # --- Payment tracking ---
@@ -204,6 +207,75 @@ class PurchaseDocument(models.Model):
 
     def __str__(self):
         return f"{self.get_doc_type_display()} {self.document_number or self.uuid}"
+
+
+class PurchaseDocumentPzLink(models.Model):
+    """
+    M:M link between a PurchaseDocument (FZ/PAR_VAT) and a PZ DeliveryDocument.
+
+    Replaces the legacy 1:1 FK PurchaseDocument.delivery_document, enabling:
+      - wiele PZ → 1 faktura  (zbiorczak: dostawca dostarcza w partiach, jedna faktura)
+      - 1 PZ → wiele faktur   (korekta: brakujący produkt dochodzi osobną fakturą)
+    """
+
+    purchase_document = models.ForeignKey(
+        PurchaseDocument,
+        on_delete=models.CASCADE,
+        related_name="pz_links",
+    )
+    delivery_document = models.ForeignKey(
+        "delivery.DeliveryDocument",
+        on_delete=models.CASCADE,
+        related_name="purchase_doc_links",
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("purchase_document", "delivery_document")]
+        ordering = ["linked_at"]
+        verbose_name = "Powiązanie Faktura–PZ"
+        verbose_name_plural = "Powiązania Faktura–PZ"
+
+    def __str__(self):
+        return f"{self.purchase_document} ↔ {self.delivery_document}"
+
+
+class InvoiceItemPzLink(models.Model):
+    """
+    Line-level 3-way match: one PurchaseDocumentItem line matched to one DeliveryItem line.
+
+    quantity_matched is the agreed quantity for this pairing — typically
+    min(invoice_item.quantity_unmatched, delivery_item.quantity_available).
+    Enforced in the view; model stays constraint-free for flexibility.
+
+    The parent-level PurchaseDocumentPzLink is auto-created by confirm_line_matches.
+    """
+
+    invoice_item = models.ForeignKey(
+        "PurchaseDocumentItem",
+        on_delete=models.CASCADE,
+        related_name="pz_line_links",
+    )
+    delivery_item = models.ForeignKey(
+        "delivery.DeliveryItem",
+        on_delete=models.CASCADE,
+        related_name="invoice_line_links",
+    )
+    quantity_matched = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("invoice_item", "delivery_item")]
+        ordering = ["created_at"]
+        verbose_name = "Powiązanie pozycja faktury–pozycja PZ"
+        verbose_name_plural = "Powiązania pozycje faktury–pozycje PZ"
+
+    def __str__(self):
+        return f"{self.invoice_item} ↔ {self.delivery_item} qty={self.quantity_matched}"
 
 
 class PurchaseDocumentItem(models.Model):

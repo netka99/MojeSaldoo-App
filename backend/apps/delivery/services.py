@@ -1007,6 +1007,7 @@ def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user)
             corrects_pz=original_pz,
             from_supplier=original_pz.from_supplier,
             to_warehouse=warehouse,
+            # Legacy FK — also copied for backward compat
             ksef_invoice=original_pz.ksef_invoice,
             issue_date=timezone.localdate(),
             status=DeliveryDocument.STATUS_DELIVERED,
@@ -1014,6 +1015,18 @@ def create_pz_kor(original_pz: "DeliveryDocument", correction_items: list, user)
             user=user,
             notes=f"Korekta {doc_label}",
         )
+
+        # Copy all M:M KSeF links from the original PZ to the PZ-KOR
+        from .models import DeliveryDocumentKSeFLink
+        ksef_links = [
+            DeliveryDocumentKSeFLink(
+                delivery_document=kor_doc,
+                ksef_invoice_id=link.ksef_invoice_id,
+            )
+            for link in original_pz.ksef_links.all()
+        ]
+        if ksef_links:
+            DeliveryDocumentKSeFLink.objects.bulk_create(ksef_links, ignore_conflicts=True)
         kor_label = kor_doc.document_number or str(kor_doc.id)
 
         for ch in changes:

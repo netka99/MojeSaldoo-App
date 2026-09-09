@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 
+from django.db.models import Prefetch
 from django.http import HttpResponse
 from django.utils import timezone
 
@@ -37,14 +38,49 @@ def _annotation_status(inv: "ReceivedKSeFInvoice") -> str | None:
         return None
 
 
+def _get_pz_docs_for_invoice(inv: "ReceivedKSeFInvoice") -> list:
+    """
+    Return all PZ DeliveryDocuments linked to a KSeF invoice.
+
+    Merges results from both sources:
+      1. New M:M: DeliveryDocumentKSeFLink.pz_ksef_links (new data)
+      2. Legacy FK: inv.pz_documents (old data not yet migrated or set via legacy path)
+
+    De-duplicates by document ID so documents linked via both paths appear once.
+    """
+    from apps.delivery.models import DeliveryDocument
+
+    seen_ids: set = set()
+    result: list = []
+
+    # M:M path (new)
+    for link in inv.pz_ksef_links.select_related("delivery_document").only(
+        "delivery_document__id",
+        "delivery_document__document_number",
+        "delivery_document__status",
+    ):
+        doc = link.delivery_document
+        if doc.id not in seen_ids:
+            seen_ids.add(doc.id)
+            result.append(doc)
+
+    # Legacy FK path (backward compat — covers data not yet in M:M table)
+    for doc in inv.pz_documents.only("id", "document_number", "status").all():
+        if doc.id not in seen_ids:
+            seen_ids.add(doc.id)
+            result.append(doc)
+
+    return result
+
+
 def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
     """Serialize a ReceivedKSeFInvoice to the same shape the KSeF API returns.
 
     pz_docs: pre-fetched list of linked DeliveryDocument objects (avoids N+1 queries).
-    When None, fetches lazily (single invoice use).
+    When None, fetches via _get_pz_docs_for_invoice() (single invoice use).
     """
     if pz_docs is None:
-        pz_docs = list(inv.pz_documents.only("id", "document_number").all())
+        pz_docs = _get_pz_docs_for_invoice(inv)
 
     return {
         "id": str(inv.id),
@@ -237,12 +273,22 @@ class ReceivedInvoicesView(APIView):
 
         total = qs.count()
         offset = (page - 1) * page_size
-        page_qs = list(qs.prefetch_related("pz_documents")[offset: offset + page_size])
+        # Prefetch both M:M links (new) and legacy FK back-refs (old) to avoid N+1
+        from apps.delivery.models import DeliveryDocumentKSeFLink
+        page_qs = list(
+            qs.prefetch_related(
+                "pz_documents",  # legacy FK back-ref
+                Prefetch(
+                    "pz_ksef_links",
+                    queryset=DeliveryDocumentKSeFLink.objects.select_related("delivery_document"),
+                ),
+            )[offset: offset + page_size]
+        )
 
-        # Build pz_docs map per invoice to avoid N+1
+        # Build pz_docs map per invoice using merged M:M + legacy paths
         pz_map: dict = {}
         for inv in page_qs:
-            pz_map[inv.pk] = list(inv.pz_documents.all())
+            pz_map[inv.pk] = _get_pz_docs_for_invoice(inv)
 
         invoices = [_invoice_to_dict(inv, pz_docs=pz_map.get(inv.pk, [])) for inv in page_qs]
 
@@ -535,7 +581,7 @@ class ReceivedInvoiceParseView(APIView):
 
 def _enrich_result_with_pz(result: dict, db_invoice: "ReceivedKSeFInvoice") -> None:
     """Mutates a parsed-invoice result dict to add PZ tracking fields."""
-    pz_docs = list(db_invoice.pz_documents.only("id", "document_number", "status").all())
+    pz_docs = _get_pz_docs_for_invoice(db_invoice)
     result["pz_documents"] = [
         {"id": str(d.id), "documentNumber": d.document_number, "status": d.status}
         for d in pz_docs
@@ -548,18 +594,30 @@ def _enrich_result_with_pz(result: dict, db_invoice: "ReceivedKSeFInvoice") -> N
 
 def _pz_info_by_line_position(db_invoice: "ReceivedKSeFInvoice") -> dict:
     """
-    Returns a dict mapping invoice line position → list of {id, documentNumber}
+    Returns a dict mapping invoice line position → list of {id, documentNumber, status}
     for all PZ documents that took items from that line.
+
+    Queries via both M:M (ksef_links) and legacy FK (ksef_invoice) to cover
+    all documents during the transition period.
     """
+    from django.db.models import Q
     from apps.delivery.models import DeliveryItem
 
+    # Match DeliveryItems belonging to PZs linked to this invoice via either path
     pz_items = (
         DeliveryItem.objects.filter(
-            delivery_document__ksef_invoice=db_invoice,
+            Q(delivery_document__ksef_links__ksef_invoice=db_invoice)
+            | Q(delivery_document__ksef_invoice=db_invoice),
             ksef_invoice_line_position__isnull=False,
         )
         .select_related("delivery_document")
-        .only("ksef_invoice_line_position", "delivery_document__id", "delivery_document__document_number", "delivery_document__status")
+        .only(
+            "ksef_invoice_line_position",
+            "delivery_document__id",
+            "delivery_document__document_number",
+            "delivery_document__status",
+        )
+        .distinct()
     )
 
     by_pos: dict = {}
@@ -630,7 +688,7 @@ def _invoice_parsed_from_db(db_invoice: "ReceivedKSeFInvoice", company) -> dict:
         "lines": lines,
         "pz_documents": [
             {"id": str(d.id), "documentNumber": d.document_number, "status": d.status}
-            for d in db_invoice.pz_documents.only("id", "document_number", "status").all()
+            for d in _get_pz_docs_for_invoice(db_invoice)
         ],
     }
 
@@ -1443,9 +1501,20 @@ class KorMatchView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        from apps.delivery.models import DeliveryDocumentKSeFLink
         original = ReceivedKSeFInvoice.objects.filter(
             company=company, ksef_number=kor_invoice.original_ksef_number
-        ).prefetch_related("pz_documents__items__product").first()
+        ).prefetch_related(
+            # M:M path (new)
+            Prefetch(
+                "pz_ksef_links",
+                queryset=DeliveryDocumentKSeFLink.objects.select_related(
+                    "delivery_document"
+                ).prefetch_related("delivery_document__items__product"),
+            ),
+            # Legacy FK path (old)
+            "pz_documents__items__product",
+        ).first()
 
         if not original:
             return Response({
@@ -1455,10 +1524,9 @@ class KorMatchView(APIView):
                 "matched": False,
             })
 
-        active_pzs = [
-            d for d in original.pz_documents.all()
-            if d.status not in ("cancelled",)
-        ]
+        # Merge M:M + legacy FK, filter active only
+        all_pz_docs = _get_pz_docs_for_invoice(original)
+        active_pzs = [d for d in all_pz_docs if d.status not in ("cancelled",)]
 
         pz_list = []
         for pz in active_pzs:

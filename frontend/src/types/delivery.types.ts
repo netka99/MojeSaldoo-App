@@ -102,8 +102,10 @@ export interface DeliveryDocument {
   supplier_name?: string | null;
   /** Supplier NIP (read-only, from API). */
   supplier_nip?: string | null;
-  /** KSeF invoice this PZ was created from (read-only, from API). */
+  /** KSeF invoice this PZ was created from (read-only, backward-compat — first M:M link). */
   ksef_invoice_ref?: { id: string; ksef_number: string; invoice_number: string } | null;
+  /** M:M list of all linked KSeF invoices (read-only). */
+  ksef_invoice_refs?: Array<{ id: string; ksef_number: string; invoice_number: string }>;
   /** Writable: link/unlink a KSeF invoice to this PZ after the fact. */
   ksef_invoice_id?: string | null;
   status: DeliveryDocumentStatus;

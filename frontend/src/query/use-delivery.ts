@@ -457,6 +457,18 @@ export function useCreateRwMutation() {
 }
 
 /** Fetch PZ documents not yet linked to any KSeF invoice, optionally filtered by supplier. */
+/** All PZ documents for the current company — used in FZ→PZ match panel. */
+export function useAllPzQuery(enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, document_type: 'PZ' }),
+    queryFn: () => deliveryService.fetchList({ document_type: 'PZ', page_size: 50 }),
+    enabled: Boolean(companyId) && enabled,
+    select: (data) => data.results,
+  });
+}
+
 export function useUnmatchedPzQuery(supplierId?: string | null, enabled = true) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
