@@ -3,12 +3,15 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.products.models import Warehouse
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired
 from apps.users.tenant import filter_queryset_for_current_company
+from apps.activity.log import log_error, log_success
+from apps.activity.format import flatten_error_value
 
 from .models import VanRoute
 from .serializers import (
@@ -23,8 +26,9 @@ from .services import _validate_orders_for_route, close_route, confirm_loading, 
 
 class VanRouteViewSet(viewsets.ModelViewSet):
     lookup_field = "uuid"
+    module_required = "van_routes"
     required_permission = 'can_access_routes'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
@@ -110,14 +114,40 @@ class VanRouteViewSet(viewsets.ModelViewSet):
             {"product_id": i["product_id"], "quantity": i["quantity"]}
             for i in ser.validated_data["items"]
         ]
-        route = start_loading(route, user=request.user, items=items)
+        try:
+            route = start_loading(route, user=request.user, items=items)
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="van_route.start_loading",
+                error_code="STOCK_SHORTFALL" if "stock" in str(exc.detail).lower() or "stan" in str(exc.detail).lower() else "DELIVERY_WRONG_STATUS",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="van_route", object_id=str(route.uuid), request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="van_route.start_loading",
+            object_type="van_route", object_id=str(route.uuid),
+        )
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="confirm-loading")
     def confirm_loading_action(self, request, uuid=None):
         """Driver confirms van is loaded; route goes in_progress."""
         route = self.get_object()
-        route = confirm_loading(route)
+        try:
+            route = confirm_loading(route)
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="van_route.confirm_loading",
+                error_code="DELIVERY_WRONG_STATUS",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="van_route", object_id=str(route.uuid), request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="van_route.confirm_loading",
+            object_type="van_route", object_id=str(route.uuid),
+        )
         return Response(VanRouteDetailSerializer(route).data)
 
     @action(detail=True, methods=["post"], url_path="add-orders")
@@ -189,5 +219,18 @@ class VanRouteViewSet(viewsets.ModelViewSet):
     def close_action(self, request, uuid=None):
         """Mark route closed after reconciliation."""
         route = self.get_object()
-        route = close_route(route)
+        try:
+            route = close_route(route)
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="van_route.close",
+                error_code="DELIVERY_WRONG_STATUS",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="van_route", object_id=str(route.uuid), request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="van_route.close",
+            object_type="van_route", object_id=str(route.uuid),
+        )
         return Response(VanRouteDetailSerializer(route).data)

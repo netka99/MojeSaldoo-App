@@ -11,6 +11,11 @@
 
 - Raporty dla ksiegowych - z jednego miejsca
 
+- warto mieć dokument zamówienia do dostawcy (często oznaczany jako ZD lub PO – Purchase Order), nawet w aplikacji dla małych i mikrofirm. Z punktu widzenia architektury nie jest to zarezerwowane wyłącznie dla korporacji. - zastanowic sie jak
+
+- kontrola nad magazynami
+
+- proforma ksef
 
 2.  Recorded / Replay Testing (E2E Tests)
 What you're thinking of is End-to-End (E2E) testing. The idea: you interact with the app like a real user, the tool records those interactions, then replays them automatically on every change.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermission';
 import {
   INVOICE_KSEF_STATUS_LABELS_PL,
@@ -299,7 +299,7 @@ export function InvoicesPage() {
 
 function InvoicesPageContent() {
   const canInvoices = usePermission('can_manage_invoices');
-  const navigate = useNavigate();
+
 
   // source tab: all / ksef / manual
   const [sourceTab, setSourceTab] = useState<SourceTab>('all');
@@ -561,13 +561,12 @@ function InvoicesPageContent() {
               key={t.key}
               type="button"
               onClick={() => {
-                if (t.key === 'ksef') { navigate('/ksef/inbox'); return; }
                 setSourceTab(t.key);
                 resetPage();
               }}
               className={cn(
                 'rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-all',
-                sourceTab === t.key && t.key !== 'ksef'
+                sourceTab === t.key
                   ? 'bg-[#5856D6] text-white'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
               )}
@@ -575,47 +574,82 @@ function InvoicesPageContent() {
               {t.label}
             </button>
           ))}
-          <button
-            type="button"
-            onClick={() => navigate('/purchase-documents')}
-            className="rounded-full px-3.5 py-1.5 text-[13px] font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all"
-          >
-            Zakupowe / Paragony
-          </button>
         </div>
 
-        {/* ── Status tabs ─────────────────────────────────────────────────── */}
-        <div className="mb-5 border-b border-gray-200">
-          <div
-            className="flex overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
-            role="tablist"
-            aria-label="Filtruj po statusie płatności"
-          >
-            {STATUS_TABS.map(tab => (
+
+        {/* ── Filter container ─────────────────────────────────────────────── */}
+        <div className="mb-4 overflow-hidden rounded-2xl bg-white shadow-sm px-5 py-4">
+          {/* Dates row */}
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <label className="text-[13px] font-medium text-gray-600">Od</label>
+              <input
+                id="invoice-issue-from"
+                type="date"
+                value={dateFrom}
+                onChange={e => { setDateFrom(e.target.value); resetPage(); }}
+                aria-label="Data wystawienia od"
+                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[13px] font-medium text-gray-600">Do</label>
+              <input
+                id="invoice-issue-to"
+                type="date"
+                value={dateTo}
+                onChange={e => { setDateTo(e.target.value); resetPage(); }}
+                aria-label="Data wystawienia do"
+                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+              />
+            </div>
+            {(dateFrom || dateTo) && (
               <button
-                key={tab.key}
                 type="button"
-                role="tab"
-                aria-selected={activeTab === tab.key}
-                onClick={() => { setActiveTab(tab.key); resetPage(); }}
-                className={cn(
-                  'shrink-0 whitespace-nowrap px-4 pb-3 pt-1 text-[14px] font-medium transition-colors border-b-2',
-                  activeTab === tab.key
-                    ? 'border-[#5856D6] text-[#5856D6]'
-                    : 'border-transparent text-gray-500 hover:text-gray-700',
-                )}
+                onClick={() => { setDateFrom(''); setDateTo(''); resetPage(); }}
+                className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
               >
-                {tab.label}
+                Wyczyść daty
               </button>
-            ))}
+            )}
+            <div className="flex gap-1.5 ml-1">
+              {[
+                { label: 'Ten miesiąc', fn: () => {
+                  const now = new Date();
+                  setDateFrom(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`);
+                  setDateTo(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(new Date(now.getFullYear(), now.getMonth()+1, 0).getDate()).padStart(2,'0')}`);
+                  resetPage();
+                }},
+                { label: 'Poprzedni', fn: () => {
+                  const now = new Date();
+                  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                  setDateFrom(`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-01`);
+                  const lastDay = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+                  setDateTo(`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`);
+                  resetPage();
+                }},
+                { label: 'Ten rok', fn: () => {
+                  const y = new Date().getFullYear();
+                  setDateFrom(`${y}-01-01`);
+                  setDateTo(`${y}-12-31`);
+                  resetPage();
+                }},
+              ].map(({ label, fn }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={fn}
+                  className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50 transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-
-        {/* ── Search bar ──────────────────────────────────────────────────── */}
-        <div className="mb-3">
+          {/* Search */}
           <div ref={customerWrapRef} className="relative">
             {customerId ? (
-              <div className="flex items-center gap-2 rounded-lg border border-[#5856D6]/30 bg-[#5856D6]/5 px-3 py-2">
+              <div className="flex items-center gap-2 rounded-xl border border-[#5856D6]/30 bg-[#5856D6]/5 px-3 py-2">
                 <svg className="h-4 w-4 shrink-0 text-[#5856D6]" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                   <path d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" />
                 </svg>
@@ -626,9 +660,7 @@ function InvoicesPageContent() {
               </div>
             ) : (
               <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                  <IconSearch />
-                </span>
+                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
                 <input
                   type="text"
                   id="invoice-customer-search"
@@ -640,7 +672,7 @@ function InvoicesPageContent() {
                   aria-label="Szukaj klienta"
                   aria-expanded={showCustomerDropdown && customerOptions.length > 0}
                   aria-haspopup="listbox"
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-[14px] text-gray-900 placeholder-gray-400 shadow-sm focus:border-[#5856D6]/40 focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+                  className="h-10 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
                 />
                 {customersLoading && (
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">…</span>
@@ -673,81 +705,6 @@ function InvoicesPageContent() {
                 ))}
               </ul>
             )}
-          </div>
-        </div>
-
-        {/* ── Date range bar (always visible) ─────────────────────────────── */}
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 shrink-0">
-            Data wystawienia:
-          </span>
-          <div className="flex items-center gap-1.5">
-            <input
-              id="invoice-issue-from"
-              type="date"
-              value={dateFrom}
-              onChange={e => { setDateFrom(e.target.value); resetPage(); }}
-              aria-label="Data wystawienia od"
-              className={cn(
-                'rounded-lg border px-2.5 py-1.5 text-[13px] text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20',
-                dateFrom ? 'border-[#5856D6]/40 bg-[#5856D6]/5 text-[#5856D6]' : 'border-gray-200 bg-white',
-              )}
-            />
-            <span className="text-[12px] text-gray-400">—</span>
-            <input
-              id="invoice-issue-to"
-              type="date"
-              value={dateTo}
-              onChange={e => { setDateTo(e.target.value); resetPage(); }}
-              aria-label="Data wystawienia do"
-              className={cn(
-                'rounded-lg border px-2.5 py-1.5 text-[13px] text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20',
-                dateTo ? 'border-[#5856D6]/40 bg-[#5856D6]/5 text-[#5856D6]' : 'border-gray-200 bg-white',
-              )}
-            />
-            {(dateFrom || dateTo) && (
-              <button
-                type="button"
-                onClick={() => { setDateFrom(''); setDateTo(''); resetPage(); }}
-                aria-label="Wyczyść zakres dat"
-                className="rounded p-0.5 text-gray-400 hover:text-gray-600"
-              >
-                <IconX className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-          <div className="flex gap-1.5">
-            {[
-              { label: 'Ten miesiąc', fn: () => {
-                const now = new Date();
-                setDateFrom(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`);
-                setDateTo(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(new Date(now.getFullYear(), now.getMonth()+1, 0).getDate()).padStart(2,'0')}`);
-                resetPage();
-              }},
-              { label: 'Poprzedni', fn: () => {
-                const now = new Date();
-                const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                setDateFrom(`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-01`);
-                const lastDay = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
-                setDateTo(`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`);
-                resetPage();
-              }},
-              { label: 'Ten rok', fn: () => {
-                const y = new Date().getFullYear();
-                setDateFrom(`${y}-01-01`);
-                setDateTo(`${y}-12-31`);
-                resetPage();
-              }},
-            ].map(({ label, fn }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={fn}
-                className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[12px] font-medium text-gray-500 hover:bg-gray-50 transition-colors"
-              >
-                {label}
-              </button>
-            ))}
           </div>
         </div>
 

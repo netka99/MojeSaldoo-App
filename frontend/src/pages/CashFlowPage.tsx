@@ -181,7 +181,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
 
   // ── Key numbers ──
   const totalRevenue = month.revenue_paid + month.b2c_revenue;
-  const totalCosts = month.costs_ksef + month.costs_quick + month.costs_fixed;
+  const totalCosts = month.costs_ksef + (month.costs_pd ?? 0) + month.costs_quick + month.costs_fixed;
   const taxTotal = month.vat_to_pay + month.zus_social + month.zus_health + month.pit_estimate;
   // Wynik = po wszystkim: koszty operacyjne + zarezerwowane podatki
   const wynik = month.really_yours_estimate;
@@ -562,7 +562,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
       <Section title="Koszty" total={totalCosts}>
         {/* KSeF invoices — expandable: invoice list + category breakdown */}
         <InnerExpandable
-          label="Faktury dostawców (KSeF)"
+          label="Faktury dostawców (z KSeF)"
           sub={`${month.costs_ksef_count ?? 0} ${
             (month.costs_ksef_count ?? 0) === 1 ? 'faktura' :
             (month.costs_ksef_count ?? 0) <= 4 ? 'faktury' : 'faktur'
@@ -623,6 +623,34 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
             </Link>
           </div>
         </InnerExpandable>
+
+        {/* Manually entered purchase documents (FZ/PAR_VAT/PAR) */}
+        {(month.costs_pd ?? 0) > 0 && (
+          <InnerExpandable
+            label="Faktury zakupowe (ręczne)"
+            sub="FZ, paragony z NIP, paragony"
+            amount={month.costs_pd ?? 0}
+          >
+            <div className="pt-1 space-y-1">
+              {[
+                { label: 'Faktury zakupowe (FZ i PAR z NIP)', to: '/purchase-documents?tab=fz' },
+                { label: 'Paragony', to: '/purchase-documents?tab=par' },
+                { label: 'Wszystkie dokumenty zakupowe', to: '/purchase-documents' },
+              ].map(({ label, to }) => (
+                <Link
+                  key={to}
+                  to={to}
+                  className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+                >
+                  <svg viewBox="0 0 16 16" className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 8h10M9 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </InnerExpandable>
+        )}
 
         {/* Other quick expenses — expandable: individual list + category summary */}
         <InnerExpandable

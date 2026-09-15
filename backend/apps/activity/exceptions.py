@@ -43,6 +43,7 @@ def _log_server_error(exc, context):
             status=ActivityLog.STATUS_ERROR,
             error_code="SERVER_ERROR",
             error_detail=f"{type(exc).__name__}: {exc}",
+            request=request,
         )
     except Exception:
         # Never let logging crash the response

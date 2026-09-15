@@ -13,7 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired
 
 from django.db.models import Prefetch
 from django.http import HttpResponse
@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from apps.products.models import Product
 from apps.suppliers.models import Supplier
-from apps.activity.log import log_activity
+from apps.activity.log import log_activity, log_error, log_success
 from apps.activity.models import ActivityLog
 from .models import KSeFSession, KSeFProductMapping, ReceivedKSeFInvoice, ReceivedKSeFInvoiceLine
 from apps.cash_flow.models import OPEX_CATEGORY_CHOICES
@@ -111,7 +111,13 @@ def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
 logger = logging.getLogger(__name__)
 
 
-class KSeFSessionView(APIView):
+class KSeFModuleMixin:
+    """Mixin that enforces the 'ksef' module is enabled for all KSeF views."""
+    module_required = "ksef"
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
+
+
+class KSeFSessionView(KSeFModuleMixin, APIView):
     """
     GET  /api/ksef/session/       — check active session for current company
     POST /api/ksef/session/       — authenticate (NIP + passphrase), store session
@@ -119,7 +125,6 @@ class KSeFSessionView(APIView):
     """
 
     required_permission = 'can_manage_invoices'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request):
         company = request.user.current_company
@@ -218,7 +223,7 @@ class KSeFSessionView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class ReceivedInvoicesView(APIView):
+class ReceivedInvoicesView(KSeFModuleMixin, APIView):
     """
     GET /api/ksef/inbox/
     Sync new invoices from KSeF into local DB, then return from DB.
@@ -226,7 +231,6 @@ class ReceivedInvoicesView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request):
         company = request.user.current_company
@@ -344,7 +348,7 @@ class ReceivedInvoicesView(APIView):
         return total_new
 
 
-class ReceivedInvoicesSyncView(APIView):
+class ReceivedInvoicesSyncView(KSeFModuleMixin, APIView):
     """
     POST /api/ksef/inbox/sync/
     Sync new invoices from KSeF into local DB for the given date range.
@@ -353,48 +357,72 @@ class ReceivedInvoicesSyncView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def post(self, request):
         company = request.user.current_company
         if not company:
+            log_error(
+                user=request.user, action="ksef.sync", error_code="KSEF_SYNC_FAILED",
+                error_detail="Brak aktywnej firmy.", request=request,
+            )
             return Response({"detail": "No active company."}, status=status.HTTP_400_BAD_REQUEST)
 
         nip = (company.nip or "").strip()
         if not nip:
+            log_error(
+                user=request.user, action="ksef.sync", error_code="KSEF_NO_NIP_COMPANY",
+                request=request,
+            )
             return Response({"detail": "Uzupełnij NIP firmy."}, status=status.HTTP_400_BAD_REQUEST)
 
         date_from = request.data.get("date_from", "").strip()
         date_to = request.data.get("date_to", "").strip()
         if not date_from or not date_to:
+            log_error(
+                user=request.user, action="ksef.sync", error_code="KSEF_SYNC_FAILED",
+                error_detail="Wymagane: date_from, date_to.", request=request,
+            )
             return Response({"detail": "Wymagane: date_from, date_to."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             ksef_sess = KSeFSession.objects.get(company=company)
         except KSeFSession.DoesNotExist:
+            log_error(
+                user=request.user, action="ksef.sync", error_code="KSEF_NO_SESSION", request=request,
+            )
             return Response({"detail": "Brak aktywnej sesji KSeF."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not ksef_sess.is_active():
+            log_error(
+                user=request.user, action="ksef.sync", error_code="KSEF_SESSION_EXPIRED", request=request,
+            )
             return Response({"detail": "Sesja KSeF wygasła."}, status=status.HTTP_401_UNAUTHORIZED)
 
         try:
             new_count = ReceivedInvoicesView._sync_from_ksef(company, nip, date_from, date_to)
         except Exception as exc:
             logger.error("KSeF sync failed: %s", exc)
+            log_error(
+                user=request.user, action="ksef.sync", error_code="KSEF_SYNC_FAILED",
+                error_detail=str(exc), request=request,
+            )
             return Response({"detail": f"Błąd synchronizacji: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
 
         total = ReceivedKSeFInvoice.objects.filter(company=company).count()
+        log_success(
+            user=request.user, action="ksef.sync", object_type="ksef_inbox",
+            object_id=f"{date_from}–{date_to}",
+        )
         return Response({"new_count": new_count, "total": total})
 
 
-class ReceivedInvoiceDownloadView(APIView):
+class ReceivedInvoiceDownloadView(KSeFModuleMixin, APIView):
     """
     GET /api/ksef/inbox/<ksef_reference_number>/xml/
     Download a received invoice XML — serves from DB cache first, falls back to KSeF API.
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request, ksef_reference_number: str):
         company = request.user.current_company
@@ -416,9 +444,17 @@ class ReceivedInvoiceDownloadView(APIView):
         try:
             ksef_sess = KSeFSession.objects.get(company=company)
         except KSeFSession.DoesNotExist:
+            log_error(
+                user=request.user, action="ksef.download", error_code="KSEF_NO_SESSION",
+                object_type="ksef_invoice", object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": "Brak aktywnej sesji KSeF."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not ksef_sess.is_active():
+            log_error(
+                user=request.user, action="ksef.download", error_code="KSEF_SESSION_EXPIRED",
+                object_type="ksef_invoice", object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": "Sesja KSeF wygasła."}, status=status.HTTP_401_UNAUTHORIZED)
 
         try:
@@ -429,6 +465,11 @@ class ReceivedInvoiceDownloadView(APIView):
             )
         except Exception as exc:
             logger.error("KSeF download received invoice failed (ref: %s): %s", ksef_reference_number, exc)
+            log_error(
+                user=request.user, action="ksef.download", error_code="KSEF_DOWNLOAD_FAILED",
+                error_detail=str(exc), object_type="ksef_invoice",
+                object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": f"Błąd pobierania: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
 
         if db_invoice:
@@ -439,7 +480,7 @@ class ReceivedInvoiceDownloadView(APIView):
         return http_resp
 
 
-class ReceivedInvoiceHtmlView(APIView):
+class ReceivedInvoiceHtmlView(KSeFModuleMixin, APIView):
     """
     GET /api/ksef/inbox/<ksef_reference_number>/html/
     Render a KSeF-style HTML preview of a received invoice.
@@ -447,7 +488,6 @@ class ReceivedInvoiceHtmlView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request, ksef_reference_number: str):
         company = request.user.current_company
@@ -496,14 +536,13 @@ class ReceivedInvoiceHtmlView(APIView):
         return HttpResponse(html, content_type="text/html; charset=utf-8")
 
 
-class ReceivedInvoiceParseView(APIView):
+class ReceivedInvoiceParseView(KSeFModuleMixin, APIView):
     """
     GET /api/ksef/inbox/<ksef_reference_number>/parse/
     Download invoice XML from KSeF, parse FA-3 line items, and attempt product/supplier auto-match.
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request, ksef_reference_number: str):
         company = request.user.current_company
@@ -548,9 +587,17 @@ class ReceivedInvoiceParseView(APIView):
         try:
             ksef_sess = KSeFSession.objects.get(company=company)
         except KSeFSession.DoesNotExist:
+            log_error(
+                user=request.user, action="ksef.parse", error_code="KSEF_NO_SESSION",
+                object_type="ksef_invoice", object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": "Brak aktywnej sesji KSeF."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not ksef_sess.is_active():
+            log_error(
+                user=request.user, action="ksef.parse", error_code="KSEF_SESSION_EXPIRED",
+                object_type="ksef_invoice", object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": "Sesja KSeF wygasła."}, status=status.HTTP_401_UNAUTHORIZED)
 
         try:
@@ -561,12 +608,22 @@ class ReceivedInvoiceParseView(APIView):
             )
         except Exception as exc:
             logger.error("KSeF parse: download failed (ref: %s): %s", ksef_reference_number, exc)
+            log_error(
+                user=request.user, action="ksef.parse", error_code="KSEF_DOWNLOAD_FAILED",
+                error_detail=str(exc), object_type="ksef_invoice",
+                object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": f"Błąd pobierania XML: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
 
         try:
             result = _parse_fa3_invoice(xml_bytes, company)
         except Exception as exc:
             logger.error("KSeF parse: XML parsing failed (ref: %s): %s", ksef_reference_number, exc)
+            log_error(
+                user=request.user, action="ksef.parse", error_code="KSEF_DOWNLOAD_FAILED",
+                error_detail=str(exc), object_type="ksef_invoice",
+                object_id=ksef_reference_number, request=request,
+            )
             return Response({"detail": f"Błąd parsowania XML: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Store XML + address + lines for future requests (no session needed next time)
@@ -1251,7 +1308,7 @@ def _render_invoice_html_from_db(db_invoice: "ReceivedKSeFInvoice") -> str:
 </html>"""
 
 
-class KSeFProductMappingView(APIView):
+class KSeFProductMappingView(KSeFModuleMixin, APIView):
     """
     POST /api/ksef/product-mappings/
     Save product mappings for a seller so future imports auto-fill them.
@@ -1260,7 +1317,6 @@ class KSeFProductMappingView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def post(self, request):
         company = request.user.current_company
@@ -1296,7 +1352,7 @@ class KSeFProductMappingView(APIView):
         return Response({"saved": saved})
 
 
-class InvoiceOpexTagView(APIView):
+class InvoiceOpexTagView(KSeFModuleMixin, APIView):
     """
     GET  /api/ksef/inbox/<ksef_reference_number>/opex/
          Returns invoice-level opex_category + per-line opex categories.
@@ -1311,7 +1367,6 @@ class InvoiceOpexTagView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def _get_invoice(self, company, ksef_reference_number):
         try:
@@ -1410,7 +1465,7 @@ class InvoiceOpexTagView(APIView):
 # Mark invoice as paid / unpaid
 # ---------------------------------------------------------------------------
 
-class MarkInvoicePaidView(APIView):
+class MarkInvoicePaidView(KSeFModuleMixin, APIView):
     """
     PATCH /api/ksef/inbox/<ksef_reference_number>/mark-paid/
     Body: { is_paid: bool, due_date?: "YYYY-MM-DD" }
@@ -1418,7 +1473,6 @@ class MarkInvoicePaidView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def patch(self, request, ksef_reference_number):
         company = request.user.current_company
@@ -1462,7 +1516,7 @@ class MarkInvoicePaidView(APIView):
 # KOR match helper — finds the original PZ for a correction invoice
 # ---------------------------------------------------------------------------
 
-class KorMatchView(APIView):
+class KorMatchView(KSeFModuleMixin, APIView):
     """
     GET /api/ksef/inbox/<ksef_reference_number>/kor-match/
 
@@ -1479,7 +1533,6 @@ class KorMatchView(APIView):
     """
 
     required_permission = 'can_access_ksef_inbox'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     def get(self, request, ksef_reference_number: str):
         from apps.delivery.serializers import DeliveryDocumentSerializer
@@ -2846,7 +2899,7 @@ def _parse_invoice_lines(text: str) -> list:
     return lines
 
 
-class PaperScanView(APIView):
+class PaperScanView(KSeFModuleMixin, APIView):
     """Accept an image upload, run OCR, return extracted invoice fields.
 
     POST /api/ksef/scan-paper/
@@ -2862,7 +2915,6 @@ class PaperScanView(APIView):
     """
 
     required_permission = 'can_manage_invoices'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
 
     _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
     _ALLOWED_MIME = {
@@ -2910,6 +2962,10 @@ class PaperScanView(APIView):
         # --- rate limit ---
         if not self._check_rate_limit(request.user.id):
             logging.warning("OCR rate limit exceeded for user=%s", request.user)
+            log_error(
+                user=request.user, action="ksef.scan_paper", error_code="KSEF_OCR_FAILED",
+                error_detail="Przekroczono limit skanów (20/godz.).", request=request,
+            )
             return Response(
                 {"detail": "Przekroczono limit skanów (20/godz.). Spróbuj ponownie za jakiś czas."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -2918,10 +2974,18 @@ class PaperScanView(APIView):
         # --- file present ---
         image_file = request.FILES.get("image")
         if not image_file:
+            log_error(
+                user=request.user, action="ksef.scan_paper", error_code="KSEF_OCR_FAILED",
+                error_detail="Nie przesłano obrazu.", request=request,
+            )
             return Response({"detail": "No image provided."}, status=status.HTTP_400_BAD_REQUEST)
 
         # --- file size ---
         if image_file.size > self._MAX_FILE_SIZE:
+            log_error(
+                user=request.user, action="ksef.scan_paper", error_code="KSEF_OCR_FAILED",
+                error_detail=f"Plik za duży ({image_file.size} B).", request=request,
+            )
             return Response(
                 {"detail": f"Plik za duży. Maksymalny rozmiar: {self._MAX_FILE_SIZE // 1024 // 1024} MB."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -2929,6 +2993,10 @@ class PaperScanView(APIView):
 
         # --- MIME type (header claim) ---
         if image_file.content_type not in self._ALLOWED_MIME:
+            log_error(
+                user=request.user, action="ksef.scan_paper", error_code="KSEF_OCR_FAILED",
+                error_detail=f"Nieobsługiwany format: {image_file.content_type}.", request=request,
+            )
             return Response(
                 {"detail": f"Nieobsługiwany format: {image_file.content_type}. Dozwolone: JPEG, PNG, PDF, TIFF, BMP."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -2939,6 +3007,10 @@ class PaperScanView(APIView):
         image_file.seek(0)
         if not self._validate_magic(header):
             logging.warning("OCR magic byte mismatch user=%s claimed=%s", request.user, image_file.content_type)
+            log_error(
+                user=request.user, action="ksef.scan_paper", error_code="KSEF_OCR_FAILED",
+                error_detail="Plik nie jest prawidłowym obrazem lub PDF.", request=request,
+            )
             return Response(
                 {"detail": "Plik nie jest prawidłowym obrazem lub PDF."},
                 status=status.HTTP_400_BAD_REQUEST,

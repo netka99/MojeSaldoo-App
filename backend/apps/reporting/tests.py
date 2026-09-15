@@ -15,7 +15,7 @@ from apps.invoices.models import Invoice, InvoiceItem
 from apps.ksef.models import ReceivedKSeFInvoice
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product, ProductStock, StockBatch, Warehouse
-from apps.users.models import Company, CompanyMembership
+from apps.users.models import Company, CompanyMembership, CompanyModule
 
 
 class ReportingUrlTests(TestCase):
@@ -102,6 +102,7 @@ class ReportingScopedApiTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="reporting", defaults={"is_enabled": True})
 
         self.customer_a = Customer.objects.create(name="Alice", company=self.co)
         self.customer_b = Customer.objects.create(name="Bob", company=self.co_b)
@@ -365,6 +366,7 @@ class ReportingInventoryOrmTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="reporting", defaults={"is_enabled": True})
         self.wh = Warehouse.objects.create(
             user=self.user,
             company=self.co,
@@ -417,6 +419,7 @@ class ProfitLossViewTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="reporting", defaults={"is_enabled": True})
         self.client.force_authenticate(user=self.user)
 
         self.customer = Customer.objects.create(name="PL Customer", company=self.co)
@@ -594,6 +597,7 @@ class CustomerMarginViewTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="reporting", defaults={"is_enabled": True})
         self.client.force_authenticate(user=self.user)
 
         self.customer = Customer.objects.create(name="CM Customer A", company=self.co)
@@ -721,6 +725,7 @@ class ExpiryAlertsViewTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="reporting", defaults={"is_enabled": True})
         self.client.force_authenticate(user=self.user)
 
         self.product = Product.objects.create(

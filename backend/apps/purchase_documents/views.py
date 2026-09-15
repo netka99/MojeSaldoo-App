@@ -14,6 +14,7 @@ from rest_framework.response import Response
 
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
+from apps.activity.log import log_error
 
 from .models import InvoiceItemPzLink, PurchaseDocument, PurchaseDocumentItem, PurchaseDocumentPzLink
 from .serializers import PurchaseDocumentSerializer
@@ -506,13 +507,28 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
         matches = request.data.get("matches", [])
 
         if not pz_uuid:
+            log_error(
+                user=request.user, action="purchase_document.match", error_code="PZ_MATCH_FAILED",
+                error_detail="Pole pz_id jest wymagane.",
+                object_type="purchase_document", object_id=str(instance.uuid), request=request,
+            )
             return Response({"detail": "Pole pz_id jest wymagane."}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(matches, list) or len(matches) == 0:
+            log_error(
+                user=request.user, action="purchase_document.match", error_code="PZ_MATCH_FAILED",
+                error_detail="Pole matches musi być niepustą listą.",
+                object_type="purchase_document", object_id=str(instance.uuid), request=request,
+            )
             return Response({"detail": "Pole matches musi być niepustą listą."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             pz = DeliveryDocument.objects.get(uuid=pz_uuid, company=instance.company, document_type="PZ")
         except DeliveryDocument.DoesNotExist:
+            log_error(
+                user=request.user, action="purchase_document.match", error_code="PZ_MATCH_FAILED",
+                error_detail="PZ nie istnieje.",
+                object_type="purchase_document", object_id=str(instance.uuid), request=request,
+            )
             return Response({"detail": "PZ nie istnieje."}, status=status.HTTP_400_BAD_REQUEST)
 
         errors = []
@@ -545,6 +561,11 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
             validated.append((inv_item, del_item, qty))
 
         if errors:
+            log_error(
+                user=request.user, action="purchase_document.match", error_code="PZ_MATCH_FAILED",
+                error_detail="; ".join(errors),
+                object_type="purchase_document", object_id=str(instance.uuid), request=request,
+            )
             return Response({"detail": errors}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():

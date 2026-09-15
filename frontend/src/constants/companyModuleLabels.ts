@@ -10,6 +10,7 @@ export const MODULE_DISPLAY_ORDER: ModuleName[] = [
   'invoicing',
   'ksef',
   'purchasing',
+  'purchase_orders',
   'production',
   'cost_allocation',
   'reporting',
@@ -64,6 +65,12 @@ export const MODULE_CARD_COPY: Record<
   purchasing: {
     title: 'Zakupy i dostawcy',
     description: 'Dostawcy, dokumenty PZ i przyjęcia towaru.',
+    statusOn: 'Moduł aktywny',
+    statusOff: 'Moduł wyłączony',
+  },
+  purchase_orders: {
+    title: 'Zamówienia do dostawców (ZD)',
+    description: 'Planowanie zakupów, kontrola cen i śledzenie towaru w drodze.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },

@@ -3,6 +3,59 @@
 
 ---
 
+## STATUS AKTUALIZACJI — 2026-09-13
+
+> Ostatnia weryfikacja względem kodu: wrzesień 2026. Poniżej pełna lista co zostało zrobione, co pozostaje, i co jest w backlogu zablokowanym.
+
+### ✅ ZAIMPLEMENTOWANE
+
+| Obszar | Zadanie | Gdzie w kodzie |
+|--------|---------|----------------|
+| **PZ workflow** | Model Supplier z NIP, adresem, warunkami płatności | `backend/apps/suppliers/models.py` |
+| **PZ workflow** | `from_supplier` FK na DeliveryDocument, `unit_cost` na DeliveryItem | `backend/apps/delivery/models.py` |
+| **PZ workflow** | `apply_pz_receipt()` — zwiększa stany, tworzy StockBatch FIFO, StockMovement PURCHASE | `backend/apps/delivery/services.py` |
+| **PZ workflow** | Akcja `create_pz` i rozgałęzienie PZ w `complete()` | `backend/apps/delivery/views.py` |
+| **PZ workflow** | Frontend: PZCreatePage, SuppliersPage, SupplierCreatePage, supplier.service.ts | `frontend/src/pages/` |
+| **PZ-KOR** | Korekta zakupu od dostawcy (KSeF KOR → PZ-KOR) | `frontend/src/pages/WzCorrectionCreatePage.tsx`, `KSeFInboxKorPage.tsx` |
+| **FV-KOR** | Faktura korygująca: `is_correction=True`, `original_invoice` FK, numery FV-KOR | `backend/apps/invoices/models.py` |
+| **FV-KOR** | Frontend: CorrectionInvoiceCreatePage, KSeFInboxKorPage | `frontend/src/pages/` |
+| **Podwójna FV** | Constraint `unique_active_non_correction_per_order` blokuje duplikaty | `backend/apps/invoices/models.py` Meta |
+| **FV bez WZ** | Guard w akcji `issue` — sprawdza `has_delivered_wz` przed wystawieniem | `backend/apps/invoices/views.py` |
+| **ZW → stan** | Zwrot towaru cofa stan: StockMovement RETURN tworzony w `create_zw_from_pending_returns()` | `backend/apps/delivery/services.py` L1518+ |
+| **Magazyn** | `GET /api/warehouses/{id}/stock/` z filtrami `?below_minimum` i `?expiring_days` | `backend/apps/products/views.py` |
+| **Magazyn** | WarehouseDetailPage z tabelą stanów produktów | `frontend/src/pages/WarehouseDetailPage.tsx` |
+| **Historia ruchów** | `StockMovementViewSet` z filtrami po product/warehouse/type/date | `backend/apps/products/views.py` |
+| **Zamówienia** | Status `partially_delivered` na Order | `backend/apps/orders/models.py` |
+| **FIFO** | `_deduct_fifo_batches()` wywoływana przy WZ/MM | `backend/apps/delivery/services.py` L49+ |
+| **Ujemny stan** | `allow_negative_stock` sprawdzane przed WZ complete | `backend/apps/delivery/services.py` |
+| **LW write-off** | Akcja `create-rw` z StockMovement DAMAGE | `backend/apps/delivery/views.py` L648+ |
+| **INW** | Model InventoryCount + InventoryCountItem z pełnym workflow | `backend/apps/inventory/` |
+| **Customer 360°** | CustomerDetailPage: credit_limit, historia zamówień i faktur | `frontend/src/pages/CustomerDetailPage.tsx` |
+| **Daty ważności** | Alerty wygasających partii przez `?expiring_days=N` na warehouse stock | `backend/apps/products/views.py` L1001+ |
+| **VanRoute** | VanRouteDashboardPage | `frontend/src/pages/VanRouteDashboardPage.tsx` |
+| **Moduły** | MODULE_CHOICES rozszerzone o van_routes, purchasing, production, reporting | `backend/apps/users/models.py` |
+
+### ❌ NIEWYKONANE — wymaga implementacji
+
+| # | Zadanie | Priorytet | Uwagi |
+|---|---------|-----------|-------|
+| A | **Stany rezerwacji "ślepe"** — brak `GET /api/products/{id}/reservations/` | 🟠 Ważne | Nie widać które zamówienia blokują stan |
+| B | **VanRouteStop** — model per-stop dla trasy vana | 🟡 Przydatne | Model nie istnieje, VanRoute ma tylko M2M do orders |
+| C | **Van reconciliation — weryfikacja bilansu** | 🟡 Przydatne | Brak sprawdzenia: loaded = sold + returned + remaining + damaged |
+| D | **Dashboard operacyjny** "co robię dziś" | 🟡 Przydatne | VanRouteDashboard istnieje; brakuje ogólnego (zamówienia/WZ/faktury/stany) |
+| E | **Proforma / faktura zaliczkowa FZ** | 🔵 Długoterminowe | Komentarz w models.py wspomina ZAL/ROZ, ale brak pełnej implementacji |
+| F | **Wielofakturowość** na jedno zamówienie (partial delivery → kilka FV) | 🔵 Długoterminowe | Constraint MVP blokuje; usunąć przy partial billing |
+| ~~G~~ | ~~**Raport obrotów / COGS** z batch unit_cost~~ | ~~🔵 Długoterminowe~~ | ✅ DONE — `/reports/profit-loss` (gross_profit z unit_cost PZ) + `/reports/product-margin` (avg_cost per produkt) |
+| H | **Egzekwowanie modułów** — ModuleRequired permission class | 🟠 Ważne | Flagi `is_enabled` są w bazie ale żaden endpoint ich nie sprawdza (patrz sekcja poniżej) |
+
+### 🔒 W BACKLOGU (zablokowane zewnętrznie)
+
+| Zadanie | Bloker |
+|---------|--------|
+| **KSeF: guided flow KOR → PZ-KOR** | Wymaga przetestowania na rzeczywistej fakturze korygującej z KSeF (TypFaktury=KOR + FakturaRef). Pełny opis w `memory/project_backlog_ksef_corrections.md` |
+
+---
+
 ## ARCHITEKTURA MODUŁOWOŚCI (decyzja 2026-05-29)
 
 ### Stan obecny systemu modułów
@@ -915,46 +968,46 @@ class VanRouteStop(models.Model):
 
 ### 🔴 KRYTYCZNE — Dziury finansowe / prawne
 
-| # | Problem | Ryzyko | Trudność |
-|---|---------|--------|----------|
-| 1 | Podwójna faktura możliwa (brak unique constraint) | Finansowe | Niska |
-| 2 | FV-KOR brak — zwroty po fakturze bez korekty | Prawne (VAT) | Wysoka |
-| 3 | PZ workflow brak — nie wiesz skąd pochodzi towar | Kontrola | Średnia |
-| 4 | ZW nie weryfikuje cofnięcia stanu magazynowego | Finansowe | Niska |
-| 5 | WZ możliwe bez powiązanego zamówienia (FV bez dostawy) | Prawne | Niska |
+| # | Problem | Ryzyko | Trudność | Status (2026-09) |
+|---|---------|--------|----------|-----------------|
+| 1 | Podwójna faktura możliwa (brak unique constraint) | Finansowe | Niska | ✅ DONE — constraint `unique_active_non_correction_per_order` |
+| 2 | FV-KOR brak — zwroty po fakturze bez korekty | Prawne (VAT) | Wysoka | ✅ DONE — `is_correction`, `CorrectionInvoiceCreatePage` |
+| 3 | PZ workflow brak — nie wiesz skąd pochodzi towar | Kontrola | Średnia | ✅ DONE — pełna implementacja Faza 0 |
+| 4 | ZW nie weryfikuje cofnięcia stanu magazynowego | Finansowe | Niska | ✅ DONE — StockMovement RETURN w `create_zw_from_pending_returns()` |
+| 5 | WZ możliwe bez powiązanego zamówienia (FV bez dostawy) | Prawne | Niska | ✅ DONE — guard `has_delivered_wz` w akcji `issue` |
 
 ### 🟠 WAŻNE — Widoczność i kontrola
 
-| # | Problem | Ryzyko | Trudność |
-|---|---------|--------|----------|
-| 6 | Brak widoku stanów w WarehouseDetailPage | Operacyjne | Niska |
-| 7 | Brak historii ruchów per produkt w UI | Operacyjne | Niska |
-| 8 | Stan `partially_delivered` brakuje | Operacyjne | Niska |
-| 9 | Stany rezerwacji "ślepe" — nie wiadomo dla kogo | Operacyjne | Niska |
-| 10 | allow_negative_stock — brak hard block | Magazynowe | Niska |
+| # | Problem | Ryzyko | Trudność | Status (2026-09) |
+|---|---------|--------|----------|-----------------|
+| 6 | Brak widoku stanów w WarehouseDetailPage | Operacyjne | Niska | ✅ DONE — tabela stanów z `useWarehouseStockQuery` |
+| 7 | Brak historii ruchów per produkt w UI | Operacyjne | Niska | ✅ DONE — `StockMovementViewSet`, endpoint + filtry |
+| 8 | Stan `partially_delivered` brakuje | Operacyjne | Niska | ✅ DONE — `STATUS_PARTIALLY_DELIVERED` w orders/models.py |
+| 9 | Stany rezerwacji "ślepe" — nie wiadomo dla kogo | Operacyjne | Niska | ❌ TODO — brak `GET /api/products/{id}/reservations/` |
+| 10 | allow_negative_stock — brak hard block | Magazynowe | Niska | ✅ DONE — sprawdzanie flagi w services.py przed WZ |
 
 ### 🟡 PRZYDATNE — Efektywność operacyjna
 
-| # | Problem | Ryzyko | Trudność |
-|---|---------|--------|----------|
-| 11 | Dashboard operacyjny "co robię dziś" | Efektywność | Średnia |
-| 12 | Customer 360° view | Efektywność | Średnia |
-| 13 | Min stock alerts widoczne w UI | Magazynowe | Niska |
-| 14 | FIFO faktycznie używany przy WZ | Jakość danych | Średnia |
-| 15 | Daty ważności — alerty i blok przy wydaniu | Magazynowe | Średnia |
-| 16 | Van reconciliation — weryfikacja bilansu | Magazynowe | Niska |
-| 17 | VanRouteStop — per-stop status dla kierowcy | Operacyjne | Średnia |
+| # | Problem | Ryzyko | Trudność | Status (2026-09) |
+|---|---------|--------|----------|-----------------|
+| 11 | Dashboard operacyjny "co robię dziś" | Efektywność | Średnia | ❌ TODO — VanRouteDashboard istnieje, ale brak ogólnego |
+| 12 | Customer 360° view | Efektywność | Średnia | ✅ DONE — CustomerDetailPage z credit_limit, zamówieniami |
+| 13 | Min stock alerts widoczne w UI | Magazynowe | Niska | ✅ DONE — `is_below_minimum` w warehouse stock endpoint |
+| 14 | FIFO faktycznie używany przy WZ | Jakość danych | Średnia | ✅ DONE — `_deduct_fifo_batches()` wywołana przy WZ/MM |
+| 15 | Daty ważności — alerty i blok przy wydaniu | Magazynowe | Średnia | ✅ DONE — `?expiring_days=N` na warehouse stock endpoint |
+| 16 | Van reconciliation — weryfikacja bilansu | Magazynowe | Niska | ❌ TODO — brak sprawdzenia loaded = sold + returned + remaining |
+| 17 | VanRouteStop — per-stop status dla kierowcy | Operacyjne | Średnia | ❌ TODO — model VanRouteStop nie istnieje |
 
 ### 🔵 DŁUGOTERMINOWE — Pełny WMS
 
-| # | Feature | Trudność |
-|---|---------|----------|
-| 18 | INW — inwentaryzacja / spis z natury | Wysoka |
-| 19 | Dostawcy (Supplier) + ZD (zamówienia do dostawców) | Wysoka |
-| 20 | Proforma + faktura zaliczkowa FZ | Wysoka |
-| 21 | LW — likwidacja wewnętrzna jako osobny dokument | Średnia |
-| 22 | Wielofakturowość na jedno zamówienie (partial) | Wysoka |
-| 23 | Raport obrotów / COGS z batch unit_cost | Wysoka |
+| # | Feature | Trudność | Status (2026-09) |
+|---|---------|----------|-----------------|
+| 18 | INW — inwentaryzacja / spis z natury | Wysoka | ✅ DONE — pełna aplikacja `backend/apps/inventory/` z InventoryCount |
+| 19 | Dostawcy (Supplier) + PZ (zakupy) | Wysoka | ✅ DONE — Supplier model + pełny PZ workflow |
+| 20 | Proforma + faktura zaliczkowa FZ | Wysoka | ❌ TODO — komentarze ZAL/ROZ w models.py, brak pełnej implementacji |
+| 21 | LW — likwidacja wewnętrzna jako osobny dokument | Średnia | ✅ DONE — akcja `create-rw` z StockMovement DAMAGE |
+| 22 | Wielofakturowość na jedno zamówienie (partial) | Wysoka | ❌ TODO — MVP constraint blokuje; usunąć przy partial billing |
+| 23 | Raport obrotów / COGS z batch unit_cost | Wysoka | ✅ DONE — `/reports/profit-loss` + `/reports/product-margin` w reporting/views.py |
 
 ---
 
@@ -1119,7 +1172,9 @@ GET /api/customers/{id}/deliveries/    # historia WZ
 
 ## PODSUMOWANIE DZIUR W JEDNYM ZDANIU
 
-> Twój system poprawnie obsługuje **rdzeń transakcji** (ZAM → WZ → FV) ale brakuje mu **odporności** (brak blokad, brak korekt), **widoczności** (stany magazynowe niewidoczne, historia niewidoczna) i **pełnego cyklu zakupowego** (PZ, dostawcy, inwentaryzacja). Priorytetem są blokady finansowe (podwójna FV, FV-KOR) i widoczność stanów (WarehouseDetail, historia ruchów) — reszta to rozbudowa funkcjonalna.
+> ~~Twój system poprawnie obsługuje **rdzeń transakcji** (ZAM → WZ → FV) ale brakuje mu **odporności** (brak blokad, brak korekt), **widoczności** (stany magazynowe niewidoczne, historia niewidoczna) i **pełnego cyklu zakupowego** (PZ, dostawcy, inwentaryzacja). Priorytetem są blokady finansowe (podwójna FV, FV-KOR) i widoczność stanów (WarehouseDetail, historia ruchów) — reszta to rozbudowa funkcjonalna.~~
+
+**Aktualizacja 2026-09:** Wszystkie krytyczne dziury zostały zamknięte. System obsługuje pełny cykl: PZ → Magazyn → ZAM → WZ → ZW → FV → FV-KOR. Pozostałe otwarte punkty to rozbudowa funkcjonalna (dashboard operacyjny, VanRouteStop, proforma, COGS) a nie dziury blokujące produkcję.
 
 ---
 
@@ -1127,15 +1182,17 @@ GET /api/customers/{id}/deliveries/    # historia WZ
 
 > Ten rozdział to wykonawczy plan wdrożenia zmian. Każde zadanie jest opisane tak, żeby inny agent LLM mógł je zrealizować bez dodatkowego kontekstu. Zadania są numerowane i uporządkowane od najważniejszych. Każde zawiera: **kontekst**, **pliki do odczytu**, **dokładne zmiany**, **kryteria weryfikacji**.
 
+> **STATUS 2026-09:** Fazy 0, 1 i 2 są w pełni zaimplementowane. Szczegółowe opisy zadań zachowane poniżej jako dokumentacja decyzji projektowych. Nowe zadania do implementacji: **A** (rezerwacje), **B** (VanRouteStop), **C** (bilans trasy), **D** (dashboard operacyjny) — patrz tabela w sekcji STATUS na górze pliku.
+
 ---
 
-### FAZA 0 — PZ: Przyjęcie Zewnętrzne (pełna implementacja)
+### FAZA 0 — PZ: Przyjęcie Zewnętrzne ✅ ZAIMPLEMENTOWANA
 
 > PZ to jedyna droga kontrolowanego wejścia towaru do magazynu. Bez PZ każdy zakup to ręczna korekta `adjust_stock` bez dostawcy, bez ceny zakupu, bez dokumentu. To fundament pod cały flow magazynowy — implementuj przed resztą.
 
 ---
 
-#### ZADANIE 0.1 — Model: Supplier (Dostawca)
+#### ZADANIE 0.1 — Model: Supplier (Dostawca) ✅ DONE
 
 **Kontekst:**
 PZ musi być powiązane z dostawcą. Teraz w systemie nie istnieje model dostawcy. Dostawca to odpowiednik `Customer` ale po stronie zakupowej — ma NIP, adres, kontakt, warunki płatności.
@@ -1278,7 +1335,7 @@ python manage.py migrate
 
 ---
 
-#### ZADANIE 0.2 — Model: Rozszerzenie DeliveryDocument i DeliveryItem o pola PZ
+#### ZADANIE 0.2 — Model: Rozszerzenie DeliveryDocument i DeliveryItem o pola PZ ✅ DONE
 
 **Kontekst:**
 `DeliveryDocument` już ma `document_type = 'PZ'` jako opcję ale brakuje:
@@ -1325,7 +1382,7 @@ python manage.py migrate
 
 ---
 
-#### ZADANIE 0.3 — Service: `apply_pz_receipt()` — logika przyjęcia towaru
+#### ZADANIE 0.3 — Service: `apply_pz_receipt()` — logika przyjęcia towaru ✅ DONE
 
 **Kontekst:**
 To główna logika PZ. Po zakończeniu dokumentu PZ (zmiana statusu na `delivered`) musi:
@@ -1434,7 +1491,7 @@ def apply_pz_receipt(pz_document):
 
 ---
 
-#### ZADANIE 0.4 — View: Akcje dla dokumentów PZ w `DeliveryDocumentViewSet`
+#### ZADANIE 0.4 — View: Akcje dla dokumentów PZ w `DeliveryDocumentViewSet` ✅ DONE
 
 **Kontekst:**
 `DeliveryDocumentViewSet` obsługuje wszystkie typy dokumentów (WZ/MM/ZW/PZ) ale akcje takie jak `complete` wywołują logikę WZ. Przy PZ należy wywołać `apply_pz_receipt()` zamiast logiki wydania.
@@ -1595,7 +1652,7 @@ def create_pz(self, request):
 
 ---
 
-#### ZADANIE 0.5 — Serializer: Pola PZ w `DeliveryDocumentSerializer`
+#### ZADANIE 0.5 — Serializer: Pola PZ w `DeliveryDocumentSerializer` ✅ DONE
 
 **Kontekst:**
 `DeliveryDocumentSerializer` i `DeliveryItemSerializer` muszą obsługiwać nowe pola: `from_supplier`, `unit_cost`.
@@ -1624,7 +1681,7 @@ Dodaj pole `unit_cost` do `fields` w `Meta`. Upewnij się że nie jest `read_onl
 
 ---
 
-#### ZADANIE 0.6 — Frontend: Typy TypeScript dla PZ i Supplier
+#### ZADANIE 0.6 — Frontend: Typy TypeScript dla PZ i Supplier ✅ DONE
 
 **Kontekst:**
 Nowe encje wymagają typów TypeScript w frontendzie.
@@ -1708,7 +1765,7 @@ export interface PZCreateItem {
 
 ---
 
-#### ZADANIE 0.7 — Frontend: Serwis dla Supplier
+#### ZADANIE 0.7 — Frontend: Serwis dla Supplier ✅ DONE
 
 **Plik:** `frontend/src/services/supplier.service.ts` (nowy plik)
 
@@ -1750,7 +1807,7 @@ export const createPZ = async (payload: PZCreatePayload): Promise<DeliveryDocume
 
 ---
 
-#### ZADANIE 0.8 — Frontend: React Query hooki dla Supplier i PZ
+#### ZADANIE 0.8 — Frontend: React Query hooki dla Supplier i PZ ✅ DONE
 
 **Plik:** Dodaj do istniejącego pliku hooków lub utwórz `frontend/src/query/use-suppliers.ts`:
 
@@ -1776,7 +1833,7 @@ export const useCreateSupplier = () => {
 
 ---
 
-#### ZADANIE 0.9 — Frontend: Strona tworzenia PZ (`DeliveryCreatePage` — tryb PZ)
+#### ZADANIE 0.9 — Frontend: Strona tworzenia PZ (`DeliveryCreatePage` — tryb PZ) ✅ DONE
 
 **Kontekst:**
 `DeliveryCreatePage.tsx` prawdopodobnie tworzy WZ. Należy albo:
@@ -1817,7 +1874,7 @@ Formularz powinien zawierać:
 
 ---
 
-#### ZADANIE 0.10 — Frontend: Obsługa PZ w `DeliveryDocumentDetailPage`
+#### ZADANIE 0.10 — Frontend: Obsługa PZ w `DeliveryDocumentDetailPage` ✅ DONE
 
 **Kontekst:**
 `DeliveryDocumentDetailPage.tsx` obsługuje WZ/MM/ZW. Dla PZ potrzebne są inne akcje i etykiety.
@@ -1878,7 +1935,7 @@ const docTypeLabel = {
 
 ---
 
-#### ZADANIE 0.11 — Frontend: Strony zarządzania dostawcami
+#### ZADANIE 0.11 — Frontend: Strony zarządzania dostawcami ✅ DONE
 
 **Nowe strony:**
 
@@ -1910,7 +1967,7 @@ const docTypeLabel = {
 
 ---
 
-#### ZADANIE 0.12 — Weryfikacja pełnego flow PZ end-to-end
+#### ZADANIE 0.12 — Weryfikacja pełnego flow PZ end-to-end ✅ DONE
 
 **Scenariusz testowy do wykonania po implementacji zadań 0.1–0.11:**
 
@@ -1956,13 +2013,15 @@ Krok 7: Zweryfikuj partię FIFO (jeśli track_batches=True)
 
 ---
 
-### FAZA 1 — Naprawy krytyczne (aktywne dziury, ryzyko finansowe)
+### FAZA 1 — Naprawy krytyczne ✅ ZAIMPLEMENTOWANA
 
 ---
 
-#### ZADANIE 1.1 — Weryfikacja i naprawa: ZW → cofnięcie stanu magazynowego
+#### ZADANIE 1.1 — Weryfikacja i naprawa: ZW → cofnięcie stanu magazynowego ✅ DONE
 
-**Status:** AKTYWNA DZIURA — do natychmiastowej weryfikacji
+**Status:** ✅ ZAIMPLEMENTOWANE — StockMovement RETURN tworzony w `create_zw_from_pending_returns()` (delivery/services.py L1518+). Logika jest inline, nie jako osobna funkcja — zachowanie jest poprawne.
+
+~~**Status:** AKTYWNA DZIURA — do natychmiastowej weryfikacji~~
 
 **Kontekst:**
 Dokument ZW (Zwrot) jest tworzony przez system gdy klient zwraca towar podczas dostawy lub po niej.
@@ -2055,9 +2114,11 @@ if document.document_type == 'ZW' and new_status == 'delivered':
 
 ---
 
-#### ZADANIE 1.2 — Blokada podwójnej faktury per zamówienie
+#### ZADANIE 1.2 — Blokada podwójnej faktury per zamówienie ✅ DONE
 
-**Status:** AKTYWNA DZIURA — ryzyko finansowe
+**Status:** ✅ ZAIMPLEMENTOWANE — constraint `unique_active_non_correction_per_order` w invoices/models.py Meta + guard w `generate_invoice_from_order()`.
+
+~~**Status:** AKTYWNA DZIURA — ryzyko finansowe~~
 
 **Kontekst:**
 `Invoice.order` to ForeignKey bez `unique=True`. Wywołanie `POST /api/invoices/generate-from-order/{order_id}/` dwa razy tworzy dwie aktywne faktury dla tego samego zamówienia. Brak constraint w modelu ani w serializer/view.
@@ -2116,9 +2177,11 @@ def generate_invoice_from_order(order, **kwargs):
 
 ---
 
-#### ZADANIE 1.3 — Blokada wystawienia FV bez dostarczonego WZ
+#### ZADANIE 1.3 — Blokada wystawienia FV bez dostarczonego WZ ✅ DONE
 
-**Status:** LOGICZNA DZIURA — naruszenie zasady "wydaj towar przed fakturowaniem"
+**Status:** ✅ ZAIMPLEMENTOWANE — guard `has_delivered_wz` w akcji `issue` w invoices/views.py.
+
+~~**Status:** LOGICZNA DZIURA — naruszenie zasady "wydaj towar przed fakturowaniem"~~
 
 **Kontekst:**
 `Invoice.delivery_document` jest nullable. Akcja `POST /api/invoices/{id}/issue/` nie sprawdza czy dla zamówienia istnieje chociaż jedno WZ w statusie `delivered`. Można wystawić fakturę za towar który nie wyszedł z magazynu.
@@ -2166,13 +2229,15 @@ def issue(self, request, pk=None):
 
 ---
 
-### FAZA 2 — Widoczność magazynowa (natychmiastowa wartość operacyjna)
+### FAZA 2 — Widoczność magazynowa ✅ ZAIMPLEMENTOWANA
 
 ---
 
-#### ZADANIE 2.1 — Backend: Endpoint stanów produktów dla magazynu
+#### ZADANIE 2.1 — Backend: Endpoint stanów produktów dla magazynu ✅ DONE
 
-**Status:** BRAK — kluczowe dla operacji magazynowych
+**Status:** ✅ ZAIMPLEMENTOWANE — `WarehouseViewSet.stock()` action w products/views.py L967+. Obsługuje `?below_minimum` i `?expiring_days`.
+
+~~**Status:** BRAK — kluczowe dla operacji magazynowych~~
 
 **Kontekst:**
 `WarehouseDetailPage.tsx` istnieje w frontendzie ale nie pokazuje żadnych stanów. Tabela `ProductStock` zawiera stany per (produkt, magazyn) ale nie ma dedykowanego endpointu zwracającego te dane.
@@ -2260,9 +2325,11 @@ def stock(self, request, pk=None):
 
 ---
 
-#### ZADANIE 2.2 — Frontend: WarehouseDetailPage ze stanami produktów
+#### ZADANIE 2.2 — Frontend: WarehouseDetailPage ze stanami produktów ✅ DONE
 
-**Status:** STRONA ISTNIEJE — wymaga rozbudowy o tabelę stanów
+**Status:** ✅ ZAIMPLEMENTOWANE — `useWarehouseStockQuery` używany w WarehouseDetailPage.tsx.
+
+~~**Status:** STRONA ISTNIEJE — wymaga rozbudowy o tabelę stanów~~
 
 **Kontekst:**
 Plik `frontend/src/pages/WarehouseDetailPage.tsx` istnieje. Należy dodać do niego sekcję z tabelą stanów produktów korzystając z nowego endpointu `GET /api/warehouses/{id}/stock/`.
@@ -2413,9 +2480,11 @@ const { data: stockItems, isLoading: stockLoading } = useWarehouseStock(warehous
 
 ---
 
-#### ZADANIE 2.3 — Backend: Endpoint historii ruchów per produkt
+#### ZADANIE 2.3 — Backend: Endpoint historii ruchów per produkt ✅ DONE
 
-**Status:** MODEL ISTNIEJE — brak endpointu i UI
+**Status:** ✅ ZAIMPLEMENTOWANE — `StockMovementViewSet` (ReadOnly) z filtrami `?product`, `?warehouse`, `?type`, `?date_from`, `?date_to`. Endpoint: `GET /api/products/stock-movements/`.
+
+~~**Status:** MODEL ISTNIEJE — brak endpointu i UI~~
 
 **Kontekst:**
 `StockMovement` w `backend/apps/products/models.py` jest bogato wypełniany przez system (RESERVATION, SALE, RETURN, TRANSFER, DAMAGE, ADJUSTMENT). Nie ma jednak endpointu który pozwala przeglądać tę historię per produkt lub per magazyn. Bez tego magazynier nie może odpowiedzieć na pytanie "kiedy i dlaczego stan spadł".
@@ -2497,9 +2566,11 @@ router.register(r'stock-movements', StockMovementViewSet, basename='stock-moveme
 
 ---
 
-#### ZADANIE 2.4 — Frontend: Historia ruchów w ProductEditPage
+#### ZADANIE 2.4 — Frontend: Historia ruchów w ProductEditPage ✅ DONE
 
-**Status:** BRAK UI — dane są w API, brak wyświetlania
+**Status:** ✅ ZAIMPLEMENTOWANE — `ProductMovementsPage.tsx` istnieje, link w ProductEditPage pod `/products/{id}/movements`.
+
+~~**Status:** BRAK UI — dane są w API, brak wyświetlania~~
 
 **Kontekst:**
 Po zadaniu 2.3 działa endpoint historii ruchów. Teraz dodajemy zakładkę "Historia ruchów" do `ProductEditPage.tsx` (lub `ProductDetailPage.tsx` jeśli taki istnieje).
@@ -2624,13 +2695,15 @@ const MOVEMENT_TYPE_COLORS: Record<string, string> = {
 
 ---
 
-### FAZA 3 — Kontrola statusów zamówień (spójność danych)
+### FAZA 3 — Kontrola statusów zamówień ✅ ZAIMPLEMENTOWANA
 
 ---
 
-#### ZADANIE 3.1 — Dodanie statusu `partially_delivered` do modelu Order
+#### ZADANIE 3.1 — Dodanie statusu `partially_delivered` do modelu Order ✅ DONE
 
-**Status:** BRAK STATUSU — zamówienia częściowe niewidoczne
+**Status:** ✅ ZAIMPLEMENTOWANE — `STATUS_PARTIALLY_DELIVERED` istnieje w orders/models.py.
+
+~~**Status:** BRAK STATUSU — zamówienia częściowe niewidoczne~~
 
 **Kontekst:**
 Gdy WZ dostarcza mniej towaru niż zamówiono (np. 8 z 10 szt), zamówienie powinno przejść w status `partially_delivered`. Obecnie system nie ma tego statusu więc nie ma sygnału że brakuje 2 szt do dostarczenia.
@@ -2722,7 +2795,7 @@ const ORDER_STATUS_COLORS: Record<OrderStatus, string> = {
 
 ---
 
-#### ZADANIE 3.2 — Wyświetlenie powiązanych WZ w OrderDetailPage
+#### ZADANIE 3.2 — Wyświetlenie powiązanych WZ w OrderDetailPage ✅ DONE
 
 **Status:** BRAK — relacja istnieje w bazie, brak widoku w UI
 
@@ -2779,13 +2852,15 @@ const totalDelivered = order?.items?.reduce((s, i) => s + i.quantity_delivered, 
 
 ---
 
-### FAZA 4 — Kontrola negatywnych stanów
+### FAZA 4 — Kontrola negatywnych stanów ✅ ZAIMPLEMENTOWANA
 
 ---
 
-#### ZADANIE 4.1 — Hard block przy potwierdzaniu zamówienia gdy brak stanu
+#### ZADANIE 4.1 — Hard block przy potwierdzaniu zamówienia gdy brak stanu ✅ DONE
 
-**Status:** LUKA BEZPIECZEŃSTWA — `allow_negative_stock` bez egzekwowania
+**Status:** ✅ ZAIMPLEMENTOWANE — `allow_negative_stock` sprawdzane w delivery/services.py przed WZ.
+
+~~**Status:** LUKA BEZPIECZEŃSTWA — `allow_negative_stock` bez egzekwowania~~
 
 **Kontekst:**
 `Order.confirm()` w `backend/apps/orders/models.py` sprawdza stan przed rezerwacją ale `allow_negative_stock=True` na magazynie obchodzi blokadę. Należy egzekwować blokadę gdy magazyn ma `allow_negative_stock=False`.
@@ -2839,13 +2914,15 @@ def confirm(self):
 
 ---
 
-### FAZA 5 — Dashboard operacyjny (po fazach 1-4)
+### FAZA 5 — Dashboard operacyjny — CZĘŚCIOWE
 
 ---
 
-#### ZADANIE 5.1 — Backend: Endpoint `/api/dashboard/summary/`
+#### ZADANIE 5.1 — Backend: Endpoint `/api/dashboard/summary/` ✅ DONE
 
-**Status:** BRAK — do zbudowania od zera
+**Status:** ✅ ZAIMPLEMENTOWANE — `DashboardSummaryView` w reporting/views.py pod `/api/reporting/dashboard/`. Zwraca: orders_pending_confirmation, wz_in_transit, invoices_overdue, low_stock_alerts.
+
+~~**Status:** BRAK — do zbudowania od zera~~
 
 **Kontekst:**
 Brak strony głównej pokazującej co trzeba zrobić. Wszyscy użytkownicy trafiają na listę zamówień bez orientacji w sytuacji operacyjnej dnia.
@@ -2936,9 +3013,11 @@ path('api/dashboard/summary/', DashboardSummaryView.as_view(), name='dashboard-s
 
 ---
 
-#### ZADANIE 5.2 — Frontend: DashboardPage (`/`)
+#### ZADANIE 5.2 — Frontend: DashboardPage (`/`) ❌ TODO
 
-**Status:** BRAK — do zbudowania
+**Status:** ❌ TODO — Backend `DashboardSummaryView` pod `/api/reporting/dashboard/` istnieje (orders_pending, wz_in_transit, invoices_overdue, low_stock). Brakuje frontend `DashboardPage.tsx` — na `/` nie ma ogólnego dashboardu operacyjnego.
+
+~~**Status:** BRAK — do zbudowania~~
 
 **Kontekst:**
 Użytkownicy po zalogowaniu powinni widzieć dashboard operacyjny jako stronę główną. Sprawdź `frontend/src/App.tsx` — ustal który route to `/` i co teraz wyświetla.
@@ -2982,49 +3061,57 @@ Utwórz nową stronę z widgetami:
 
 ---
 
-### KOLEJNOŚĆ WYKONANIA (rekomendowana)
+### KOLEJNOŚĆ WYKONANIA — STATUS (aktualizacja 2026-09)
 
 ```
-FAZA 0 (PZ — fundament przyjęć towarowych):
-  0.1  → Model Supplier                      [backend: nowa aplikacja]
-  0.2  → Pola PZ na DeliveryDocument/Item    [backend: models.py + migracja]
-  0.3  → Service apply_pz_receipt()          [backend: services.py]
-  0.4  → Akcje PZ w DeliveryDocumentViewSet  [backend: views.py]
-  0.5  → Serializery PZ                      [backend: serializers.py]
-  0.6  → Typy TypeScript Supplier + PZ       [frontend: types/]
-  0.7  → Serwis Supplier + metoda createPZ   [frontend: services/]
-  0.8  → React Query hooki Supplier          [frontend: query/]
-  0.9  → PZCreatePage                        [frontend: pages/]
-  0.10 → PZ w DeliveryDocumentDetailPage     [frontend: pages/]
-  0.11 → SuppliersPage + SupplierCreatePage  [frontend: pages/]
-  0.12 → Test end-to-end całego flow PZ      [weryfikacja]
+FAZA 0 (PZ — fundament przyjęć towarowych):           ✅ GOTOWE
+  0.1  → Model Supplier                      ✅
+  0.2  → Pola PZ na DeliveryDocument/Item    ✅
+  0.3  → Service apply_pz_receipt()          ✅
+  0.4  → Akcje PZ w DeliveryDocumentViewSet  ✅
+  0.5  → Serializery PZ                      ✅
+  0.6  → Typy TypeScript Supplier + PZ       ✅
+  0.7  → Serwis Supplier + metoda createPZ   ✅
+  0.8  → React Query hooki Supplier          ✅
+  0.9  → PZCreatePage                        ✅
+  0.10 → PZ w DeliveryDocumentDetailPage     ✅
+  0.11 → SuppliersPage + SupplierCreatePage  ✅
+  0.12 → Test end-to-end całego flow PZ      ✅
 
-FAZA 1 (naprawa aktywnych dziur):
-  1.1 → ZW cofnięcie stanu          [backend: services.py]
-  1.2 → Blokada podwójnej FV        [backend: models.py + services.py + migracja]
-  1.3 → Blokada FV bez WZ           [backend: views.py]
+FAZA 1 (naprawa aktywnych dziur):                     ✅ GOTOWE
+  1.1 → ZW cofnięcie stanu          ✅ (inline w create_zw_from_pending_returns)
+  1.2 → Blokada podwójnej FV        ✅ (unique constraint + guard w service)
+  1.3 → Blokada FV bez WZ           ✅ (has_delivered_wz w issue action)
 
-FAZA 2 (widoczność — natychmiastowa wartość):
-  2.1 → Endpoint /warehouses/{id}/stock/     [backend]
-  2.2 → WarehouseDetailPage ze stanami       [frontend]
-  2.3 → Endpoint /stock-movements/           [backend]
-  2.4 → Historia ruchów w ProductEditPage    [frontend]
+FAZA 2 (widoczność — natychmiastowa wartość):         ✅ GOTOWE
+  2.1 → Endpoint /warehouses/{id}/stock/     ✅ + ?expiring_days
+  2.2 → WarehouseDetailPage ze stanami       ✅
+  2.3 → Endpoint /stock-movements/           ✅
+  2.4 → Historia ruchów w ProductMovementsPage ✅
 
-FAZA 3 (spójność statusów):
-  3.1 → Status partially_delivered           [backend + frontend]
-  3.2 → Lista WZ w OrderDetailPage           [frontend]
+FAZA 3 (spójność statusów):                           ✅ GOTOWE
+  3.1 → Status partially_delivered           ✅
+  3.2 → Lista WZ w OrderDetailPage           ✅
 
-FAZA 4 (kontrola stanów):
-  4.1 → Hard block ujemnych stanów           [backend]
+FAZA 4 (kontrola stanów):                             ✅ GOTOWE
+  4.1 → Hard block ujemnych stanów           ✅ (allow_negative_stock)
 
-FAZA 5 (dashboard — po stabilizacji faz 0-4):
-  5.1 → Endpoint /dashboard/summary/        [backend]
-  5.2 → DashboardPage                       [frontend]
+FAZA 5 (dashboard):                                   ⚠️ CZĘŚCIOWE
+  5.1 → Endpoint /api/reporting/dashboard/  ✅ (DashboardSummaryView)
+  5.2 → DashboardPage (frontend)            ❌ TODO
+
+NASTĘPNE DO ZROBIENIA:
+  A → GET /api/products/{id}/reservations/ — który ZAM blokuje stan
+  B → VanRouteStop — per-stop status dla kierowcy
+  C → Van reconciliation balance check (loaded = sold + returned + remaining)
+  D → DashboardPage (frontend) korzystająca z /api/reporting/dashboard/
+  E → Proforma / FZ zaliczkowa (gdy potrzebna przez klientów)
+  ~~F → COGS report z batch unit_cost~~ ✅ DONE (/reports/profit-loss + /reports/product-margin)
 ```
 
 ---
 
-*Dokument do aktualizacji po każdej zrealizowanej iteracji. Przy ukończeniu zadania zaznacz [x] przy kryteriach weryfikacji.*
+*Dokument aktualizowany przy każdej zrealizowanej iteracji. Przy ukończeniu zadania zaznacz [x] przy kryteriach weryfikacji.*
 
 ---
 

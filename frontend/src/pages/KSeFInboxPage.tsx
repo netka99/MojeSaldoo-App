@@ -61,7 +61,7 @@ interface InvoiceRowProps {
   onOpenCatManager: () => void;
 }
 
-function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpenManager: () => void }) {
+export function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta; onOpenManager: () => void }) {
   const [open, setOpen] = useState(false);
   const [addingNew, setAddingNew] = useState(false);
   const [newName, setNewName] = useState('');
@@ -302,7 +302,7 @@ function KSeFPzMatchComparison({ pzId, inv }: { pzId: string; inv: ReceivedInvoi
   );
 }
 
-function MatchPzPanel({ inv, onClose }: { inv: ReceivedInvoiceMeta; onClose: () => void }) {
+export function MatchPzPanel({ inv, onClose }: { inv: ReceivedInvoiceMeta; onClose: () => void }) {
   const supplierId = (inv.seller as { id?: string })?.id ?? undefined;
   const { data: unmatchedPzs = [], isPending } = useUnmatchedPzQuery(supplierId, true);
   const linkM = useLinkInvoiceToPzMutation();
@@ -1543,15 +1543,12 @@ export function KSeFInboxContent({ onOpenCatManager }: { onOpenCatManager?: () =
                           <button
                             type="button"
                             onClick={() => setOrdering((prev) => prev === field ? `-${field}` : prev === `-${field}` ? field : `-${field}`)}
-                            className="group inline-flex items-center hover:text-gray-900 transition-colors"
+                            className="inline-flex items-center gap-1 hover:text-gray-600 transition-colors"
                           >
                             {label}
-                            {ordering === field
-                              ? <span className="ml-1 text-[#5856D6] font-bold">↑</span>
-                              : ordering === `-${field}`
-                                ? <span className="ml-1 text-[#5856D6] font-bold">↓</span>
-                                : <span className="ml-1 text-gray-400 group-hover:text-gray-600">⇅</span>
-                            }
+                            <span className={cn('text-[10px]', (ordering === field || ordering === `-${field}`) ? 'text-[#5856D6]' : 'text-gray-400')}>
+                              {ordering === field ? '↑' : ordering === `-${field}` ? '↓' : '↕'}
+                            </span>
                           </button>
                         </th>
                       ))}
@@ -1560,10 +1557,7 @@ export function KSeFInboxContent({ onOpenCatManager }: { onOpenCatManager?: () =
                           value={categoryFilter}
                           onChange={(e) => setCategoryFilter(e.target.value)}
                           style={{ fontWeight: 600 }}
-                          className={cn(
-                            'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
-                            categoryFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
-                          )}
+                          className="text-xs bg-transparent border-none outline-none cursor-pointer pr-4 text-gray-600 hover:text-gray-900"
                         >
                           <option value="">Kategoria</option>
                           {allCategories.map((cat) => (
@@ -1580,10 +1574,7 @@ export function KSeFInboxContent({ onOpenCatManager }: { onOpenCatManager?: () =
                             setPage(1);
                           }}
                           style={{ fontWeight: 600 }}
-                          className={cn(
-                            'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
-                            isPaidFilter !== undefined ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
-                          )}
+                          className="text-xs bg-transparent border-none outline-none cursor-pointer pr-4 text-gray-600 hover:text-gray-900"
                         >
                           <option value="">Status</option>
                           <option value="paid">Opłacone</option>
@@ -1595,10 +1586,7 @@ export function KSeFInboxContent({ onOpenCatManager }: { onOpenCatManager?: () =
                           value={pzFilter}
                           onChange={(e) => { setPzFilter(e.target.value as '' | 'true' | 'false'); setPage(1); }}
                           style={{ fontWeight: 600 }}
-                          className={cn(
-                            'text-xs bg-transparent border-none outline-none cursor-pointer pr-4',
-                            pzFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900',
-                          )}
+                          className="text-xs bg-transparent border-none outline-none cursor-pointer pr-4 text-gray-600 hover:text-gray-900"
                         >
                           <option value="">PZ</option>
                           <option value="true">Z PZ</option>

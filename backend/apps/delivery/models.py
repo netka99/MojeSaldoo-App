@@ -137,6 +137,14 @@ class DeliveryDocument(models.Model):
         related_name="pz_documents",
         help_text="[LEGACY] KSeF invoice this PZ was created from — superseded by M:M ksef_links.",
     )
+    source_supplier_order = models.ForeignKey(
+        "purchase_orders.SupplierOrder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pz_documents",
+        help_text="ZD (SupplierOrder) this PZ was created from.",
+    )
     corrects_pz = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,

@@ -311,6 +311,7 @@ export interface CashFlowMonth {
   revenue_outstanding: number;
   b2c_revenue: number;
   costs_ksef: number;
+  costs_pd?: number;
   costs_quick: number;
   costs_fixed: number;
   vat_output: number;

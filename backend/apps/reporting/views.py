@@ -31,8 +31,9 @@ from apps.invoices.models import Invoice, InvoiceItem
 from apps.orders.models import Order, OrderItem
 from apps.production.models import ProductionOrder, Recipe
 from apps.products.models import Product, ProductStock, StockBatch
-from apps.users.permissions import IsCompanyMember
+from apps.users.permissions import IsCompanyMember, ModuleRequired
 from apps.van_routes.models import VanRoute
+from apps.activity.log import log_error
 
 from .serializers import ReportingInvoiceSerializer, ReportingRejectedInvoiceSerializer
 from .jpk_ewp_generator import generate_jpk_ewp
@@ -112,8 +113,14 @@ def _csv_response(headers: list, rows: list[list], filename: str) -> HttpRespons
     return response
 
 
-class SalesSummaryView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+class ReportingModuleMixin:
+    """Mixin that enforces the 'reporting' module is enabled for all reporting views."""
+    module_required = "reporting"
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired]
+
+
+class SalesSummaryView(ReportingModuleMixin, APIView):
+    pass
 
     def get(self, request):
         company = request.user.current_company
@@ -161,9 +168,8 @@ class SalesSummaryView(APIView):
         )
 
 
-class ReportingInvoiceListView(ListAPIView):
+class ReportingInvoiceListView(ReportingModuleMixin, ListAPIView):
     serializer_class = ReportingInvoiceSerializer
-    permission_classes = [IsAuthenticated, IsCompanyMember]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["status"]
 
@@ -183,8 +189,7 @@ class ReportingInvoiceListView(ListAPIView):
         return qs
 
 
-class TopProductsView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+class TopProductsView(ReportingModuleMixin, APIView):
 
     def get(self, request):
         company = request.user.current_company
@@ -223,8 +228,7 @@ class TopProductsView(APIView):
         return Response(out)
 
 
-class TopCustomersView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+class TopCustomersView(ReportingModuleMixin, APIView):
 
     def get(self, request):
         company = request.user.current_company
@@ -263,7 +267,7 @@ class TopCustomersView(APIView):
         return Response(out)
 
 
-class InventoryReportView(APIView):
+class InventoryReportView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/inventory/
 
@@ -274,7 +278,6 @@ class InventoryReportView(APIView):
         None when there are no sales in the last 90 days for that product.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         from datetime import date as _date
@@ -371,8 +374,7 @@ class InventoryReportView(APIView):
         return Response(out)
 
 
-class KsefStatusReportView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMember]
+class KsefStatusReportView(ReportingModuleMixin, APIView):
 
     def get(self, request):
         company = request.user.current_company
@@ -402,10 +404,9 @@ class KsefStatusReportView(APIView):
         )
 
 
-class DashboardSummaryView(APIView):
+class DashboardSummaryView(ReportingModuleMixin, APIView):
     """GET /api/reports/dashboard/ — operational summary for the current company."""
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         from django.db.models import F
@@ -477,7 +478,7 @@ class DashboardSummaryView(APIView):
         })
 
 
-class ProfitLossView(APIView):
+class ProfitLossView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/profit-loss/
 
@@ -489,7 +490,6 @@ class ProfitLossView(APIView):
       date_to    YYYY-MM-DD  (defaults to today)
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         from calendar import monthrange
@@ -559,6 +559,7 @@ class ProfitLossView(APIView):
 
         # OPEX: tagged KSeF invoices — summed by month
         from apps.ksef.models import ReceivedKSeFInvoice
+        from apps.purchase_documents.models import PurchaseDocument
         opex_qs = (
             ReceivedKSeFInvoice.objects.filter(
                 company=company,
@@ -575,12 +576,33 @@ class ProfitLossView(APIView):
             .order_by("month", "opex_category")
         )
 
+        # OPEX: manually entered purchase documents (FZ/PAR_VAT/PAR)
+        # All registered/matched docs count; uncategorized go to "inne"
+        pd_opex_qs = (
+            PurchaseDocument.objects.filter(
+                company=company,
+                issue_date__gte=date_from,
+                issue_date__lte=date_to,
+                status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+            )
+            .annotate(month=TruncMonth("issue_date"))
+            .values("month", "opex_category")
+            .annotate(
+                total=Coalesce(Sum("total_gross"), Value(Decimal("0"), output_field=_MONEY))
+            )
+            .order_by("month", "opex_category")
+        )
+
         # opex_by_month: { month_date: { category: Decimal } }
         opex_by_month: dict = {}
         for row in opex_qs:
             m = row["month"]
             cat = row["opex_category"]
-            opex_by_month.setdefault(m, {})[cat] = row["total"]
+            opex_by_month.setdefault(m, {})[cat] = opex_by_month.get(m, {}).get(cat, Decimal("0")) + row["total"]
+        for row in pd_opex_qs:
+            m = row["month"]
+            cat = row["opex_category"] or "inne"  # uncategorized → "inne"
+            opex_by_month.setdefault(m, {})[cat] = opex_by_month.get(m, {}).get(cat, Decimal("0")) + row["total"]
 
         # Fixed costs: manually entered recurring expenses (salaries, ZUS, rent…)
         # Fetch all active entries that started on or before date_to, then filter
@@ -741,14 +763,13 @@ class ProfitLossView(APIView):
         )
 
 
-class ProfitLossMonthDetailView(APIView):
+class ProfitLossMonthDetailView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/profit-loss/month-detail/?month=2026-06
 
     Returns the invoices and PZ documents that make up a given month's P&L.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         company = request.user.current_company
@@ -850,7 +871,7 @@ class ProfitLossMonthDetailView(APIView):
         return Response({"invoices": invoices_out, "pz_documents": pz_out, "opex_invoices": opex_out})
 
 
-class ProductMarginDetailView(APIView):
+class ProductMarginDetailView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/product-margin/product-detail/
         ?product_id=<uuid>&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
@@ -858,7 +879,6 @@ class ProductMarginDetailView(APIView):
     Returns invoice lines and PZ lines for a single product in the period.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         import uuid as _uuid
@@ -982,7 +1002,7 @@ class ProductMarginDetailView(APIView):
         })
 
 
-class ProductMarginView(APIView):
+class ProductMarginView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/product-margin/
 
@@ -998,7 +1018,6 @@ class ProductMarginView(APIView):
       limit      int (default 50, max 200)
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         company = request.user.current_company
@@ -1111,7 +1130,7 @@ class ProductMarginView(APIView):
         return Response(out)
 
 
-class PaymentAgingView(APIView):
+class PaymentAgingView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/payment-aging/
 
@@ -1125,7 +1144,6 @@ class PaymentAgingView(APIView):
       over_90  — > 90 days overdue
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         from datetime import date as _date
@@ -1210,7 +1228,7 @@ class PaymentAgingView(APIView):
         )
 
 
-class SupplierCostsView(APIView):
+class SupplierCostsView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/supplier-costs/
 
@@ -1222,7 +1240,6 @@ class SupplierCostsView(APIView):
       limit      int (default 20 suppliers, max 100)
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         company = request.user.current_company
@@ -1285,7 +1302,7 @@ class SupplierCostsView(APIView):
         return Response({"months": months_set, "suppliers": suppliers_out})
 
 
-class SupplierCostsDetailView(APIView):
+class SupplierCostsDetailView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/supplier-costs/detail/
         ?supplier_id=<uuid>&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
@@ -1293,7 +1310,6 @@ class SupplierCostsDetailView(APIView):
     Returns individual PZ documents for a supplier in the period.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         import uuid as _uuid
@@ -1349,7 +1365,7 @@ class SupplierCostsDetailView(APIView):
         return Response({"documents": out})
 
 
-class ExpiryAlertsView(APIView):
+class ExpiryAlertsView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/expiry-alerts/
         ?days=90  (default 90, max 365)
@@ -1359,7 +1375,6 @@ class ExpiryAlertsView(APIView):
     Only batches with quantity_remaining > 0 are included.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         from datetime import date as _date
@@ -1403,7 +1418,7 @@ class ExpiryAlertsView(APIView):
         return Response(out)
 
 
-class CustomerMarginView(APIView):
+class CustomerMarginView(ReportingModuleMixin, APIView):
     """
     GET /api/reports/customer-margin/
 
@@ -1417,7 +1432,6 @@ class CustomerMarginView(APIView):
       limit      int (default 50, max 200)
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         company = request.user.current_company
@@ -1547,7 +1561,7 @@ class CustomerMarginView(APIView):
         return Response({"rows": out, "productsMissingCost": products_missing})
 
 
-class JpkEwpExportView(APIView):
+class JpkEwpExportView(ReportingModuleMixin, APIView):
     """
     GET /api/v1/reporting/jpk-ewp/?year=2026&month=6
 
@@ -1555,20 +1569,32 @@ class JpkEwpExportView(APIView):
     Only available when company.taxation_form == 'ryczalt'.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get(self, request):
         company = request.user.current_company
         if not company:
+            log_error(
+                user=request.user, action="report", error_detail="Brak aktywnej firmy.", request=request,
+            )
             return Response({"detail": "Brak aktywnej firmy."}, status=400)
 
         if company.taxation_form != "ryczalt":
+            log_error(
+                user=request.user, action="report",
+                error_detail="Eksport JPK_EWP jest dostępny tylko dla firm na ryczałcie.",
+                request=request,
+            )
             return Response(
                 {"detail": "Eksport JPK_EWP jest dostępny tylko dla firm na ryczałcie."},
                 status=400,
             )
 
         if not company.ryczalt_category:
+            log_error(
+                user=request.user, action="report",
+                error_detail="Ustaw stawkę ryczałtu w ustawieniach firmy przed eksportem.",
+                request=request,
+            )
             return Response(
                 {"detail": "Ustaw stawkę ryczałtu w ustawieniach firmy przed eksportem."},
                 status=400,

@@ -21,9 +21,10 @@ from apps.ksef.models import KSeFSession
 from apps.ksef.xml_generator import generate_fa3_xml, generate_fa3_xml_base64
 from apps.ksef.validators import validate_invoice_for_ksef
 from apps.orders.models import Order
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired
 from apps.users.tenant import filter_queryset_for_current_company
-from apps.activity.log import log_activity
+from apps.activity.log import log_activity, log_error, log_success
+from apps.activity.format import flatten_error_value
 from apps.activity.models import ActivityLog
 
 from .filters import InvoiceFilter
@@ -48,9 +49,10 @@ def _optional_iso_date(data, key: str):
 class InvoiceViewSet(viewsets.ModelViewSet):
     lookup_field = "uuid"
     serializer_class = InvoiceSerializer
+    module_required = "invoicing"
     required_permission = 'can_manage_invoices'
     read_permission = None  # any company member may list/read invoices
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_class = InvoiceFilter
     ordering_fields = ['issue_date', 'due_date', 'total_gross']
@@ -86,6 +88,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             user=self.request.user,
             customer=customer,
         )
+        invoice = serializer.instance
+        log_success(
+            user=self.request.user, action="invoice.create",
+            object_type="invoice",
+            object_id=invoice.invoice_number or str(invoice.uuid),
+        )
 
     def perform_update(self, serializer):
         serializer.save(user=self.request.user)
@@ -114,15 +122,27 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         due_date = _optional_iso_date(request.data, "due_date")
         pm_raw = request.data.get("payment_method")
         payment_method = None if pm_raw in (None, "") else pm_raw
-        invoice = generate_invoice_from_order(
-            order=order,
-            company=company,
-            user=request.user,
-            delivery_document=doc,
-            issue_date=issue_date,
-            sale_date=sale_date,
-            due_date=due_date,
-            payment_method=payment_method,
+        try:
+            invoice = generate_invoice_from_order(
+                order=order,
+                company=company,
+                user=request.user,
+                delivery_document=doc,
+                issue_date=issue_date,
+                sale_date=sale_date,
+                due_date=due_date,
+                payment_method=payment_method,
+            )
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="invoice.create",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="order", object_id=str(order.uuid), request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="invoice.create",
+            object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
         )
         out = InvoiceSerializer(invoice, context=self.get_serializer_context())
         return Response(out.data, status=status.HTTP_201_CREATED)
@@ -301,6 +321,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         try:
             xml_str = generate_fa3_xml(invoice)
         except Exception as exc:
+            log_error(
+                user=request.user, action="invoice.download", error_code="KSEF_XML_FAILED",
+                error_detail=str(exc),
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+                request=request,
+            )
             return Response(
                 {"detail": f"Błąd generowania XML: {exc}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -480,6 +506,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice = self.get_object()
 
         if not invoice.ksef_reference_number:
+            log_error(
+                user=request.user, action="ksef.status", error_code="INVOICE_NOT_ISSUED",
+                error_detail="Faktura nie ma numeru referencyjnego KSeF.",
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+                request=request,
+            )
             return Response(
                 {"detail": "Faktura nie ma numeru referencyjnego KSeF. Najpierw wyślij fakturę."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -489,6 +521,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         try:
             ksef_sess = KSeFSession.objects.get(company=company)
         except KSeFSession.DoesNotExist:
+            log_error(
+                user=request.user, action="ksef.status", error_code="KSEF_NO_SESSION",
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+                request=request,
+            )
             return Response(
                 {"detail": "Brak sesji KSeF."},
                 status=status.HTTP_401_UNAUTHORIZED,
@@ -501,6 +538,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
         except Exception as exc:
             logger.error("SSAPI get_invoice_status failed for invoice %s: %s", invoice.pk, exc)
+            log_error(
+                user=request.user, action="ksef.status", error_code="KSEF_SEND_FAILED",
+                error_detail=str(exc),
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+                request=request,
+            )
             return Response(
                 {"detail": f"Błąd sprawdzania statusu w SSAPI: {exc}"},
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -572,15 +615,30 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         due_date = _optional_iso_date(request.data, "due_date")
         payment_method = request.data.get("payment_method") or None
 
-        correction = create_invoice_correction(
-            original_invoice=invoice,
-            company=request.user.current_company,
-            user=request.user,
-            correction_reason=correction_reason,
-            items_data=items_data,
-            issue_date=issue_date,
-            due_date=due_date,
-            payment_method=payment_method,
+        try:
+            correction = create_invoice_correction(
+                original_invoice=invoice,
+                company=request.user.current_company,
+                user=request.user,
+                correction_reason=correction_reason,
+                items_data=items_data,
+                issue_date=issue_date,
+                due_date=due_date,
+                payment_method=payment_method,
+            )
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="invoice.correction",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="invoice",
+                object_id=invoice.invoice_number or str(invoice.uuid),
+                request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="invoice.correction",
+            object_type="invoice",
+            object_id=correction.invoice_number or str(correction.uuid),
         )
         return Response(
             self.get_serializer(correction).data,
@@ -600,6 +658,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice = self.get_object()
 
         if not invoice.upo_received:
+            log_error(
+                user=request.user, action="invoice.download",
+                error_detail="UPO nie jest jeszcze dostępne.",
+                object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+                request=request,
+            )
             return Response(
                 {"detail": "UPO nie jest jeszcze dostępne dla tej faktury."},
                 status=status.HTTP_404_NOT_FOUND,

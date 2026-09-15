@@ -11,14 +11,16 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
-import { KSeFInboxContent } from './KSeFInboxPage';
+import { KSeFInboxContent, OpexTagButton, MatchPzPanel } from './KSeFInboxPage';
+import { useKsefInboxParseQuery, useKsefMarkPaidMutation, useKsefSessionQuery } from '@/query/use-invoices';
 import { ksefService, isKorType } from '@/services/ksef.service';
+import { authStorage, apiClient } from '@/services/api';
 import { purchaseDocumentService } from '@/services/purchase-document.service';
 import {
   usePurchaseDocumentListQuery,
@@ -104,6 +106,33 @@ function PurchaseDocPayButton({ doc }: { doc: PurchaseDocument }) {
       )}
     >
       {markPaid.isPending ? '…' : doc.is_paid ? '✓ Opłacono' : isOverdue ? '↑ Zaległe' : 'Opłać'}
+    </button>
+  );
+}
+
+// ─── KSeFPayButton ────────────────────────────────────────────────────────────
+
+function KSeFPayButton({ inv }: { inv: ReceivedInvoiceMeta }) {
+  const markPaid = useKsefMarkPaidMutation();
+  const today = todayIso();
+  const isOverdue = !inv.isPaid && !!inv.dueDate && inv.dueDate < today;
+
+  return (
+    <button
+      type="button"
+      disabled={markPaid.isPending}
+      onClick={() => markPaid.mutate({ ksefNumber: inv.ksefNumber, isPaid: !inv.isPaid })}
+      title={inv.isPaid ? 'Kliknij aby cofnąć' : 'Oznacz jako opłacone'}
+      className={cn(
+        'inline-flex items-center h-7 px-2.5 rounded-md text-xs font-medium border transition-colors whitespace-nowrap',
+        inv.isPaid
+          ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+          : isOverdue
+            ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+            : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
+      )}
+    >
+      {markPaid.isPending ? '…' : inv.isPaid ? '✓ Opłacono' : isOverdue ? '↑ Zaległe' : 'Opłać'}
     </button>
   );
 }
@@ -498,7 +527,7 @@ function PurchaseDocPzButton({ doc }: { doc: PurchaseDocument }) {
     <button
       type="button"
       onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
-      className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap"
+      className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors"
     >
       + Utwórz PZ
     </button>
@@ -763,8 +792,11 @@ interface UnifiedDoc {
   currency: string;
   isPaid?: boolean;
   isKor?: boolean;
+  hasPz?: boolean;
+  opex_category?: string | null;
   dueDate?: string | null;
   ksefNumber?: string;
+  ksefInv?: ReceivedInvoiceMeta;
   purchaseDoc?: PurchaseDocument; // full obj for non-KSeF actions
 }
 
@@ -792,7 +824,10 @@ function normalizeKseF(inv: ReceivedInvoiceMeta): UnifiedDoc {
     currency: inv.currency,
     isPaid: inv.isPaid,
     isKor: isKorType(inv.invoiceType),
+    hasPz: (inv.pzDocuments ?? []).some((p) => p.status !== 'cancelled'),
+    opex_category: inv.opex_category ?? null,
     ksefNumber: inv.ksefNumber,
+    ksefInv: inv,
   };
 }
 
@@ -810,26 +845,187 @@ function normalizePurchaseDoc(doc: PurchaseDocument): UnifiedDoc {
     gross: Number.parseFloat(doc.total_gross) || 0,
     currency: 'PLN',
     isPaid: doc.is_paid,
+    hasPz: doc.pz_documents.length > 0,
+    opex_category: doc.opex_category ?? null,
     dueDate: doc.due_date,
     purchaseDoc: doc,
   };
 }
 
-function UnifiedDocList({
-  dateFrom,
-  dateTo,
-  ksefEnabled,
-  filterSources,
-}: {
-  dateFrom: string;
-  dateTo: string;
-  ksefEnabled: boolean;
-  filterSources?: UnifiedSource[];
-}) {
+// Expanded row for KSeF invoice lines — lazy fetched on first expand
+function KsefExpandedRow({ ksefNumber, colSpan }: { ksefNumber: string; colSpan: number }) {
+  const { data: parsed, isPending, isError } = useKsefInboxParseQuery(ksefNumber, true);
+  const plMoney = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  return (
+    <tr className="bg-gray-50/60">
+      <td colSpan={colSpan} className="px-8 py-3">
+        {isPending && <p className="text-[12px] text-gray-400">Ładowanie pozycji…</p>}
+        {isError && <p className="text-[12px] text-red-400">Nie udało się załadować pozycji.</p>}
+        {parsed?.lines && parsed.lines.length > 0 && (
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-gray-400 font-medium">
+                <th className="pb-1 text-left font-medium">Nazwa</th>
+                <th className="pb-1 text-right font-medium">Ilość</th>
+                <th className="pb-1 text-right font-medium">J.m.</th>
+                <th className="pb-1 text-right font-medium">Cena netto</th>
+                <th className="pb-1 text-right font-medium">VAT</th>
+                <th className="pb-1 text-right font-medium">Wartość netto</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {parsed.lines.map((line, i) => (
+                <tr key={i}>
+                  <td className="py-1 text-gray-800">{line.name}</td>
+                  <td className="py-1 text-right tabular-nums text-gray-700">{line.quantity}</td>
+                  <td className="py-1 text-right text-gray-500">{line.unit || '—'}</td>
+                  <td className="py-1 text-right tabular-nums text-gray-700">{plMoney.format(line.unit_net_price)} zł</td>
+                  <td className="py-1 text-right text-gray-500">{line.vat_rate}</td>
+                  <td className="py-1 text-right tabular-nums font-medium text-gray-800">{plMoney.format(line.line_net)} zł</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// PZ cell for FZ/PAR docs — linked PZs as colored text links, no pill border
+function UnifiedPzCell({ doc }: { doc: PurchaseDocument }) {
+  const navigate = useNavigate();
+  const unlinkPz = useUnlinkPzMutation();
+  if (doc.doc_type === 'PAR') return <span className="text-[12px] text-gray-400">—</span>;
+  const linkedPzs = doc.pz_documents ?? [];
+  return (
+    <div className="flex flex-col gap-0.5">
+      {linkedPzs.map((pz) => (
+        <div key={pz.id} className="flex items-center gap-1">
+          <Link
+            to={`/delivery/${pz.id}`}
+            className="text-[12px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline whitespace-nowrap"
+          >
+            {pz.document_number || pz.id.slice(0, 8)}
+          </Link>
+          <button
+            type="button"
+            disabled={unlinkPz.isPending}
+            onClick={() => unlinkPz.mutate({ id: doc.id, pzId: pz.id })}
+            className="text-[10px] text-gray-300 hover:text-red-400 transition-colors"
+            title="Odepnij PZ"
+          >✕</button>
+        </div>
+      ))}
+      {linkedPzs.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
+          className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors whitespace-nowrap text-left"
+        >+ PZ</button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
+          className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap"
+        >+ Utwórz PZ</button>
+      )}
+    </div>
+  );
+}
+
+// PZ cell for KSeF invoices — shows linked PZs as colored text + Utwórz PZ
+function UnifiedKsefPzCell({ inv }: { inv: ReceivedInvoiceMeta }) {
+  const navigate = useNavigate();
+  const activePzs = (inv.pzDocuments ?? []).filter((p) => p.status !== 'cancelled');
+  return (
+    <div className="flex flex-col gap-0.5">
+      {activePzs.map((pz) => (
+        <Link
+          key={pz.id}
+          to={`/delivery/${pz.id}`}
+          className="text-[12px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline whitespace-nowrap"
+        >
+          {pz.documentNumber || pz.id.slice(0, 8)}
+        </Link>
+      ))}
+      <button
+        type="button"
+        onClick={() => navigate(`/ksef/inbox/${encodeURIComponent(inv.ksefNumber)}/pz`)}
+        className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap text-left"
+      >
+        {activePzs.length > 0 ? '+ PZ' : '+ Utwórz PZ'}
+      </button>
+    </div>
+  );
+}
+
+function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolean; onOpenCatManager: () => void }) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   const deleteMutation = useDeletePurchaseDocumentMutation();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState(monthAgoIso());
+  const [dateTo, setDateTo] = useState(todayIso());
+  const [search, setSearch] = useState('');
+  const [sourceFilter, setSourceFilter] = useState<'' | UnifiedSource>('');
+  const [statusFilter, setStatusFilter] = useState<'' | 'paid' | 'unpaid'>('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [pzFilter, setPzFilter] = useState<'' | 'true' | 'false'>('');
+  const [menuOpenKey, setMenuOpenKey] = useState<string | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [matchPanelKey, setMatchPanelKey] = useState<string | null>(null);
+  const [downloadingKsef, setDownloadingKsef] = useState<string | null>(null);
+  const [ordering, setOrdering] = useState('-issue_date');
+
+  async function handleKsefPreview(ksefNumber: string) {
+    try {
+      const resp = await apiClient.get<string>(
+        `/ksef/inbox/${encodeURIComponent(ksefNumber)}/html/`,
+        { responseType: 'text' },
+      );
+      const win = window.open('', '_blank');
+      if (win) { win.document.write(resp.data); win.document.close(); }
+    } catch { /* ignore */ }
+  }
+
+  function handleKsefDownload(ksefNumber: string) {
+    if (downloadingKsef) return;
+    setDownloadingKsef(ksefNumber);
+    const token = authStorage.getAccessToken();
+    const url = `/api/ksef/inbox/${encodeURIComponent(ksefNumber)}/xml/`;
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
+      .then((blob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${ksefNumber}.xml`;
+        a.click();
+      })
+      .finally(() => setDownloadingKsef(null));
+  }
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { data: categories = [] } = useOpexCategoriesQuery();
+
+  function toggleSort(field: string) {
+    setOrdering((prev) => prev === field ? `-${field}` : prev === `-${field}` ? field : `-${field}`);
+  }
+
+  function SortIcon({ field }: { field: string }) {
+    if (ordering === field) return <span className="ml-1 text-[#5856D6] font-bold">↑</span>;
+    if (ordering === `-${field}`) return <span className="ml-1 text-[#5856D6] font-bold">↓</span>;
+    return <span className="ml-1 text-gray-400 opacity-0 group-hover:opacity-100">⇅</span>;
+  }
+
+  useEffect(() => {
+    if (!menuOpenKey) return;
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpenKey(null);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [menuOpenKey]);
 
   const ksefQuery = useQuery({
     queryKey: ['ksef', 'inbox', 'unified', { companyId, dateFrom, dateTo }],
@@ -847,12 +1043,32 @@ function UnifiedDocList({
     enabled: Boolean(companyId),
   });
 
-  const ksefDocs: UnifiedDoc[] = ksefEnabled
-    ? (ksefQuery.data?.invoices ?? []).map(normalizeKseF)
-    : [];
+  const ksefDocs: UnifiedDoc[] = ksefEnabled ? (ksefQuery.data?.invoices ?? []).map(normalizeKseF) : [];
   const purchaseDocs: UnifiedDoc[] = (pdQuery.data?.results ?? []).map(normalizePurchaseDoc);
-  const allUnified = [...ksefDocs, ...purchaseDocs].sort((a, b) => b.date.localeCompare(a.date));
-  const unified = filterSources ? allUnified.filter((d) => filterSources.includes(d.source)) : allUnified;
+  const allUnified = [...ksefDocs, ...purchaseDocs].sort((a, b) => {
+    const dir = ordering.startsWith('-') ? -1 : 1;
+    const field = ordering.replace(/^-/, '');
+    if (field === 'issue_date') return dir * a.date.localeCompare(b.date);
+    if (field === 'document_number') return dir * (a.number ?? '').localeCompare(b.number ?? '');
+    if (field === 'supplier_name') return dir * (a.supplier ?? '').localeCompare(b.supplier ?? '');
+    if (field === 'total_gross') return dir * ((parseFloat(String(a.gross)) || 0) - (parseFloat(String(b.gross)) || 0));
+    return 0;
+  });
+
+  const sq = search.trim().toLowerCase();
+  const unified = allUnified.filter((doc) => {
+    if (sourceFilter && doc.source !== sourceFilter) return false;
+    if (statusFilter === 'paid' && !doc.isPaid) return false;
+    if (statusFilter === 'unpaid' && doc.isPaid) return false;
+    if (categoryFilter && doc.opex_category !== categoryFilter) return false;
+    if (pzFilter === 'true' && !doc.hasPz) return false;
+    if (pzFilter === 'false' && doc.hasPz) return false;
+    if (sq) {
+      const haystack = [doc.supplier, doc.supplierNip, doc.number].join(' ').toLowerCase();
+      if (!haystack.includes(sq)) return false;
+    }
+    return true;
+  });
 
   const isLoading = (ksefEnabled && ksefQuery.isPending) || pdQuery.isPending;
   const isError   = (ksefEnabled && ksefQuery.isError)   || pdQuery.isError;
@@ -864,117 +1080,347 @@ function UnifiedDocList({
     finally { setDeletingId(null); }
   }
 
-  if (isLoading) return <div className="py-12 text-center text-sm text-gray-400">Ładowanie…</div>;
-  if (isError)   return <div className="py-12 text-center text-sm text-red-500">Nie udało się załadować dokumentów.</div>;
-  if (unified.length === 0) return (
-    <div className="py-12 text-center">
-      <p className="text-[15px] font-medium text-gray-500">Brak dokumentów w tym okresie</p>
-      <p className="mt-1 text-[13px] text-gray-400">Zmień zakres dat lub dodaj dokumenty ręcznie.</p>
-    </div>
-  );
+  const selectCls = 'text-xs bg-transparent border-none outline-none cursor-pointer appearance-none text-gray-600 hover:text-gray-900';
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-100 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-              <th className="px-5 py-3 text-left">Źródło</th>
-              <th className="px-4 py-3 text-left">Data</th>
-              <th className="px-4 py-3 text-left">Numer</th>
-              <th className="px-4 py-3 text-left">Dostawca / Wystawca</th>
-              <th className="px-4 py-3 text-right">Kwota brutto</th>
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {unified.map((doc) => (
-              <tr key={doc._key} className="group transition-colors hover:bg-gray-50/60">
-                <td className="px-5 py-3.5">
-                  <div className="flex flex-col gap-1">
-                    <span className={cn('w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold', SOURCE_BADGE[doc.source])}>
-                      {SOURCE_LABEL[doc.source]}
-                    </span>
-                    {doc.isKor && (
-                      <span className="w-fit rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-semibold text-orange-600">KOR</span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-3.5 text-gray-600 whitespace-nowrap">{formatDate(doc.date)}</td>
-                <td className="px-4 py-3.5">
-                  <span className="font-medium text-gray-900">{doc.number || '—'}</span>
-                </td>
-                <td className="px-4 py-3.5">
-                  <div className="text-gray-900">{doc.supplier || '—'}</div>
-                  {doc.supplierNip && doc.supplierNip !== '—' && (
-                    <div className="text-[11px] text-gray-400">NIP: {doc.supplierNip}</div>
-                  )}
-                </td>
-                <td className="px-4 py-3.5 text-right font-semibold tabular-nums text-gray-900 whitespace-nowrap">
-                  {formatGross(doc.gross, doc.currency)}
-                </td>
-                <td className="px-4 py-3.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* Accounting annotation */}
-                    {doc.purchaseDoc && <PurchaseDocAnnotationButton doc={doc.purchaseDoc} />}
+    <div className="space-y-4">
+      {/* Filter bar */}
+      <div className="overflow-hidden rounded-2xl bg-white shadow-sm px-5 py-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-[13px] font-medium text-gray-600">Od</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[13px] font-medium text-gray-600">Do</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
+            >
+              Wyczyść daty
+            </button>
+          )}
+        </div>
+        <div className="mt-3 relative">
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+          <input
+            type="text"
+            placeholder="Szukaj po numerze, dostawcy, NIP…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-10 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-8 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+            >✕</button>
+          )}
+        </div>
+      </div>
 
-                    {/* Category tag — for all purchase docs */}
-                    {doc.purchaseDoc && <PurchaseDocCategoryTag doc={doc.purchaseDoc} />}
-
-                    {/* PZ link / create */}
-                    {doc.purchaseDoc && <PurchaseDocPzButton doc={doc.purchaseDoc} />}
-
-                    {/* Payment button */}
-                    {doc.purchaseDoc && <PurchaseDocPayButton doc={doc.purchaseDoc} />}
-                    {doc.source === 'ksef' && (
-                      <span className={cn(
-                        'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                        doc.isPaid ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
-                      )}>
-                        {doc.isPaid ? '✓ Opłacono' : 'Nieopłacona'}
+      {/* Table */}
+      {isLoading && <div className="py-12 text-center text-sm text-gray-400">Ładowanie…</div>}
+      {isError && <div className="py-12 text-center text-sm text-red-500">Nie udało się załadować dokumentów.</div>}
+      {!isLoading && !isError && (
+        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+          <div className="px-5 py-3 text-[13px] text-gray-500 border-b border-gray-100">
+            {unified.length} {unified.length === 1 ? 'dokument' : unified.length < 5 ? 'dokumenty' : 'dokumentów'}
+          </div>
+          <div>
+            <table className="w-full table-fixed text-sm">
+              <colgroup>
+                <col className="w-[80px]" />
+                <col className="w-[90px]" />
+                <col className="w-[150px]" />
+                <col />
+                <col className="w-[90px]" />
+                <col className="w-[130px]" />
+                <col className="w-[100px]" />
+                <col className="w-[100px]" />
+                <col className="w-[56px]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200 text-xs font-semibold text-gray-600">
+                  <th className="px-3 py-3 text-left">
+                    <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as '' | UnifiedSource)} className={selectCls} style={{ fontWeight: 600 }}>
+                      <option value="">Źródło</option>
+                      <option value="ksef">KSeF</option>
+                      <option value="fz">FZ</option>
+                      <option value="par_vat">PAR z NIP</option>
+                      <option value="par">Paragon</option>
+                    </select>
+                  </th>
+                  <th className="px-3 py-3 text-left">
+                    <button type="button" onClick={() => toggleSort('issue_date')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Data<SortIcon field="issue_date" />
+                    </button>
+                  </th>
+                  <th className="px-3 py-3 text-left">
+                    <button type="button" onClick={() => toggleSort('document_number')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Numer<SortIcon field="document_number" />
+                    </button>
+                  </th>
+                  <th className="px-3 py-3 text-left">
+                    <button type="button" onClick={() => toggleSort('supplier_name')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Dostawca<SortIcon field="supplier_name" />
+                    </button>
+                  </th>
+                  <th className="px-3 py-3 text-right">
+                    <button type="button" onClick={() => toggleSort('total_gross')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
+                      Kwota<SortIcon field="total_gross" />
+                    </button>
+                  </th>
+                  <th className="px-3 py-3 text-left">
+                    <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} style={{ fontWeight: 600 }}
+                      className={cn('text-xs bg-transparent border-none outline-none cursor-pointer appearance-none', categoryFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900')}>
+                      <option value="">Kategoria</option>
+                      {categories.map((c) => (
+                        <option key={c.slug} value={c.slug}>{c.name}</option>
+                      ))}
+                    </select>
+                  </th>
+                  <th className="px-3 py-3 text-left">
+                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as '' | 'paid' | 'unpaid')} style={{ fontWeight: 600 }}
+                      className={cn('text-xs bg-transparent border-none outline-none cursor-pointer appearance-none', statusFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900')}>
+                      <option value="">Status</option>
+                      <option value="paid">Opłacone</option>
+                      <option value="unpaid">Nieopłacone</option>
+                    </select>
+                  </th>
+                  <th className="px-3 py-3 text-left">
+                    <select value={pzFilter} onChange={(e) => setPzFilter(e.target.value as '' | 'true' | 'false')} style={{ fontWeight: 600 }}
+                      className={cn('text-xs bg-transparent border-none outline-none cursor-pointer appearance-none', pzFilter ? 'text-[#5856D6]' : 'text-gray-600 hover:text-gray-900')}>
+                      <option value="">PZ</option>
+                      <option value="true">Z PZ</option>
+                      <option value="false">Bez PZ</option>
+                    </select>
+                  </th>
+                  <th className="px-2 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {unified.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-5 py-12 text-center text-[13px] text-gray-400">
+                      Brak dokumentów spełniających kryteria
+                    </td>
+                  </tr>
+                )}
+                {unified.map((doc) => (
+                  <React.Fragment key={doc._key}>
+                  <tr className="group transition-colors hover:bg-gray-50/60">
+                    {/* Źródło */}
+                    <td className="px-3 py-3.5 whitespace-nowrap">
+                      <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-semibold', SOURCE_BADGE[doc.source])}>
+                        {SOURCE_LABEL[doc.source]}
                       </span>
-                    )}
-
-                    {/* Edit/Delete/File — purchase docs only, on hover */}
-                    {doc.purchaseDoc && (
-                      <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        {doc.purchaseDoc.ocr_raw_filename && doc.purchaseDoc.ocr_raw_filename.includes('/') && (
-                          <a
-                            href={purchaseDocumentService.getFileUrl(doc.purchaseDoc.id)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="rounded-lg px-2 py-1 text-[11px] font-medium text-gray-500 hover:bg-gray-100"
-                            title="Podgląd zeskanowanego dokumentu"
+                      {doc.isKor && (
+                        <span className="ml-1 rounded-full bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-600">KOR</span>
+                      )}
+                    </td>
+                    {/* Data */}
+                    <td className="px-3 py-3.5 text-gray-600 whitespace-nowrap text-[12px]">{formatDate(doc.date)}</td>
+                    {/* Numer */}
+                    <td className="px-3 py-3.5 truncate">
+                      <span className="font-medium text-gray-900">{doc.number || '—'}</span>
+                    </td>
+                    {/* Dostawca */}
+                    <td className="px-3 py-3.5">
+                      <div className="truncate text-gray-900">{doc.supplier || '—'}</div>
+                      {doc.supplierNip && doc.supplierNip !== '—' && (
+                        <div className="text-[11px] text-gray-400">{doc.supplierNip}</div>
+                      )}
+                    </td>
+                    {/* Kwota */}
+                    <td className="px-3 py-3.5 text-right font-semibold tabular-nums text-gray-900 whitespace-nowrap text-[12px]">
+                      {formatGross(doc.gross, doc.currency)}
+                    </td>
+                    {/* Kategoria */}
+                    <td className="px-3 py-3.5 overflow-hidden">
+                      {doc.purchaseDoc
+                        ? <PurchaseDocCategoryTag doc={doc.purchaseDoc} />
+                        : doc.ksefInv
+                          ? <OpexTagButton inv={doc.ksefInv} onOpenManager={onOpenCatManager} />
+                          : <span className="text-[12px] text-gray-400">—</span>
+                      }
+                    </td>
+                    {/* Status */}
+                    <td className="px-3 py-3.5 whitespace-nowrap">
+                      {doc.purchaseDoc
+                        ? <PurchaseDocPayButton doc={doc.purchaseDoc} />
+                        : doc.ksefInv
+                          ? <KSeFPayButton inv={doc.ksefInv} />
+                          : <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', doc.isPaid ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700')}>
+                              {doc.isPaid ? '✓ Opłacono' : 'Nieopłacona'}
+                            </span>
+                      }
+                    </td>
+                    {/* PZ */}
+                    <td className="px-3 py-3.5">
+                      {doc.purchaseDoc
+                        ? <UnifiedPzCell doc={doc.purchaseDoc} />
+                        : doc.ksefInv
+                          ? <UnifiedKsefPzCell inv={doc.ksefInv} />
+                          : <span className="text-[12px] text-gray-400">—</span>
+                      }
+                    </td>
+                    {/* Three-dots menu + expand toggle */}
+                    <td className="px-2 py-3.5">
+                      <div className="relative flex items-center justify-end gap-1" ref={menuOpenKey === doc._key ? menuRef : undefined}>
+                        {(doc.purchaseDoc?.items?.length || doc.ksefInv) ? (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedKey(expandedKey === doc._key ? null : doc._key)}
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                            title="Pokaż pozycje"
                           >
-                            Plik
-                          </a>
-                        )}
-                        <Link
-                          to={`/purchase-documents/${doc.purchaseDoc.id}/edit`}
-                          className="rounded-lg px-2 py-1 text-[11px] font-medium text-[#5856D6] hover:bg-[#5856D6]/5"
-                        >
-                          Edytuj
-                        </Link>
+                            {expandedKey === doc._key ? '▲' : '▼'}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          disabled={deletingId === doc.purchaseDoc.id}
-                          onClick={() => void handleDelete(doc.purchaseDoc!.id)}
-                          className="rounded-lg px-2 py-1 text-[11px] font-medium text-red-500 hover:bg-red-50 disabled:opacity-40"
+                          onClick={() => setMenuOpenKey(menuOpenKey === doc._key ? null : doc._key)}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                         >
-                          {deletingId === doc.purchaseDoc.id ? '…' : 'Usuń'}
+                          •••
                         </button>
+                        {menuOpenKey === doc._key && (
+                          <div className="absolute right-0 top-8 z-20 min-w-[140px] rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+                            {doc.purchaseDoc && (
+                              <>
+                                <Link
+                                  to={`/purchase-documents/${doc.purchaseDoc.id}/edit`}
+                                  onClick={() => setMenuOpenKey(null)}
+                                  className="block px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                                >
+                                  Edytuj
+                                </Link>
+                                {doc.purchaseDoc.ocr_raw_filename?.includes('/') && (
+                                  <a
+                                    href={purchaseDocumentService.getFileUrl(doc.purchaseDoc.id)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={() => setMenuOpenKey(null)}
+                                    className="block px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                                  >
+                                    Podgląd pliku
+                                  </a>
+                                )}
+                                <div className="my-1 border-t border-gray-100" />
+                                <button
+                                  type="button"
+                                  disabled={deletingId === doc.purchaseDoc.id}
+                                  onClick={() => { setMenuOpenKey(null); void handleDelete(doc.purchaseDoc!.id); }}
+                                  className="block w-full px-3 py-1.5 text-left text-[13px] text-red-500 hover:bg-red-50 disabled:opacity-40"
+                                >
+                                  {deletingId === doc.purchaseDoc.id ? '…' : 'Usuń'}
+                                </button>
+                              </>
+                            )}
+                            {doc.source === 'ksef' && doc.ksefNumber && (
+                              <>
+                                {doc.purchaseDoc && <div className="my-1 border-t border-gray-100" />}
+                                <button
+                                  type="button"
+                                  onClick={() => { setMenuOpenKey(null); void handleKsefPreview(doc.ksefNumber!); }}
+                                  className="block w-full px-3 py-1.5 text-left text-[13px] text-gray-700 hover:bg-gray-50"
+                                >
+                                  Podgląd faktury
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={downloadingKsef === doc.ksefNumber}
+                                  onClick={() => { setMenuOpenKey(null); handleKsefDownload(doc.ksefNumber!); }}
+                                  className="block w-full px-3 py-1.5 text-left text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                >
+                                  {downloadingKsef === doc.ksefNumber ? 'Pobieranie…' : 'Pobierz XML'}
+                                </button>
+                                {!doc.hasPz && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setMenuOpenKey(null); setMatchPanelKey(matchPanelKey === doc._key ? null : doc._key); }}
+                                    className={cn('block w-full px-3 py-1.5 text-left text-[13px] hover:bg-gray-50', matchPanelKey === doc._key ? 'text-[#5856D6] font-medium' : 'text-gray-700')}
+                                  >
+                                    Powiąż z PZ
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {(ksefQuery.data?.hasMore || (pdQuery.data?.count ?? 0) > 100) && (
-        <div className="border-t border-gray-100 px-5 py-3 text-[12px] text-gray-400">
-          Wyświetlono pierwsze 100 wyników z każdego źródła — zawęź zakres dat, aby zobaczyć więcej.
+                    </td>
+                  </tr>
+                  {matchPanelKey === doc._key && doc.source === 'ksef' && doc.ksefInv && (
+                    <tr className="border-b border-gray-100 bg-gray-50/40">
+                      <td colSpan={9} className="px-5 py-3">
+                        <MatchPzPanel
+                          inv={doc.ksefInv}
+                          onClose={() => setMatchPanelKey(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  {/* Expanded items row */}
+                  {expandedKey === doc._key && doc.purchaseDoc?.items?.length ? (
+                    <tr className="bg-gray-50/60">
+                      <td colSpan={9} className="px-8 py-3">
+                        <table className="w-full text-[12px]">
+                          <thead>
+                            <tr className="text-gray-400 font-medium">
+                              <th className="pb-1 text-left font-medium">Nazwa</th>
+                              <th className="pb-1 text-right font-medium">Ilość</th>
+                              <th className="pb-1 text-right font-medium">J.m.</th>
+                              <th className="pb-1 text-right font-medium">Cena brutto</th>
+                              <th className="pb-1 text-right font-medium">Wartość</th>
+                              <th className="pb-1 text-right font-medium">VAT</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {doc.purchaseDoc.items.map((item) => (
+                              <tr key={item.id}>
+                                <td className="py-1 text-gray-800">{item.product_name}</td>
+                                <td className="py-1 text-right tabular-nums text-gray-700">{item.quantity}</td>
+                                <td className="py-1 text-right text-gray-500">{item.unit || '—'}</td>
+                                <td className="py-1 text-right tabular-nums text-gray-700">{item.unit_price_gross ? `${Number(item.unit_price_gross).toFixed(2)} zł` : '—'}</td>
+                                <td className="py-1 text-right tabular-nums font-medium text-gray-800">{item.line_gross ? `${Number(item.line_gross).toFixed(2)} zł` : '—'}</td>
+                                <td className="py-1 text-right text-gray-500">{item.vat_rate || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  ) : null}
+                  {expandedKey === doc._key && doc.ksefInv ? (
+                    <KsefExpandedRow ksefNumber={doc.ksefInv.ksefNumber} colSpan={9} />
+                  ) : null}
+                </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {(ksefQuery.data?.hasMore || (pdQuery.data?.count ?? 0) > 100) && (
+            <div className="border-t border-gray-100 px-5 py-3 text-[12px] text-gray-400">
+              Wyświetlono pierwsze 100 wyników z każdego źródła — zawęź zakres dat.
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1480,7 +1926,7 @@ function PurchaseDocSection({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 text-xs font-semibold text-gray-600">
-                  <th className="px-5 py-3 text-left">
+                  <th className="px-4 py-3 text-left">
                     <button type="button" onClick={() => toggleSort('issue_date')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
                       Data<SortIcon field="issue_date" />
                     </button>
@@ -1495,12 +1941,12 @@ function PurchaseDocSection({
                       Wystawca<SortIcon field="supplier_name" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 text-right">
+                  <th className="px-3 py-3 text-right">
                     <button type="button" onClick={() => toggleSort('total_gross')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
                       Kwota<SortIcon field="total_gross" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-3 py-3 text-left">
                     <select
                       value={categoryFilter}
                       onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
@@ -1516,7 +1962,7 @@ function PurchaseDocSection({
                       ))}
                     </select>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-3 py-3 text-left">
                     <select
                       value={statusFilter}
                       onChange={(e) => { setStatusFilter(e.target.value as '' | 'paid' | 'unpaid'); setPage(1); }}
@@ -1531,7 +1977,7 @@ function PurchaseDocSection({
                       <option value="unpaid">Nieopłacone</option>
                     </select>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-3 py-3 text-left">
                     <select
                       value={pzFilter}
                       onChange={(e) => { setPzFilter(e.target.value as '' | 'true' | 'false'); setPage(1); }}
@@ -1546,7 +1992,7 @@ function PurchaseDocSection({
                       <option value="false">Bez PZ</option>
                     </select>
                   </th>
-                  <th className="px-4 py-3" />
+                  <th className="px-2 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -1578,12 +2024,12 @@ function PurchaseDocSection({
                         {doc.supplier_nip && <div className="text-[11px] text-gray-400">{doc.supplier_nip}</div>}
                       </td>
                       {/* KWOTA */}
-                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                      <td className="px-3 py-3.5 text-right whitespace-nowrap">
                         <div className="font-semibold tabular-nums text-gray-900">{formatGross(doc.total_gross)}</div>
                         <div className="text-[11px] tabular-nums text-gray-400">VAT {formatGross(doc.total_vat)}</div>
                       </td>
                       {/* KATEGORIA */}
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3.5">
                         {(() => {
                           const docLineCats = allLineCategories[doc.id] ?? {};
                           const uniqueSlugs = [...new Set(Object.values(docLineCats))];
@@ -1602,11 +2048,11 @@ function PurchaseDocSection({
                         })()}
                       </td>
                       {/* STATUS */}
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3.5">
                         <PurchaseDocPayButton doc={doc} />
                       </td>
                       {/* PZ */}
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3.5">
                         {(() => {
                           const linkedPzs = doc.pz_documents ?? [];
                           if (linkedPzs.length > 0) {
@@ -1616,7 +2062,7 @@ function PurchaseDocSection({
                                   <Link
                                     key={pz.id}
                                     to={`/delivery/${pz.id}`}
-                                    className="text-[12px] text-emerald-600 hover:text-emerald-800 hover:underline transition-colors leading-snug whitespace-nowrap"
+                                    className="text-[12px] text-emerald-600 hover:text-emerald-800 hover:underline transition-colors leading-snug"
                                     title="Przejdź do PZ"
                                   >
                                     {pz.document_number || pz.id.slice(0, 8)}
@@ -1632,7 +2078,7 @@ function PurchaseDocSection({
                         })()}
                       </td>
                       {/* ··· */}
-                      <td className="px-4 py-3.5">
+                      <td className="px-2 py-3.5">
                         <div className="flex items-center justify-end gap-1">
                           <button
                             type="button"
@@ -1745,10 +2191,13 @@ const TAB_DEFS: { key: MainTab; label: string; requiresKsef?: boolean }[] = [
 export function PurchaseDocumentsPage() {
   const ksefEnabled = useModuleGuard('ksef');
   const canInvoices = usePermission('can_manage_invoices');
-  const [activeTab, setActiveTab] = useState<MainTab>('all');
-  const [dateFrom, setDateFrom] = useState(monthAgoIso());
-  const [dateTo, setDateTo] = useState(todayIso());
+  const [searchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as MainTab | null) ?? 'all';
+  const [activeTab, setActiveTab] = useState<MainTab>(
+    TAB_DEFS.some(t => t.key === initialTab) ? initialTab : 'all'
+  );
   const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const { data: ksefSession } = useKsefSessionQuery();
 
   return (
     <div
@@ -1777,6 +2226,14 @@ export function PurchaseDocumentsPage() {
             >
               Skanuj
             </Link>
+            {ksefEnabled && !ksefSession?.active && (
+              <Link
+                to="/settings/certificate"
+                className="flex items-center gap-1.5 rounded-full bg-[#5856D6] px-4 py-2 text-[14px] font-semibold text-white shadow-sm transition-all hover:bg-[#4744C4] active:scale-95"
+              >
+                🔑 Zaloguj się do KSeF
+              </Link>
+            )}
             {canInvoices && (
               <Link
                 to="/purchase-documents/new"
@@ -1814,9 +2271,7 @@ export function PurchaseDocumentsPage() {
 
 
         {/* Wszystkie — all sources merged */}
-        {activeTab === 'all' && (
-          <UnifiedDocList dateFrom={dateFrom} dateTo={dateTo} ksefEnabled={ksefEnabled} />
-        )}
+        {activeTab === 'all' && <UnifiedDocList ksefEnabled={ksefEnabled} onOpenCatManager={() => setCatManagerOpen(true)} />}
 
         {/* Z KSeF — full KSeF inbox with all original features */}
         {activeTab === 'ksef' && ksefEnabled && <KSeFInboxContent onOpenCatManager={() => setCatManagerOpen(true)} />}

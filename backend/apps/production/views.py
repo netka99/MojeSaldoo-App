@@ -6,6 +6,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.activity.log import log_error, log_success
+from apps.activity.format import flatten_error_value
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
@@ -111,11 +113,27 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         try:
             completed = complete_production_order(order, request.user)
-        except ValidationError:
+        except ValidationError as exc:
+            detail = flatten_error_value(exc.detail)
+            code = "PRODUCTION_NO_WAREHOUSE" if "magazynu głównego" in detail else "STOCK_SHORTFALL" if "stan magazynowy" in detail else ""
+            log_error(
+                user=request.user, action="production.complete", error_code=code,
+                error_detail=detail, object_type="production_order",
+                object_id=str(order.uuid), request=request,
+            )
             raise
         except Exception as exc:
+            log_error(
+                user=request.user, action="production.complete",
+                error_detail=str(exc), object_type="production_order",
+                object_id=str(order.uuid), request=request,
+            )
             raise ValidationError({"detail": str(exc)}) from exc
 
+        log_success(
+            user=request.user, action="production.complete",
+            object_type="production_order", object_id=str(completed.uuid),
+        )
         return Response(
             ProductionOrderSerializer(completed, context=self.get_serializer_context()).data
         )

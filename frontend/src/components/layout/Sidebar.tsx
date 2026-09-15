@@ -120,45 +120,48 @@ function NavSectionDostawa() {
   );
 }
 
-function NavSectionEFaktury() {
-  const ksefEnabled = useModuleGuard('ksef');
-  const canInvoices = usePermission('can_manage_invoices');
-  const canKsefInbox = usePermission('can_access_ksef_inbox');
-  const anyEnabled = ksefEnabled && (canInvoices || canKsefInbox);
-  if (!anyEnabled) return null;
-  return (
-    <div className="space-y-1">
-      <NavGroupTitle>E-Faktury (KSeF)</NavGroupTitle>
-      <div className="space-y-0.5">
-        {canKsefInbox && (
-          <ModuleNavItem module="ksef" to="/purchase-documents">
-            Dokumenty zakupowe
-          </ModuleNavItem>
-        )}
-        {canInvoices && (
-          <ModuleNavItem module="ksef" to="/ksef/scan-paper">
-            Skanuj fakturę papierową
-          </ModuleNavItem>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function NavSectionZakupy() {
   const purchasingEnabled = useModuleGuard('purchasing');
+  const purchaseOrdersEnabled = useModuleGuard('purchase_orders');
+  const ksefEnabled = useModuleGuard('ksef');
   const canPurchasing = usePermission('can_manage_purchasing');
-  if (!purchasingEnabled || !canPurchasing) return null;
+  const canPurchaseOrders = usePermission('can_manage_purchase_orders');
+  const canKsefInbox = usePermission('can_access_ksef_inbox');
+  const canInvoices = usePermission('can_manage_invoices');
+  const anyEnabled =
+    (purchasingEnabled && canPurchasing) ||
+    (purchaseOrdersEnabled && canPurchaseOrders) ||
+    (ksefEnabled && (canKsefInbox || canInvoices));
+  if (!anyEnabled) return null;
   return (
     <div className="space-y-1">
       <NavGroupTitle>Zakupy</NavGroupTitle>
       <div className="space-y-0.5">
-        <ModuleNavItem module="purchasing" to="/suppliers">
-          Dostawcy
-        </ModuleNavItem>
-        <ModuleNavItem module="purchasing" to="/delivery/new-pz">
-          Nowe PZ
-        </ModuleNavItem>
+        {purchasingEnabled && canPurchasing && (
+          <ModuleNavItem module="purchasing" to="/suppliers">
+            Dostawcy
+          </ModuleNavItem>
+        )}
+        {purchaseOrdersEnabled && canPurchaseOrders && (
+          <ModuleNavItem module="purchase_orders" to="/purchase-orders">
+            Zamówienia ZD
+          </ModuleNavItem>
+        )}
+        {purchasingEnabled && canPurchasing && (
+          <ModuleNavItem module="purchasing" to="/delivery/new-pz">
+            Nowe PZ
+          </ModuleNavItem>
+        )}
+        {ksefEnabled && canKsefInbox && (
+          <ModuleNavItem module="ksef" to="/purchase-documents">
+            Dokumenty zakupowe
+          </ModuleNavItem>
+        )}
+        {ksefEnabled && canInvoices && (
+          <ModuleNavItem module="ksef" to="/ksef/scan-paper">
+            Skanuj fakturę papierową
+          </ModuleNavItem>
+        )}
       </div>
     </div>
   );
@@ -281,7 +284,6 @@ export function Sidebar() {
         <NavSectionMagazyn />
         <NavSectionZakupy />
         <NavSectionProdukcja />
-        <NavSectionEFaktury />
         <NavSectionFinanse />
         <NavSectionRaporty />
       </nav>

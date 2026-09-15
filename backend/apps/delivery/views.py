@@ -18,8 +18,9 @@ from apps.orders.models import Order, OrderItem
 from apps.products.models import ProductStock, StockMovement, Warehouse
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired, _get_active_membership
 from apps.users.tenant import filter_queryset_for_current_company
-from apps.activity.log import log_activity
+from apps.activity.log import log_activity, log_error, log_success
 from apps.activity.models import ActivityLog
+from apps.activity.format import flatten_error_value
 
 from .filters import DeliveryDocumentFilter
 from .models import DeliveryDocument, DeliveryItem
@@ -440,6 +441,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 },
             )
         if doc.status != DeliveryDocument.STATUS_SAVED:
+            log_error(
+                user=request.user, action="delivery.start", error_code="DELIVERY_WRONG_STATUS",
+                error_detail=f"Status dokumentu: {doc.status}.",
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(
                 {"error": "Only saved documents can start delivery."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -447,6 +454,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         doc.status = DeliveryDocument.STATUS_IN_TRANSIT
         doc.user = request.user
         doc.save(update_fields=["status", "user", "updated_at"])
+        log_success(
+            user=request.user, action="delivery.start",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data)
 
     @action(detail=False, methods=["post"], url_path="create-pz")
@@ -488,6 +499,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         items_data = request.data.get("items", [])
 
         if not to_warehouse_id:
+            log_error(
+                user=request.user, action="delivery.pz_create", error_code="PZ_NO_WAREHOUSE",
+                request=request,
+            )
             return Response(
                 {"error": "to_warehouse_id is required."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -501,6 +516,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         try:
             to_warehouse = Warehouse.objects.get(uuid=to_warehouse_id, company_id=company_id)
         except Warehouse.DoesNotExist:
+            log_error(
+                user=request.user, action="delivery.pz_create", error_code="PZ_NO_WAREHOUSE",
+                error_detail="Nie znaleziono magazynu.", request=request,
+            )
             return Response({"error": "Warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
 
         from_supplier = None
@@ -522,6 +541,13 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     document_type=DeliveryDocument.DOC_TYPE_PZ,
                 ).exclude(status=DeliveryDocument.STATUS_CANCELLED).first()
                 if existing_pz:
+                    log_error(
+                        user=request.user, action="delivery.pz_create", error_code="PZ_DUPLICATE",
+                        error_detail=existing_pz.document_number or str(existing_pz.uuid),
+                        object_type="delivery",
+                        object_id=existing_pz.document_number or str(existing_pz.uuid),
+                        request=request,
+                    )
                     return Response(
                         {
                             "error": (
@@ -611,6 +637,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 )
 
         doc.refresh_from_db()
+        log_success(
+            user=request.user, action="delivery.pz_create",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="create-rw")
@@ -735,6 +765,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 )
 
         doc.refresh_from_db()
+        log_success(
+            user=request.user, action="delivery.rw_create",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="complete")
@@ -762,6 +796,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 DeliveryDocument.STATUS_IN_TRANSIT,
             )
             if doc.status not in _PZ_ALLOWED:
+                log_error(
+                    user=request.user, action="delivery.complete", error_code="DELIVERY_WRONG_STATUS",
+                    error_detail=f"Status PZ: {doc.status}.",
+                    object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                    request=request,
+                )
                 return Response(
                     {"error": "PZ document is already delivered or cancelled."},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -810,10 +850,20 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 apply_pz_receipt(doc, request.user)
 
             doc.refresh_from_db()
+            log_success(
+                user=request.user, action="delivery.complete",
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+            )
             return Response(self.get_serializer(doc).data)
         # ── end PZ branch ──────────────────────────────────────────────────────
 
         if doc.status != DeliveryDocument.STATUS_IN_TRANSIT:
+            log_error(
+                user=request.user, action="delivery.complete", error_code="DELIVERY_WRONG_STATUS",
+                error_detail=f"Status dokumentu: {doc.status}.",
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(
                 {"error": "Only documents in transit can be completed."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1007,6 +1057,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                             }
                         )
                 if shortfalls:
+                    log_error(
+                        user=request.user, action="delivery.complete", error_code="STOCK_SHORTFALL",
+                        error_detail=flatten_error_value({"stock": shortfalls}),
+                        object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                        request=request,
+                    )
                     raise ValidationError({"stock": shortfalls})
 
                 movement_user = doc.user or request.user
@@ -1164,6 +1220,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         order.update_status(Order.STATUS_PARTIALLY_DELIVERED)
 
         doc.refresh_from_db()
+        log_success(
+            user=request.user, action="delivery.complete",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="add-returns")
@@ -1212,6 +1272,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             )
 
         doc.refresh_from_db()
+        log_success(
+            user=request.user, action="delivery.zw_create",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="cancel-pz")
@@ -1230,11 +1294,23 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         doc = self.get_object()
 
         if doc.document_type != DeliveryDocument.DOC_TYPE_PZ:
+            log_error(
+                user=request.user, action="delivery.pz_cancel", error_code="DELIVERY_WRONG_STATUS",
+                error_detail="Anulowanie dotyczy tylko dokumentów PZ.",
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(
                 {"error": "Anulowanie dotyczy tylko dokumentów PZ."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if doc.status == DeliveryDocument.STATUS_CANCELLED:
+            log_error(
+                user=request.user, action="delivery.pz_cancel", error_code="DELIVERY_WRONG_STATUS",
+                error_detail="Dokument jest już anulowany.",
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(
                 {"error": "Dokument jest już anulowany."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1243,11 +1319,26 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         try:
             cancel_pz(doc, request.user)
         except ValidationError as exc:
+            log_error(
+                user=request.user, action="delivery.pz_cancel",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
         except ValueError as exc:
+            log_error(
+                user=request.user, action="delivery.pz_cancel", error_detail=str(exc),
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         doc.refresh_from_db()
+        log_success(
+            user=request.user, action="delivery.pz_cancel",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
         return Response(self.get_serializer(doc).data)
 
     @action(detail=True, methods=["post"], url_path="create-kor")
@@ -1291,10 +1382,25 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         try:
             kor_doc = create_pz_kor(doc, items, request.user)
         except ValidationError as exc:
+            log_error(
+                user=request.user, action="delivery.pz_kor",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
         except ValueError as exc:
+            log_error(
+                user=request.user, action="delivery.pz_kor", error_detail=str(exc),
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        log_success(
+            user=request.user, action="delivery.pz_kor",
+            object_type="delivery", object_id=kor_doc.document_number or str(kor_doc.uuid),
+        )
         return Response(self.get_serializer(kor_doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="create-wz-correction")
@@ -1352,10 +1458,25 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 issue_date=ser.validated_data.get("issue_date"),
             )
         except ValidationError as exc:
+            log_error(
+                user=request.user, action="delivery.wz_kor",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
         except ValueError as exc:
+            log_error(
+                user=request.user, action="delivery.wz_kor", error_detail=str(exc),
+                object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+                request=request,
+            )
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        log_success(
+            user=request.user, action="delivery.wz_kor",
+            object_type="delivery", object_id=wz_kor.document_number or str(wz_kor.uuid),
+        )
         return Response(self.get_serializer(wz_kor).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="van-loading")
@@ -1386,6 +1507,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             issue_date=data.get("issue_date"),
             driver_name=(data.get("driver_name") or "").strip(),
             notes=(data.get("notes") or "").strip(),
+        )
+        log_success(
+            user=request.user, action="delivery.van_loading",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
         )
         out = DeliveryDocumentSerializer(doc, context={"request": request})
         return Response(out.data, status=status.HTTP_201_CREATED)
@@ -1453,6 +1578,10 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             if route.status != VanRoute.STATUS_CLOSED:
                 close_route(route)
 
+        log_success(
+            user=request.user, action="delivery.van_recon",
+            object_type="warehouse", object_id=str(van_wh.uuid),
+        )
         return Response(summary, status=status.HTTP_200_OK)
 
     def _wz_planned_lines(self, order: Order) -> list[tuple[OrderItem, Decimal]]:
@@ -1540,6 +1669,11 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             uuid=order_id,
         )
         if order.status not in (Order.STATUS_CONFIRMED, Order.STATUS_PARTIALLY_DELIVERED):
+            log_error(
+                user=request.user, action="delivery.wz_create", error_code="DELIVERY_WRONG_STATUS",
+                error_detail=f"Status zamówienia: {order.status}.",
+                object_type="order", object_id=str(order.uuid), request=request,
+            )
             return Response(
                 {"error": "Order must be confirmed or partially delivered to generate a delivery document."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1547,6 +1681,11 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
 
         lines = self._wz_planned_lines(order)
         if not lines:
+            log_error(
+                user=request.user, action="delivery.wz_create",
+                error_detail="Brak pozostałej ilości do wydania.",
+                object_type="order", object_id=str(order.uuid), request=request,
+            )
             return Response(
                 {"error": "No remaining quantity to deliver for this order."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1803,6 +1942,11 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 created.append(doc)
 
         serializer = self.get_serializer(created, many=True)
+        log_success(
+            user=request.user, action="delivery.wz_create",
+            object_type="delivery",
+            object_id=",".join((d.document_number or str(d.uuid)) for d in created)[:64],
+        )
         return Response(
             {"documents": serializer.data},
             status=status.HTTP_201_CREATED,

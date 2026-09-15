@@ -183,6 +183,7 @@ class CompanyRole(models.Model):
     can_access_routes = models.BooleanField(default=False, help_text="Trasy vana")
     can_manage_invoices = models.BooleanField(default=False, help_text="Faktury")
     can_manage_purchasing = models.BooleanField(default=False, help_text="Zakupy, dostawcy, dokumenty PZ")
+    can_manage_purchase_orders = models.BooleanField(default=False, help_text="Zamówienia do dostawców (ZD)")
     can_manage_production = models.BooleanField(default=False, help_text="Produkcja, receptury")
     can_view_reports = models.BooleanField(default=False, help_text="Raporty i analizy")
     can_access_ksef_inbox = models.BooleanField(default=False, help_text="Odebrane faktury KSeF (przychodzące od dostawców)")
@@ -209,7 +210,7 @@ PERMISSION_FLAGS = [
     "can_manage_products", "can_manage_warehouses", "can_manage_inventory",
     "can_manage_customers", "can_manage_orders",
     "can_manage_delivery", "can_access_routes", "can_manage_invoices",
-    "can_manage_purchasing", "can_manage_production", "can_view_reports",
+    "can_manage_purchasing", "can_manage_purchase_orders", "can_manage_production", "can_view_reports",
     "can_access_ksef_inbox", "can_manage_stock_moves", "can_manage_accounting",
 ]
 
@@ -321,6 +322,7 @@ class CompanyModule(models.Model):
         # --- Optional ---
         ("van_routes",      "Van Routes & Mobile Delivery"),
         ("purchasing",      "Purchasing & Suppliers (PZ)"),
+        ("purchase_orders", "Purchase Orders — ZD"),
         ("production",      "Own Production (PW/RW)"),
         ("ksef_inbox",      "KSeF Inbox (Received Invoices)"),
         # --- Integrations ---

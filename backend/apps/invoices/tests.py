@@ -23,7 +23,7 @@ from apps.invoices.services import (
 )
 from apps.orders.models import Order, OrderItem
 from apps.products.models import Product
-from apps.users.models import Company, CompanyMembership
+from apps.users.models import Company, CompanyMembership, CompanyModule
 
 
 class InvoiceModelTests(TestCase):
@@ -193,6 +193,7 @@ class InvoiceApiTests(TestCase):
         )
         self.user.current_company = co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=co, module="invoicing", defaults={"is_enabled": True})
         self.client.force_authenticate(user=self.user)
         response = self.client.get(reverse("invoice-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -225,6 +226,7 @@ class InvoiceViewSetAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="invoicing", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(name="Buyer", company=self.co)
         self.order = Order.objects.create(
             user=self.user,
@@ -329,6 +331,7 @@ class InvoiceActionsAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="invoicing", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(
             name="Buyer",
             company=self.co,
@@ -1415,6 +1418,7 @@ class InvoiceIssueLevel2GuardTests(TestCase):
         CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="invoicing", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(name="B", company=self.co, payment_terms=14)
         self.product = Product.objects.create(
             name="Widget L2",
@@ -1823,6 +1827,7 @@ class InvoiceCorrectionAPITests(TestCase):
         )
         self.user.current_company = self.company
         self.user.save()
+        CompanyModule.objects.get_or_create(company=self.company, module="invoicing", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(name="API Cust", company=self.company)
         self.product = Product.objects.create(
             company=self.company, name="Milk", unit="l", price_gross="2.00"
@@ -1916,6 +1921,7 @@ class InvoiceCorrectionFilterTests(TestCase):
         )
         self.user.current_company = self.company
         self.user.save()
+        CompanyModule.objects.get_or_create(company=self.company, module="invoicing", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(name="Cust", company=self.company)
         self.order = Order.objects.create(
             user=self.user,

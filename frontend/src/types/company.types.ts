@@ -14,6 +14,7 @@ export interface UserPermissions {
   can_access_routes: boolean
   can_manage_invoices: boolean
   can_manage_purchasing: boolean
+  can_manage_purchase_orders: boolean
   can_manage_production: boolean
   can_view_reports: boolean
   can_access_ksef_inbox: boolean
@@ -34,6 +35,7 @@ export const EMPTY_PERMISSIONS: UserPermissions = {
   can_access_routes: false,
   can_manage_invoices: false,
   can_manage_purchasing: false,
+  can_manage_purchase_orders: false,
   can_manage_production: false,
   can_view_reports: false,
   can_access_ksef_inbox: false,
@@ -61,6 +63,7 @@ export interface CompanyRoleDefinition {
   can_access_routes: boolean
   can_manage_invoices: boolean
   can_manage_purchasing: boolean
+  can_manage_purchase_orders: boolean
   can_manage_production: boolean
   can_view_reports: boolean
   can_access_ksef_inbox: boolean
@@ -98,6 +101,7 @@ export type ModuleName =
   | 'reporting'
   | 'cost_allocation'
   | 'purchasing'
+  | 'purchase_orders'
   | 'production'
   | 'van_routes'
 

@@ -227,6 +227,11 @@ class DeliveryDocumentSerializerTests(TestCase):
         )
         self.user.current_company = self.company
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.company, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.company, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.company, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.company, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.company, module="van_routes", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(name="C1", company=self.company)
         self.order = Order.objects.create(
             user=self.user,
@@ -294,6 +299,9 @@ class DeliveryDocumentAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="orders", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="warehouses", is_enabled=True)
         self.customer = Customer.objects.create(name="Buyer", company=self.co)
         self.order = Order.objects.create(
             user=self.user,
@@ -385,11 +393,21 @@ class DeliveryDocumentAPITests(TestCase):
         other = Company.objects.create(name="Not member")
         self.user.current_company = other
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
         self.client.force_authenticate(user=self.user)
         r = self.client.get(reverse("delivery-document-list"))
         self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
     def test_create_sets_company_user_and_document_number(self):
         self.client.force_authenticate(user=self.user)
@@ -2086,6 +2104,11 @@ class VanLoadingAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
         self.wh_main = Warehouse.objects.create(
             user=self.user,
             company=self.co,
@@ -2381,6 +2404,11 @@ class VanReconciliationAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
         self.wh_main = Warehouse.objects.create(
             user=self.user,
             company=self.co,
@@ -2821,10 +2849,11 @@ class PZFlowAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
-
-        # Enable delivery + purchasing modules
-        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
-        CompanyModule.objects.create(company=self.co, module="purchasing", is_enabled=True)
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
         self.wh = Warehouse.objects.create(
             user=self.user,
@@ -3119,6 +3148,11 @@ class GenerateForOrderVanRouteAutoTests(TestCase):
         CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
         self.customer = Customer.objects.create(name="CA", company=self.co)
         self.product = Product.objects.create(
             name="PA",
@@ -3218,6 +3252,11 @@ class FifoStockBatchDeductionOnWZTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
         self.wh = Warehouse.objects.create(
             user=self.user,
@@ -3391,6 +3430,11 @@ class ExpiryDateOnPZTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
         self.wh = Warehouse.objects.create(
             user=self.user,
@@ -3526,9 +3570,11 @@ class CreateRWAPITests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
-
-        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
-        CompanyModule.objects.create(company=self.co, module="warehouses", is_enabled=True)
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
         self.wh = Warehouse.objects.create(
             user=self.user,
@@ -3665,6 +3711,11 @@ class ZWReturnBatchTests(TestCase):
         CompanyMembership.objects.create(user=self.user, company=self.co, role="admin", is_active=True)
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
         self.wh = Warehouse.objects.create(
             user=self.user, company=self.co, code="MG", name="Main",
@@ -3936,6 +3987,9 @@ class WzKorAPITests(TestCase):
         )
         self.user.current_company = self.company
         self.user.save()
+        CompanyModule.objects.create(company=self.company, module="delivery", is_enabled=True)
+        CompanyModule.objects.create(company=self.company, module="orders", is_enabled=True)
+        CompanyModule.objects.create(company=self.company, module="warehouses", is_enabled=True)
         self.warehouse = Warehouse.objects.create(
             company=self.company, user=self.user, name="MG", code="MG", warehouse_type="main"
         )
@@ -4046,6 +4100,11 @@ class PZExtraFieldsTests(TestCase):
         )
         self.user.current_company = self.co
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="delivery", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="orders", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="warehouses", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="purchasing", defaults={"is_enabled": True})
+        CompanyModule.objects.get_or_create(company=self.co, module="van_routes", defaults={"is_enabled": True})
 
         self.wh = Warehouse.objects.create(
             user=self.user,
@@ -4061,9 +4120,6 @@ class PZExtraFieldsTests(TestCase):
             price_gross=Decimal("1.62"),
             track_batches=True,
         )
-        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
-        CompanyModule.objects.create(company=self.co, module="purchasing", is_enabled=True)
-        CompanyModule.objects.create(company=self.co, module="warehouses", is_enabled=True)
         self.client.force_authenticate(user=self.user)
 
     def _url_create_pz(self):

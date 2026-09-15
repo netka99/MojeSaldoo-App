@@ -29,6 +29,29 @@ function formatDate(iso: string) {
   });
 }
 
+function CopyErrorCode({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <button
+      type="button"
+      className="mt-2 rounded border border-red-200 bg-white px-2 py-1 text-xs text-red-800 hover:bg-red-100"
+      onClick={async (event) => {
+        event.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(code);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        } catch {
+          setCopied(false);
+        }
+      }}
+    >
+      {copied ? 'Skopiowano kod' : `Kod błędu: ${code}`}
+    </button>
+  );
+}
+
 function EntryRow({ entry }: { entry: ActivityEntry }) {
   const [expanded, setExpanded] = useState(false);
   const hasError = entry.status !== 'success' && entry.error_info;
@@ -44,7 +67,6 @@ function EntryRow({ entry }: { entry: ActivityEntry }) {
         onClick={() => hasError && setExpanded((v) => !v)}
         aria-expanded={hasError ? expanded : undefined}
       >
-        {/* Status dot */}
         <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', STATUS_DOT[entry.status])} aria-hidden />
 
         <div className="min-w-0 flex-1">
@@ -57,8 +79,10 @@ function EntryRow({ entry }: { entry: ActivityEntry }) {
               {STATUS_LABELS[entry.status]}
             </span>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(entry.created_at)}</p>
-          {/* Collapsed error hint */}
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {formatDate(entry.created_at)}
+            {entry.user_display ? ` · ${entry.user_display}` : ''}
+          </p>
           {!expanded && hasError && (
             <p className="mt-1 text-xs text-red-600">{entry.error_info!.title} — kliknij aby zobaczyć szczegóły</p>
           )}
@@ -69,19 +93,19 @@ function EntryRow({ entry }: { entry: ActivityEntry }) {
         )}
       </button>
 
-      {/* Expanded error panel */}
       {expanded && hasError && (
         <div className="mx-4 mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm">
           <p className="font-semibold text-red-800">{entry.error_info!.title}</p>
-          <p className="mt-1 text-red-700">{entry.error_info!.description}</p>
+          <p className="mt-1 whitespace-pre-wrap text-red-700">{entry.error_info!.description}</p>
           <p className="mt-2 text-red-700">
             <span className="font-medium">Co zrobić: </span>
             {entry.error_info!.action_hint}
           </p>
+          {entry.error_code && <CopyErrorCode code={entry.error_code} />}
           {entry.error_info!.action_url && (
             <Link
               to={entry.error_info!.action_url.replace('{object_id}', entry.object_id)}
-              className="mt-2 inline-block rounded bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
+              className="mt-2 ml-2 inline-block rounded bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
             >
               Przejdź do poprawki
             </Link>
@@ -113,7 +137,7 @@ export function ActivityPage() {
       <div>
         <h1 className="text-xl font-semibold">Historia aktywności</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Twoje ostatnie działania i napotkane błędy. Kliknij błąd, aby zobaczyć co zrobić.
+          Twoje ostatnie działania i napotkane błędy. Kliknij błąd, aby zobaczyć przyczynę i co zrobić — zanim skontaktujesz się z supportem.
         </p>
       </div>
 
@@ -145,7 +169,11 @@ export function ActivityPage() {
           <p className="p-6 text-center text-sm text-destructive">Nie udało się załadować historii.</p>
         )}
         {!isPending && !isError && data && data.results.length === 0 && (
-          <p className="p-6 text-center text-sm text-muted-foreground">Brak wpisów dla wybranych filtrów.</p>
+          <p className="p-6 text-center text-sm text-muted-foreground">
+            {statusFilter
+              ? 'Brak wpisów dla wybranych filtrów.'
+              : 'Brak wpisów. Gdy operacja się nie uda, znajdziesz tutaj przyczynę, kod błędu i podpowiedź co zrobić — zanim skontaktujesz się z supportem.'}
+          </p>
         )}
         {!isPending && !isError && data && data.results.map((entry) => (
           <EntryRow key={entry.id} entry={entry} />

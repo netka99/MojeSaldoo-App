@@ -16,7 +16,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.activity.log import log_activity
+from apps.activity.log import log_activity, log_error
 from apps.activity.models import ActivityLog
 from .filters import ProductFilter
 from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
@@ -245,6 +245,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         """
         file_obj = request.FILES.get("file")
         if not file_obj:
+            log_error(
+                user=request.user, action="product.import", error_code="IMPORT_ROW_ERRORS",
+                error_detail="Brak pliku.", request=request,
+            )
             return Response({"detail": "Brak pliku."}, status=status.HTTP_400_BAD_REQUEST)
 
         dry_run = request.data.get("dry_run", "true").lower() != "false"
@@ -286,6 +290,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                 else:
                     to_create.append(data)
 
+            if errors:
+                log_activity(
+                    user=request.user, action="product.import",
+                    status=ActivityLog.STATUS_WARNING, error_code="IMPORT_ROW_ERRORS",
+                    error_detail="; ".join(str(e) for e in errors[:20]),
+                    request=request,
+                )
             return Response({
                 "dry_run": True,
                 "to_create": len(to_create),
@@ -483,6 +494,80 @@ class ProductViewSet(viewsets.ModelViewSet):
             blockers.append("Produkt ma stan magazynowy > 0.")
         return blockers
 
+    @action(detail=True, methods=["get"], url_path="reservations")
+    def reservations(self, request, uuid=None):
+        """GET /api/products/{uuid}/reservations/ — which orders are blocking stock for this product.
+
+        Returns active RESERVATION movements grouped by order, with order details.
+        Only orders in statuses that hold a reservation are included.
+        """
+        from apps.orders.models import Order
+
+        product = self.get_object()
+        company = request.user.current_company
+
+        # Find active reservation movements for this product (negative quantity = stock blocked)
+        # Each RESERVATION movement has reference_type="order" and reference_id=order.uuid
+        reservation_movements = (
+            StockMovement.objects.filter(
+                company=company,
+                product=product,
+                movement_type=StockMovement.MovementType.RESERVATION,
+            )
+            .select_related("warehouse")
+            .values("reference_id", "warehouse__uuid", "warehouse__name", "quantity")
+        )
+
+        if not reservation_movements:
+            return Response([])
+
+        # Collect order UUIDs from reservation movements
+        order_uuid_to_qty: dict = {}
+        order_uuid_to_warehouse: dict = {}
+        for mov in reservation_movements:
+            oid = mov["reference_id"]
+            if oid is None:
+                continue
+            # quantity is negative for reservations; abs() = reserved qty
+            order_uuid_to_qty[oid] = order_uuid_to_qty.get(oid, 0) + abs(mov["quantity"])
+            order_uuid_to_warehouse[oid] = {
+                "warehouse_id": str(mov["warehouse__uuid"]),
+                "warehouse_name": mov["warehouse__name"],
+            }
+
+        if not order_uuid_to_qty:
+            return Response([])
+
+        # Fetch orders that are still in reservation-holding statuses
+        orders = Order.objects.filter(
+            company=company,
+            uuid__in=order_uuid_to_qty.keys(),
+            status__in=[
+                Order.STATUS_CONFIRMED,
+                Order.STATUS_IN_PREPARATION,
+                Order.STATUS_LOADED,
+                Order.STATUS_IN_DELIVERY,
+                Order.STATUS_PARTIALLY_DELIVERED,
+            ],
+        ).select_related("customer")
+
+        result = []
+        for order in orders:
+            oid = order.uuid
+            result.append({
+                "order_uuid": str(order.uuid),
+                "order_number": order.order_number,
+                "customer_name": order.customer.name if order.customer else None,
+                "status": order.status,
+                "delivery_date": order.delivery_date.isoformat() if order.delivery_date else None,
+                "quantity_reserved": str(order_uuid_to_qty.get(oid, 0)),
+                **order_uuid_to_warehouse.get(oid, {}),
+            })
+
+        # Sort by delivery_date ascending (soonest first)
+        result.sort(key=lambda x: x["delivery_date"] or "")
+        return Response(result)
+
     @action(detail=False, methods=["get"], url_path="stock-snapshot")
     def stock_snapshot(self, request):
         """Current stock in one warehouse (only lines with ``quantity_available`` > 0)."""
@@ -638,6 +723,10 @@ class WarehouseViewSet(viewsets.ModelViewSet):
         """
         file_obj = request.FILES.get("file")
         if not file_obj:
+            log_error(
+                user=request.user, action="warehouse.import", error_code="IMPORT_ROW_ERRORS",
+                error_detail="Brak pliku.", request=request,
+            )
             return Response({"detail": "Brak pliku."}, status=status.HTTP_400_BAD_REQUEST)
 
         dry_run = request.data.get("dry_run", "true").lower() != "false"

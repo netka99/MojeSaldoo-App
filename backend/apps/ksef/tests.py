@@ -9,7 +9,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.users.models import Company, CompanyMembership
+from apps.users.models import Company, CompanyMembership, CompanyModule
 
 from .models import ReceivedKSeFInvoice
 
@@ -52,6 +52,7 @@ class InvoiceOpexTagViewTests(TestCase):
         )
         self.user.current_company = self.company
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.create(company=self.company, module="ksef", is_enabled=True)
 
         self.invoice = _make_invoice(self.company)
         self.url = reverse("ksef-inbox-opex", kwargs={"ksef_reference_number": KSEF_REF})
@@ -132,6 +133,7 @@ class InvoiceOpexTagViewTests(TestCase):
         )
         user_b.current_company = company_b
         user_b.save(update_fields=["current_company"])
+        CompanyModule.objects.create(company=company_b, module="ksef", is_enabled=True)
 
         # user_b tries to tag self.invoice which belongs to self.company (not company_b)
         self.client.force_authenticate(user=user_b)
@@ -185,6 +187,7 @@ class PaperScanViewTests(TestCase):
         )
         self.user.current_company = self.company
         self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.create(company=self.company, module="ksef", is_enabled=True)
         self.url = reverse("ksef-scan-paper")
 
     def _minimal_png(self):

@@ -191,6 +191,9 @@ const SalesReportEditPage = lazy(() =>
 const PurchaseDocumentsPage = lazy(() =>
   import('./pages/PurchaseDocumentsPage').then((m) => ({ default: m.PurchaseDocumentsPage })),
 );
+const PurchaseOrdersPage = lazy(() =>
+  import('./pages/PurchaseOrdersPage'),
+);
 const PurchaseDocumentCreatePage = lazy(() =>
   import('./pages/PurchaseDocumentCreatePage').then((m) => ({ default: m.PurchaseDocumentCreatePage })),
 );
@@ -635,6 +638,7 @@ function App() {
                 <Route path="/purchase-documents/new" element={<PurchaseDocumentCreatePage />} />
                 <Route path="/purchase-documents/:id/edit" element={<PurchaseDocumentCreatePage />} />
                 <Route path="/purchase-documents/:id/create-pz" element={<PurchaseDocCreatePzPage />} />
+                <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
                 <Route path="/activity" element={<ActivityPage />} />
                 <Route path="/settings/company" element={<CompanySettingsPage />} />
                 <Route path="/settings/company-data" element={<CompanyDataPage />} />

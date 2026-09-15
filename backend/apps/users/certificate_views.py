@@ -14,6 +14,7 @@ import logging
 
 from .ksef_crypto import encrypt_private_key_pem, parse_certificate_and_key
 from .models import Company, CompanyMembership, KSeFCertificate, User
+from apps.activity.log import log_error, log_success
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,10 @@ class KSeFCertificateUploadView(APIView):
         cert_file = request.FILES.get("certificate_file")
         key_file = request.FILES.get("key_file")
         if not cert_file or not key_file:
+            log_error(
+                user=request.user, action="company.certificate", error_code="CERTIFICATE_INVALID",
+                error_detail="Brak pliku certyfikatu lub klucza.", request=request,
+            )
             return Response(
                 {"detail": "Fields certificate_file and key_file are required (multipart)."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -141,6 +146,10 @@ class KSeFCertificateUploadView(APIView):
             key_bytes = key_file.read()
             parsed = parse_certificate_and_key(cert_bytes, key_bytes)
         except ValueError as e:
+            log_error(
+                user=request.user, action="company.certificate", error_code="CERTIFICATE_INVALID",
+                error_detail=str(e), request=request,
+            )
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         enc_key = encrypt_private_key_pem(parsed.private_key_pem)
         uploader = request.user if isinstance(request.user, User) else None
@@ -162,6 +171,10 @@ class KSeFCertificateUploadView(APIView):
         # the certificate is read directly from DB at authentication time.
 
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        log_success(
+            user=request.user, action="company.certificate",
+            object_type="company", object_id=str(company.uuid),
+        )
         return Response(_public_metadata_row(row), status=status_code)
 
     def delete(self, request, company_id):

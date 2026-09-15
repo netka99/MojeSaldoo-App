@@ -9,6 +9,46 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def log_success(
+    *,
+    user,
+    action: str,
+    object_type: str = "",
+    object_id: str = "",
+    request=None,
+) -> None:
+    log_activity(
+        user=user,
+        action=action,
+        status="success",
+        object_type=object_type,
+        object_id=object_id,
+        request=request,
+    )
+
+
+def log_error(
+    *,
+    user,
+    action: str,
+    error_code: str = "",
+    error_detail: str = "",
+    object_type: str = "",
+    object_id: str = "",
+    request=None,
+) -> None:
+    log_activity(
+        user=user,
+        action=action,
+        status="error",
+        error_code=error_code,
+        error_detail=error_detail,
+        object_type=object_type,
+        object_id=object_id,
+        request=request,
+    )
+
+
 def log_activity(
     *,
     user,

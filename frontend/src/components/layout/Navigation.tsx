@@ -354,12 +354,15 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 </div>
               )}
 
-              {purchasingEnabled && (
+              {(purchasingEnabled || ksefEnabled) && (
                 <div className="space-y-1">
                   <NavGroupTitle>Zakupy</NavGroupTitle>
                   <div className="space-y-0.5">
-                    <AppNavItemLink to="/suppliers">Dostawcy</AppNavItemLink>
-                    <AppNavItemLink to="/delivery/new-pz">Nowe PZ</AppNavItemLink>
+                    {purchasingEnabled && <AppNavItemLink to="/suppliers">Dostawcy</AppNavItemLink>}
+                    {purchasingEnabled && <AppNavItemLink to="/delivery/new-pz">Nowe PZ</AppNavItemLink>}
+                    {ksefEnabled && <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>}
+                    {ksefEnabled && <AppNavItemLink to="/purchase-documents">Dokumenty zakupowe</AppNavItemLink>}
+                    {ksefEnabled && <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>}
                   </div>
                 </div>
               )}
@@ -370,16 +373,6 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                   <div className="space-y-0.5">
                     <AppNavItemLink to="/production/orders">Zlecenia produkcji</AppNavItemLink>
                     <AppNavItemLink to="/production/recipes">Receptury</AppNavItemLink>
-                  </div>
-                </div>
-              )}
-
-              {ksefEnabled && (
-                <div className="space-y-1">
-                  <NavGroupTitle>E-Faktury (KSeF)</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>
-                    <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>
                   </div>
                 </div>
               )}

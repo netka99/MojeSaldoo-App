@@ -13,6 +13,7 @@ from django.utils import timezone
 from apps.fixed_costs.models import FixedCost
 from apps.invoices.models import Invoice
 from apps.ksef.models import ReceivedKSeFInvoice
+from apps.purchase_documents.models import PurchaseDocument
 
 from apps.sales_reports.models import DailySalesReport
 from .models import OPEX_CATEGORY_CHOICES, CompanyTaxConfig, DailyB2CRevenue, QuickExpense
@@ -133,8 +134,9 @@ def compute_history(company) -> list:
 
             costs_ksef = _get_costs_ksef(company, period_start, period_end)
             costs_quick = _get_costs_quick(company, period_start, period_end)
+            costs_pd = _get_costs_purchase_documents(company, period_start, period_end)
             costs_fixed = _get_costs_fixed(company, period_end)
-            costs_total = costs_ksef + costs_quick + costs_fixed
+            costs_total = costs_ksef + costs_quick + costs_pd + costs_fixed
 
             zus_social = _calc_zus_social(config)
             zus_health = _calc_health_contribution(config, _ZERO)
@@ -616,6 +618,7 @@ def _build_month(
     # --- Costs ---
     costs_ksef = _get_costs_ksef(company, period_start, period_end)
     costs_quick = _get_costs_quick(company, period_start, period_end)
+    costs_pd = _get_costs_purchase_documents(company, period_start, period_end)
     costs_fixed = _get_costs_fixed(company, period_end)
 
     # Cost summaries for UI
@@ -670,6 +673,7 @@ def _build_month(
         + b2c_gross
         - costs_ksef
         - costs_quick
+        - costs_pd
         - costs_fixed
         - vat_to_pay
         - zus_social
@@ -849,6 +853,7 @@ def _build_month(
         "revenue_outstanding": float(revenue_outstanding.quantize(_CENT, rounding=ROUND_HALF_UP)),
         "b2c_revenue": float(b2c_gross.quantize(_CENT, rounding=ROUND_HALF_UP)),
         "costs_ksef": float(costs_ksef.quantize(_CENT, rounding=ROUND_HALF_UP)),
+        "costs_pd": float(costs_pd.quantize(_CENT, rounding=ROUND_HALF_UP)),
         "costs_quick": float(costs_quick.quantize(_CENT, rounding=ROUND_HALF_UP)),
         "costs_fixed": float(costs_fixed.quantize(_CENT, rounding=ROUND_HALF_UP)),
         "vat_output": float(vat_output.quantize(_CENT, rounding=ROUND_HALF_UP)),
@@ -1246,6 +1251,21 @@ def _get_costs_quick(company, period_start, period_end) -> Decimal:
     return result or _ZERO
 
 
+def _get_costs_purchase_documents(company, period_start, period_end) -> Decimal:
+    """OPEX from manually entered purchase documents (FZ, PAR_VAT, PAR).
+
+    All registered/matched documents count as costs — the user entered them
+    deliberately, so no opex_category requirement. Drafts are excluded.
+    """
+    result = PurchaseDocument.objects.filter(
+        company=company,
+        issue_date__gte=period_start,
+        issue_date__lte=period_end,
+        status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+    ).aggregate(t=Sum("total_gross"))["t"]
+    return result or _ZERO
+
+
 def _get_costs_fixed(company, period_end: datetime.date) -> Decimal:
     """Sum of active fixed costs that started on or before period_end."""
     result = FixedCost.objects.filter(
@@ -1278,8 +1298,16 @@ def _get_net_costs(company, config: CompanyTaxConfig, period_start, period_end) 
         else:
             quick_net += exp.amount
 
+    # Purchase documents (FZ/PAR_VAT/PAR): use total_net directly; all count regardless of category
+    pd_net = PurchaseDocument.objects.filter(
+        company=company,
+        issue_date__gte=period_start,
+        issue_date__lte=period_end,
+        status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+    ).aggregate(t=Sum("total_net"))["t"] or _ZERO
+
     fixed = _get_costs_fixed(company, period_end)
-    return ksef_net + quick_net + fixed
+    return ksef_net + quick_net + pd_net + fixed
 
 
 # ---------------------------------------------------------------------------
@@ -1371,7 +1399,18 @@ def _get_vat_naliczony(
     ):
         quick_vat += exp.amount * Decimal("23") / Decimal("123")
 
-    return ksef_vat + quick_vat
+    # Purchase documents (FZ/PAR_VAT): use stored total_vat directly; all count
+    pd_vat = PurchaseDocument.objects.filter(
+        company=company,
+        issue_date__gte=period_start,
+        issue_date__lte=period_end,
+        total_vat__isnull=False,
+        status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+    ).exclude(
+        doc_type=PurchaseDocument.DOC_TYPE_PAR,  # zwykłe paragony bez VAT
+    ).aggregate(t=Sum("total_vat"))["t"] or _ZERO
+
+    return ksef_vat + quick_vat + pd_vat
 
 
 def _get_vat_naliczony_breakdown(company, period_start, period_end) -> list:

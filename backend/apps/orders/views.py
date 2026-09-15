@@ -12,9 +12,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.products.models import ProductStock, StockMovement, Warehouse
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember, company_has_module
+from apps.users.permissions import HasCompanyPermission, IsCompanyMember, ModuleRequired, company_has_module
 from apps.users.tenant import filter_queryset_for_current_company
-from apps.activity.log import log_activity
+from apps.activity.log import log_activity, log_error, log_success
+from apps.activity.format import flatten_error_value
 from apps.activity.models import ActivityLog
 
 from .filters import OrderFilter
@@ -42,8 +43,9 @@ class OrderViewSet(viewsets.ModelViewSet):
     lookup_field = "uuid"
 
     serializer_class = OrderSerializer
+    module_required = "orders"
     required_permission = 'can_manage_orders'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+    permission_classes = [IsAuthenticated, IsCompanyMember, ModuleRequired, HasCompanyPermission]
     filterset_class = OrderFilter
     filter_backends = [
         DjangoFilterBackend,
@@ -176,6 +178,12 @@ class OrderViewSet(viewsets.ModelViewSet):
                             }
                         )
                 if shortfalls and not main_wh.allow_negative_stock:
+                    log_error(
+                        user=request.user, action="order.confirm",
+                        error_code="ORDER_STOCK_SHORTFALL",
+                        error_detail=flatten_error_value({"stock": shortfalls}),
+                        object_type="order", object_id=str(order.uuid), request=request,
+                    )
                     raise ValidationError({"stock": shortfalls})
 
             movement_user = order.user or request.user
@@ -223,6 +231,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         """POST /{id}/cancel/ — cancel (only when draft or confirmed)."""
         order = self.get_object()
         if order.status not in (Order.STATUS_DRAFT, Order.STATUS_CONFIRMED):
+            log_error(
+                user=request.user, action="order.cancel", error_code="DELIVERY_WRONG_STATUS",
+                error_detail=f"Status zamówienia: {order.status}.",
+                object_type="order", object_id=str(order.uuid), request=request,
+            )
             return Response(
                 {
                     "error": f"Zamówienie w statusie '{order.status}' nie może być anulowane "
@@ -353,6 +366,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.status = Order.STATUS_CANCELLED
             order.save()
 
+        log_success(
+            user=request.user, action="order.cancel",
+            object_type="order", object_id=str(order.uuid),
+        )
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"], url_path="changelog")

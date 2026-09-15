@@ -30,7 +30,7 @@ export function RevenueBreakdownBar({ month }: RevenueBreakdownBarProps) {
 
   if (totalRevenue <= 0) return null;
 
-  const totalCosts = month.costs_ksef + month.costs_quick + month.costs_fixed;
+  const totalCosts = month.costs_ksef + (month.costs_pd ?? 0) + month.costs_quick + month.costs_fixed;
   const totalTaxes = month.zus_monthly + month.vat_to_pay + month.pit_estimate;
   const totalOutgoings = totalCosts + totalTaxes;
   const isLoss = month.really_yours_estimate < 0;

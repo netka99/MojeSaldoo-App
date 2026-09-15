@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from apps.invoices.models import Invoice
-from apps.users.models import Company
+from apps.users.models import Company, CompanyModule
 
 from .jpk_ewp_generator import CATEGORY_XML_FIELD, generate_jpk_ewp
 
@@ -131,6 +131,7 @@ class JpkEwpEndpointTests(TestCase):
             company=self.company,
             role="admin",
         )
+        CompanyModule.objects.create(company=self.company, module="reporting", is_enabled=True)
         self.client.force_login(self.user)
 
     def test_returns_xml_for_ryczalt_company(self):

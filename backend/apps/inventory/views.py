@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from apps.products.models import ProductStock
 from apps.users.models import Company
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
+from apps.activity.log import log_error, log_success
 
 from .models import InventoryCount, InventoryCountItem
 from .serializers import (
@@ -91,12 +92,22 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         count = self.get_object()
 
         if count.status != InventoryCount.STATUS_DRAFT:
+            log_error(
+                user=request.user, action="inventory.complete", error_code="DELIVERY_WRONG_STATUS",
+                error_detail=f"Status inwentaryzacji: {count.status}.",
+                object_type="inventory", object_id=count.document_number or str(count.uuid),
+                request=request,
+            )
             raise ValidationError(
                 {"detail": f"Cannot complete an inventory count with status '{count.status}'."}
             )
 
         complete_inventory_count(count, request.user)
         count.refresh_from_db()
+        log_success(
+            user=request.user, action="inventory.complete",
+            object_type="inventory", object_id=count.document_number or str(count.uuid),
+        )
         serializer = InventoryCountSerializer(count, context={"request": request})
         return Response(serializer.data)
 
@@ -106,6 +117,12 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         count = self.get_object()
 
         if count.status != InventoryCount.STATUS_DRAFT:
+            log_error(
+                user=request.user, action="inventory.cancel", error_code="DELIVERY_WRONG_STATUS",
+                error_detail=f"Status inwentaryzacji: {count.status}.",
+                object_type="inventory", object_id=count.document_number or str(count.uuid),
+                request=request,
+            )
             raise ValidationError(
                 {"detail": f"Only draft inventory counts can be cancelled (current status: '{count.status}')."}
             )
@@ -113,6 +130,10 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         count.status = InventoryCount.STATUS_CANCELLED
         count.save(update_fields=["status", "updated_at"])
         count.refresh_from_db()
+        log_success(
+            user=request.user, action="inventory.cancel",
+            object_type="inventory", object_id=count.document_number or str(count.uuid),
+        )
         serializer = InventoryCountSerializer(count, context={"request": request})
         return Response(serializer.data)
 

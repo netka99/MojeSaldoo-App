@@ -286,6 +286,7 @@ export const Home: React.FC = () => {
     ksef_inbox: useModuleGuard('ksef_inbox'),
     cost_allocation: useModuleGuard('cost_allocation'),
     purchasing: useModuleGuard('purchasing'),
+    purchase_orders: useModuleGuard('purchase_orders'),
     production: useModuleGuard('production'),
     van_routes: useModuleGuard('van_routes'),
   };

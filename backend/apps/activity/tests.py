@@ -5,13 +5,15 @@ from apps.users.models import Company, CompanyMembership
 from .models import ActivityLog
 from .log import log_activity
 from .error_codes import get_error_info
+from .format import flatten_error_value
+from .middleware import _match_action
 
 User = get_user_model()
 
 
 def _make_user_with_company(username="testuser"):
     company = Company.objects.create(name="Test Firma", is_active=True)
-    user = User.objects.create_user(username=username, password="pass")
+    user = User.objects.create_user(username=username, email=f"{username}@test.local", password="pass")
     CompanyMembership.objects.create(user=user, company=company, role="admin", is_active=True)
     user.current_company = company
     user.save(update_fields=["current_company"])
@@ -74,6 +76,21 @@ class ErrorCodesTests(TestCase):
         info = get_error_info("TOTALLY_UNKNOWN")
         self.assertEqual(info["title"], "Nieznany błąd")
 
+    def test_unknown_code_uses_error_detail(self):
+        info = get_error_info("TOTALLY_UNKNOWN", "FA-3: brak NIP")
+        self.assertEqual(info["title"], "Nieznany błąd")
+        self.assertIn("FA-3: brak NIP", info["description"])
+
+    def test_known_code_appends_error_detail(self):
+        info = get_error_info("KSEF_VALIDATION_FAILED", "Pole P_1 jest puste")
+        self.assertEqual(info["title"], "Faktura nie przeszła walidacji FA-3")
+        self.assertIn("Pole P_1 jest puste", info["description"])
+
+    def test_empty_code_uses_operation_title(self):
+        info = get_error_info("", "HTTP 400")
+        self.assertEqual(info["title"], "Błąd operacji")
+        self.assertEqual(info["description"], "HTTP 400")
+
 
 class ActivityLogViewTests(TestCase):
     def setUp(self):
@@ -112,8 +129,64 @@ class ActivityLogViewTests(TestCase):
         self.assertIsNotNone(result["error_info"])
         self.assertEqual(result["error_info"]["title"], "Faktura odrzucona przez KSeF")
 
+    def test_error_info_includes_detail_and_label(self):
+        log_activity(
+            user=self.user,
+            action="delivery.complete",
+            status=ActivityLog.STATUS_ERROR,
+            error_code="STOCK_SHORTFALL",
+            error_detail="Bułka: brakuje 20",
+            object_id="WZ/1/2026",
+        )
+        resp = self.client.get("/api/activity/", **self._auth_headers())
+        result = resp.json()["results"][0]
+        self.assertEqual(result["action_label"], "Zakończenie dokumentu WZ/PZ")
+        self.assertIn("Bułka: brakuje 20", result["error_info"]["description"])
+        self.assertTrue(result["user_display"])
+
+    def test_validation_failed_is_not_unknown(self):
+        log_activity(
+            user=self.user,
+            action="ksef.send",
+            status=ActivityLog.STATUS_ERROR,
+            error_code="KSEF_VALIDATION_FAILED",
+            error_detail="Brak P_1",
+        )
+        result = self.client.get("/api/activity/", **self._auth_headers()).json()["results"][0]
+        self.assertEqual(result["error_info"]["title"], "Faktura nie przeszła walidacji FA-3")
+        self.assertIn("Brak P_1", result["error_info"]["description"])
+
     def test_other_company_logs_not_visible(self):
         other_user, _ = _make_user_with_company("otheruser")
         log_activity(user=other_user, action="ksef.send", status=ActivityLog.STATUS_ERROR)
         resp = self.client.get("/api/activity/", **self._auth_headers())
         self.assertEqual(resp.json()["total"], 0)
+
+
+class FlattenAndUrlTests(TestCase):
+    def test_flattens_stock_shortfall(self):
+        text = flatten_error_value({
+            "stock": [
+                {
+                    "product_name": "Bułka",
+                    "short_by": "20",
+                    "quantity_available": "0",
+                    "quantity_requested": "20",
+                }
+            ]
+        })
+        self.assertIn("Bułka", text)
+        self.assertIn("brakuje 20", text)
+
+    def test_match_delivery_complete(self):
+        action, label = _match_action("/api/delivery/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/complete/")
+        self.assertEqual(action, "delivery.complete")
+        self.assertIn("Zakończenie", label)
+
+    def test_match_cash_flow_not_api(self):
+        action, _ = _match_action("/api/cash-flow/quick-expenses/")
+        self.assertEqual(action, "cashflow.expense")
+
+    def test_match_purchase_documents(self):
+        action, _ = _match_action("/api/purchase-documents/")
+        self.assertEqual(action, "purchase_document")

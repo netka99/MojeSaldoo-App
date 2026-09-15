@@ -22,7 +22,7 @@ export function BalanceDonut({ today, month }: BalanceDonutProps) {
 
   // ── Revenue breakdown donut ─────────────────────────────────────────────
   const totalRevenue = month.revenue_paid + month.b2c_revenue;
-  const costsOp = month.costs_ksef + month.costs_quick + month.costs_fixed;
+  const costsOp = month.costs_ksef + (month.costs_pd ?? 0) + month.costs_quick + month.costs_fixed;
   const costsTax = month.vat_to_pay + month.zus_social + month.zus_health + month.pit_estimate;
   const yoursRaw = month.really_yours_estimate;
   const yoursPositive = Math.max(yoursRaw, 0);
@@ -160,9 +160,10 @@ export function BalanceDonut({ today, month }: BalanceDonutProps) {
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Struktura kosztów
           </h3>
-          <CostBar label="Faktury zakupowe (KSeF)" amount={month.costs_ksef} total={costsOp} color="#f97316" />
-          <CostBar label="Koszty gotówkowe"          amount={month.costs_quick} total={costsOp} color="#fb923c" />
-          <CostBar label="Koszty stałe"              amount={month.costs_fixed} total={costsOp} color="#fdba74" />
+          <CostBar label="Faktury z KSeF"       amount={month.costs_ksef}        total={costsOp} color="#f97316" />
+          <CostBar label="Faktury zakupowe (ręczne)" amount={month.costs_pd ?? 0} total={costsOp} color="#ef4444" />
+          <CostBar label="Koszty gotówkowe"    amount={month.costs_quick}       total={costsOp} color="#fb923c" />
+          <CostBar label="Koszty stałe"        amount={month.costs_fixed}       total={costsOp} color="#fdba74" />
         </div>
       )}
 
