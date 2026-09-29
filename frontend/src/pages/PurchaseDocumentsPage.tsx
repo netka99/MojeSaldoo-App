@@ -36,6 +36,7 @@ import {
 } from '@/query/use-purchase-documents';
 import { useAllPzQuery } from '@/query/use-delivery';
 import { useOpexCategoriesQuery, useCreateOpexCategoryMutation } from '@/query/use-cashflow';
+import { cashFlowService } from '@/services/cashflow.service';
 import { OpexCategoryManager } from '@/components/features/cashflow/OpexCategoryManager';
 import type { PurchaseDocument, PurchaseDocDocType } from '@/services/purchase-document.service';
 import type { ReceivedInvoiceMeta } from '@/services/ksef.service';
@@ -961,13 +962,14 @@ function UnifiedKsefPzCell({ inv }: { inv: ReceivedInvoiceMeta }) {
   );
 }
 
-function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolean; onOpenCatManager: () => void }) {
+function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksefEnabled: boolean; onOpenCatManager: () => void; highlightedId?: string | null }) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   const deleteMutation = useDeletePurchaseDocumentMutation();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState(monthAgoIso());
   const [dateTo, setDateTo] = useState(todayIso());
+  const [exportPending, setExportPending] = useState(false);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'' | UnifiedSource>('');
   const [statusFilter, setStatusFilter] = useState<'' | 'paid' | 'unpaid'>('');
@@ -978,6 +980,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolea
   const [matchPanelKey, setMatchPanelKey] = useState<string | null>(null);
   const [downloadingKsef, setDownloadingKsef] = useState<string | null>(null);
   const [ordering, setOrdering] = useState('-issue_date');
+  const [dateField, setDateField] = useState<'issue_date' | 'created_at'>('issue_date');
 
   async function handleKsefPreview(ksefNumber: string) {
     try {
@@ -1034,14 +1037,23 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolea
   });
 
   const pdQuery = useQuery({
-    queryKey: ['purchaseDocs', 'unified', { companyId, dateFrom, dateTo }],
+    queryKey: ['purchaseDocs', 'unified', { companyId, dateFrom: highlightedId ? '' : dateFrom, dateTo: highlightedId ? '' : dateTo, dateField }],
     queryFn: () => purchaseDocumentService.fetchList({
       page_size: 100,
-      ...(dateFrom ? { issue_date__gte: dateFrom } : {}),
-      ...(dateTo   ? { issue_date__lte: dateTo }   : {}),
+      ...(!highlightedId && dateFrom ? (dateField === 'created_at' ? { created_at__gte: dateFrom } : { issue_date__gte: dateFrom }) : {}),
+      ...(!highlightedId && dateTo   ? (dateField === 'created_at' ? { created_at__lte: dateTo }   : { issue_date__lte: dateTo })   : {}),
     }),
     enabled: Boolean(companyId),
   });
+
+  // Scroll to and highlight newly created document (wait for data to load)
+  useEffect(() => {
+    if (!highlightedId || pdQuery.isPending) return;
+    const el = document.querySelector(`[data-doc-id="${highlightedId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightedId, pdQuery.isPending]);
 
   const ksefDocs: UnifiedDoc[] = ksefEnabled ? (ksefQuery.data?.invoices ?? []).map(normalizeKseF) : [];
   const purchaseDocs: UnifiedDoc[] = (pdQuery.data?.results ?? []).map(normalizePurchaseDoc);
@@ -1087,6 +1099,25 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolea
       {/* Filter bar */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm px-5 py-4">
         <div className="flex flex-wrap items-center gap-3">
+          {/* Date field toggle */}
+          <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5 text-[12px]">
+            <button
+              type="button"
+              onClick={() => setDateField('issue_date')}
+              className={cn('rounded-md px-2.5 py-1 transition-colors', dateField === 'issue_date' ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}
+              title="Filtruj po dacie wystawienia dokumentu"
+            >
+              Wystawienia
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateField('created_at')}
+              className={cn('rounded-md px-2.5 py-1 transition-colors', dateField === 'created_at' ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}
+              title="Filtruj po dacie wprowadzenia do systemu"
+            >
+              Wpływu
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <label className="text-[13px] font-medium text-gray-600">Od</label>
             <input
@@ -1105,15 +1136,25 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolea
               className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
             />
           </div>
-          {(dateFrom || dateTo) && (
-            <button
-              type="button"
-              onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
-            >
-              Wyczyść daty
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={exportPending}
+            onClick={async () => {
+              setExportPending(true);
+              try {
+                await cashFlowService.downloadKpirCsv({ date_from: dateFrom, date_to: dateTo });
+              } finally {
+                setExportPending(false);
+              }
+            }}
+            className="ml-auto flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-600 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+            title="Pobierz CSV z kosztami dla księgowej (format KPiR)"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5 text-gray-400">
+              <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd"/>
+            </svg>
+            {exportPending ? 'Generuję…' : 'Eksport dla księgowej'}
+          </button>
         </div>
         <div className="mt-3 relative">
           <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
@@ -1224,7 +1265,15 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolea
                 )}
                 {unified.map((doc) => (
                   <React.Fragment key={doc._key}>
-                  <tr className="group transition-colors hover:bg-gray-50/60">
+                  <tr
+                    data-doc-id={doc.purchaseDoc?.id ?? ''}
+                    className={cn(
+                      'group transition-colors hover:bg-gray-50/60',
+                      doc.purchaseDoc?.id && doc.purchaseDoc.id === highlightedId
+                        ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/40'
+                        : '',
+                    )}
+                  >
                     {/* Źródło */}
                     <td className="px-3 py-3.5 whitespace-nowrap">
                       <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-semibold', SOURCE_BADGE[doc.source])}>
@@ -1301,7 +1350,15 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager }: { ksefEnabled: boolea
                           •••
                         </button>
                         {menuOpenKey === doc._key && (
-                          <div className="absolute right-0 top-8 z-20 min-w-[140px] rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+                          <div className="absolute right-0 top-8 z-20 min-w-[160px] rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+                            {doc.purchaseDoc?.created_at && (
+                              <div className="px-3 py-2 border-b border-gray-100">
+                                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Data wpływu</p>
+                                <p className="text-[12px] font-medium text-gray-700">
+                                  {new Date(doc.purchaseDoc.created_at).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                </p>
+                              </div>
+                            )}
                             {doc.purchaseDoc && (
                               <>
                                 <Link
@@ -2197,6 +2254,9 @@ export function PurchaseDocumentsPage() {
     TAB_DEFS.some(t => t.key === initialTab) ? initialTab : 'all'
   );
   const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [newDocMenuOpen, setNewDocMenuOpen] = useState(false);
+  const highlightedId = searchParams.get('newDoc') ?? null;
   const { data: ksefSession } = useKsefSessionQuery();
 
   return (
@@ -2213,37 +2273,83 @@ export function PurchaseDocumentsPage() {
             <p className="mt-0.5 text-[13px] text-gray-500">Faktury i paragony — z KSeF i spoza KSeF</p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCatManagerOpen(true)}
-              className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-[14px] font-medium text-gray-500 shadow-sm transition-all hover:bg-gray-50 hover:text-gray-700"
-            >
-              Kategorie kosztów
-            </button>
-            <Link
-              to="/ksef/scan-paper"
-              className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-4 py-2 text-[14px] font-medium text-gray-700 shadow-sm transition-all hover:bg-gray-50"
-            >
-              Skanuj
-            </Link>
+            {/* ⋯ More menu */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMoreMenuOpen((v) => !v)}
+                className="flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-2 text-[14px] font-medium text-gray-500 shadow-sm hover:bg-gray-50"
+                aria-label="Więcej opcji"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                  <circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/>
+                </svg>
+              </button>
+              {moreMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setMoreMenuOpen(false)} />
+                  <div className="absolute right-0 top-10 z-20 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => { setCatManagerOpen(true); setMoreMenuOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-2.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                    >
+                      Kategorie kosztów
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             {ksefEnabled && !ksefSession?.active && (
               <Link
                 to="/settings/certificate"
-                className="flex items-center gap-1.5 rounded-full bg-[#5856D6] px-4 py-2 text-[14px] font-semibold text-white shadow-sm transition-all hover:bg-[#4744C4] active:scale-95"
+                className="flex items-center gap-1.5 rounded-full border border-[#5856D6] bg-white px-4 py-2 text-[14px] font-semibold text-[#5856D6] shadow-sm transition-all hover:bg-[#5856D6]/5"
               >
                 🔑 Zaloguj się do KSeF
               </Link>
             )}
             {canInvoices && (
-              <Link
-                to="/purchase-documents/new"
-                className="flex items-center gap-1.5 rounded-full bg-[#5856D6] px-4 py-2 text-[14px] font-semibold text-white shadow-sm transition-all hover:bg-[#4744C4] active:scale-95"
-              >
-                <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                  <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
-                </svg>
-                Nowy dokument
-              </Link>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNewDocMenuOpen((v) => !v)}
+                  className="flex items-center gap-1.5 rounded-full bg-[#5856D6] px-4 py-2 text-[14px] font-semibold text-white shadow-sm transition-all hover:bg-[#4744C4] active:scale-95"
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                  </svg>
+                  Nowy dokument
+                </button>
+                {newDocMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setNewDocMenuOpen(false)} />
+                    <div className="absolute right-0 top-11 z-20 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                      <Link
+                        to="/ksef/scan-paper"
+                        onClick={() => setNewDocMenuOpen(false)}
+                        className="flex items-center gap-3 px-4 py-2.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                      >
+                        <span className="text-base">📷</span>
+                        <div>
+                          <p className="font-medium">Skanuj dokument</p>
+                          <p className="text-[11px] text-gray-400">Zrób zdjęcie, OCR wypełni dane</p>
+                        </div>
+                      </Link>
+                      <Link
+                        to="/purchase-documents/new"
+                        onClick={() => setNewDocMenuOpen(false)}
+                        className="flex items-center gap-3 px-4 py-2.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                      >
+                        <span className="text-base">✏️</span>
+                        <div>
+                          <p className="font-medium">Wpisz ręcznie</p>
+                          <p className="text-[11px] text-gray-400">Formularz, wszystkie pola</p>
+                        </div>
+                      </Link>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -2271,7 +2377,7 @@ export function PurchaseDocumentsPage() {
 
 
         {/* Wszystkie — all sources merged */}
-        {activeTab === 'all' && <UnifiedDocList ksefEnabled={ksefEnabled} onOpenCatManager={() => setCatManagerOpen(true)} />}
+        {activeTab === 'all' && <UnifiedDocList ksefEnabled={ksefEnabled} onOpenCatManager={() => setCatManagerOpen(true)} highlightedId={highlightedId} />}
 
         {/* Z KSeF — full KSeF inbox with all original features */}
         {activeTab === 'ksef' && ksefEnabled && <KSeFInboxContent onOpenCatManager={() => setCatManagerOpen(true)} />}

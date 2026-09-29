@@ -27,7 +27,7 @@ RYCZALT_SERVICE_CATEGORIES = {
 
 TILE_MODULE_MAP: dict[str, list[str]] = {
     "purchasing": ["purchasing", "ksef_inbox"],
-    "production": ["production", "warehouses", "products"],
+    "production": ["production", "products"],
     "warehouses": ["warehouses", "products"],
     "cost_allocation": ["cost_allocation", "ksef_inbox"],
 }
@@ -132,6 +132,10 @@ class OnboardingCompleteView(APIView):
         company.ryczalt_category = ryczalt_category if taxation_form == Company.TAXATION_RYCZALT else None
         company.onboarding_completed = True
         company.save(update_fields=["company_type", "taxation_form", "ryczalt_category", "onboarding_completed"])
+
+        from apps.products.default_warehouse import ensure_silent_default_warehouse
+
+        ensure_silent_default_warehouse(company, request.user)
 
         modules_response = {
             row.module: row.is_enabled

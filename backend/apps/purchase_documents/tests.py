@@ -401,3 +401,155 @@ class PurchaseDocCreatePzAPITests(TestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+# ---------------------------------------------------------------------------
+# Supplier auto-link tests
+# ---------------------------------------------------------------------------
+
+class SupplierAutoLinkTests(TestCase):
+    """PurchaseDocumentSerializer._resolve_supplier auto-links Supplier by NIP."""
+
+    URL = "/api/purchase-documents/"
+
+    def setUp(self):
+        self.company = _make_company("AutoLinkCo")
+        self.user = _make_user(self.company)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def _post(self, payload: dict):
+        return self.client.post(self.URL, payload, format="json")
+
+    def test_create_new_supplier_when_nip_not_in_db(self):
+        resp = self._post({
+            "doc_type": "FZ",
+            "supplier_name": "JERONIMO MARTINS POLSKA S.A.",
+            "supplier_nip": "7791011327",
+            "document_number": "FV/001",
+            "issue_date": "2026-07-01",
+            "total_gross": "5.99",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        doc = PurchaseDocument.objects.get(uuid=resp.data["id"])
+        self.assertIsNotNone(doc.supplier_id)
+        self.assertEqual(doc.supplier.nip, "7791011327")
+        self.assertEqual(doc.supplier.name, "JERONIMO MARTINS POLSKA S.A.")
+
+    def test_links_existing_supplier_and_uses_canonical_name(self):
+        existing = Supplier.objects.create(
+            company=self.company,
+            name="Biedronka (nazwa skrócona)",
+            nip="7791011327",
+        )
+        resp = self._post({
+            "doc_type": "FZ",
+            "supplier_name": "BIEDRONKA",
+            "supplier_nip": "7791011327",
+            "document_number": "FV/002",
+            "issue_date": "2026-07-01",
+            "total_gross": "10.00",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        doc = PurchaseDocument.objects.get(uuid=resp.data["id"])
+        self.assertEqual(doc.supplier_id, existing.id)
+        self.assertEqual(doc.supplier_name, "Biedronka (nazwa skrócona)")
+        self.assertEqual(Supplier.objects.filter(company=self.company).count(), 1)
+
+    def test_second_document_same_nip_reuses_supplier(self):
+        self._post({
+            "doc_type": "FZ",
+            "supplier_name": "JERONIMO MARTINS POLSKA S.A.",
+            "supplier_nip": "7791011327",
+            "document_number": "FV/003",
+            "issue_date": "2026-07-01",
+            "total_gross": "5.99",
+        })
+        self._post({
+            "doc_type": "FZ",
+            "supplier_name": "BIEDRONKA",
+            "supplier_nip": "7791011327",
+            "document_number": "FV/004",
+            "issue_date": "2026-07-02",
+            "total_gross": "8.00",
+        })
+        self.assertEqual(Supplier.objects.filter(company=self.company, nip="7791011327").count(), 1)
+
+    def test_no_nip_skips_supplier_link(self):
+        resp = self._post({
+            "doc_type": "FZ",
+            "supplier_name": "Dostawca bez NIP",
+            "document_number": "FV/005",
+            "issue_date": "2026-07-01",
+            "total_gross": "1.00",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        doc = PurchaseDocument.objects.get(uuid=resp.data["id"])
+        self.assertIsNone(doc.supplier_id)
+
+    def test_explicit_supplier_id_not_overridden_by_nip(self):
+        explicit = Supplier.objects.create(company=self.company, name="Explicit Sp. z o.o.", nip="")
+        resp = self._post({
+            "doc_type": "FZ",
+            "supplier_id": str(explicit.uuid),
+            "supplier_name": "JERONIMO MARTINS POLSKA S.A.",
+            "supplier_nip": "7791011327",
+            "document_number": "FV/006",
+            "issue_date": "2026-07-01",
+            "total_gross": "5.99",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        doc = PurchaseDocument.objects.get(uuid=resp.data["id"])
+        self.assertEqual(doc.supplier_id, explicit.id)
+
+
+class DuplicateDocumentTests(TestCase):
+    """PurchaseDocumentSerializer._check_duplicate blocks duplicate saves."""
+
+    URL = "/api/purchase-documents/"
+
+    def setUp(self):
+        self.company = _make_company("DupCo")
+        self.user = _make_user(self.company)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def _post(self, payload):
+        return self.client.post(self.URL, payload, format="json")
+
+    def test_duplicate_nip_and_number_returns_400(self):
+        self._post({
+            "doc_type": "FZ", "supplier_nip": "7791011327",
+            "document_number": "FV/2026/001", "issue_date": "2026-07-01",
+            "total_gross": "5.99",
+        })
+        resp = self._post({
+            "doc_type": "FZ", "supplier_nip": "7791011327",
+            "document_number": "FV/2026/001", "issue_date": "2026-07-01",
+            "total_gross": "5.99",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("document_number", resp.data)
+
+    def test_same_number_different_nip_allowed(self):
+        self._post({
+            "doc_type": "FZ", "supplier_nip": "7791011327",
+            "document_number": "FV/001", "issue_date": "2026-07-01", "total_gross": "5.99",
+        })
+        resp = self._post({
+            "doc_type": "FZ", "supplier_nip": "9999999999",
+            "document_number": "FV/001", "issue_date": "2026-07-01", "total_gross": "5.99",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+    def test_no_nip_no_duplicate_check(self):
+        self._post({
+            "doc_type": "FZ", "document_number": "FV/002",
+            "issue_date": "2026-07-01", "total_gross": "5.99",
+        })
+        resp = self._post({
+            "doc_type": "FZ", "document_number": "FV/002",
+            "issue_date": "2026-07-01", "total_gross": "5.99",
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+

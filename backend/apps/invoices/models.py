@@ -1,4 +1,3 @@
-import re
 import uuid
 from decimal import Decimal
 
@@ -71,7 +70,17 @@ class Invoice(models.Model):
     order = models.ForeignKey(
         Order,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="invoices",
+        help_text="Primary order (legacy single-order invoices). Null for manual invoices.",
+    )
+    orders = models.ManyToManyField(
+        Order,
+        through="InvoiceOrder",
+        related_name="multi_invoices",
+        blank=True,
+        help_text="All orders covered by this invoice (multi-order flow).",
     )
     customer = models.ForeignKey(
         Customer,
@@ -92,8 +101,29 @@ class Invoice(models.Model):
         blank=True,
         help_text="Assigned on save, e.g. FV/2026/0001 (unique per company).",
     )
+    # P_6 variants — "Wybierz datę albo okres, którego dotyczy faktura"
+    SALE_DATE_TYPE_SINGLE = 'single'       # [4a] Wspólna data dokonania dostawy/usługi → <P_6>
+    SALE_DATE_TYPE_PERIOD = 'period'       # [4b] Okres (art. 19a ust. 3/4/5) → <OkresFa>
+    SALE_DATE_TYPE_ISSUE  = 'issue'        # [4c] Data wystawienia = data wykonania → brak P_6
+    SALE_DATE_TYPE_VARIOUS = 'various'     # [4d] Różne daty per wiersz → brak P_6 na poziomie Fa
+    SALE_DATE_TYPE_CHOICES = [
+        (SALE_DATE_TYPE_SINGLE,  'Wspólna dla całej faktury data dokonania lub zakończenia dostawy towarów lub wykonania usługi'),
+        (SALE_DATE_TYPE_PERIOD,  'Okres, którego dotyczy faktura (art. 19a ust. 3/4/5)'),
+        (SALE_DATE_TYPE_ISSUE,   'Data wystawienia jest taka sama jak data wykonania czynności'),
+        (SALE_DATE_TYPE_VARIOUS, 'Różne daty dla poszczególnych towarów lub usług'),
+    ]
+    sale_date_type = models.CharField(
+        max_length=10,
+        choices=SALE_DATE_TYPE_CHOICES,
+        default=SALE_DATE_TYPE_SINGLE,
+        help_text="Wariant pola P_6 w FA-3.",
+    )
     issue_date = models.DateField()
     sale_date = models.DateField()
+    sale_date_to = models.DateField(
+        null=True, blank=True,
+        help_text="Koniec okresu dla OkresFa (gdy sale_date_type='period').",
+    )
     due_date = models.DateField()
     payment_method = models.CharField(
         max_length=20,
@@ -275,45 +305,60 @@ class Invoice(models.Model):
                   "Domyślnie True dla zgodności z istniejącymi fakturami.",
     )
 
+    # Miejsce wystawienia (P_1M w FA-3). Jeśli puste — fallback do company.city.
+    place_of_issue = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Miejsce wystawienia faktury (P_1M). Jeśli puste — używane jest miasto firmy.",
+    )
+
+    # Czy drukować numery dokumentów WZ na fakturze (dla faktur zbiorczych).
+    show_wz_numbers = models.BooleanField(
+        default=True,
+        help_text="Czy wyświetlać numery dokumentów WZ na fakturze zbiorczej.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
     def _next_invoice_number(cls, company_id, issue_date, is_correction: bool = False) -> str:
         """
-        Next FV/{year}/{seq:04d} (or FV-KOR/{year}/{seq:04d}) for this company.
+        Next invoice number for this company, respecting Company numbering settings.
         Must run inside the same transaction.atomic() as a Company row lock.
         """
-        prefix_type = "FV-KOR" if is_correction else "FV"
+        from apps.users.models import Company
+        company = Company.objects.get(pk=company_id)
+
+        prefix = (company.invoice_number_prefix or "FV").strip()
+        padding = max(1, min(int(company.invoice_number_padding or 4), 8))
+        period = company.invoice_number_period or "yearly"
+        start = int(company.invoice_number_start or 1)
+
         y = (issue_date or timezone.localdate()).year
-        prefix = f"{prefix_type}/{y}/"
-        pat = re.compile(rf"^{re.escape(prefix_type)}/{y}/" + r"(\d{4})$")
+        m = (issue_date or timezone.localdate()).month
+
+        type_prefix = f"{prefix}-KOR" if is_correction else prefix
+        date_part = f"{y}/{m:02d}" if period == "monthly" else str(y)
+        search_prefix = f"{type_prefix}/{date_part}/"
+
         max_seq = 0
-        for num in (
-            cls.objects.filter(
-                company_id=company_id,
-                invoice_number__startswith=prefix,
-            ).values_list("invoice_number", flat=True)
-        ):
+        for num in cls.objects.filter(
+            company_id=company_id,
+            invoice_number__startswith=search_prefix,
+        ).values_list("invoice_number", flat=True):
             if not num:
                 continue
-            m = pat.match(num)
-            if m:
-                max_seq = max(max_seq, int(m.group(1)))
-        return f"{prefix_type}/{y}/{max_seq + 1:04d}"
+            try:
+                seq = int(num[len(search_prefix):].split("/")[0])
+                if seq > max_seq:
+                    max_seq = seq
+            except (ValueError, IndexError):
+                continue
+
+        next_seq = start if max_seq == 0 else max_seq + 1
+        return f"{type_prefix}/{date_part}/{next_seq:0{padding}d}"
 
     def save(self, *args, **kwargs):
-        if self._state.adding and not self.invoice_number and self.company_id:
-            with transaction.atomic():
-                from apps.users.models import Company
-
-                Company.objects.select_for_update().get(pk=self.company_id)
-                issue_date = self.issue_date or timezone.localdate()
-                self.invoice_number = self._next_invoice_number(
-                    self.company_id,
-                    issue_date,
-                    is_correction=self.is_correction,
-                )
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -326,14 +371,8 @@ class Invoice(models.Model):
                 fields=["company", "invoice_number"],
                 name="invoices_invoice_company_invoice_number_uniq",
             ),
-            models.UniqueConstraint(
-                fields=["company", "order"],
-                condition=models.Q(
-                    status__in=["draft", "issued", "sent", "paid", "overdue"],
-                    is_correction=False,
-                ),
-                name="invoices_unique_active_non_correction_per_order",
-            ),
+            # NOTE: active-invoice-per-order uniqueness is now enforced in service
+            # (supports multi-order invoices via InvoiceOrder M2M).
         ]
 
 
@@ -375,9 +414,9 @@ class InvoiceItem(models.Model):
         help_text="True for correction lines that remove the original line entirely.",
     )
     unit_price_net = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal("0.00"),
+        max_digits=12,
+        decimal_places=4,
+        default=Decimal("0.0000"),
         validators=[MinValueValidator(Decimal("0"))],
     )
     vat_rate = models.DecimalField(
@@ -441,3 +480,28 @@ class InvoiceItem(models.Model):
         ordering = ["created_at"]
         verbose_name = "Invoice item"
         verbose_name_plural = "Invoice items"
+
+
+class InvoiceOrder(models.Model):
+    """Junction table linking an Invoice to one or more Orders (multi-order invoicing)."""
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="invoice_orders",
+    )
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.PROTECT,
+        related_name="invoice_orders",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("invoice", "order")]
+        ordering = ["created_at"]
+        verbose_name = "Invoice order"
+        verbose_name_plural = "Invoice orders"
+
+    def __str__(self):
+        return f"{self.invoice_id} ↔ {self.order_id}"

@@ -1,6 +1,8 @@
 import calendar
+import csv
 import datetime
 
+from django.http import HttpResponse
 from rest_framework import filters, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -120,8 +122,9 @@ class CompanyOpexCategoryViewSet(viewsets.ModelViewSet):
             cat.save(update_fields=['slug'])
 
         qs = CompanyOpexCategory.objects.filter(company=company).order_by('sort_order', 'created_at')
-        # ?all=true → return all including hidden (for the category manager UI)
-        if self.request.query_params.get('all') != 'true':
+        # For detail actions (retrieve/update/destroy) always return all so that
+        # hidden categories can be restored. Filter only for list action.
+        if self.action == 'list' and self.request.query_params.get('all') != 'true':
             qs = qs.filter(is_active=True)
         return qs
 
@@ -155,6 +158,160 @@ class CompanyOpexCategoryViewSet(viewsets.ModelViewSet):
             if counter > 99:
                 break
         return slug[:20]
+
+
+class KpirExportView(APIView):
+    """GET /api/cash-flow/export-kpir/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+
+    Returns a CSV file with all categorised costs for the period, structured
+    for easy import into a KPiR (Podatkowa Księga Przychodów i Rozchodów).
+
+    Columns: LP | Data | Nr dokumentu | Kontrahent | Adres | Opis | Kwota netto |
+             Kwota VAT | Kwota brutto | KPiR kol.
+
+    Sources:
+      - PurchaseDocument (FZ, PAR_VAT) with opex_category set
+      - ReceivedKSeFInvoice with opex_category set
+      - QuickExpense (all, non-private)
+    """
+
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        company = request.user.current_company
+        date_from_str = request.query_params.get("date_from", "")
+        date_to_str = request.query_params.get("date_to", "")
+
+        try:
+            date_from = datetime.date.fromisoformat(date_from_str) if date_from_str else datetime.date(1900, 1, 1)
+            date_to = datetime.date.fromisoformat(date_to_str) if date_to_str else datetime.date(2099, 12, 31)
+        except ValueError:
+            return Response({"detail": "Nieprawidłowy format daty. Użyj YYYY-MM-DD."}, status=400)
+
+        # Build kpir_column lookup: slug → column
+        kpir_map = {
+            cat.slug: cat.kpir_column
+            for cat in CompanyOpexCategory.objects.filter(company=company)
+            if cat.slug
+        }
+        # Fallback for built-in slugs not yet in DB (shouldn't happen after migration)
+        from .models import KPIR_COLUMN_DEFAULTS
+        for slug, col in KPIR_COLUMN_DEFAULTS.items():
+            kpir_map.setdefault(slug, col)
+
+        rows = []
+
+        # ── 1. PurchaseDocument ───────────────────────────────────────────────
+        from apps.purchase_documents.models import PurchaseDocument
+        pd_qs = PurchaseDocument.objects.filter(
+            company=company,
+            issue_date__gte=date_from,
+            issue_date__lte=date_to,
+            is_private=False,
+            status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+        ).exclude(
+            doc_type=PurchaseDocument.DOC_TYPE_PAR,  # PAR bez NIP — brak VAT, brak adresu
+        ).select_related("supplier")
+
+        for doc in pd_qs:
+            address = ""
+            if doc.supplier:
+                parts = [doc.supplier.street, doc.supplier.postal_code, doc.supplier.city]
+                address = ", ".join(p for p in parts if p)
+            rows.append({
+                "date": doc.issue_date,
+                "doc_number": doc.document_number,
+                "contractor": doc.supplier_name,
+                "address": address,
+                "description": doc.notes or doc.get_doc_type_display(),
+                "net": doc.total_net or "0.00",
+                "vat": doc.total_vat or "0.00",
+                "gross": doc.total_gross or "0.00",
+                "kpir_column": kpir_map.get(doc.opex_category or "", "13") if doc.opex_category else "",
+            })
+
+        # ── 2. ReceivedKSeFInvoice ────────────────────────────────────────────
+        from apps.ksef.models import ReceivedKSeFInvoice
+        ksef_qs = ReceivedKSeFInvoice.objects.filter(
+            company=company,
+            issue_date__gte=date_from,
+            issue_date__lte=date_to,
+            is_private=False,
+            opex_category__isnull=False,
+        ).exclude(opex_category="")
+
+        for inv in ksef_qs:
+            address_parts = [inv.seller_address_l1, inv.seller_address_l2]
+            address = ", ".join(p for p in address_parts if p)
+            rows.append({
+                "date": inv.issue_date,
+                "doc_number": inv.invoice_number or inv.ksef_reference_number,
+                "contractor": inv.seller_name,
+                "address": address,
+                "description": inv.get_opex_category_display() if inv.opex_category else "",
+                "net": str(inv.net_amount or "0.00"),
+                "vat": str(inv.vat_amount or "0.00"),
+                "gross": str(inv.gross_amount or "0.00"),
+                "kpir_column": kpir_map.get(inv.opex_category or "", "13"),
+            })
+
+        # ── 3. QuickExpense ───────────────────────────────────────────────────
+        qe_qs = QuickExpense.objects.filter(
+            company=company,
+            date__gte=date_from,
+            date__lte=date_to,
+            is_private=False,
+        )
+
+        for exp in qe_qs:
+            vat_amt = ""
+            net_amt = ""
+            if exp.has_vat and exp.amount_net is not None:
+                net_amt = str(exp.amount_net)
+                vat_amt = str(exp.amount - exp.amount_net)
+            rows.append({
+                "date": exp.date,
+                "doc_number": exp.document_number,
+                "contractor": exp.vendor,
+                "address": "",
+                "description": exp.get_category_display() if hasattr(exp, "get_category_display") else exp.category,
+                "net": net_amt or str(exp.amount),
+                "vat": vat_amt,
+                "gross": str(exp.amount),
+                "kpir_column": kpir_map.get(exp.category or "", "13"),
+            })
+
+        # ── Sort by date ──────────────────────────────────────────────────────
+        rows.sort(key=lambda r: r["date"] or datetime.date(1900, 1, 1))
+
+        # ── Build CSV ─────────────────────────────────────────────────────────
+        period_label = f"{date_from_str or 'all'}_{date_to_str or 'all'}"
+        filename = f"kpir_{company.name.replace(' ', '_')}_{period_label}.csv"
+
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response.write("\ufeff")  # UTF-8 BOM — Excel opens Polish chars correctly
+
+        writer = csv.writer(response, delimiter=";")
+        writer.writerow([
+            "LP", "Data", "Nr dokumentu", "Kontrahent", "Adres",
+            "Opis zdarzenia", "Kwota netto", "Kwota VAT", "Kwota brutto", "KPiR kol.",
+        ])
+        for i, row in enumerate(rows, start=1):
+            writer.writerow([
+                i,
+                row["date"].strftime("%d.%m.%Y") if row["date"] else "",
+                row["doc_number"],
+                row["contractor"],
+                row["address"],
+                row["description"],
+                row["net"],
+                row["vat"],
+                row["gross"],
+                row["kpir_column"],
+            ])
+
+        return response
 
 
 class ExpenseChartView(APIView):

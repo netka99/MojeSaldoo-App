@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermission';
 import {
   INVOICE_KSEF_STATUS_LABELS_PL,
   invoiceKsefStatusFilterOptions,
 } from '@/constants/invoiceKsefStatusPl';
-import { useCustomerListQuery } from '@/query/use-customers';
+import { useCustomerListQuery, useCustomerQuery } from '@/query/use-customers';
 import {
   useInvoiceListQuery,
   useMarkPaidInvoiceMutation,
@@ -299,7 +299,8 @@ export function InvoicesPage() {
 
 function InvoicesPageContent() {
   const canInvoices = usePermission('can_manage_invoices');
-
+  const [searchParams] = useSearchParams();
+  const initCustomerId = searchParams.get('customer') ?? '';
 
   // source tab: all / ksef / manual
   const [sourceTab, setSourceTab] = useState<SourceTab>('all');
@@ -323,7 +324,7 @@ function InvoicesPageContent() {
   const resetPage = () => setPage(1);
 
   // client autocomplete
-  const [customerId, setCustomerId] = useState('');
+  const [customerId, setCustomerId] = useState(initCustomerId);
   const [customerSearchInput, setCustomerSearchInput] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
@@ -374,10 +375,14 @@ function InvoicesPageContent() {
 
   const { data: customersData, isFetching: customersLoading } = useCustomerListQuery(1, customerSearch);
   const customerOptions = customersData?.results ?? [];
+  // When landing from URL ?customer=uuid, fetch the customer to display its name
+  const { data: initCustomer } = useCustomerQuery(initCustomerId || undefined, Boolean(initCustomerId));
   const selectedCustomer = customerId ? customerOptions.find(c => c.id === customerId) : null;
   const displayedCustomerName = selectedCustomer
     ? (selectedCustomer.company_name || selectedCustomer.name)
-    : selectedCustomerLabel;
+    : initCustomer && customerId === initCustomerId
+      ? (initCustomer.company_name || initCustomer.name)
+      : selectedCustomerLabel;
 
   function selectCustomer(id: string, label: string) {
     setCustomerId(id);
@@ -782,13 +787,13 @@ function InvoicesPageContent() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <Link to={`/invoices/${row.id}`} className="text-[15px] font-semibold text-[#5856D6]">
-                          {row.invoice_number ?? row.id.slice(0, 8)}
+                          {row.invoice_number ?? <span className="text-xs text-amber-600 font-medium">SZKIC</span>}
                         </Link>
                         {row.is_correction && (
                           <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">KOR</span>
                         )}
                       </div>
-                      <p className="mt-0.5 truncate text-[13px] text-gray-500">{row.order.customer_name || '—'}</p>
+                      <p className="mt-0.5 truncate text-[13px] text-gray-500">{row.customer_name || row.order?.customer_name || '—'}</p>
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-[15px] font-semibold text-gray-900">{formatGross(row.total_gross)}</p>
@@ -956,7 +961,7 @@ function InvoicesPageContent() {
               </tr>
             </thead>
             <tbody>
-              {items.map((row: Invoice) => (<>
+              {items.map((row: Invoice) => (<React.Fragment key={row.id}>
                 <tr key={row.id} className={cn('group border-b border-gray-50 transition-colors', expandedRows.has(row.id) ? 'bg-gray-50/70' : 'hover:bg-gray-50/70')}>
                   {selectionMode && (
                     <td className="w-10 px-4 py-3.5">
@@ -977,7 +982,7 @@ function InvoicesPageContent() {
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-1.5">
                         <Link to={`/invoices/${row.id}`} className="text-[14px] font-semibold text-[#5856D6] hover:underline">
-                          {row.invoice_number ?? row.id.slice(0, 8)}
+                          {row.invoice_number ?? <span className="text-xs text-amber-600 font-medium">SZKIC</span>}
                         </Link>
                         {row.is_correction && (
                           <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">KOR</span>
@@ -993,13 +998,15 @@ function InvoicesPageContent() {
                           Korekta: {c.invoice_number ?? c.id.slice(0, 8)}
                         </Link>
                       ))}
-                      <Link to={`/orders/${row.order.id}`} className="text-[12px] text-gray-400 hover:text-[#5856D6] hover:underline">
-                        Zamówienie
-                      </Link>
+                      {row.order && (
+                        <Link to={`/orders/${row.order.id}`} className="text-[12px] text-gray-400 hover:text-[#5856D6] hover:underline">
+                          Zamówienie
+                        </Link>
+                      )}
                     </div>
                   </td>
-                  <td className="max-w-[180px] truncate px-4 py-3.5 text-[14px] text-gray-600" title={row.order.customer_name}>
-                    {row.order.customer_name || '—'}
+                  <td className="max-w-[180px] truncate px-4 py-3.5 text-[14px] text-gray-600" title={row.customer_name || row.order?.customer_name}>
+                    {row.customer_name || row.order?.customer_name || '—'}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-[14px] text-gray-500">{formatDate(row.issue_date)}</td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-[14px] text-gray-500">{formatDate(row.due_date)}</td>
@@ -1090,7 +1097,7 @@ function InvoicesPageContent() {
                     </td>
                   </tr>
                 )}
-              </>))}
+              </React.Fragment>))}
               {!isFetching && items.length === 0 && !isError && (
                 <tr>
                   <td

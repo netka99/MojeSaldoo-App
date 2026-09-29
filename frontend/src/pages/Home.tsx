@@ -209,6 +209,7 @@ const DASHBOARD_TILES: DashboardTileDef[] = [
   { key: 'zestawienie', label: 'Dostawy / WZ', to: '/delivery', module: 'delivery', permission: 'can_manage_delivery', Icon: IconTileReconciliation },
   { key: 'wz', label: 'Wydania WZ', to: '/delivery', module: 'delivery', permission: 'can_manage_delivery', Icon: IconTileWZ },
   { key: 'warehouses', label: 'Magazyny', to: '/warehouses', module: 'warehouses', permission: 'can_manage_warehouses', Icon: IconTileWarehouse },
+  { key: 'stock', label: 'Stany', to: '/stock', module: 'products', permission: 'can_manage_products', Icon: IconTileWarehouse },
   { key: 'invoices', label: 'Faktury', to: '/invoices', module: 'invoicing', permission: 'can_manage_invoices', Icon: IconTileInvoices },
   { key: 'purchasing', label: 'Dostawcy', to: '/suppliers', module: 'purchasing', permission: 'can_manage_purchasing', Icon: IconTileSuppliers },
   { key: 'production', label: 'Produkcja', to: '/production/orders', module: 'production', permission: 'can_manage_production', Icon: IconTileProduction },
@@ -314,6 +315,15 @@ export const Home: React.FC = () => {
     if (permission && !hasPermission(permission)) return false;
     // deduplicate delivery tiles: show only zestawienie (WZ list) and van when van_routes active
     if (key === 'wz' && moduleEnabled.van_routes) return false;
+    if (key === 'stock' && moduleEnabled.warehouses) return false;
+    if (
+      key === 'stock' &&
+      !moduleEnabled.production &&
+      !moduleEnabled.purchasing &&
+      !moduleEnabled.delivery
+    ) {
+      return false;
+    }
     return true;
   });
 

@@ -12,6 +12,10 @@ export type CompanyListRow = {
   postalCode?: string | null;
   phone?: string | null;
   email?: string | null;
+  bank_account_iban?: string | null;
+  bank_swift?: string | null;
+  bank_name?: string | null;
+  invoice_returns_mode?: 'fv_kor' | 'net_qty' | 'lines';
 };
 
 type Resolved =

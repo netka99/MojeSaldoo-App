@@ -10,6 +10,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
+from apps.common.vat import deductible_vat, net_from_gross
 from apps.fixed_costs.models import FixedCost
 from apps.invoices.models import Invoice
 from apps.ksef.models import ReceivedKSeFInvoice
@@ -1021,6 +1022,7 @@ def _get_costs_quick_by_category(company, period_start, period_end) -> list:
             company=company,
             date__gte=period_start,
             date__lte=period_end,
+            is_private=False,
         )
         .values("category")
         .annotate(total=Sum("amount"), count=Count("uuid"))
@@ -1247,6 +1249,7 @@ def _get_costs_quick(company, period_start, period_end) -> Decimal:
         company=company,
         date__gte=period_start,
         date__lte=period_end,
+        is_private=False,
     ).aggregate(t=Sum("amount"))["t"]
     return result or _ZERO
 
@@ -1262,6 +1265,7 @@ def _get_costs_purchase_documents(company, period_start, period_end) -> Decimal:
         issue_date__gte=period_start,
         issue_date__lte=period_end,
         status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+        is_private=False,
     ).aggregate(t=Sum("total_gross"))["t"]
     return result or _ZERO
 
@@ -1284,17 +1288,22 @@ def _get_net_costs(company, config: CompanyTaxConfig, period_start, period_end) 
         issue_date__gte=period_start,
         issue_date__lte=period_end,
         opex_category__isnull=False,
+        is_private=False,
     ).aggregate(t=Sum("net_amount"))["t"] or _ZERO
 
-    # Quick expenses: if has_vat, extract net (gross / 1.23)
+    # Quick expenses: strip VAT with the document rate. Missing rate → keep gross.
     quick_net = _ZERO
     for exp in QuickExpense.objects.filter(
         company=company,
         date__gte=period_start,
         date__lte=period_end,
+        is_private=False,
     ):
         if exp.has_vat:
-            quick_net += exp.amount / Decimal("1.23")
+            if exp.amount_net is not None:
+                quick_net += exp.amount_net
+            else:
+                quick_net += net_from_gross(exp.amount, exp.vat_rate)
         else:
             quick_net += exp.amount
 
@@ -1304,6 +1313,7 @@ def _get_net_costs(company, config: CompanyTaxConfig, period_start, period_end) 
         issue_date__gte=period_start,
         issue_date__lte=period_end,
         status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
+        is_private=False,
     ).aggregate(t=Sum("total_net"))["t"] or _ZERO
 
     fixed = _get_costs_fixed(company, period_end)
@@ -1364,32 +1374,23 @@ def _get_vat_naliczony(
 ) -> Decimal:
     """Input VAT (VAT naliczony) — deductible from output VAT.
 
-    Only invoices explicitly categorised as OPEX (opex_category set, at invoice
-    level or line level) are included.  Uncategorised received invoices are
-    ignored because the user hasn't confirmed they are business-related expenses.
-
-    For invoices with line-level opex_category annotations, we use the invoice's
-    vat_amount as a proxy (line-level VAT is not stored separately).
+    opex_category is accountant labelling, not a VAT switch. Deduction uses
+    vat_deduction (full/half/none) and is_private on each document.
+    Missing VAT rate on a quick expense yields 0 — we never invent 23%.
     """
-    from apps.cost_allocation.models import InvoiceLineAnnotation
-
-    invoices_qs = ReceivedKSeFInvoice.objects.filter(
+    ksef_vat = _ZERO
+    for invoice in ReceivedKSeFInvoice.objects.filter(
         company=company,
         issue_date__gte=period_start,
         issue_date__lte=period_end,
         vat_amount__isnull=False,
-    )
+    ):
+        ksef_vat += deductible_vat(
+            stored_vat=invoice.vat_amount,
+            vat_deduction=invoice.vat_deduction,
+            is_private=invoice.is_private,
+        )
 
-    ksef_vat = _ZERO
-    for invoice in invoices_qs:
-        has_line_annotations = InvoiceLineAnnotation.objects.filter(
-            line__invoice=invoice,
-            opex_category__isnull=False,
-        ).exists()
-        if has_line_annotations or invoice.opex_category:
-            ksef_vat += invoice.vat_amount or _ZERO
-
-    # Quick expenses with VAT receipt — assume 23% embedded (amount is gross)
     quick_vat = _ZERO
     for exp in QuickExpense.objects.filter(
         company=company,
@@ -1397,18 +1398,26 @@ def _get_vat_naliczony(
         date__lte=period_end,
         has_vat=True,
     ):
-        quick_vat += exp.amount * Decimal("23") / Decimal("123")
+        quick_vat += deductible_vat(
+            gross=exp.amount,
+            vat_rate=exp.vat_rate,
+            vat_deduction=exp.vat_deduction,
+            is_private=exp.is_private,
+        )
 
-    # Purchase documents (FZ/PAR_VAT): use stored total_vat directly; all count
-    pd_vat = PurchaseDocument.objects.filter(
+    pd_vat = _ZERO
+    for doc in PurchaseDocument.objects.filter(
         company=company,
         issue_date__gte=period_start,
         issue_date__lte=period_end,
         total_vat__isnull=False,
         status__in=[PurchaseDocument.STATUS_REGISTERED, PurchaseDocument.STATUS_MATCHED],
-    ).exclude(
-        doc_type=PurchaseDocument.DOC_TYPE_PAR,  # zwykłe paragony bez VAT
-    ).aggregate(t=Sum("total_vat"))["t"] or _ZERO
+    ).exclude(doc_type=PurchaseDocument.DOC_TYPE_PAR):
+        pd_vat += deductible_vat(
+            stored_vat=doc.total_vat,
+            vat_deduction=doc.vat_deduction,
+            is_private=doc.is_private,
+        )
 
     return ksef_vat + quick_vat + pd_vat
 

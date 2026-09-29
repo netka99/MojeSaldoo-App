@@ -4,7 +4,7 @@ from django.apps import apps
 from django.db.models import Sum
 from rest_framework import serializers
 
-from apps.common.serializers import UUIDModelSerializer
+from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
 
 from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
 
@@ -350,6 +350,9 @@ class StockUpdateSerializer(serializers.Serializer):
 
 
 class CustomerProductPriceSerializer(serializers.ModelSerializer):
+    # customer / product: accept UUID (public id), resolve to int PK internally
+    customer = UUIDRelatedField(queryset=apps.get_model("customers", "Customer").objects.all())
+    product = UUIDRelatedField(queryset=apps.get_model("products", "Product").objects.all())
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_price_net = serializers.DecimalField(

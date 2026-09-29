@@ -11,6 +11,7 @@ import { ksefService } from '@/services/ksef.service';
 import { productService } from '@/services/product.service';
 import { supplierService } from '@/services/supplier.service';
 import { warehouseService } from '@/services/warehouse.service';
+import { useSilentWarehouse } from '@/hooks/useSilentWarehouse';
 import type { Product } from '@/types';
 import type { ParsedInvoiceLine } from '@/services/ksef.service';
 
@@ -310,6 +311,7 @@ export function KSeFInboxPZPage() {
   const [issueDate, setIssueDate] = useState(todayIso);
   const [notes, setNotes] = useState('');
   const [defaultWarehouseId, setDefaultWarehouseId] = useState('');
+  const { silent, warehouseId: silentWarehouseId } = useSilentWarehouse();
   const [fromSupplierId, setFromSupplierId] = useState('');
   const [lines, setLines] = useState<PzLine[] | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -369,6 +371,11 @@ export function KSeFInboxPZPage() {
       );
     }
   };
+
+  useEffect(() => {
+    if (silentWarehouseId) handleDefaultWarehouseChange(silentWarehouseId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply once MG is known
+  }, [silentWarehouseId]);
 
   const updateLine = (idx: number, patch: Partial<PzLine>) => {
     setLines((prev) => prev ? prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)) : prev);
@@ -603,7 +610,7 @@ export function KSeFInboxPZPage() {
         <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
           <h2 className="mb-4 text-[15px] font-semibold text-foreground">Dane dokumentu PZ</h2>
           <div className="space-y-4">
-            {/* Default warehouse — pre-fills all lines */}
+            {!silent && (
             <div>
               <label htmlFor="default_warehouse" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                 Magazyn domyślny
@@ -621,6 +628,7 @@ export function KSeFInboxPZPage() {
                 ))}
               </select>
             </div>
+            )}
 
             <div>
               <p className="mb-1.5 text-[13px] font-medium text-muted-foreground">Dostawca</p>
@@ -868,7 +876,7 @@ export function KSeFInboxPZPage() {
                             )}
 
                             {/* Warehouse per line */}
-                            {line.product && (
+                            {!silent && line.product && (
                               <div>
                                 <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                                   Magazyn

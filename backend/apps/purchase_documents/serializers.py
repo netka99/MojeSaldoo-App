@@ -49,7 +49,6 @@ class PurchaseDocumentItemSerializer(UUIDModelSerializer):
 class PurchaseDocumentItemWriteSerializer(serializers.ModelSerializer):
     # Plain UUID — we resolve to a Product FK in create/update on the parent serializer
     product_id = serializers.UUIDField(required=False, allow_null=True)
-
     class Meta:
         model = PurchaseDocumentItem
         fields = [
@@ -127,6 +126,8 @@ class PurchaseDocumentSerializer(UUIDModelSerializer):
             "is_paid",
             "paid_at",
             "opex_category",
+            "vat_deduction",
+            "is_private",
             "accounting_status",
             "accounting_notes",
             "total_net",
@@ -184,6 +185,32 @@ class PurchaseDocumentSerializer(UUIDModelSerializer):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _resolve_supplier(validated_data: dict) -> None:
+        """Auto-link Supplier FK by NIP. Mutates validated_data in-place.
+
+        - If supplier FK already set (user picked from dropdown) → skip.
+        - If supplier_nip matches existing Supplier in this company → link + use stored name.
+        - If no match but supplier_name provided → create new Supplier and link.
+        """
+        if validated_data.get("supplier"):
+            return  # already explicitly linked
+
+        nip = (validated_data.get("supplier_nip") or "").strip()
+        name = (validated_data.get("supplier_name") or "").strip()
+        company = validated_data.get("company")
+
+        if not nip or not company:
+            return
+
+        existing = Supplier.objects.filter(company=company, nip=nip).first()
+        if existing:
+            validated_data["supplier"] = existing
+            validated_data["supplier_name"] = existing.name  # use canonical stored name
+        elif name:
+            new_supplier = Supplier.objects.create(company=company, name=name, nip=nip)
+            validated_data["supplier"] = new_supplier
+
+    @staticmethod
     def _resolve_product(item_data: dict):
         """Pop product_id UUID and resolve it to a Product instance (or None)."""
         from apps.products.models import Product
@@ -227,11 +254,34 @@ class PurchaseDocumentSerializer(UUIDModelSerializer):
                 status=PurchaseDocument.STATUS_MATCHED
             )
 
+    @staticmethod
+    def _check_duplicate(validated_data: dict) -> None:
+        """Raise ValidationError if a document with same company+supplier_nip+document_number exists."""
+        from rest_framework.exceptions import ValidationError
+        company = validated_data.get("company")
+        nip = (validated_data.get("supplier_nip") or "").strip()
+        doc_number = (validated_data.get("document_number") or "").strip()
+        if not (company and nip and doc_number):
+            return
+        existing = PurchaseDocument.objects.filter(
+            company=company,
+            supplier_nip=nip,
+            document_number=doc_number,
+        ).values("uuid", "document_number", "supplier_name").first()
+        if existing:
+            raise ValidationError({
+                "document_number": (
+                    f"Dokument o tym numerze już istnieje w systemie "
+                    f"({existing['supplier_name'] or 'nieznany dostawca'} · {existing['document_number']})."
+                )
+            })
+
     def create(self, validated_data):
         pz_uuids = validated_data.pop("pz_ids", [])
         items_data = validated_data.pop("items_write", [])
-        # Legacy field — if provided, add it to pz_uuids so it still works
         legacy_pz = validated_data.pop("delivery_document", None)
+        self._resolve_supplier(validated_data)
+        self._check_duplicate(validated_data)
         document = PurchaseDocument.objects.create(**validated_data)
         for item_data in items_data:
             product = self._resolve_product(item_data)
@@ -244,8 +294,12 @@ class PurchaseDocumentSerializer(UUIDModelSerializer):
     def update(self, instance, validated_data):
         pz_uuids = validated_data.pop("pz_ids", None)
         items_data = validated_data.pop("items_write", None)
-        # Legacy field handled: if passed, treat as add (not replace)
         legacy_pz = validated_data.pop("delivery_document", None)
+        # Inject company from instance if not already in validated_data (update doesn't re-send it)
+        if "company" not in validated_data:
+            validated_data["company"] = instance.company
+        self._resolve_supplier(validated_data)
+        validated_data.pop("company", None)  # don't overwrite company field on update
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

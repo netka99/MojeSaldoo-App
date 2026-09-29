@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
 import { cashFlowService } from '@/services/cashflow.service';
-import type { CashFlowHistoryMonth, CashFlowPeriodSummary, CompanyTaxConfigWrite, DailyB2CRevenueWrite, HarmonogramData, QuickExpenseWrite } from '@/types/cashflow.types';
+import type { CashFlowHistoryMonth, CashFlowPeriodSummary, CompanyTaxConfigWrite, DailyB2CRevenueWrite, HarmonogramData, OpexCategory, QuickExpenseWrite } from '@/types/cashflow.types';
 
 // ---------------------------------------------------------------------------
 // Query keys
@@ -224,10 +224,16 @@ export function useUpdateOpexCategoryMutation() {
   const companyId = user?.current_company ?? '';
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; is_active?: boolean; sort_order?: number } }) =>
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; kpir_column?: string; is_active?: boolean; sort_order?: number } }) =>
       cashFlowService.updateOpexCategory(id, data),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: cashFlowKeys.opexCategories(companyId) });
+    onSuccess: (updated: OpexCategory) => {
+      // Immediately patch both cache variants (with and without 'all') so the
+      // manager reflects the change without waiting for a full refetch.
+      queryClient.setQueriesData<OpexCategory[]>(
+        { queryKey: cashFlowKeys.opexCategories(companyId), exact: false },
+        (old) => old?.map((cat) => cat.id === updated.id ? updated : cat),
+      );
+      void queryClient.invalidateQueries({ queryKey: cashFlowKeys.opexCategories(companyId), exact: false });
     },
   });
 }
@@ -239,7 +245,7 @@ export function useDeleteOpexCategoryMutation() {
   return useMutation({
     mutationFn: (id: string) => cashFlowService.deleteOpexCategory(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: cashFlowKeys.opexCategories(companyId) });
+      void queryClient.invalidateQueries({ queryKey: cashFlowKeys.opexCategories(companyId), exact: false });
     },
   });
 }

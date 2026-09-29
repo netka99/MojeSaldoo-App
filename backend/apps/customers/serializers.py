@@ -35,6 +35,15 @@ class CustomerSerializer(UUIDModelSerializer):
             # KSeF / FA-3 Podmiot2 flags
             "is_jst",
             "is_gv_member",
+            # KSeF / FA-3 Podmiot3 fields
+            "podmiot3_role",
+            "podmiot3_name",
+            "podmiot3_nip",
+            "podmiot3_id_wew",
+            "podmiot3_street",
+            "podmiot3_city",
+            "podmiot3_postal_code",
+            "podmiot3_country",
             "created_at",
             "updated_at",
         ]

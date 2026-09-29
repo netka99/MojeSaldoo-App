@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useCreateRwMutation } from '@/query/use-delivery';
 import { productService } from '@/services/product.service';
 import { warehouseService } from '@/services/warehouse.service';
+import { useSilentWarehouse } from '@/hooks/useSilentWarehouse';
 import type { Product } from '@/types';
 import type { RwReason } from '@/types/delivery.types';
 
@@ -74,6 +75,10 @@ export function RWCreatePage() {
   const [issueDate, setIssueDate] = useState(todayIso);
   const [notes, setNotes] = useState('');
   const [fromWarehouseId, setFromWarehouseId] = useState('');
+  const { silent, warehouseId: defaultWarehouseId } = useSilentWarehouse();
+  useEffect(() => {
+    if (defaultWarehouseId && !fromWarehouseId) setFromWarehouseId(defaultWarehouseId);
+  }, [defaultWarehouseId, fromWarehouseId]);
   const [reason, setReason] = useState<RwReason | ''>('');
   const [lines, setLines] = useState<RwLine[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -242,7 +247,7 @@ export function RWCreatePage() {
           <h2 className="mb-4 text-[15px] font-semibold text-foreground">Dane dokumentu</h2>
 
           <div className="space-y-4">
-            {/* warehouse */}
+            {!silent && (
             <div>
               <label htmlFor="from_warehouse" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                 Magazyn <span className="text-destructive">*</span>
@@ -262,6 +267,7 @@ export function RWCreatePage() {
                 ))}
               </select>
             </div>
+            )}
 
             {/* reason */}
             <div>

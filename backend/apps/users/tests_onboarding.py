@@ -75,10 +75,28 @@ class OnboardingCompleteTests(APITestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         enabled = self._enabled()
         self.assertIn("production", enabled)
-        self.assertIn("warehouses", enabled)
+        self.assertNotIn("warehouses", enabled)
         self.assertIn("products", enabled)
         self.assertIn("purchasing", enabled)
         self.assertIn("delivery", enabled)
+
+    def test_producer_gets_silent_main_warehouse(self):
+        from apps.products.models import Warehouse
+
+        r = self._post(["production"], "docs_only")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        wh = Warehouse.objects.get(company=self.company)
+        self.assertEqual(wh.name, "Magazyn główny")
+        self.assertEqual(wh.warehouse_type, Warehouse.WarehouseType.MAIN)
+
+    def test_purchasing_without_warehouses_gets_silent_main_warehouse(self):
+        from apps.products.models import Warehouse
+
+        r = self._post(["purchasing"], "docs_only")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertNotIn("warehouses", self._enabled())
+        wh = Warehouse.objects.get(company=self.company)
+        self.assertEqual(wh.name, "Magazyn główny")
 
     def test_producer_company_type(self):
         r = self._post(["production"], "delivery")
@@ -97,6 +115,13 @@ class OnboardingCompleteTests(APITestCase):
         self.assertNotIn("van_routes", enabled)
         self.assertNotIn("warehouses", enabled)
         self.assertNotIn("production", enabled)
+
+    def test_invoicing_only_does_not_create_warehouse(self):
+        from apps.products.models import Warehouse
+
+        r = self._post([], None)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
 
     def test_invoicing_only_company_type(self):
         r = self._post([], None)

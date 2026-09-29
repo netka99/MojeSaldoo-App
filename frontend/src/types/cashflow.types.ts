@@ -49,6 +49,7 @@ export interface OpexCategory {
   id: string;
   name: string;
   slug: string;
+  kpir_column: '10' | '12' | '13';
   is_active: boolean;
   sort_order: number;
 }
@@ -103,6 +104,8 @@ export interface QuickExpense {
   category: QuickExpenseCategory;
   cost_type: CostType;
   has_vat: boolean;
+  vat_deduction?: 'full' | 'half' | 'none';
+  is_private?: boolean;
   vendor: string;
   document_number: string;
   document_type: DocumentType;
@@ -121,6 +124,8 @@ export interface QuickExpenseWrite {
   category: QuickExpenseCategory;
   cost_type: CostType;
   has_vat: boolean;
+  vat_deduction?: 'full' | 'half' | 'none';
+  is_private?: boolean;
   vendor?: string;
   document_number?: string;
   document_type?: DocumentType;

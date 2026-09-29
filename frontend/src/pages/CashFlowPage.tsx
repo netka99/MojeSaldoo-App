@@ -248,7 +248,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
         </button>
       </div>
 
-      {/* ── 3-column summary ── */}
+      {/* ── 3 kafelki górne ── */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-xl border border-border bg-card p-3">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Wpłynęło</p>
@@ -258,13 +258,49 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Koszty</p>
           <p className="mt-1 text-base font-bold tabular-nums text-foreground">{formatPln(totalCosts)}</p>
         </div>
-        <div className={`rounded-xl border p-3 ${isLoss ? 'border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20' : 'border-green-200 bg-green-50/40 dark:border-green-900 dark:bg-green-950/20'}`}>
+        <div className="rounded-xl border border-border bg-card p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Podatki</p>
+          <p className="mt-1 text-base font-bold tabular-nums text-amber-600">{formatPln(taxTotal)}</p>
+        </div>
+      </div>
+
+      {/* ── Wynik — wyśrodkowany kafelek (lejek: 3 inputy → 1 wynik) ── */}
+      <div className="grid grid-cols-3 gap-2">
+        <div />
+        <div className={`rounded-xl border p-3 text-center ${isLoss ? 'border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20' : 'border-green-200 bg-green-50/40 dark:border-green-900 dark:bg-green-950/20'}`}>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Wynik</p>
           <p className={`mt-1 text-base font-bold tabular-nums ${isLoss ? 'text-destructive' : 'text-green-700'}`}>
             {formatPln(wynik)}
           </p>
         </div>
+        <div />
       </div>
+
+      {/* ── Belka pokrycia kosztów ── */}
+      {(totalCosts + taxTotal) > 0 && (() => {
+        const totalExpenses = totalCosts + taxTotal;
+        const coveragePct   = Math.min((totalRevenue / totalExpenses) * 100, 100);
+        const gap           = totalRevenue - totalExpenses;
+        const barColor      = coveragePct >= 100 ? 'bg-green-500' : coveragePct >= 60 ? 'bg-amber-400' : 'bg-red-400';
+        return (
+          <div className="rounded-xl border border-border bg-card px-4 py-3">
+            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                style={{ width: `${coveragePct}%` }}
+              />
+            </div>
+            <div className="flex justify-between mt-2 text-[11px]">
+              <span className="text-muted-foreground">
+                Przychody pokrywają <span className="font-semibold text-foreground">{Math.round(coveragePct)}%</span> wydatków
+              </span>
+              <span className={`font-medium ${gap >= 0 ? 'text-green-700' : 'text-destructive'}`}>
+                {gap >= 0 ? `nadwyżka ${formatPln(gap)}` : `brakuje ${formatPln(Math.abs(gap))}`}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Outstanding banner — current month only ── */}
       {isCurrentMonth && outstandingTotal > 0 && (

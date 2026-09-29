@@ -9,6 +9,10 @@ import { PZCreatePage } from './PZCreatePage';
 
 /* ── mocks ──────────────────────────────────────────────────────────────── */
 
+const hoisted = vi.hoisted(() => ({
+  warehousesEnabled: true,
+}));
+
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ user: { current_company: 'company-1' } }),
 }));
@@ -17,8 +21,8 @@ vi.mock('@/query/use-delivery', () => ({
   useCreatePzMutation: () => ({ isPending: false, mutateAsync: vi.fn() }),
 }));
 
-vi.mock('@/query/use-suppliers', () => ({
-  useAllSuppliersQuery: () => ({ data: [] }),
+vi.mock('@/hooks/useModuleGuard', () => ({
+  useModuleGuard: (m: string) => m === 'warehouses' && hoisted.warehousesEnabled,
 }));
 
 vi.mock('@/services/warehouse.service', () => ({
@@ -67,6 +71,7 @@ function renderPage() {
 describe('PZCreatePage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    hoisted.warehousesEnabled = true;
   });
 
   it('renders page title', () => {
@@ -79,6 +84,12 @@ describe('PZCreatePage', () => {
     expect(screen.getByLabelText(/data wystawienia/i)).toBeTruthy();
     expect(screen.getByText(/magazyn docelowy/i)).toBeTruthy();
     expect(screen.getByText(/dostawca/i)).toBeTruthy();
+  });
+
+  it('hides warehouse picker when warehouse management is off', () => {
+    hoisted.warehousesEnabled = false;
+    renderPage();
+    expect(screen.queryByText(/magazyn docelowy/i)).toBeNull();
   });
 
   it('submit button is disabled when no lines added', () => {
@@ -100,6 +111,9 @@ describe('PZCreatePage', () => {
 });
 
 describe('PZCreatePage — expiry_date field', () => {
+  beforeEach(() => {
+    hoisted.warehousesEnabled = true;
+  });
   it('renders expiry_date input after product is added to lines', async () => {
     renderPage();
 

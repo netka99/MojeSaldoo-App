@@ -1,12 +1,15 @@
 import { api } from './api';
 import type {
   CreateCorrectionBody,
+  CreateManualInvoiceBody,
   GenerateInvoiceFromOrderBody,
+  GenerateInvoiceFromOrdersBody,
   Invoice,
   InvoiceCreate,
   InvoicePatch,
   InvoicePreviewPayload,
   PaginatedInvoices,
+  PeriodPreviewResult,
 } from '../types';
 
 export type InvoiceSummary = {
@@ -58,6 +61,14 @@ export const invoiceService = {
     api.post<Invoice>(`${basePath}generate-from-order/${orderId}/`, body),
 
   issue: (id: string) => api.post<Invoice>(`${basePath}${id}/issue/`, {}),
+
+  setNumber: (id: string, invoiceNumber: string | null) =>
+    api.patch<Invoice>(`${basePath}${id}/set-number/`, { invoice_number: invoiceNumber ?? '' }),
+
+  nextNumber: (issueDate: string, isCorrection = false) =>
+    api.get<{ next_number: string }>(`${basePath}next-number/`, {
+      params: { issue_date: issueDate, is_correction: isCorrection },
+    }),
 
   markPaid: (id: string) => api.post<Invoice>(`${basePath}${id}/mark-paid/`, {}),
 
@@ -116,4 +127,24 @@ export const invoiceService = {
 
   /** Aggregate summary: unpaid, overdue, paid-this-month counts and totals. */
   fetchSummary: () => api.get<InvoiceSummary>(`${basePath}summary/`),
+
+  /** Create one draft invoice from multiple orders (same customer). */
+  generateFromOrders: (body: GenerateInvoiceFromOrdersBody) =>
+    api.post<Invoice>(`${basePath}generate-from-orders/`, body),
+
+  /** Create a manual draft invoice without any order. */
+  createManual: (body: CreateManualInvoiceBody) =>
+    api.post<Invoice>(`${basePath}create-manual/`, body),
+
+  /** Aggregate OrderItems per product for a customer over a date range (for period invoicing). */
+  periodPreviewOrders: (customerId: string, dateFrom: string, dateTo: string) =>
+    api.get<PeriodPreviewResult>(`${basePath}period-preview/orders/`, {
+      params: { customer_id: customerId, date_from: dateFrom, date_to: dateTo },
+    }),
+
+  /** Aggregate WZ DeliveryItems per product for a customer over a date range (for period invoicing). */
+  periodPreviewWz: (customerId: string, dateFrom: string, dateTo: string) =>
+    api.get<PeriodPreviewResult>(`${basePath}period-preview/wz/`, {
+      params: { customer_id: customerId, date_from: dateFrom, date_to: dateTo },
+    }),
 };

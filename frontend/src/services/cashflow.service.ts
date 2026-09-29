@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, API_BASE_URL } from './api';
 import type {
   CashFlowDashboard,
   CashFlowHistoryMonth,
@@ -49,10 +49,10 @@ export const cashFlowService = {
   listOpexCategories: (all?: boolean) =>
     api.get<OpexCategory[]>(`${BASE}/opex-categories/`, { params: all ? { all: 'true' } : undefined }),
 
-  createOpexCategory: (data: { name: string; slug?: string }) =>
+  createOpexCategory: (data: { name: string; slug?: string; kpir_column?: string }) =>
     api.post<OpexCategory>(`${BASE}/opex-categories/`, data),
 
-  updateOpexCategory: (id: string, data: { name?: string; is_active?: boolean; sort_order?: number }) =>
+  updateOpexCategory: (id: string, data: { name?: string; kpir_column?: string; is_active?: boolean; sort_order?: number }) =>
     api.patch<OpexCategory>(`${BASE}/opex-categories/${id}/`, data),
 
   deleteOpexCategory: (id: string) =>
@@ -71,4 +71,25 @@ export const cashFlowService = {
     api.get<HarmonogramData>(`${BASE}/harmonogram/`, {
       params: month ? { month } : undefined,
     }),
+
+  downloadKpirCsv: async (params: { date_from?: string; date_to?: string }) => {
+    const query = new URLSearchParams();
+    if (params.date_from) query.set('date_from', params.date_from);
+    if (params.date_to) query.set('date_to', params.date_to);
+    const url = `${API_BASE_URL}/cash-flow/export-kpir/?${query.toString()}`;
+    const { authStorage } = await import('./api');
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${authStorage.getAccessToken()}` },
+    });
+    if (!resp.ok) throw new Error('Eksport nieudany');
+    const blob = await resp.blob();
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? 'kpir.csv';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
 };

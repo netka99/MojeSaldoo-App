@@ -1,3 +1,24 @@
+## GDPR / Prawne
+
+- [ ] **Anonimizacja danych przed wysłaniem do Gemini API**
+  - Przed wysłaniem `raw_text` do Gemini: zamień NIP (10 cyfr) i daty na tokeny `[NIP_0]`, `[DATA_0]` itp.
+  - Po otrzymaniu odpowiedzi: podstaw oryginalne wartości z powrotem
+  - Zaimplementowane w `backend/apps/ksef/views.py` → funkcja `anonymize_for_llm()`
+
+- [ ] **Regulamin / Polityka prywatności — wzmianka o AI**
+  - Dodać klauzulę: *"Treść skanowanych dokumentów (po anonimizacji danych osobowych) może być przetwarzana przez zewnętrzne modele AI (Google Gemini) w celu automatycznego rozpoznawania struktury dokumentu. Dane osobowe (NIP, nazwy firm) nie są przesyłane do zewnętrznych systemów AI."*
+  - Wymagane: podpisanie DPA (Data Processing Agreement) z Google → console.cloud.google.com → IAM → Data Processing Terms
+
+- [ ] **Limit użycia AI per user**
+  - Wolny plan: 50 skanów/miesiąc z LLM fallback, powyżej tylko regex
+  - Śledzenie w modelu `Company` lub osobnej tabeli `AiUsage`
+
+- [ ] **Logowanie wywołań AI**
+  - Logować: user_id, company_id, doc_type, timestamp, użyty model — BEZ treści dokumentu
+  - Cel: audyt GDPR na żądanie użytkownika ("jakie dane przetwarzałeś o mnie?")
+
+---
+
 1.Testing:
     - PZ-KOR - create KOR invoice from supplier
     - removing an account

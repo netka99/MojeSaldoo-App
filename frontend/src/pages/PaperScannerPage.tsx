@@ -1,13 +1,18 @@
 /**
  * PaperScannerPage — upload / photograph a paper invoice, extract header fields
- * via backend OCR, then create a PZ (goods receipt) from the scanned data.
+ * via backend OCR, then create a purchase document (FZ/PAR) and optionally a PZ
+ * (goods receipt) from the scanned data.
  *
  * Route: /ksef/scan-paper
  * Module gate: ksef
+ *
+ * Architecture: one unified list of lines (UnifiedLine). Each line represents a
+ * position on the document (for cost/VAT). If the user optionally assigns it to
+ * a product in the catalog, that line also goes to PZ on save. No duplicate entry.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { authStorage } from '@/services/api';
@@ -16,62 +21,41 @@ import { cn } from '@/lib/utils';
 import { useCreatePzMutation } from '@/query/use-delivery';
 import { useAllSuppliersQuery } from '@/query/use-suppliers';
 import { useKsefScanPaperMutation } from '@/query/use-invoices';
-import { useCreatePurchaseDocumentMutation } from '@/query/use-purchase-documents';
+import { useCreatePurchaseDocumentMutation, useSetPurchaseDocCategoryMutation, useSetLinecategoriesMutation } from '@/query/use-purchase-documents';
+import { useOpexCategoriesQuery } from '@/query/use-cashflow';
 import { productService } from '@/services/product.service';
 import { supplierService } from '@/services/supplier.service';
 import { warehouseService } from '@/services/warehouse.service';
-import type { PaperScanLine } from '@/services/ksef.service';
+import { useSilentWarehouse } from '@/hooks/useSilentWarehouse';
+import { useModuleGuard } from '@/hooks/useModuleGuard';
+import { VatDeductionToggles, type VatDeduction } from '@/components/features/cashflow/VatDeductionToggles';
+import { IosToggle } from '@/components/ui/IosToggle';
 import type { PurchaseDocDocType } from '@/services/purchase-document.service';
-import type { Product } from '@/types';
 
-type ScanMode = 'pz' | 'doc';  // 'doc' covers FZ + PAR + PAR_VAT, auto-detected from OCR
-
-const PAGE_SIZE = 30;
-const DEBOUNCE_MS = 300;
+function ocrDocToSubType(docType?: string): 'fz' | 'par' {
+  if (!docType) return 'fz';
+  if (docType === 'paragon') return 'par';
+  return 'fz';
+}
 
 /* ── helpers ─────────────────────────────────────────────────────── */
 
-function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(id);
-  }, [value, delay]);
-  return debounced;
-}
-
-function pageFromDrfNext(next: string | null): number | undefined {
-  if (!next) return undefined;
-  try {
-    const u = new URL(next, 'http://localhost');
-    const p = u.searchParams.get('page');
-    return p ? Number(p) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /* ── types ───────────────────────────────────────────────────────── */
 
-interface PzLine {
-  product: Product;
-  quantity: string;
-  unit_cost: string;
-}
-
-/** A line parsed from OCR that hasn't been matched to a product yet. */
-interface RawOcrLine extends PaperScanLine {
-  id: number; // stable index for keying
-}
-
-/** Editable line item for PAR / FZ — no product matching required. */
-interface SimpleDocLine {
+/**
+ * Single unified line: represents one position on the document.
+ * Used for cost/VAT (always) and optionally for PZ stock receipt
+ * (when catalogProduct is assigned).
+ */
+interface UnifiedLine {
   id: number;
   product_name: string;
   quantity: string;
   unit: string;
   unit_price_gross: string;
   vat_rate: string;
+  /** Raw string typed into the "Brutto razem" field — takes priority over computed display. */
+  line_total_gross?: string;
 }
 
 /* ── icons ───────────────────────────────────────────────────────── */
@@ -80,14 +64,6 @@ function ChevronLeftIcon() {
   return (
     <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
       <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -119,155 +95,198 @@ function CheckIcon() {
   );
 }
 
-/**
- * A single unmatched OCR line with an inline product search.
- * When user picks a product it fires onAssign and this row disappears.
- */
-function RawLineRow({
-  line,
-  companyId,
-  onAssign,
-  onDismiss,
+/* ── ProductNameInput: text input with catalog autocomplete ──────── */
+
+function ProductNameInput({
+  value,
+  onChange,
 }: {
-  line: RawOcrLine;
-  companyId: string;
-  onAssign: (product: Product, quantity: string, unitPrice: string) => void;
-  onDismiss: (id: number) => void;
+  value: string;
+  onChange: (name: string) => void;
 }) {
-  const [search, setSearch] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const debouncedSearch = useDebouncedValue(search, 300);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [dropStyle, setDropStyle] = useState<React.CSSProperties>({});
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { data: pages, isPending } = useInfiniteQuery({
-    queryKey: ['products', 'raw-line', companyId, debouncedSearch] as const,
-    queryFn: ({ pageParam }) =>
-      productService.fetchList({
-        page: pageParam as number,
-        page_size: 20,
-        search: debouncedSearch.trim() || undefined,
-        is_active: true,
-        ordering: 'name',
-      }),
-    initialPageParam: 1,
-    getNextPageParam: (last) => pageFromDrfNext(last.next),
-    enabled: Boolean(companyId) && open,
-  });
-
-  const products = useMemo(() => pages?.pages.flatMap((p) => p.results) ?? [], [pages]);
-
-  useEffect(() => {
-    setSearch(line.name);
-  }, [line.name]);
-
-  const handleCreateNew = async () => {
-    setCreating(true);
+  const fetchSuggestions = useCallback(async (q: string) => {
+    if (q.length < 2) { setSuggestions([]); setOpen(false); return; }
     try {
-      const newProduct = await productService.createItem({
-        name: search.trim() || line.name,
-        description: null,
-        unit: line.unit || 'szt',
-        price_net: '0.00',
-        price_gross: '0.00',
-        vat_rate: '23',
-        sku: null,
-        barcode: null,
-        pkwiu: '',
-        track_batches: false,
-        min_stock_alert: '0',
-        shelf_life_days: null,
-        is_resalable: false,
-        markup_percent: null,
-        avg_cost: null,
-        avg_cost_source: null,
-        avg_cost_updated_at: null,
-        last_cost: null,
-        is_active: true,
-        is_service: false,
-      });
-      onAssign(newProduct, line.quantity, line.unit_price);
+      const res = await productService.fetchList({ search: q, page_size: 8, is_active: true, ordering: 'name' });
+      const names = res.results.map((p) => p.name);
+      setSuggestions(names);
+      if (names.length > 0) {
+        const r = inputRef.current?.getBoundingClientRect();
+        if (r) setDropStyle({ position: 'fixed', top: r.bottom + 2, left: r.left, width: r.width, zIndex: 9999 });
+        setOpen(true);
+      } else {
+        setOpen(false);
+      }
     } catch {
-      // ignore — user can try again
-    } finally {
-      setCreating(false);
+      setSuggestions([]); setOpen(false);
     }
-  };
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    onChange(v);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void fetchSuggestions(v), 250);
+  };
+
   return (
-    <div className="rounded-xl border border-border bg-muted/40 p-3">
-      {/* OCR name + qty + price */}
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
-          <p className="text-[13px] font-medium text-foreground">{line.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {line.quantity} {line.unit} × {line.unit_price} zł
+    <>
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={handleChange}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder="Nazwa produktu"
+        className="h-9 w-full rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+      />
+      {open && createPortal(
+        <div
+          style={dropStyle}
+          className="overflow-hidden rounded-lg border border-border bg-card shadow-xl"
+        >
+          {suggestions.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(name); setOpen(false); }}
+              className="w-full px-3 py-2 text-left text-[13px] hover:bg-muted"
+            >
+              {name}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/* ── CategoryModal ───────────────────────────────────────────────── */
+
+function CategoryModal({
+  docId,
+  items,
+  categories,
+  onSave,
+  onSkip,
+  saving,
+}: {
+  docId: string;
+  items: Array<{ id: string; product_name: string }>;
+  categories: Array<{ id: string; slug: string; name: string }>;
+  onSave: (docCategory: string | null, lineCategories: Record<string, string>) => void;
+  onSkip: () => void;
+  saving: boolean;
+}) {
+  const [docCat, setDocCat] = useState('');
+  const [lineCats, setLineCats] = useState<Record<string, string>>(() =>
+    Object.fromEntries(items.map((it) => [it.id, ''])),
+  );
+
+  // When doc category changes, apply to all lines that haven't been set individually
+  const handleDocCat = (slug: string) => {
+    setDocCat(slug);
+    setLineCats((prev) =>
+      Object.fromEntries(
+        items.map((it) => [it.id, prev[it.id] || slug]),
+      ),
+    );
+  };
+
+  const handleSave = () => {
+    const nonEmpty = Object.fromEntries(
+      Object.entries(lineCats).filter(([, v]) => v),
+    );
+    onSave(docCat || null, nonEmpty);
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
+      <div className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl bg-card shadow-2xl max-h-[85vh] flex flex-col">
+        {/* header */}
+        <div className="px-5 pt-5 pb-3 border-b border-border">
+          <h2 className="text-base font-semibold">Kategoria kosztów</h2>
+          <p className="mt-0.5 text-[13px] text-muted-foreground">
+            Przypisz kategorię, żeby dokument trafił do właściwej rubryki w KPiR.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => onDismiss(line.id)}
-          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          aria-label="Pomiń tę pozycję"
-        >
-          <TrashIcon />
-        </button>
-      </div>
 
-      {/* Product search */}
-      <div ref={wrapRef} className="relative">
-        <input
-          type="text"
-          placeholder="Wyszukaj produkt w bazie…"
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
-        />
-        {open && (
-          <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-border bg-card shadow-lg">
-            {isPending && <p className="px-3 py-2 text-sm text-muted-foreground">Ładowanie…</p>}
-            {!isPending && products.length === 0 && (
-              <p className="px-3 py-2 text-sm text-muted-foreground">Brak wyników</p>
-            )}
-            {products.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onAssign(p, line.quantity, line.unit_price);
-                }}
-                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted"
-              >
-                <span>{p.name}</span>
-                <span className="flex items-center gap-1 text-xs text-primary">
-                  <CheckIcon /> przypisz
-                </span>
-              </button>
-            ))}
-            {/* Create new product from OCR name */}
-            <button
-              type="button"
-              disabled={creating}
-              onClick={() => { setOpen(false); void handleCreateNew(); }}
-              className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm font-medium text-primary hover:bg-primary/5 disabled:opacity-60"
+        {/* body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* document-level */}
+          <div>
+            <label className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+              Cały dokument
+            </label>
+            <select
+              value={docCat}
+              onChange={(e) => handleDocCat(e.target.value)}
+              className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
-              <span className="text-lg leading-none">+</span>
-              {creating ? 'Tworzę…' : `Utwórz nowy: „${search.trim() || line.name}"`}
-            </button>
+              <option value="">— wybierz kategorię —</option>
+              {categories.map((c) => (
+                <option key={c.slug} value={c.slug}>{c.name}</option>
+              ))}
+            </select>
           </div>
-        )}
+
+          {/* per-line (only if multiple lines or any differ) */}
+          {items.length > 1 && (
+            <div>
+              <p className="mb-2 text-[12px] text-muted-foreground">
+                Różne kategorie na pozycje (opcjonalnie):
+              </p>
+              <div className="space-y-2">
+                {items.map((it) => (
+                  <div key={it.id} className="flex items-center gap-2">
+                    <span className="flex-1 truncate text-[13px]">{it.product_name}</span>
+                    <select
+                      value={lineCats[it.id] ?? ''}
+                      onChange={(e) => setLineCats((prev) => ({ ...prev, [it.id]: e.target.value }))}
+                      className="h-9 w-40 rounded-lg border border-border bg-secondary px-2 text-[12px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">jak dokument</option>
+                      {categories.map((c) => (
+                        <option key={c.slug} value={c.slug}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* footer */}
+        <div className="px-5 py-4 border-t border-border flex gap-3">
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={saving}
+            className="flex-1 rounded-xl border border-border py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >
+            Pomiń
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !docCat}
+            className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {saving ? 'Zapisuję…' : 'Zapisz kategorię'}
+          </button>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -286,13 +305,21 @@ function PaperScannerPageInner() {
   const createPz = useCreatePzMutation();
   const scanMutation = useKsefScanPaperMutation();
   const createPurchaseDoc = useCreatePurchaseDocumentMutation();
+  const setCategoryMutation = useSetPurchaseDocCategoryMutation();
+  const setLineCategoriesMutation = useSetLinecategoriesMutation();
+  const { data: opexCategories = [] } = useOpexCategoriesQuery();
 
-  /* ── doc-type step ───────────────────────────────────────────── */
-  const [scanMode, setScanMode] = useState<ScanMode | null>(null);
+  /* ── stock vs cost-only ──────────────────────────────────────── */
+  const purchasingEnabled = useModuleGuard('purchasing');
+  const productionEnabled = useModuleGuard('production');
+  const { silent, warehouseId: defaultWarehouseId } = useSilentWarehouse();
+  const canAcceptToStock = purchasingEnabled || productionEnabled || !silent;
+  const [acceptToStock, setAcceptToStock] = useState(true);
 
   /* ── image state ─────────────────────────────────────────────── */
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imageFullscreen, setImageFullscreen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ── extracted / editable header fields ─────────────────────── */
@@ -306,30 +333,42 @@ function PaperScannerPageInner() {
 
   /* ── purchase-doc specific state ────────────────────────────── */
   const [totalGross, setTotalGross] = useState('');
+  const [totalNet, setTotalNet] = useState('');
+  const [totalVat, setTotalVat] = useState('');
+  const [vatDeduction, setVatDeduction] = useState<VatDeduction>('full');
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [buyerNipWarning, setBuyerNipWarning] = useState<string | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<{ uuid: string; document_number: string; supplier_name: string } | null>(null);
+  const [ocrParVat, setOcrParVat] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'cash' | 'card'>('cash');
-  // Detected or manually overridden sub-type for 'doc' mode (fz=faktura, par=paragon)
   const [docSubType, setDocSubType] = useState<'fz' | 'par'>('par');
 
-  /* ── PZ form state ───────────────────────────────────────────── */
+  /* ── PZ / warehouse state ────────────────────────────────────── */
   const [toWarehouseId, setToWarehouseId] = useState('');
   const [fromSupplierId, setFromSupplierId] = useState('');
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [supplierCreating, setSupplierCreating] = useState(false);
   const supplierRef = useRef<HTMLDivElement>(null);
-  const [lines, setLines] = useState<PzLine[]>([]);
-  const [rawLines, setRawLines] = useState<RawOcrLine[]>([]);
-  const [simpleLines, setSimpleLines] = useState<SimpleDocLine[]>([]);
-  const [productSearch, setProductSearch] = useState('');
-  const [showProductSearch, setShowProductSearch] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [scanError, setScanError] = useState<string | null>(null);
 
-  /* show the PZ form only after an image is selected */
+  /* ── unified lines (one source of truth) ────────────────────── */
+  const [unifiedLines, setUnifiedLines] = useState<UnifiedLine[]>([]);
+
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const submitErrorRef = useRef<HTMLParagraphElement>(null);
+  const setSubmitErrorAndScroll = (msg: string | null) => {
+    setSubmitError(msg);
+    if (msg) setTimeout(() => submitErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  };
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [sellerNameNormalized, setSellerNameNormalized] = useState(false);
   const [formVisible, setFormVisible] = useState(false);
 
-  const searchRef = useRef<HTMLDivElement>(null);
-  const productSearchDebounced = useDebouncedValue(productSearch, DEBOUNCE_MS);
+  // Category modal state — shown after successful save
+  const [categoryModal, setCategoryModal] = useState<{
+    docId: string;
+    items: Array<{ id: string; product_name: string }>;
+  } | null>(null);
 
   /* warehouses */
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
@@ -341,58 +380,16 @@ function PaperScannerPageInner() {
       .catch(() => {});
   }, [companyId]);
 
+  useEffect(() => {
+    if (defaultWarehouseId && !toWarehouseId) setToWarehouseId(defaultWarehouseId);
+  }, [defaultWarehouseId, toWarehouseId]);
+
   /* suppliers */
   const { data: suppliers = [] } = useAllSuppliersQuery(Boolean(companyId));
 
-  /* products for search */
-  const {
-    data: productPages,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isPending: productsLoading,
-  } = useInfiniteQuery({
-    queryKey: ['products', 'paper-scanner', companyId, productSearchDebounced] as const,
-    queryFn: ({ pageParam }) =>
-      productService.fetchList({
-        page: pageParam as number,
-        page_size: PAGE_SIZE,
-        search: productSearchDebounced.trim() || undefined,
-        is_active: true,
-        ordering: 'name',
-      }),
-    initialPageParam: 1,
-    getNextPageParam: (last) => pageFromDrfNext(last.next),
-    enabled: Boolean(companyId) && showProductSearch,
-  });
-
-  const searchProducts = useMemo(
-    () => productPages?.pages.flatMap((p) => p.results) ?? [],
-    [productPages],
-  );
-
-  /* sentinel for product search infinite scroll */
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || !hasNextPage) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) void fetchNextPage();
-      },
-      { rootMargin: '100px' },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
-
-  /* close dropdowns on outside click */
+  /* close supplier dropdown on outside click */
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setShowProductSearch(false);
-      }
       if (supplierRef.current && !supplierRef.current.contains(e.target as Node)) {
         setSupplierOpen(false);
       }
@@ -401,52 +398,90 @@ function PaperScannerPageInner() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  /* ── sum mismatch detection ──────────────────────────────────── */
+  const linesGrossTotal = unifiedLines.reduce((sum, l) => {
+    const qty = parseFloat(l.quantity) || 0;
+    const price = parseFloat(l.unit_price_gross) || 0;
+    return sum + qty * price;
+  }, 0);
+  const docGross = parseFloat(totalGross) || 0;
+  const sumMismatch =
+    unifiedLines.length > 0 && docGross > 0 && Math.abs(linesGrossTotal - docGross) > 0.02;
+
   /* ── image selection ─────────────────────────────────────────── */
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setImageFile(file);
     setImagePreviewUrl(URL.createObjectURL(file));
+    // Clear all form state so previous scan doesn't bleed into new document
     setScanError(null);
+    setSubmitError(null);
     setFormVisible(true);
-    // Reset extracted fields when a new image is picked
     setInvoiceNumber('');
     setSellerName('');
     setSellerNip('');
+    setSellerNameNormalized(false);
+    setSupplierSearch('');
+    setFromSupplierId('');
+    setNotes('');
     setIssueDate(todayIso);
-    setRawLines([]);
+    setUnifiedLines([]);
+    setTotalGross('');
+    setTotalNet('');
+    setTotalVat('');
+    setStoredFilename('');
+    setOcrParVat(false);
+    setBuyerNipWarning(null);
+    setDuplicateWarning(null);
+    setVatDeduction('full');
+    setIsPrivate(false);
   };
 
   /* ── OCR scan ────────────────────────────────────────────────── */
   const onScan = async () => {
     if (!imageFile) return;
     setScanError(null);
+    setSubmitError(null);
     try {
       const result = await scanMutation.mutateAsync(imageFile);
       if (result.invoice_number) setInvoiceNumber(result.invoice_number);
       if (result.seller_name) setSellerName(result.seller_name);
+      setSellerNameNormalized(result.seller_name_normalized ?? false);
       if (result.seller_nip) setSellerNip(result.seller_nip);
       if (result.issue_date) setIssueDate(result.issue_date);
-      if (result.invoice_number && scanMode === 'pz') setNotes(`Faktura papierowa: ${result.invoice_number}`);
+      if (result.invoice_number) setNotes(`Skan: ${result.invoice_number}`);
       if (result.seller_name) setSupplierSearch(result.seller_name);
       if (result.total_gross) setTotalGross(result.total_gross);
+      if (result.total_net) setTotalNet(result.total_net);
+      if (result.total_vat) setTotalVat(result.total_vat);
       if (result.stored_filename) setStoredFilename(result.stored_filename);
-      // Auto-detect doc sub-type from OCR result
-      if (result.doc_type) setDocSubType(result.doc_type === 'faktura' ? 'fz' : 'par');
-      // Pre-fill raw OCR lines (unmatched yet)
+      if (result.doc_type) setDocSubType(ocrDocToSubType(result.doc_type));
+      const parVat = Boolean(result.buyer_nip_matches_company);
+      setOcrParVat(parVat);
+      if (result.buyer_nip && result.buyer_nip_matches_company === false) {
+        setBuyerNipWarning('Na dokumencie jest inny NIP nabywcy niż NIP tej firmy — VAT nie zostanie odliczony.');
+      } else {
+        setBuyerNipWarning(null);
+      }
+      if (result.possible_duplicate) {
+        setDuplicateWarning(result.possible_duplicate);
+      } else {
+        setDuplicateWarning(null);
+      }
       if (result.lines?.length) {
-        setRawLines(result.lines.map((l, i) => ({ ...l, id: i })));
-        // For par/fz — also pre-fill simple editable lines
-        if (scanMode !== 'pz') {
-          setSimpleLines(result.lines.map((l, i) => ({
-            id: i,
-            product_name: l.name,
-            quantity: l.quantity || '1',
-            unit: l.unit || 'szt',
-            unit_price_gross: l.unit_price || '',
-            vat_rate: l.vat_rate || '23',
-          })));
-        }
+        setUnifiedLines(result.lines.map((l, i) => ({
+          id: i,
+          product_name: l.name,
+          quantity: l.quantity || '1',
+          unit: l.unit || 'szt',
+          unit_price_gross: l.unit_price || '',
+          vat_rate: l.vat_rate || '',
+        })));
+        // keep acceptToStock as whatever user set (or default true)
+      } else {
+        setUnifiedLines([]);
+        // don't touch acceptToStock — preserve user's selection
       }
     } catch {
       setScanError('Nie udało się przetworzyć obrazu. Wypełnij pola ręcznie.');
@@ -454,43 +489,55 @@ function PaperScannerPageInner() {
   };
 
   /* ── line management ─────────────────────────────────────────── */
-  const addProduct = (product: Product, quantity = '1', unitCost = '') => {
-    setLines((prev) => {
-      if (prev.some((l) => l.product.id === product.id)) return prev;
-      return [...prev, { product, quantity, unit_cost: unitCost }];
-    });
-    setProductSearch('');
-    setShowProductSearch(false);
+  const updateLine = (id: number, field: keyof Omit<UnifiedLine, 'id'>, value: string) => {
+    setUnifiedLines((prev) => prev.map((l) => {
+      if (l.id !== id) return l;
+      // When directly editing unit price, clear the total override
+      if (field === 'unit_price_gross') return { ...l, [field]: value, line_total_gross: undefined };
+      // When editing quantity while a total override exists, recompute unit price from that total
+      if (field === 'quantity' && l.line_total_gross !== undefined) {
+        const qty = parseFloat(value) || 1;
+        const total = parseFloat(l.line_total_gross) || 0;
+        return { ...l, quantity: value, unit_price_gross: (total / qty).toFixed(4) };
+      }
+      return { ...l, [field]: value };
+    }));
   };
 
-  const assignRawLine = (product: Product, quantity: string, unitPrice: string, rawId: number) => {
-    addProduct(product, quantity, unitPrice);
-    setRawLines((prev) => prev.filter((r) => r.id !== rawId));
+  const removeLine = (id: number) => {
+    setUnifiedLines((prev) => prev.filter((l) => l.id !== id));
   };
 
-  const dismissRawLine = (rawId: number) => {
-    setRawLines((prev) => prev.filter((r) => r.id !== rawId));
-  };
-
-  const removeLine = (productId: string) => {
-    setLines((prev) => prev.filter((l) => l.product.id !== productId));
-  };
-
-  const updateLine = (productId: string, field: 'quantity' | 'unit_cost', value: string) => {
-    setLines((prev) =>
-      prev.map((l) => (l.product.id === productId ? { ...l, [field]: value } : l)),
-    );
-  };
-
-  /* ── purchase doc submit ─────────────────────────────────────── */
-  const onSubmitPurchaseDoc = async () => {
+  /* ── submit: always cost doc, optionally PZ ──────────────────── */
+  const onSubmitAll = async () => {
     setSubmitError(null);
-    const nipDigits = sellerNip.replace(/[\s\-]/g, '');
-    const isParWithNip = docSubType === 'par' && /^\d{10}$/.test(nipDigits);
-    const docType: PurchaseDocDocType = docSubType === 'par' ? (isParWithNip ? 'PAR_VAT' : 'PAR') : 'FZ';
-    const filledLines = simpleLines.filter((l) => l.product_name.trim());
+    const takeStock = canAcceptToStock && acceptToStock && !isPrivate;
+    if (takeStock && !toWarehouseId) {
+      setSubmitErrorAndScroll(silent ? 'Brak magazynu głównego — odśwież stronę i spróbuj ponownie.' : 'Wybierz magazyn docelowy.');
+      return;
+    }
+
+    const filledLines = unifiedLines.filter((l) => l.product_name.trim());
+
+    const missingVat = filledLines.filter((l) => l.vat_rate === '');
+    const missingQty = filledLines.filter((l) => !parseFloat(l.quantity));
+    const missingPrice = filledLines.filter((l) => !parseFloat(l.unit_price_gross));
+    const invalid = [
+      missingVat.length > 0 && `brak VAT: ${missingVat.map((l) => l.product_name || '(bez nazwy)').join(', ')}`,
+      missingQty.length > 0 && `brak ilości: ${missingQty.map((l) => l.product_name || '(bez nazwy)').join(', ')}`,
+      missingPrice.length > 0 && `brak ceny: ${missingPrice.map((l) => l.product_name || '(bez nazwy)').join(', ')}`,
+    ].filter(Boolean);
+    if (invalid.length > 0) {
+      setSubmitErrorAndScroll(`Uzupełnij pozycje — ${invalid.join(' · ')}`);
+      return;
+    }
+
+    const isParWithCompanyNip = docSubType === 'par' && ocrParVat;
+    const docType: PurchaseDocDocType = docSubType === 'par' ? (isParWithCompanyNip ? 'PAR_VAT' : 'PAR') : 'FZ';
+
+    let savedDoc: { id: string; items?: { id: string; product_name: string }[] } | null = null;
     try {
-      await createPurchaseDoc.mutateAsync({
+      savedDoc = await createPurchaseDoc.mutateAsync({
         doc_type: docType,
         supplier_name: sellerName,
         supplier_nip: sellerNip,
@@ -498,8 +545,10 @@ function PaperScannerPageInner() {
         issue_date: issueDate || null,
         payment_method: paymentMethod,
         total_gross: totalGross || '0.00',
-        total_net: '0.00',
-        total_vat: '0.00',
+        total_net: totalNet || '0.00',
+        total_vat: totalVat || '0.00',
+        vat_deduction: isPrivate ? 'none' : docType === 'PAR' ? 'none' : vatDeduction,
+        is_private: isPrivate,
         notes: notes.trim(),
         ocr_raw_filename: storedFilename || imageFile?.name || '',
         ...(filledLines.length > 0 && {
@@ -508,62 +557,105 @@ function PaperScannerPageInner() {
             unit: l.unit || 'szt',
             quantity: l.quantity || '1',
             unit_price_gross: l.unit_price_gross || '0',
-            vat_rate: l.vat_rate || '23',
+            vat_rate: l.vat_rate || '',
           })),
         }),
       });
+    } catch (e: unknown) {
+      setSubmitErrorAndScroll(e instanceof Error ? e.message : 'Nie udało się zapisać dokumentu.');
+      return;
+    }
+
+    if (takeStock && filledLines.length > 0) {
+      // Auto-resolve each line to a catalog product: search by name, create if not found
+      const resolvedItems: { product_id: string; quantity_planned: string; unit_cost?: string }[] = [];
+      for (const line of filledLines) {
+        const qty = parseFloat(line.quantity);
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+        try {
+          const results = await productService.fetchList({ search: line.product_name.trim(), page_size: 1, is_active: true });
+          let productId: string;
+          if (results.results.length > 0) {
+            productId = results.results[0].id;
+          } else {
+            const created = await productService.createItem({
+              name: line.product_name.trim(),
+              description: null, unit: line.unit || 'szt',
+              price_net: '0.00', price_gross: '0.00', vat_rate: '23',
+              sku: null, barcode: null, pkwiu: '', track_batches: false,
+              min_stock_alert: '0', shelf_life_days: null, is_resalable: false,
+              markup_percent: null, avg_cost: null, avg_cost_source: null,
+              avg_cost_updated_at: null, last_cost: null, is_active: true, is_service: false,
+            });
+            productId = created.id;
+          }
+          resolvedItems.push({
+            product_id: productId,
+            quantity_planned: qty.toFixed(2),
+            unit_cost: line.unit_price_gross ? parseFloat(line.unit_price_gross).toFixed(4) : undefined,
+          });
+        } catch {
+          // skip lines that fail to resolve — don't block the whole PZ
+        }
+      }
+
+      if (resolvedItems.length > 0) {
+        try {
+          await createPz.mutateAsync({
+            to_warehouse_id: toWarehouseId,
+            from_supplier_id: fromSupplierId || null,
+            issue_date: issueDate,
+            notes: notes.trim() || undefined,
+            items: resolvedItems,
+          });
+        } catch (e: unknown) {
+          const msg =
+            e instanceof Error ? e.message
+            : typeof e === 'object' && e !== null && 'detail' in e
+              ? String((e as { detail: unknown }).detail)
+              : 'Nie udało się przyjąć towaru na stan.';
+          setSubmitErrorAndScroll(`Zapisano koszt, ale nie przyjęto na stan: ${msg}`);
+          return;
+        }
+      }
+    }
+
+    // Open category modal before navigating away
+    if (savedDoc) {
+      setCategoryModal({
+        docId: savedDoc.id,
+        items: (savedDoc.items ?? []).map((it) => ({ id: it.id, product_name: it.product_name })),
+      });
+    } else {
       navigate('/purchase-documents');
-    } catch {
-      setSubmitError('Nie udało się zapisać dokumentu.');
     }
   };
 
-  /* ── PZ submit ───────────────────────────────────────────────── */
-  const onSubmit = async () => {
-    setSubmitError(null);
-    if (!toWarehouseId) {
-      setSubmitError('Wybierz magazyn docelowy.');
-      return;
-    }
-    if (lines.length === 0) {
-      setSubmitError('Dodaj co najmniej jeden produkt.');
-      return;
-    }
-    const invalidQty = lines.find((l) => {
-      const q = parseFloat(l.quantity);
-      return !Number.isFinite(q) || q <= 0;
-    });
-    if (invalidQty) {
-      setSubmitError(`Nieprawidłowa ilość dla: ${invalidQty.product.name}`);
-      return;
-    }
-
+  /* ── category modal handlers ─────────────────────────────────── */
+  const handleCategorySave = async (docCategory: string | null, lineCategories: Record<string, string>) => {
+    if (!categoryModal) return;
     try {
-      const doc = await createPz.mutateAsync({
-        to_warehouse_id: toWarehouseId,
-        from_supplier_id: fromSupplierId || null,
-        issue_date: issueDate,
-        notes: notes.trim() || undefined,
-        items: lines.map((l) => ({
-          product_id: l.product.id,
-          quantity_planned: parseFloat(l.quantity).toFixed(2),
-          unit_cost: l.unit_cost ? parseFloat(l.unit_cost).toFixed(4) : undefined,
-        })),
-      });
-      navigate(`/delivery/${doc.id}`);
-    } catch (e: unknown) {
-      const msg =
-        e instanceof Error
-          ? e.message
-          : typeof e === 'object' && e !== null && 'detail' in e
-            ? String((e as { detail: unknown }).detail)
-            : 'Nie udało się utworzyć PZ.';
-      setSubmitError(msg);
+      if (docCategory) {
+        await setCategoryMutation.mutateAsync({ id: categoryModal.docId, category: docCategory });
+      }
+      if (Object.keys(lineCategories).length > 0) {
+        await setLineCategoriesMutation.mutateAsync({ id: categoryModal.docId, lineCategories });
+      }
+    } finally {
+      setCategoryModal(null);
+      navigate(`/purchase-documents?newDoc=${categoryModal.docId}`);
     }
+  };
+
+  const handleCategorySkip = () => {
+    const docId = categoryModal?.docId;
+    setCategoryModal(null);
+    navigate(`/purchase-documents?newDoc=${docId ?? ''}`);
   };
 
   /* ── render ──────────────────────────────────────────────────── */
   return (
+    <>
     <div className="min-h-screen bg-background pb-32">
       {/* header */}
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/95 backdrop-blur-xl">
@@ -586,44 +678,53 @@ function PaperScannerPageInner() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-5 px-4 py-5">
-        {/* ── step 0: choose document type ────────────────────────── */}
-        <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-          <h2 className="mb-3 text-[15px] font-semibold text-foreground">Rodzaj dokumentu</h2>
-          <div className="grid grid-cols-2 gap-2">
-            {([
-              { mode: 'pz' as ScanMode, label: 'WZ / PZ', sub: 'Dokument magazynowy' },
-              { mode: 'doc' as ScanMode, label: 'Dokument zakupowy', sub: 'Faktura, paragon — OCR wykryje typ' },
-            ] as const).map(({ mode, label, sub }) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setScanMode(mode)}
-                className={cn(
-                  'flex flex-col items-center justify-center rounded-xl border-2 px-3 py-4 text-center transition-all',
-                  scanMode === mode
-                    ? 'border-primary bg-primary/5 text-primary'
-                    : 'border-border bg-secondary text-foreground hover:border-primary/40',
-                )}
-              >
-                <span className="text-[14px] font-semibold">{label}</span>
-                <span className="mt-0.5 text-[11px] text-muted-foreground">{sub}</span>
-              </button>
-            ))}
-          </div>
-        </section>
+      {/* ── fullscreen image lightbox ─────────────────────────────── */}
+      {imageFullscreen && imagePreviewUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+          onClick={() => setImageFullscreen(false)}
+        >
+          <img
+            src={imagePreviewUrl}
+            alt="Powiększony podgląd faktury"
+            className="max-h-full max-w-full object-contain"
+            style={{ touchAction: 'pinch-zoom' }}
+          />
+          <button
+            type="button"
+            onClick={() => setImageFullscreen(false)}
+            className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+            aria-label="Zamknij"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
+              <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      )}
 
+      <main className="mx-auto max-w-3xl space-y-5 px-4 py-5">
         {/* ── image upload ────────────────────────────────────────── */}
-        <section className={cn('rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]', !scanMode && 'opacity-40 pointer-events-none')}>
+        <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
           <h2 className="mb-4 text-[15px] font-semibold text-foreground">Zdjęcie dokumentu</h2>
 
           {imagePreviewUrl ? (
             <div className="space-y-3">
-              <img
-                src={imagePreviewUrl}
-                alt="Podgląd faktury"
-                className="max-h-64 w-full rounded-xl object-contain border border-border bg-muted"
-              />
+              <button
+                type="button"
+                onClick={() => setImageFullscreen(true)}
+                className="relative w-full cursor-zoom-in"
+                aria-label="Powiększ zdjęcie"
+              >
+                <img
+                  src={imagePreviewUrl}
+                  alt="Podgląd faktury"
+                  className="max-h-64 w-full rounded-xl object-contain border border-border bg-muted"
+                />
+                <span className="absolute bottom-2 right-2 rounded-lg bg-black/50 px-2 py-1 text-[11px] text-white">
+                  Dotknij, aby powiększyć
+                </span>
+              </button>
               {imageFile && (
                 <p className="text-[12px] text-muted-foreground truncate">
                   <span className="font-medium">Plik:</span> {imageFile.name}
@@ -689,6 +790,7 @@ function PaperScannerPageInner() {
           <>
             {submitError && (
               <p
+                ref={submitErrorRef}
                 className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
                 role="alert"
               >
@@ -700,27 +802,27 @@ function PaperScannerPageInner() {
               <h2 className="mb-4 text-[15px] font-semibold text-foreground">Dane dokumentu</h2>
 
               <div className="space-y-4">
-                {/* warehouse — PZ only */}
-                {scanMode === 'pz' && (
-                <div>
-                  <label htmlFor="to_warehouse" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
-                    Magazyn docelowy <span className="text-destructive">*</span>
-                  </label>
-                  <select
-                    id="to_warehouse"
-                    value={toWarehouseId}
-                    onChange={(e) => setToWarehouseId(e.target.value)}
-                    className={cn(
-                      'h-10 w-full rounded-xl border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30',
-                      !toWarehouseId ? 'border-destructive/40' : 'border-border',
-                    )}
-                  >
-                    <option value="">— wybierz magazyn —</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* warehouse — only when accepting to stock and managing locations */}
+                {canAcceptToStock && acceptToStock && !silent && !isPrivate && (
+                  <div>
+                    <label htmlFor="to_warehouse" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                      Magazyn docelowy <span className="text-destructive">*</span>
+                    </label>
+                    <select
+                      id="to_warehouse"
+                      value={toWarehouseId}
+                      onChange={(e) => setToWarehouseId(e.target.value)}
+                      className={cn(
+                        'h-10 w-full rounded-xl border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30',
+                        !toWarehouseId ? 'border-destructive/40' : 'border-border',
+                      )}
+                    >
+                      <option value="">— wybierz magazyn —</option>
+                      {warehouses.map((w) => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 )}
 
                 {/* supplier combobox */}
@@ -730,7 +832,6 @@ function PaperScannerPageInner() {
                   </label>
                   <div ref={supplierRef} className="relative">
                     {fromSupplierId ? (
-                      // Selected state — show name + clear button
                       <div className="flex h-10 items-center justify-between rounded-xl border border-border bg-secondary px-3">
                         <span className="text-sm text-foreground">
                           {suppliers.find((s) => s.id === fromSupplierId)?.name ?? supplierSearch}
@@ -775,7 +876,6 @@ function PaperScannerPageInner() {
                               <CheckIcon />
                             </button>
                           ))}
-                        {/* Create new supplier */}
                         {supplierSearch.trim() && (
                           <button
                             type="button"
@@ -821,7 +921,7 @@ function PaperScannerPageInner() {
                   />
                 </div>
 
-                {/* invoice number (from OCR, editable) */}
+                {/* invoice number */}
                 <div>
                   <label htmlFor="invoice_number" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                     Numer faktury
@@ -836,7 +936,7 @@ function PaperScannerPageInner() {
                   />
                 </div>
 
-                {/* seller NIP (from OCR, editable) */}
+                {/* seller NIP */}
                 <div>
                   <label htmlFor="seller_nip" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                     NIP dostawcy
@@ -849,17 +949,17 @@ function PaperScannerPageInner() {
                     placeholder="10 cyfr"
                     className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
-                  {scanMode === 'doc' && docSubType === 'par' && (
+                  {docSubType === 'par' && (
                     <p className="mt-1 text-[11px]">
-                      {/^\d{10}$/.test(sellerNip.replace(/[\s\-]/g, ''))
-                        ? <span className="font-medium text-orange-600">→ Zostanie zapisany jako PAR z NIP — znajdziesz go w zakładce <strong>Faktury i PAR z NIP</strong></span>
-                        : <span className="text-muted-foreground">→ Zostanie zapisany jako Paragon fiskalny — znajdziesz go w zakładce <strong>Paragony</strong>. Dodaj NIP, aby zmienić na PAR z NIP.</span>
+                      {ocrParVat
+                        ? <span className="font-medium text-orange-600">→ Paragon z NIP tej firmy — odliczenie VAT</span>
+                        : <span className="text-muted-foreground">→ Paragon bez NIP nabywcy — koszt, bez odliczenia VAT</span>
                       }
                     </p>
                   )}
                 </div>
 
-                {/* seller name (from OCR, editable) */}
+                {/* seller name */}
                 <div>
                   <label htmlFor="seller_name" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                     Nazwa dostawcy
@@ -868,10 +968,15 @@ function PaperScannerPageInner() {
                     id="seller_name"
                     type="text"
                     value={sellerName}
-                    onChange={(e) => setSellerName(e.target.value)}
+                    onChange={(e) => { setSellerName(e.target.value); setSellerNameNormalized(false); }}
                     placeholder="np. Firma ABC Sp. z o.o."
                     className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
+                  {sellerNameNormalized && (
+                    <p className="mt-1 text-[12px] text-amber-600">
+                      Nazwa uzupełniona automatycznie na podstawie NIP — sprawdź, czy jest prawidłowa.
+                    </p>
+                  )}
                 </div>
 
                 {/* notes */}
@@ -889,134 +994,250 @@ function PaperScannerPageInner() {
                   />
                 </div>
 
-                {/* purchase-doc specific fields */}
-                {scanMode === 'doc' && (
-                  <>
-                    <div>
-                      <label htmlFor="total_gross" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
-                        Kwota brutto (PLN) <span className="text-destructive">*</span>
-                      </label>
-                      <input
-                        id="total_gross"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={totalGross}
-                        onChange={(e) => setTotalGross(e.target.value)}
-                        placeholder="0.00"
-                        className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="payment_method" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
-                        Sposób płatności
-                      </label>
-                      <select
-                        id="payment_method"
-                        value={paymentMethod}
-                        onChange={(e) => setPaymentMethod(e.target.value as 'transfer' | 'cash' | 'card')}
-                        className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                {/* totals */}
+                <div>
+                  <label htmlFor="total_gross" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                    Kwota brutto (PLN) <span className="text-destructive">*</span>
+                  </label>
+                  <input
+                    id="total_gross"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={totalGross}
+                    onChange={(e) => setTotalGross(e.target.value)}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    placeholder="0.00"
+                    className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="total_net" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                      Netto
+                    </label>
+                    <input
+                      id="total_net"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={totalNet}
+                      onChange={(e) => setTotalNet(e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      placeholder="0.00"
+                      className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="total_vat" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                      VAT
+                    </label>
+                    <input
+                      id="total_vat"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={totalVat}
+                      onChange={(e) => setTotalVat(e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      placeholder="0.00"
+                      className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+
+                {buyerNipWarning && (
+                  <p className="text-[13px] text-amber-600">{buyerNipWarning}</p>
+                )}
+
+                {duplicateWarning && (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
+                    <p className="text-[13px] font-semibold text-amber-800">
+                      ⚠ Ten dokument już jest w systemie
+                    </p>
+                    <p className="text-[12px] text-amber-700">
+                      {duplicateWarning.supplier_name && `${duplicateWarning.supplier_name} · `}
+                      Nr: {duplicateWarning.document_number}
+                    </p>
+                    <div className="flex items-center gap-3 pt-1">
+                      <a
+                        href="/purchase-documents"
+                        className="text-[12px] font-medium text-amber-800 underline"
                       >
-                        <option value="transfer">Przelew</option>
-                        <option value="cash">Gotówka</option>
-                        <option value="card">Karta</option>
-                      </select>
+                        Przejdź do istniejącego →
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setDuplicateWarning(null)}
+                        className="text-[12px] text-amber-600 hover:text-amber-800 underline"
+                      >
+                        Mimo to dodaj nowy
+                      </button>
                     </div>
-                    {/* Doc sub-type override */}
-                    <div>
-                      <p className="mb-1.5 text-[13px] font-medium text-muted-foreground">Typ dokumentu</p>
-                      <div className="flex gap-2">
-                        {([
-                          { v: 'fz' as const, label: 'Faktura (FZ)' },
-                          { v: 'par' as const, label: 'Paragon' },
-                        ]).map(({ v, label }) => (
-                          <button
-                            key={v}
-                            type="button"
-                            onClick={() => setDocSubType(v)}
-                            className={cn(
-                              'flex-1 rounded-xl border px-3 py-2 text-[13px] font-medium transition-all',
-                              docSubType === v
-                                ? 'border-primary bg-primary/5 text-primary'
-                                : 'border-border bg-secondary text-foreground hover:border-primary/40',
-                            )}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {docSubType === 'fz' && (
-                        <p className="mt-1 text-[11px] text-muted-foreground">→ Faktura zakupowa — znajdziesz ją w zakładce <strong>Faktury i PAR z NIP</strong></p>
-                      )}
-                    </div>
-                  </>
+                  </div>
+                )}
+
+                {docSubType !== 'par' || ocrParVat ? (
+                  <VatDeductionToggles
+                    deduction={vatDeduction}
+                    isPrivate={isPrivate}
+                    hidePrivate
+                    onDeductionChange={setVatDeduction}
+                    onPrivateChange={(v) => {
+                      setIsPrivate(v);
+                      if (v) setAcceptToStock(false);
+                    }}
+                  />
+                ) : (
+                  <VatDeductionToggles
+                    deduction="none"
+                    isPrivate={isPrivate}
+                    hidePassengerCar
+                    hidePrivate
+                    onDeductionChange={setVatDeduction}
+                    onPrivateChange={(v) => {
+                      setIsPrivate(v);
+                      if (v) setAcceptToStock(false);
+                    }}
+                  />
+                )}
+
+                <div>
+                  <label htmlFor="payment_method" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                    Sposób płatności
+                  </label>
+                  <select
+                    id="payment_method"
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as 'transfer' | 'cash' | 'card')}
+                    className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="transfer">Przelew</option>
+                    <option value="cash">Gotówka</option>
+                    <option value="card">Karta</option>
+                  </select>
+                </div>
+
+                {/* Doc sub-type override */}
+                <div>
+                  <p className="mb-1.5 text-[13px] font-medium text-muted-foreground">Typ dokumentu</p>
+                  <div className="flex gap-2">
+                    {([
+                      { v: 'fz' as const, label: 'Faktura (FZ)' },
+                      { v: 'par' as const, label: 'Paragon' },
+                    ]).map(({ v, label }) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setDocSubType(v)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-[13px] font-medium transition-all',
+                          docSubType === v
+                            ? 'border-primary bg-primary/5 text-primary'
+                            : 'border-border bg-secondary text-foreground hover:border-primary/40',
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {docSubType === 'fz' && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">→ Faktura zakupowa — znajdziesz ją w zakładce <strong>Faktury i PAR z NIP</strong></p>
+                  )}
+                </div>
+
+                {canAcceptToStock && !isPrivate && (
+                  <IosToggle
+                    checked={acceptToStock}
+                    onChange={setAcceptToStock}
+                    label="Przyjmij towar na stan"
+                    description="Wyłącz przy gazie, prądzie, paliwie, usłudze."
+                  />
                 )}
               </div>
             </section>
 
-            {/* ── pozycje dokumentu (PAR / FZ) ─────────────────────── */}
-            {scanMode === 'doc' && (
-              <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-                <div className="mb-4 flex items-center justify-between">
+            {/* ── pozycje dokumentu ────────────────────────────────── */}
+            <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
                   <h2 className="text-[15px] font-semibold text-foreground">Pozycje</h2>
-                  <button
-                    type="button"
-                    onClick={() => setSimpleLines((prev) => [
-                      ...prev,
-                      { id: Date.now(), product_name: '', quantity: '1', unit: 'szt', unit_price_gross: '', vat_rate: '23' },
-                    ])}
-                    className="rounded-lg border border-dashed border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-                  >
-                    + Dodaj pozycję
-                  </button>
                 </div>
-                {simpleLines.length === 0 ? (
-                  <p className="text-[13px] text-muted-foreground">Brak pozycji — kliknij „Odczytaj dane (OCR)" lub dodaj ręcznie.</p>
-                ) : (
-                  <div className="overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setUnifiedLines((prev) => [
+                    ...prev,
+                    { id: Date.now(), product_name: '', quantity: '1', unit: 'szt', unit_price_gross: '', vat_rate: '' },
+                  ])}
+                  className="rounded-lg border border-dashed border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                >
+                  + Dodaj pozycję
+                </button>
+              </div>
+
+              {/* sum mismatch alert */}
+              {sumMismatch && (
+                <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+                  <span className="mt-0.5 shrink-0 text-base leading-none">⚠</span>
+                  <span>
+                    Suma pozycji ({linesGrossTotal.toFixed(2)} PLN) nie zgadza się z kwotą brutto dokumentu ({docGross.toFixed(2)} PLN).
+                    Prawdopodobnie OCR nie wykrył wszystkich pozycji — dodaj brakujące ręcznie.
+                  </span>
+                </div>
+              )}
+
+              {unifiedLines.length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">Brak pozycji — kliknij „Odczytaj dane (OCR)" lub dodaj ręcznie.</p>
+              ) : (
+                <div className="overflow-x-auto">
                   <div className="min-w-[700px] space-y-2">
-                    <div className="grid grid-cols-[minmax(120px,1fr)_4rem_3.5rem_4.5rem_4rem_4.5rem_4rem_4.5rem_2rem] gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground px-1">
+                    <div className="grid grid-cols-[minmax(160px,1fr)_4rem_3.5rem_4.5rem_4rem_4.5rem_4rem_4.5rem_2rem] gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       <span>Nazwa</span>
                       <span>Ilość</span>
                       <span>J.m.</span>
-                      <span>Cena br.</span>
+                      <span>Cena br./szt</span>
                       <span>VAT %</span>
                       <span className="text-right">Netto</span>
                       <span className="text-right">VAT zł</span>
-                      <span className="text-right">Brutto</span>
+                      <span className="text-right">Brutto razem</span>
                       <span />
                     </div>
-                    {simpleLines.map((line) => {
+                    {unifiedLines.map((line) => {
                       const qty = parseFloat(line.quantity) || 0;
                       const price = parseFloat(line.unit_price_gross) || 0;
                       const vat = parseFloat(line.vat_rate) || 0;
                       const lineTotal = qty * price;
                       const lineNet = lineTotal / (1 + vat / 100);
                       const lineVat = lineTotal - lineNet;
-                      const lineTotalStr = lineTotal > 0 ? lineTotal.toFixed(2) : '—';
                       const lineNetStr = lineTotal > 0 ? lineNet.toFixed(2) : '—';
                       const lineVatStr = lineTotal > 0 ? lineVat.toFixed(2) : '—';
+                      // Use raw typed total if available, otherwise derive from unit price
+                      const lineTotalDisplay = line.line_total_gross !== undefined
+                        ? line.line_total_gross
+                        : (lineTotal > 0 ? lineTotal.toFixed(2) : '');
                       return (
-                        <div key={line.id} className="grid grid-cols-[minmax(120px,1fr)_4rem_3.5rem_4.5rem_4rem_4.5rem_4rem_4.5rem_2rem] gap-1.5 items-center">
-                          <input
-                            type="text"
+                        <div key={line.id} className="grid grid-cols-[minmax(160px,1fr)_4rem_3.5rem_4.5rem_4rem_4.5rem_4rem_4.5rem_2rem] gap-1.5 items-start">
+                          <ProductNameInput
                             value={line.product_name}
-                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, product_name: e.target.value } : l))}
-                            placeholder="Nazwa produktu"
-                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            onChange={(name) => updateLine(line.id, 'product_name', name)}
                           />
                           <input
                             type="number"
                             min="0"
-                            step="0.001"
+                            step="1"
                             value={line.quantity}
-                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, quantity: e.target.value } : l))}
-                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            onChange={(e) => updateLine(line.id, 'quantity', e.target.value)}
+                            onWheel={(e) => e.currentTarget.blur()}
+                            className={`h-9 rounded-lg border px-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                              !parseFloat(line.quantity)
+                                ? 'border-destructive bg-destructive/10 text-destructive placeholder:text-destructive/50'
+                                : 'border-border bg-secondary text-foreground'
+                            }`}
                           />
                           <input
                             type="text"
                             value={line.unit}
-                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, unit: e.target.value } : l))}
+                            onChange={(e) => updateLine(line.id, 'unit', e.target.value)}
                             placeholder="szt"
                             className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                           />
@@ -1025,32 +1246,73 @@ function PaperScannerPageInner() {
                             min="0"
                             step="0.01"
                             value={line.unit_price_gross}
-                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, unit_price_gross: e.target.value } : l))}
+                            onChange={(e) => updateLine(line.id, 'unit_price_gross', e.target.value)}
+                            onWheel={(e) => e.currentTarget.blur()}
                             placeholder="0.00"
-                            className="h-9 rounded-lg border border-border bg-secondary px-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            className={`h-9 rounded-lg border px-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                              !parseFloat(line.unit_price_gross)
+                                ? 'border-destructive bg-destructive/10 text-destructive placeholder:text-destructive/50'
+                                : 'border-border bg-secondary text-foreground'
+                            }`}
                           />
                           <select
                             value={line.vat_rate}
-                            onChange={(e) => setSimpleLines((prev) => prev.map((l) => l.id === line.id ? { ...l, vat_rate: e.target.value } : l))}
-                            className="h-9 rounded-lg border border-border bg-secondary px-1 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            onChange={(e) => updateLine(line.id, 'vat_rate', e.target.value)}
+                            className={`h-9 rounded-lg border px-1 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                              line.vat_rate === ''
+                                ? 'border-destructive bg-destructive/10 text-destructive'
+                                : 'border-border bg-secondary text-foreground'
+                            }`}
                           >
+                            <option value="" disabled>VAT?</option>
                             <option value="0">0%</option>
                             <option value="5">5%</option>
                             <option value="8">8%</option>
                             <option value="23">23%</option>
                           </select>
-                          <span className="text-right text-[12px] tabular-nums text-muted-foreground">
+                          <span className="pt-2 text-right text-[12px] tabular-nums text-muted-foreground">
                             {lineNetStr}
                           </span>
-                          <span className="text-right text-[12px] tabular-nums text-muted-foreground">
+                          <span className="pt-2 text-right text-[12px] tabular-nums text-muted-foreground">
                             {lineVatStr}
                           </span>
-                          <span className="text-right text-[13px] font-semibold tabular-nums text-foreground pr-1">
-                            {lineTotalStr}
-                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={lineTotalDisplay}
+                            onWheel={(e) => e.currentTarget.blur()}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              const total = parseFloat(raw);
+                              const q = parseFloat(line.quantity) || 1;
+                              // Store raw string so typing "5." doesn't get replaced mid-entry
+                              setUnifiedLines((prev) => prev.map((l) => {
+                                if (l.id !== line.id) return l;
+                                if (raw === '') return { ...l, line_total_gross: undefined, unit_price_gross: '' };
+                                const newPrice = !isNaN(total) ? (total / q).toFixed(4) : l.unit_price_gross;
+                                return { ...l, line_total_gross: raw, unit_price_gross: newPrice };
+                              }));
+                            }}
+                            onBlur={(e) => {
+                              const val = parseFloat(e.target.value);
+                              if (!isNaN(val)) {
+                                const rounded = val.toFixed(2);
+                                const q = parseFloat(line.quantity) || 1;
+                                setUnifiedLines((prev) => prev.map((l) =>
+                                  l.id === line.id
+                                    ? { ...l, line_total_gross: rounded, unit_price_gross: (val / q).toFixed(4) }
+                                    : l
+                                ));
+                              }
+                            }}
+                            placeholder="0.00"
+                            title="Wpisz kwotę brutto całej pozycji — cena/szt zostanie obliczona automatycznie"
+                            className="h-9 rounded-lg border border-primary/40 bg-primary/5 px-2 text-right text-[13px] font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
                           <button
                             type="button"
-                            onClick={() => setSimpleLines((prev) => prev.filter((l) => l.id !== line.id))}
+                            onClick={() => removeLine(line.id)}
                             className="flex h-9 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                             title="Usuń pozycję"
                           >
@@ -1059,9 +1321,10 @@ function PaperScannerPageInner() {
                         </div>
                       );
                     })}
+
                     {/* Suma kontrolna */}
-                    {simpleLines.length > 0 && (() => {
-                      const totals = simpleLines.reduce((acc, l) => {
+                    {unifiedLines.length > 0 && (() => {
+                      const totals = unifiedLines.reduce((acc, l) => {
                         const qty = parseFloat(l.quantity) || 0;
                         const price = parseFloat(l.unit_price_gross) || 0;
                         const vat = parseFloat(l.vat_rate) || 0;
@@ -1084,166 +1347,9 @@ function PaperScannerPageInner() {
                       );
                     })()}
                   </div>
-                  </div>
-                )}
-              </section>
-            )}
-
-            {/* ── raw OCR lines (PZ only) ──────────────────────────── */}
-            {rawLines.length > 0 && scanMode === 'pz' && (
-              <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-                <h2 className="mb-1 text-[15px] font-semibold text-foreground">Pozycje z paragonu</h2>
-                <p className="mb-4 text-[12px] text-muted-foreground">
-                  Wyszukaj każdą pozycję w bazie produktów. Ilość i cena są wstępnie wypełnione z OCR.
-                </p>
-                <div className="space-y-3">
-                  {rawLines.map((raw) => (
-                    <RawLineRow
-                      key={raw.id}
-                      line={raw}
-                      companyId={companyId}
-                      onAssign={(product, qty, price) => assignRawLine(product, qty, price, raw.id)}
-                      onDismiss={dismissRawLine}
-                    />
-                  ))}
                 </div>
-              </section>
-            )}
-
-            {/* ── line items — PZ only ─────────────────────────────── */}
-            {scanMode === 'pz' && (
-            <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-              <h2 className="mb-4 text-[15px] font-semibold text-foreground">Pozycje</h2>
-
-              {/* product search */}
-              <div ref={searchRef} className="relative mb-4">
-                <input
-                  type="text"
-                  placeholder="Szukaj i dodaj produkt…"
-                  value={productSearch}
-                  onChange={(e) => {
-                    setProductSearch(e.target.value);
-                    setShowProductSearch(true);
-                  }}
-                  onFocus={() => setShowProductSearch(true)}
-                  className="h-10 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  aria-label="Szukaj produktu"
-                />
-                {showProductSearch && (
-                  <div
-                    ref={scrollAreaRef}
-                    className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-lg"
-                  >
-                    {productsLoading && (
-                      <p className="px-3 py-2 text-sm text-muted-foreground">Ładowanie…</p>
-                    )}
-                    {!productsLoading && searchProducts.length === 0 && (
-                      <p className="px-3 py-2 text-sm text-muted-foreground">Brak wyników</p>
-                    )}
-                    {searchProducts.map((product) => (
-                      <button
-                        key={product.id}
-                        type="button"
-                        onClick={() => addProduct(product)}
-                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted"
-                      >
-                        <span>{product.name}</span>
-                        <span className="text-xs text-muted-foreground">{product.unit}</span>
-                      </button>
-                    ))}
-                    <div ref={sentinelRef} className="h-1" />
-                  </div>
-                )}
-              </div>
-
-              {/* lines table */}
-              {lines.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-xs text-muted-foreground">
-                        <th className="pb-2 text-left font-medium">Produkt</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Ilość</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Cena jedn.</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Razem</th>
-                        <th className="pb-2" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {lines.map((line) => {
-                        const qty = parseFloat(line.quantity) || 0;
-                        const cost = parseFloat(line.unit_cost) || 0;
-                        const lineTotal = qty * cost;
-                        return (
-                          <tr key={line.product.id}>
-                            <td className="py-2 pr-2">
-                              <span className="font-medium text-foreground">{line.product.name}</span>
-                              <span className="ml-1 text-xs text-muted-foreground">{line.product.unit}</span>
-                            </td>
-                            <td className="py-2 pr-2">
-                              <input
-                                type="number"
-                                min="0.001"
-                                step="0.001"
-                                value={line.quantity}
-                                onChange={(e) => updateLine(line.product.id, 'quantity', e.target.value)}
-                                className="w-20 rounded-lg border border-border bg-secondary px-2 py-1 text-right text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                aria-label={`Ilość ${line.product.name}`}
-                              />
-                            </td>
-                            <td className="py-2 pr-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={line.unit_cost}
-                                onChange={(e) => updateLine(line.product.id, 'unit_cost', e.target.value)}
-                                placeholder="—"
-                                className="w-24 rounded-lg border border-border bg-secondary px-2 py-1 text-right text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                aria-label={`Cena jedn. ${line.product.name}`}
-                              />
-                            </td>
-                            <td className="py-2 pr-2 text-right text-sm tabular-nums text-foreground">
-                              {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}
-                            </td>
-                            <td className="py-2">
-                              <button
-                                type="button"
-                                onClick={() => removeLine(line.product.id)}
-                                className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                aria-label={`Usuń ${line.product.name}`}
-                              >
-                                <TrashIcon />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-border">
-                        <td colSpan={3} className="pt-2 text-right text-[13px] font-semibold text-foreground">
-                          Suma:
-                        </td>
-                        <td className="pt-2 pr-2 text-right text-[13px] font-semibold tabular-nums text-foreground">
-                          {lines.reduce((sum, l) => {
-                            const qty = parseFloat(l.quantity) || 0;
-                            const cost = parseFloat(l.unit_cost) || 0;
-                            return sum + qty * cost;
-                          }, 0).toFixed(2)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              ) : (
-                <p className="py-4 text-center text-sm text-muted-foreground">
-                  Użyj pola powyżej, aby dodać produkty z faktury.
-                </p>
               )}
             </section>
-            )} {/* end scanMode === 'pz' */}
 
             {/* ── submit ───────────────────────────────────────────── */}
             <div className="flex gap-3">
@@ -1254,36 +1360,35 @@ function PaperScannerPageInner() {
               >
                 Anuluj
               </button>
-              {scanMode === 'pz' && (
-                <button
-                  type="button"
-                  onClick={() => void onSubmit()}
-                  disabled={createPz.isPending || lines.length === 0 || !toWarehouseId}
-                  className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
-                >
-                  {createPz.isPending ? 'Tworzę PZ…' : 'Utwórz PZ'}
-                </button>
-              )}
-              {scanMode === 'doc' && (
-                <button
-                  type="button"
-                  onClick={() => void onSubmitPurchaseDoc()}
-                  disabled={createPurchaseDoc.isPending}
-                  className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
-                >
-                  {createPurchaseDoc.isPending
-                    ? 'Zapisuję…'
-                    : docSubType === 'par' && /^\d{10}$/.test(sellerNip.replace(/[\s\-]/g, ''))
-                      ? 'Zapisz PAR z NIP'
-                      : docSubType === 'par'
-                        ? 'Zapisz paragon'
-                        : 'Zapisz fakturę'}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => void onSubmitAll()}
+                disabled={createPurchaseDoc.isPending || createPz.isPending || !!duplicateWarning}
+                className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
+              >
+                {createPurchaseDoc.isPending || createPz.isPending
+                  ? 'Zapisuję…'
+                  : docSubType === 'par' && ocrParVat
+                    ? 'Zapisz PAR z NIP'
+                    : docSubType === 'par'
+                      ? 'Zapisz paragon'
+                      : 'Zapisz fakturę'}
+              </button>
             </div>
           </>
         )}
       </main>
     </div>
+    {categoryModal && (
+      <CategoryModal
+        docId={categoryModal.docId}
+        items={categoryModal.items}
+        categories={opexCategories}
+        onSave={(docCat, lineCats) => void handleCategorySave(docCat, lineCats)}
+        onSkip={handleCategorySkip}
+        saving={setCategoryMutation.isPending || setLineCategoriesMutation.isPending}
+      />
+    )}
+    </>
   );
 }

@@ -167,6 +167,24 @@ class InvoiceOpexTagViewTests(TestCase):
                 self.assertEqual(self.invoice.opex_category, category)
                 self.assertIsNotNone(self.invoice.opex_tagged_at)
 
+    def test_patch_vat_deduction_without_opex(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.patch(self.url, {"vat_deduction": "half"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.vat_deduction, "half")
+        self.assertIsNone(self.invoice.opex_category)
+
+    def test_patch_is_private(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.patch(
+            self.url, {"is_private": True, "vat_deduction": "none"}, format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.invoice.refresh_from_db()
+        self.assertTrue(self.invoice.is_private)
+        self.assertEqual(self.invoice.vat_deduction, "none")
+
 
 class PaperScanViewTests(TestCase):
     """Tests for POST /api/ksef/scan-paper/"""
@@ -189,6 +207,9 @@ class PaperScanViewTests(TestCase):
         self.user.save(update_fields=["current_company"])
         CompanyModule.objects.create(company=self.company, module="ksef", is_enabled=True)
         self.url = reverse("ksef-scan-paper")
+        self.analyze_patcher = patch("apps.ksef.views._analyze_invoice", return_value=None)
+        self.analyze_patcher.start()
+        self.addCleanup(self.analyze_patcher.stop)
 
     def _minimal_png(self):
         """Return a minimal 1x1 white PNG as an in-memory file."""
@@ -287,6 +308,38 @@ class PaperScanViewTests(TestCase):
         self.assertEqual(r.data["issue_date"], "2026-06-10")
         self.assertEqual(r.data["total_gross"], "82.53")
         self.assertIn("S-ka jawna", r.data["seller_name"])
+        self.assertEqual(r.data["buyer_nip"], "8442120248")
+        self.assertFalse(r.data["buyer_nip_matches_company"])
+
+    def test_paragon_buyer_nip_matches_company(self):
+        self.company.nip = "8442120248"
+        self.company.save(update_fields=["nip"])
+        self.client.force_authenticate(user=self.user)
+        f = self._minimal_png()
+        sample_text = (
+            "As Bylak i Wspólnicy S-ka jawna\n"
+            "NIP 8441866342          nr:480130\n"
+            "PARAGON FISKALNY\n"
+            "SUMA PLN                    82,53\n"
+            "NIP NABYWCY:\n"
+            "8442120248\n"
+            "2026-06-10 18:47\n"
+        )
+        with patch("apps.ksef.views._ocr_image", return_value=sample_text):
+            r = self.client.post(self.url, {"image": f}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["buyer_nip"], "8442120248")
+        self.assertTrue(r.data["buyer_nip_matches_company"])
+        self.assertEqual(r.data["doc_type"], "paragon")
+
+    def test_valid_image_includes_vat_keys(self):
+        self.client.force_authenticate(user=self.user)
+        f = self._minimal_png()
+        with patch("apps.ksef.views._ocr_image", return_value=""):
+            r = self.client.post(self.url, {"image": f}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        for key in ("buyer_nip", "buyer_nip_matches_company", "total_net", "total_vat"):
+            self.assertIn(key, r.data, f"Missing key: {key}")
 
     # ------------------------------------------------------------------
     # 6. Empty OCR text returns empty fields (graceful degradation)
@@ -302,3 +355,219 @@ class PaperScanViewTests(TestCase):
         self.assertEqual(r.data["invoice_number"], "")
         self.assertEqual(r.data["issue_date"], "")
         self.assertEqual(r.data["total_gross"], "")
+
+
+class ParseInvoiceFieldsTests(TestCase):
+    """Regex OCR helpers — net/VAT and buyer NIP without inventing 23%."""
+
+    def test_ptu_summary_gives_net_and_vat(self):
+        from apps.ksef.views import _parse_invoice_fields
+
+        text = (
+            "PARAGON FISKALNY\n"
+            "PTU C 8,00%                 76,42    6,11    82,53\n"
+            "SUMA PLN                    82,53\n"
+            "SUMA PTU                     6,11\n"
+            "NIP NABYWCY:\n"
+            "8442120248\n"
+        )
+        parsed = _parse_invoice_fields(text)
+        self.assertEqual(parsed["buyer_nip"], "8442120248")
+        self.assertEqual(parsed["total_gross"], "82.53")
+        self.assertEqual(parsed["total_vat"], "6.11")
+        self.assertEqual(parsed["total_net"], "76.42")
+
+    def test_missing_vat_is_empty_not_23(self):
+        from apps.ksef.views import _parse_invoice_fields
+
+        text = "Faktura VAT FV/1\nNIP: 1234567890\nDo zapłaty: 100,00\n"
+        parsed = _parse_invoice_fields(text)
+        self.assertEqual(parsed["total_gross"], "100.00")
+        self.assertEqual(parsed["total_vat"], "")
+        self.assertEqual(parsed["total_net"], "")
+
+
+class AnonymizeForLlmTests(TestCase):
+    """GDPR anonymization — nothing personal reaches the external LLM."""
+
+    def _anon(self, text):
+        from apps.ksef.views import _anonymize_for_llm
+        return _anonymize_for_llm(text)
+
+    # ── NIPs ──────────────────────────────────────────────────────────────────
+
+    def test_nip_replaced(self):
+        # NIPs outside labeled sections (e.g. in footer or header lines)
+        text = "NIP sprzedawcy: 7791011327\nNIP nabywcy: 8442120248\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("7791011327", result)
+        self.assertNotIn("8442120248", result)
+        # Both NIPs must be tokenized
+        nip_tokens = [v for v in token_map if v.startswith("[NIP_")]
+        self.assertEqual(len(nip_tokens), 2)
+        self.assertIn("7791011327", token_map.values())
+        self.assertIn("8442120248", token_map.values())
+
+    def test_same_nip_deduplicated(self):
+        """Same NIP appearing twice gets same token, not two different tokens."""
+        text = "NIP: 7791011327\nNIP: 7791011327\n"
+        result, token_map = self._anon(text)
+        self.assertEqual(result.count("[NIP_0]"), 2)
+        self.assertNotIn("[NIP_1]", result)
+
+    def test_nip_with_dashes_replaced(self):
+        text = "NIP: 779-101-13-27\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("779-101-13-27", result)
+        self.assertIn("[NIP_0]", result)
+
+    # ── Dates ─────────────────────────────────────────────────────────────────
+
+    def test_date_iso_replaced(self):
+        text = "Data wystawienia: 2026-07-08\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("2026-07-08", result)
+        self.assertIn("[DATA_0]", result)
+        self.assertEqual(token_map["[DATA_0]"], "2026-07-08")
+
+    def test_date_polish_format_replaced(self):
+        text = "Data: 08.07.2026\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("08.07.2026", result)
+        self.assertIn("[DATA_0]", result)
+
+    def test_same_date_deduplicated(self):
+        text = "Data sprzedaży 2026-07-08 Data wystawienia: 2026-07-08\n"
+        result, _ = self._anon(text)
+        self.assertEqual(result.count("[DATA_0]"), 2)
+        self.assertNotIn("[DATA_1]", result)
+
+    # ── Buyer block ───────────────────────────────────────────────────────────
+
+    def test_nabywca_block_replaced(self):
+        """Full buyer name + address replaced with [NABYWCA] token."""
+        text = (
+            "Sprzedawca: BIEDRONKA Sp. z o.o.\n"
+            "Nabywca SMACZNY KĄSEK- catering- Ewelina Radon ul. Senieńska 21/1 16-400 Suwałki NIP: 8442120248\n"
+            "Gotówka\n"
+        )
+        result, token_map = self._anon(text)
+        self.assertNotIn("Ewelina Radon", result)
+        self.assertNotIn("Senieńska", result)
+        self.assertNotIn("Suwałki", result)
+        self.assertIn("[NABYWCA]", result)
+        self.assertIn("SMACZNY KĄSEK", token_map["[NABYWCA]"])
+
+    def test_odbiorca_label_also_replaced(self):
+        text = "Odbiorca: Jan Nowak, ul. Lipowa 3, 00-001 Warszawa\nVAT%\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("Jan Nowak", result)
+        self.assertIn("[NABYWCA]", result)
+
+    def test_kupujacy_label_also_replaced(self):
+        text = "Kupujący: Anna Wiśniewska, ul. Kwiatowa 1\nNazwa towaru\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("Anna Wiśniewska", result)
+        self.assertIn("[NABYWCA]", result)
+
+    # ── Seller block ──────────────────────────────────────────────────────────
+
+    def test_sprzedawca_label_replaced(self):
+        """Explicit seller label → replaced with [SPRZEDAWCA] token."""
+        text = (
+            "Sprzedawca: Piotr Kowalski, ul. Domowa 5, 15-001 Białystok NIP: 5423112233\n"
+            "Nabywca [NABYWCA]\n"
+        )
+        result, token_map = self._anon(text)
+        self.assertNotIn("Piotr Kowalski", result)
+        self.assertNotIn("Białystok", result)
+        self.assertIn("[SPRZEDAWCA]", result)
+
+    def test_wystawca_label_replaced(self):
+        text = "Wystawca: Maria Zielińska, ul. Leśna 10\nNabywca [NABYWCA]\n"
+        result, _ = self._anon(text)
+        self.assertNotIn("Maria Zielińska", result)
+        self.assertIn("[SPRZEDAWCA]", result)
+
+    # ── JDG seller without explicit label ─────────────────────────────────────
+
+    def test_jdg_person_name_near_address_replaced(self):
+        """JDG name 'Jan Kowalski' next to street address → replaced with [OSOBA_0]."""
+        text = "Jan Kowalski ul. Różana 7, 30-001 Kraków NIP: 6781234567\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("Jan Kowalski", result)
+        self.assertIn("[OSOBA_0]", result)
+        self.assertEqual(token_map["[OSOBA_0]"], "Jan Kowalski")
+
+    def test_jdg_person_name_near_nip_replaced(self):
+        text = "Anna Nowak NIP 9871234567\n"
+        result, token_map = self._anon(text)
+        self.assertNotIn("Anna Nowak", result)
+        self.assertIn("[OSOBA_0]", result)
+
+    def test_product_name_not_replaced(self):
+        """Product names like 'Bocz Kości' should NOT be treated as person names."""
+        text = (
+            "Bocz Bez Kości kg  0,686 KG  16,99  6,52  5  6,85\n"
+            "Szynka Wieprzowa  1,000 KG  12,99  9,99  5  10,49\n"
+        )
+        result, token_map = self._anon(text)
+        # No [OSOBA_*] tokens should appear — product names lack ul./NIP next to them
+        self.assertNotIn("[OSOBA_0]", result)
+        self.assertIn("Bocz Bez Kości", result)
+
+    def test_sp_zoo_name_not_replaced(self):
+        """Large company name (ALL CAPS or Sp. z o.o.) should not be treated as JDG."""
+        text = "JERONIMO MARTINS POLSKA S.A. ul. Żniwna 5 NIP: 7791011327\n"
+        result, _ = self._anon(text)
+        # JERONIMO etc are all caps — the regex requires Title-case, so no [OSOBA_*]
+        self.assertNotIn("[OSOBA_0]", result)
+
+    # ── Product names survive ──────────────────────────────────────────────────
+
+    def test_product_names_survive_anonymization(self):
+        """Anonymization must not touch product names in the line items section."""
+        text = (
+            "Nabywca [NABYWCA]\n"
+            "Gotówka\n"
+            "Nazwa towaru i stawka\n"
+            "Bocz Bez Kości kg  C  0,686  KG  16,99  6,52  5  6,85\n"
+            "SzynkaWpVAC b k kg  C  1,279  KG  14,99  8,51  5  8,94\n"
+            "VAT% Wartość netto\n"
+        )
+        result, _ = self._anon(text)
+        self.assertIn("Bocz Bez Kości kg", result)
+        self.assertIn("SzynkaWpVAC b k kg", result)
+
+    # ── Nothing leaks ─────────────────────────────────────────────────────────
+
+    def test_biedronka_invoice_full_anonymization(self):
+        """Simulate the full Biedronka thermal invoice — all PII must be gone."""
+        text = (
+            "FAKTURA ORYGINAŁ\n"
+            "nr: 2868F00778/0726 Data sprzedaży 2026-07-08\n"
+            "BIEDRONKA 2868 SUWAŁKI NIP: 7791011327\n"
+            "Nabywca SMACZNY KĄSEK- catering- Ewelina Radon ul. Senieńska 21/1 16-400 Suwałki NIP: 8442120248\n"
+            "Gotówka\n"
+            "Bocz Bez Kości kg  C  0,686  KG  16,99  6,52  5  6,85\n"
+            "SzynkaWpVAC b k kg  C  1,279  KG  14,99  8,51  5  8,94\n"
+            "VAT% 5  154,36  7,72  162,08\n"
+        )
+        result, token_map = self._anon(text)
+
+        # All NIPs gone
+        self.assertNotIn("7791011327", result)
+        self.assertNotIn("8442120248", result)
+        # Date gone
+        self.assertNotIn("2026-07-08", result)
+        # Buyer PII gone
+        self.assertNotIn("Ewelina Radon", result)
+        self.assertNotIn("Senieńska", result)
+        # Products intact
+        self.assertIn("Bocz Bez Kości kg", result)
+        self.assertIn("SzynkaWpVAC b k kg", result)
+        # Tokens present
+        self.assertIn("[NIP_0]", result)
+        self.assertIn("[DATA_0]", result)
+        self.assertIn("[NABYWCA]", result)
+

@@ -21,6 +21,13 @@ export interface Customer {
   // KSeF / FA-3 Podmiot2 flags
   is_jst: boolean;
   is_gv_member: boolean;
+  // KSeF / FA-3 Podmiot3 (trzecia strona faktury)
+  podmiot3_role: '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | '11' | null;
+  podmiot3_name: string | null;
+  podmiot3_id_wew: string | null;
+  podmiot3_street: string | null;
+  podmiot3_city: string | null;
+  podmiot3_postal_code: string | null;
   created_at: string;
   updated_at: string;
 }

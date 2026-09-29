@@ -14,11 +14,15 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.test import APIClient
 
 from apps.customers.models import Customer
-from apps.delivery.models import DeliveryDocument
+from apps.delivery.models import DeliveryDocument, DeliveryItem
 from apps.invoices.models import Invoice, InvoiceItem
 from apps.invoices.services import (
+    billable_quantity,
     build_invoice_preview_data,
     generate_invoice_from_order,
+    generate_invoice_from_orders,
+    get_period_preview_from_orders,
+    get_period_preview_from_wz,
     recalculate_invoice_totals,
 )
 from apps.orders.models import Order, OrderItem
@@ -78,8 +82,70 @@ class InvoiceModelTests(TestCase):
             **kwargs,
         )
 
-    def test_new_invoice_receives_sequential_number_per_company(self):
-        # Create two invoices on separate orders to avoid the unique-active-per-order constraint.
+    def test_new_invoice_has_no_number_by_default(self):
+        # Draft invoices created via save() no longer auto-assign a number.
+        inv = self._make_invoice()
+        self.assertIsNone(inv.invoice_number)
+
+    def test_next_invoice_number_sequential_per_company(self):
+        # _next_invoice_number classmethod produces sequential numbers.
+        i1 = self._make_invoice(invoice_number=Invoice._next_invoice_number(self.company.pk, date(2026, 4, 1)))
+        order2 = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 4, 2),
+            delivery_date=date(2026, 4, 11),
+            status=Order.STATUS_DELIVERED,
+        )
+        i2 = self._make_invoice(order=order2, invoice_number=Invoice._next_invoice_number(self.company.pk, date(2026, 4, 1)))
+        self.assertEqual(i1.invoice_number, "FV/2026/0001")
+        self.assertEqual(i2.invoice_number, "FV/2026/0002")
+
+    def test_different_companies_may_reuse_number_pattern(self):
+        a = self._make_invoice(invoice_number=Invoice._next_invoice_number(self.company.pk, date(2026, 4, 1)))
+        b = self._make_invoice(
+            company=self.company_b,
+            order=self.order_b,
+            customer=self.customer_b,
+            invoice_number=Invoice._next_invoice_number(self.company_b.pk, date(2026, 4, 1)),
+        )
+        self.assertEqual(a.invoice_number, "FV/2026/0001")
+        self.assertEqual(b.invoice_number, "FV/2026/0001")
+
+    def test_year_is_taken_from_issue_date(self):
+        num = Invoice._next_invoice_number(self.company.pk, date(2025, 6, 15))
+        self.assertEqual(num, "FV/2025/0001")
+
+    def test_explicit_invoice_number_is_preserved(self):
+        inv = self._make_invoice(invoice_number="MANUAL-FV-1")
+        self.assertEqual(inv.invoice_number, "MANUAL-FV-1")
+
+    def test_duplicate_invoice_number_per_company_fails(self):
+        with self.assertRaises(IntegrityError):
+            Invoice.objects.create(
+                company=self.company,
+                user=self.user,
+                order=self.order,
+                customer=self.customer,
+                issue_date=date(2026, 4, 1),
+                sale_date=date(2026, 4, 1),
+                due_date=date(2026, 4, 30),
+                invoice_number="FV/2026/0001",
+            )
+            Invoice.objects.create(
+                company=self.company,
+                user=self.user,
+                order=self.order,
+                customer=self.customer,
+                issue_date=date(2026, 4, 1),
+                sale_date=date(2026, 4, 1),
+                due_date=date(2026, 4, 30),
+                invoice_number="FV/2026/0001",
+            )
+
+    def test_multiple_unnumbered_drafts_allowed(self):
+        # Two drafts without a number for the same company are allowed.
         i1 = self._make_invoice()
         order2 = Order.objects.create(
             user=self.user,
@@ -90,40 +156,8 @@ class InvoiceModelTests(TestCase):
             status=Order.STATUS_DELIVERED,
         )
         i2 = self._make_invoice(order=order2)
-        self.assertEqual(i1.invoice_number, "FV/2026/0001")
-        self.assertEqual(i2.invoice_number, "FV/2026/0002")
-
-    def test_different_companies_may_reuse_number_pattern(self):
-        a = self._make_invoice()
-        b = self._make_invoice(
-            company=self.company_b,
-            order=self.order_b,
-            customer=self.customer_b,
-        )
-        self.assertEqual(a.invoice_number, "FV/2026/0001")
-        self.assertEqual(b.invoice_number, "FV/2026/0001")
-
-    def test_year_is_taken_from_issue_date(self):
-        inv = self._make_invoice(issue_date=date(2025, 6, 15), sale_date=date(2025, 6, 15))
-        self.assertEqual(inv.invoice_number, "FV/2025/0001")
-
-    def test_explicit_invoice_number_is_not_replaced(self):
-        inv = self._make_invoice(invoice_number="MANUAL-FV-1")
-        self.assertEqual(inv.invoice_number, "MANUAL-FV-1")
-
-    def test_duplicate_invoice_number_per_company_fails(self):
-        first = self._make_invoice()
-        with self.assertRaises(IntegrityError):
-            Invoice.objects.create(
-                company=self.company,
-                user=self.user,
-                order=self.order,
-                customer=self.customer,
-                issue_date=date(2026, 4, 1),
-                sale_date=date(2026, 4, 1),
-                due_date=date(2026, 4, 30),
-                invoice_number=first.invoice_number,
-            )
+        self.assertIsNone(i1.invoice_number)
+        self.assertIsNone(i2.invoice_number)
 
     def test_id_is_uuid(self):
         inv = self._make_invoice()
@@ -272,7 +306,8 @@ class InvoiceViewSetAPITests(TestCase):
         self.assertEqual(r.data["count"], 1)
         self.assertEqual(r.data["results"][0]["id"], str(mine.uuid))
 
-    def test_create_sets_invoice_number_company_user_and_customer_from_order(self):
+    def test_create_sets_company_user_and_customer_from_order(self):
+        # Draft invoices now have no number until explicitly issued.
         self.client.force_authenticate(user=self.user)
         body = {
             "order_id": str(self.order.uuid),
@@ -286,7 +321,7 @@ class InvoiceViewSetAPITests(TestCase):
         }
         r = self.client.post(reverse("invoice-list"), data=body, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
-        self.assertEqual(r.data["invoice_number"], "FV/2026/0001")
+        self.assertIsNone(r.data["invoice_number"])
         self.assertEqual(r.data["status"], "draft")
         self.assertEqual(str(r.data["company"]), str(self.co.uuid))
         self.assertEqual(str(r.data["user"]), str(self.user.uuid))
@@ -727,6 +762,81 @@ class InvoiceActionsAPITests(TestCase):
         r4 = self.client.get(reverse("invoice-list"), {"ksef_status": "pending"})
         ids4 = {row["id"] for row in r4.data["results"]}
         self.assertIn(str(inv_issued.uuid), ids4)
+
+
+class InvoiceNextNumberAndIssueTests(TestCase):
+    """Tests for GET /api/invoices/next-number/ and issue-with-number behaviour."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="next-num-user",
+            email="next-num@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="Next Num Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.co, module="invoicing", defaults={"is_enabled": True})
+        self.customer = Customer.objects.create(name="Buyer", company=self.co)
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 4, 1), delivery_date=date(2026, 4, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        DeliveryDocument.objects.create(
+            company=self.co, order=self.order, user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 4, 10), status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_next_number_returns_first_number(self):
+        r = self.client.get(reverse("invoice-next-number"), {"issue_date": "2026-04-01"})
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["next_number"], "FV/2026/0001")
+
+    def test_next_number_increments_after_issued_invoice(self):
+        # Issue one invoice first
+        inv = Invoice.objects.create(
+            company=self.co, user=self.user, order=self.order, customer=self.customer,
+            issue_date=date(2026, 4, 1), sale_date=date(2026, 4, 1), due_date=date(2026, 4, 30),
+            invoice_number="FV/2026/0001",
+        )
+        r = self.client.get(reverse("invoice-next-number"), {"issue_date": "2026-04-01"})
+        self.assertEqual(r.data["next_number"], "FV/2026/0002")
+
+    def test_issue_assigns_number_to_unnumbered_draft(self):
+        inv = Invoice.objects.create(
+            company=self.co, user=self.user, order=self.order, customer=self.customer,
+            issue_date=date(2026, 4, 1), sale_date=date(2026, 4, 1), due_date=date(2026, 4, 30),
+        )
+        self.assertIsNone(inv.invoice_number)
+        r = self.client.post(reverse("invoice-issue", kwargs={"uuid": str(inv.uuid)}), {}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertEqual(r.data["status"], Invoice.STATUS_ISSUED)
+        self.assertEqual(r.data["invoice_number"], "FV/2026/0001")
+
+    def test_delete_draft_without_number_succeeds(self):
+        inv = Invoice.objects.create(
+            company=self.co, user=self.user, order=self.order, customer=self.customer,
+            issue_date=date(2026, 4, 1), sale_date=date(2026, 4, 1), due_date=date(2026, 4, 30),
+        )
+        r = self.client.delete(reverse("invoice-detail", kwargs={"uuid": str(inv.uuid)}))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_delete_draft_with_number_rejected(self):
+        inv = Invoice.objects.create(
+            company=self.co, user=self.user, order=self.order, customer=self.customer,
+            issue_date=date(2026, 4, 1), sale_date=date(2026, 4, 1), due_date=date(2026, 4, 30),
+            invoice_number="FV/2026/0001",
+        )
+        r = self.client.delete(reverse("invoice-detail", kwargs={"uuid": str(inv.uuid)}))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class BuildInvoicePreviewDataTests(TestCase):
@@ -1505,7 +1615,7 @@ class InvoiceIssueLevel2GuardTests(TestCase):
 
 
 class InvoiceCorrectionNumberingTests(TestCase):
-    """FV-KOR invoices get FV-KOR/{year}/{seq:04d} numbers."""
+    """FV-KOR numbering via _next_invoice_number classmethod."""
 
     def setUp(self):
         User = get_user_model()
@@ -1524,6 +1634,7 @@ class InvoiceCorrectionNumberingTests(TestCase):
         )
 
     def _make_invoice(self, order=None, **kwargs):
+        """Create an invoice; caller is responsible for setting invoice_number if needed."""
         return Invoice.objects.create(
             company=self.company,
             user=self.user,
@@ -1535,24 +1646,22 @@ class InvoiceCorrectionNumberingTests(TestCase):
             **kwargs,
         )
 
-    def test_correction_gets_fv_kor_number(self):
-        original = self._make_invoice()
-        kor = self._make_invoice(
-            is_correction=True,
-            corrects_invoice=original,
-            correction_reason="Test",
-            # needs separate order slot or no active-non-correction constraint
-        )
-        self.assertTrue(kor.invoice_number.startswith("FV-KOR/2026/"))
+    def test_correction_next_number_uses_fv_kor_prefix(self):
+        num = Invoice._next_invoice_number(self.company.pk, date(2026, 6, 1), is_correction=True)
+        self.assertTrue(num.startswith("FV-KOR/2026/"))
 
     def test_correction_numbering_is_sequential(self):
         original = self._make_invoice()
-        # Create two corrections on the same order (allowed because is_correction=True)
+        # Assign numbers explicitly using the classmethod (as the service does)
+        num1 = Invoice._next_invoice_number(self.company.pk, date(2026, 6, 1), is_correction=True)
         kor1 = self._make_invoice(
-            is_correction=True, corrects_invoice=original, correction_reason="R1"
+            is_correction=True, corrects_invoice=original, correction_reason="R1",
+            invoice_number=num1,
         )
+        num2 = Invoice._next_invoice_number(self.company.pk, date(2026, 6, 1), is_correction=True)
         kor2 = self._make_invoice(
-            is_correction=True, corrects_invoice=original, correction_reason="R2"
+            is_correction=True, corrects_invoice=original, correction_reason="R2",
+            invoice_number=num2,
         )
         self.assertEqual(kor1.invoice_number, "FV-KOR/2026/0001")
         self.assertEqual(kor2.invoice_number, "FV-KOR/2026/0002")
@@ -1566,10 +1675,16 @@ class InvoiceCorrectionNumberingTests(TestCase):
             delivery_date=date(2026, 6, 11),
             status=Order.STATUS_DELIVERED,
         )
-        inv1 = self._make_invoice()
-        inv2 = self._make_invoice(order=order2)
+        inv1 = self._make_invoice(
+            invoice_number=Invoice._next_invoice_number(self.company.pk, date(2026, 6, 1))
+        )
+        inv2 = self._make_invoice(
+            order=order2,
+            invoice_number=Invoice._next_invoice_number(self.company.pk, date(2026, 6, 1)),
+        )
         kor = self._make_invoice(
-            is_correction=True, corrects_invoice=inv1, correction_reason="R"
+            is_correction=True, corrects_invoice=inv1, correction_reason="R",
+            invoice_number=Invoice._next_invoice_number(self.company.pk, date(2026, 6, 1), is_correction=True),
         )
         self.assertEqual(inv2.invoice_number, "FV/2026/0002")
         self.assertEqual(kor.invoice_number, "FV-KOR/2026/0001")
@@ -1985,3 +2100,532 @@ class InvoiceCorrectionFilterTests(TestCase):
         ids = [item["id"] for item in r.data["results"]]
         self.assertIn(str(self.invoice.uuid), ids)
         self.assertIn(str(self.correction.uuid), ids)
+
+
+# ---------------------------------------------------------------------------
+# billable_quantity with returns_mode
+# ---------------------------------------------------------------------------
+
+class BillableQuantityTests(TestCase):
+    """Unit tests for billable_quantity() with different returns modes."""
+
+    def _make_item(self, quantity="10.00", quantity_delivered=None, quantity_returned="0.00"):
+        User = get_user_model()
+        user = User.objects.create_user(
+            username=f"bq-user-{uuid.uuid4().hex[:8]}",
+            email=f"bq-{uuid.uuid4().hex[:8]}@test.com",
+            password="test",
+        )
+        company = Company.objects.create(name=f"BQ Co {uuid.uuid4().hex[:4]}")
+        customer = Customer.objects.create(name="Cust", company=company)
+        order = Order.objects.create(
+            user=user,
+            customer=customer,
+            company=company,
+            order_date=date(2026, 9, 1),
+            delivery_date=date(2026, 9, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        product = Product.objects.create(name="Bread", company=company, user=user, price_net=Decimal("2.00"))
+        oi = OrderItem.objects.create(
+            order=order,
+            product=product,
+            product_name="Bread",
+            product_unit="szt",
+            quantity=Decimal(quantity),
+            unit_price_net=Decimal("2.00"),
+            vat_rate=Decimal("8"),
+        )
+        if quantity_delivered is not None:
+            oi.quantity_delivered = Decimal(quantity_delivered)
+        if quantity_returned is not None:
+            oi.quantity_returned = Decimal(quantity_returned)
+        oi.save()
+        return oi
+
+    def test_no_delivery_returns_ordered_quantity(self):
+        oi = self._make_item(quantity="5.00")
+        self.assertEqual(billable_quantity(oi, "fv_kor"), Decimal("5.00"))
+
+    def test_fv_kor_uses_delivered_ignores_returns(self):
+        oi = self._make_item(quantity="10.00", quantity_delivered="8.00", quantity_returned="2.00")
+        self.assertEqual(billable_quantity(oi, "fv_kor"), Decimal("8.00"))
+
+    def test_net_qty_subtracts_returns_from_delivered(self):
+        oi = self._make_item(quantity="10.00", quantity_delivered="8.00", quantity_returned="3.00")
+        self.assertEqual(billable_quantity(oi, "net_qty"), Decimal("5.00"))
+
+    def test_net_qty_clamps_to_zero_when_returns_exceed_delivered(self):
+        oi = self._make_item(quantity="10.00", quantity_delivered="2.00", quantity_returned="5.00")
+        self.assertEqual(billable_quantity(oi, "net_qty"), Decimal("0.00"))
+
+    def test_lines_mode_uses_delivered_like_fv_kor(self):
+        oi = self._make_item(quantity="10.00", quantity_delivered="7.00", quantity_returned="1.00")
+        self.assertEqual(billable_quantity(oi, "lines"), Decimal("7.00"))
+
+    def test_default_mode_is_fv_kor(self):
+        oi = self._make_item(quantity="10.00", quantity_delivered="6.00", quantity_returned="3.00")
+        self.assertEqual(billable_quantity(oi), Decimal("6.00"))
+
+
+# ---------------------------------------------------------------------------
+# generate_invoice_from_orders with order_item_ids (partial selection)
+# ---------------------------------------------------------------------------
+
+class GenerateFromOrdersTests(TestCase):
+    """Tests for generate_invoice_from_orders() including order_item_ids filtering."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="gfo-user",
+            email="gfo@test.com",
+            password="test",
+        )
+        self.company = Company.objects.create(name="GFO Co")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="admin", is_active=True)
+        self.customer = Customer.objects.create(name="GFO Customer", company=self.company)
+
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 9, 1),
+            delivery_date=date(2026, 9, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        product = Product.objects.create(name="Bread", company=self.company, user=self.user, price_net=Decimal("2.00"))
+        product2 = Product.objects.create(name="Roll", company=self.company, user=self.user, price_net=Decimal("1.00"))
+
+        self.item1 = OrderItem.objects.create(
+            order=self.order, product=product, product_name="Bread",
+            product_unit="szt", quantity=Decimal("10"), unit_price_net=Decimal("2.00"), vat_rate=Decimal("8"),
+        )
+        self.item2 = OrderItem.objects.create(
+            order=self.order, product=product2, product_name="Roll",
+            product_unit="szt", quantity=Decimal("20"), unit_price_net=Decimal("1.00"), vat_rate=Decimal("8"),
+        )
+
+    def test_generates_invoice_for_all_items_when_no_filter(self):
+        inv = generate_invoice_from_orders(
+            order_ids=[str(self.order.uuid)],
+            company=self.company,
+            user=self.user,
+            issue_date=date(2026, 9, 15),
+            sale_date=date(2026, 9, 10),
+            due_date=date(2026, 9, 29),
+        )
+        self.assertEqual(inv.items.count(), 2)
+        self.assertEqual(inv.customer, self.customer)
+
+    def test_generates_invoice_for_selected_items_only(self):
+        inv = generate_invoice_from_orders(
+            order_ids=[str(self.order.uuid)],
+            order_item_ids=[str(self.item1.uuid)],
+            company=self.company,
+            user=self.user,
+            issue_date=date(2026, 9, 15),
+            sale_date=date(2026, 9, 10),
+            due_date=date(2026, 9, 29),
+        )
+        self.assertEqual(inv.items.count(), 1)
+        self.assertEqual(inv.items.first().product_name, "Bread")
+
+    def test_empty_item_ids_list_raises_validation_error(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        with self.assertRaises(DRFValidationError):
+            generate_invoice_from_orders(
+                order_ids=[str(self.order.uuid)],
+                order_item_ids=[],  # all items filtered out → nothing to bill
+                company=self.company,
+                user=self.user,
+                issue_date=date(2026, 9, 15),
+                sale_date=date(2026, 9, 10),
+                due_date=date(2026, 9, 29),
+            )
+
+    def test_net_qty_returns_mode_subtracts_returned(self):
+        self.company.invoice_returns_mode = "net_qty"
+        self.company.save()
+        self.item1.quantity_delivered = Decimal("10")
+        self.item1.quantity_returned = Decimal("4")
+        self.item1.save()
+
+        inv = generate_invoice_from_orders(
+            order_ids=[str(self.order.uuid)],
+            order_item_ids=[str(self.item1.uuid)],
+            company=self.company,
+            user=self.user,
+            issue_date=date(2026, 9, 15),
+            sale_date=date(2026, 9, 10),
+            due_date=date(2026, 9, 29),
+        )
+        line = inv.items.get(product_name="Bread")
+        self.assertEqual(line.quantity, Decimal("6.00"))
+
+
+# ---------------------------------------------------------------------------
+# get_period_preview_from_orders
+# ---------------------------------------------------------------------------
+
+class PeriodPreviewOrdersTests(TestCase):
+    """Tests for get_period_preview_from_orders() service function."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="ppo-user",
+            email="ppo@test.com",
+            password="test",
+        )
+        self.company = Company.objects.create(name="PPO Co")
+        self.customer = Customer.objects.create(name="PPO Customer", company=self.company)
+        self.product = Product.objects.create(
+            name="Bread", company=self.company, user=self.user,
+            price_net=Decimal("2.00"), vat_rate=Decimal("8"),
+        )
+
+    def _make_order(self, delivery_date, quantity="10.00", quantity_delivered=None, status=Order.STATUS_DELIVERED):
+        order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.company,
+            order_date=date(2026, 9, 1), delivery_date=delivery_date, status=status,
+        )
+        oi = OrderItem.objects.create(
+            order=order, product=self.product, product_name="Bread",
+            product_unit="szt", quantity=Decimal(quantity),
+            unit_price_net=Decimal("2.00"), vat_rate=Decimal("8"),
+        )
+        if quantity_delivered is not None:
+            oi.quantity_delivered = Decimal(quantity_delivered)
+            oi.save()
+        return order, oi
+
+    def test_aggregates_items_within_date_range(self):
+        self._make_order(date(2026, 9, 5), quantity="10.00")
+        self._make_order(date(2026, 9, 10), quantity="5.00")
+        self._make_order(date(2026, 9, 20), quantity="8.00")  # outside range
+
+        result = get_period_preview_from_orders(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["product_name"], "Bread")
+        self.assertEqual(Decimal(result[0]["qty"]), Decimal("15.00"))
+
+    def test_excludes_orders_outside_date_range(self):
+        self._make_order(date(2026, 8, 31), quantity="5.00")  # before range
+        self._make_order(date(2026, 9, 16), quantity="5.00")  # after range
+
+        result = get_period_preview_from_orders(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(len(result), 0)
+
+    def test_net_qty_mode_subtracts_returns(self):
+        self.company.invoice_returns_mode = "net_qty"
+        self.company.save()
+        self._make_order(date(2026, 9, 5), quantity="10.00", quantity_delivered="10.00")
+        # Manually set quantity_returned
+        oi = OrderItem.objects.filter(order__customer=self.customer).first()
+        oi.quantity_returned = Decimal("3.00")
+        oi.save()
+
+        result = get_period_preview_from_orders(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(Decimal(result[0]["qty"]), Decimal("7.00"))
+
+    def test_returns_empty_list_when_no_orders(self):
+        result = get_period_preview_from_orders(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(result, [])
+
+    def test_result_contains_required_keys(self):
+        self._make_order(date(2026, 9, 5))
+        result = get_period_preview_from_orders(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        row = result[0]
+        for key in ("product_id", "product_name", "product_unit", "qty", "unit_price_net", "vat_rate"):
+            self.assertIn(key, row)
+        # All values should be strings (JSON-serializable)
+        self.assertIsInstance(row["qty"], str)
+        self.assertIsInstance(row["unit_price_net"], str)
+        self.assertIsInstance(row["vat_rate"], str)
+
+
+# ---------------------------------------------------------------------------
+# get_period_preview_from_wz
+# ---------------------------------------------------------------------------
+
+class PeriodPreviewWzTests(TestCase):
+    """Tests for get_period_preview_from_wz() service function."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="ppwz-user",
+            email="ppwz@test.com",
+            password="test",
+        )
+        self.company = Company.objects.create(name="PPWZ Co")
+        self.customer = Customer.objects.create(name="PPWZ Customer", company=self.company)
+        self.product = Product.objects.create(
+            name="Roll", company=self.company, user=self.user,
+            price_net=Decimal("1.50"), vat_rate=Decimal("8"),
+        )
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.company,
+            order_date=date(2026, 9, 1), delivery_date=date(2026, 9, 5),
+            status=Order.STATUS_DELIVERED,
+        )
+
+    def _make_wz(self, issue_date, quantity_actual="10.00", quantity_returned="0.00", unit_cost=None):
+        wz = DeliveryDocument.objects.create(
+            company=self.company,
+            order=self.order,
+            user=self.user,
+            to_customer=self.customer,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            status=DeliveryDocument.STATUS_DELIVERED,
+            issue_date=issue_date,
+        )
+        DeliveryItem.objects.create(
+            delivery_document=wz,
+            product=self.product,
+            quantity_planned=Decimal(quantity_actual),
+            quantity_actual=Decimal(quantity_actual),
+            quantity_returned=Decimal(quantity_returned),
+            unit_cost=Decimal(unit_cost) if unit_cost else None,
+        )
+        return wz
+
+    def test_aggregates_wz_items_within_date_range(self):
+        self._make_wz(date(2026, 9, 5), quantity_actual="10.00")
+        self._make_wz(date(2026, 9, 10), quantity_actual="5.00")
+        self._make_wz(date(2026, 9, 20), quantity_actual="8.00")  # outside range
+
+        result = get_period_preview_from_wz(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["product_name"], "Roll")
+        self.assertEqual(Decimal(result[0]["qty"]), Decimal("15.00"))
+
+    def test_subtracts_returned_quantity(self):
+        self._make_wz(date(2026, 9, 5), quantity_actual="10.00", quantity_returned="3.00")
+
+        result = get_period_preview_from_wz(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(Decimal(result[0]["qty"]), Decimal("7.00"))
+
+    def test_excludes_fully_returned_items(self):
+        self._make_wz(date(2026, 9, 5), quantity_actual="5.00", quantity_returned="5.00")
+
+        result = get_period_preview_from_wz(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(result, [])
+
+    def test_excludes_non_delivered_wz(self):
+        wz = DeliveryDocument.objects.create(
+            company=self.company, order=self.order, user=self.user,
+            to_customer=self.customer, document_type=DeliveryDocument.DOC_TYPE_WZ,
+            status=DeliveryDocument.STATUS_IN_TRANSIT,
+            issue_date=date(2026, 9, 5),
+        )
+        DeliveryItem.objects.create(
+            delivery_document=wz, product=self.product,
+            quantity_planned=Decimal("10"), quantity_actual=Decimal("10"),
+        )
+        result = get_period_preview_from_wz(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(result, [])
+
+    def test_returns_empty_list_when_no_wz(self):
+        result = get_period_preview_from_wz(
+            customer=self.customer, company=self.company,
+            date_from=date(2026, 9, 1), date_to=date(2026, 9, 15),
+        )
+        self.assertEqual(result, [])
+
+
+# ---------------------------------------------------------------------------
+# Period-preview API endpoints
+# ---------------------------------------------------------------------------
+
+class PeriodPreviewApiTests(TestCase):
+    """API tests for GET /api/invoices/period-preview/orders/ and /wz/."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="ppapi-user",
+            email="ppapi@test.com",
+            password="test",
+        )
+        self.company = Company.objects.create(name="PPAPI Co")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="admin", is_active=True)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.company, module="invoicing", defaults={"is_enabled": True})
+
+        self.customer = Customer.objects.create(name="PPAPI Customer", company=self.company)
+        self.product = Product.objects.create(
+            name="Rye", company=self.company, user=self.user, price_net=Decimal("3.00"), vat_rate=Decimal("8"),
+        )
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.company,
+            order_date=date(2026, 9, 1), delivery_date=date(2026, 9, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        OrderItem.objects.create(
+            order=self.order, product=self.product, product_name="Rye",
+            product_unit="szt", quantity=Decimal("12"),
+            unit_price_net=Decimal("3.00"), vat_rate=Decimal("8"),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+        self.orders_url = reverse("invoice-period-preview-orders")
+        self.wz_url = reverse("invoice-period-preview-wz")
+
+    def test_orders_preview_returns_aggregated_items(self):
+        r = self.client.get(self.orders_url, {
+            "customer_id": str(self.customer.uuid),
+            "date_from": "2026-09-01",
+            "date_to": "2026-09-15",
+        })
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]["product_name"], "Rye")
+        self.assertEqual(Decimal(r.data[0]["qty"]), Decimal("12.00"))
+
+    def test_orders_preview_missing_params_returns_400(self):
+        r = self.client.get(self.orders_url, {"customer_id": str(self.customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_orders_preview_invalid_customer_returns_404(self):
+        r = self.client.get(self.orders_url, {
+            "customer_id": str(uuid.uuid4()),
+            "date_from": "2026-09-01",
+            "date_to": "2026-09-15",
+        })
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_wz_preview_returns_empty_when_no_wz(self):
+        r = self.client.get(self.wz_url, {
+            "customer_id": str(self.customer.uuid),
+            "date_from": "2026-09-01",
+            "date_to": "2026-09-15",
+        })
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data, [])
+
+    def test_wz_preview_missing_params_returns_400(self):
+        r = self.client.get(self.wz_url, {"customer_id": str(self.customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unauthenticated_returns_401(self):
+        client = APIClient()
+        r = client.get(self.orders_url, {
+            "customer_id": str(self.customer.uuid),
+            "date_from": "2026-09-01",
+            "date_to": "2026-09-15",
+        })
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+# ---------------------------------------------------------------------------
+# generate-from-orders API endpoint with order_item_ids
+# ---------------------------------------------------------------------------
+
+class GenerateFromOrdersApiTests(TestCase):
+    """API tests for POST /api/invoices/generate-from-orders/ with order_item_ids."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="gfoa-user",
+            email="gfoa@test.com",
+            password="test",
+        )
+        self.company = Company.objects.create(name="GFOA Co")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="admin", is_active=True)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.company, module="invoicing", defaults={"is_enabled": True})
+
+        self.customer = Customer.objects.create(name="GFOA Customer", company=self.company)
+        product = Product.objects.create(
+            name="Wheat", company=self.company, user=self.user, price_net=Decimal("5.00"),
+        )
+        product2 = Product.objects.create(
+            name="Oat", company=self.company, user=self.user, price_net=Decimal("4.00"),
+        )
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.company,
+            order_date=date(2026, 9, 1), delivery_date=date(2026, 9, 10),
+            status=Order.STATUS_CONFIRMED,
+        )
+        self.item1 = OrderItem.objects.create(
+            order=self.order, product=product, product_name="Wheat",
+            product_unit="kg", quantity=Decimal("100"),
+            unit_price_net=Decimal("5.00"), vat_rate=Decimal("8"),
+        )
+        self.item2 = OrderItem.objects.create(
+            order=self.order, product=product2, product_name="Oat",
+            product_unit="kg", quantity=Decimal("50"),
+            unit_price_net=Decimal("4.00"), vat_rate=Decimal("8"),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse("invoice-generate-from-orders-action")
+
+    def test_partial_selection_creates_invoice_with_only_selected_items(self):
+        r = self.client.post(self.url, {
+            "order_ids": [str(self.order.uuid)],
+            "order_item_ids": [str(self.item1.uuid)],
+            "issue_date": "2026-09-15",
+            "sale_date": "2026-09-10",
+            "due_date": "2026-09-29",
+            "payment_method": "transfer",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        inv = Invoice.objects.get(uuid=r.data["id"])
+        self.assertEqual(inv.items.count(), 1)
+        self.assertEqual(inv.items.first().product_name, "Wheat")
+
+    def test_all_items_included_when_no_order_item_ids(self):
+        r = self.client.post(self.url, {
+            "order_ids": [str(self.order.uuid)],
+            "issue_date": "2026-09-15",
+            "sale_date": "2026-09-10",
+            "due_date": "2026-09-29",
+            "payment_method": "transfer",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        inv = Invoice.objects.get(uuid=r.data["id"])
+        self.assertEqual(inv.items.count(), 2)
+
+    def test_invalid_order_item_ids_type_returns_400(self):
+        r = self.client.post(self.url, {
+            "order_ids": [str(self.order.uuid)],
+            "order_item_ids": "not-a-list",
+            "issue_date": "2026-09-15",
+            "sale_date": "2026-09-10",
+            "due_date": "2026-09-29",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)

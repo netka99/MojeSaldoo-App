@@ -8,6 +8,7 @@ import { useCreatePzMutation } from '@/query/use-delivery';
 import { useAllSuppliersQuery } from '@/query/use-suppliers';
 import { productService } from '@/services/product.service';
 import { warehouseService } from '@/services/warehouse.service';
+import { useSilentWarehouse } from '@/hooks/useSilentWarehouse';
 import type { Product } from '@/types';
 
 const PAGE_SIZE = 30;
@@ -85,6 +86,10 @@ export function PZCreatePage() {
   const [externalDocNumber, setExternalDocNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [toWarehouseId, setToWarehouseId] = useState('');
+  const { silent, warehouseId: defaultWarehouseId } = useSilentWarehouse();
+  useEffect(() => {
+    if (defaultWarehouseId && !toWarehouseId) setToWarehouseId(defaultWarehouseId);
+  }, [defaultWarehouseId, toWarehouseId]);
   const [fromSupplierId, setFromSupplierId] = useState('');
   const [lines, setLines] = useState<PzLine[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -269,6 +274,7 @@ export function PZCreatePage() {
 
           <div className="space-y-4">
             {/* warehouse */}
+            {!silent && (
             <div>
               <label htmlFor="to_warehouse" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
                 Magazyn docelowy <span className="text-destructive">*</span>
@@ -288,6 +294,7 @@ export function PZCreatePage() {
                 ))}
               </select>
             </div>
+            )}
 
             {/* supplier */}
             <div>

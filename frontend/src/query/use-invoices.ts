@@ -3,10 +3,13 @@ import { useAuth } from '@/context/AuthContext';
 import { invoiceService, type InvoiceListParams, type InvoiceSummary } from '@/services/invoice.service';
 import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult, type OpexCategory, type PaperScanResult, type KorMatchResult } from '@/services/ksef.service';
 import type {
+  CreateManualInvoiceBody,
   GenerateInvoiceFromOrderBody,
+  GenerateInvoiceFromOrdersBody,
   Invoice,
   InvoiceCreate,
   InvoicePatch,
+  PeriodPreviewResult,
 } from '@/types';
 import { invoiceKeys, orderKeys } from './keys';
 
@@ -94,14 +97,58 @@ export function useGenerateInvoiceFromOrderMutation() {
   });
 }
 
+export function useGenerateFromOrdersMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: GenerateInvoiceFromOrdersBody) =>
+      invoiceService.generateFromOrders(body),
+    onSuccess: (inv: Invoice) => {
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(inv.id) });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+export function useCreateManualInvoiceMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateManualInvoiceBody) =>
+      invoiceService.createManual(body),
+    onSuccess: (inv: Invoice) => {
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(inv.id) });
+    },
+  });
+}
+
+export function useInvoiceNextNumberQuery(issueDate: string, enabled = true) {
+  return useQuery({
+    queryKey: ['invoice-next-number', issueDate],
+    queryFn: () => invoiceService.nextNumber(issueDate),
+    enabled: enabled && !!issueDate,
+    staleTime: 10_000,
+  });
+}
+
+export function useSetInvoiceNumberMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, invoiceNumber }: { id: string; invoiceNumber: string | null }) =>
+      invoiceService.setNumber(id, invoiceNumber),
+    onSuccess: (inv: Invoice) => {
+      void queryClient.setQueryData(invoiceKeys.detail(inv.id), inv);
+    },
+  });
+}
+
 export function useIssueInvoiceMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => invoiceService.issue(id),
     onSuccess: (inv: Invoice) => {
       void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
-      void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(inv.id) });
-      void queryClient.invalidateQueries({ queryKey: invoiceKeys.preview(inv.id) });
+      void queryClient.setQueryData(invoiceKeys.detail(inv.id), inv);
     },
   });
 }
@@ -256,6 +303,24 @@ export function useKsefTagOpexMutation() {
   });
 }
 
+export function useKsefInboxVatFlagsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ksefNumber,
+      vat_deduction,
+      is_private,
+    }: {
+      ksefNumber: string;
+      vat_deduction?: import('@/services/ksef.service').VatDeduction;
+      is_private?: boolean;
+    }) => ksefService.patchInboxVatFlags(ksefNumber, { vat_deduction, is_private }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['ksef', 'inbox'] });
+    },
+  });
+}
+
 /** Fetch per-line opex categories for a single received invoice. */
 export function useKsefOpexLinesQuery(ksefNumber: string, enabled = true) {
   const { user } = useAuth();
@@ -315,6 +380,46 @@ export function useInvoiceSummaryQuery() {
     queryFn: () => invoiceService.fetchSummary(),
     enabled: Boolean(companyId),
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Fetch period-preview aggregation from Orders for a customer + date range.
+ * Only fires when customerId, dateFrom, dateTo are provided and enabled=true.
+ */
+export function useInvoicePeriodPreviewOrdersQuery(
+  customerId: string | undefined,
+  dateFrom: string | undefined,
+  dateTo: string | undefined,
+  enabled = true,
+) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<PeriodPreviewResult>({
+    queryKey: ['invoices', 'period-preview', 'orders', { companyId, customerId, dateFrom, dateTo }],
+    queryFn: () => invoiceService.periodPreviewOrders(customerId!, dateFrom!, dateTo!),
+    enabled: enabled && Boolean(companyId) && Boolean(customerId) && Boolean(dateFrom) && Boolean(dateTo),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Fetch period-preview aggregation from WZ documents for a customer + date range.
+ * Only fires when customerId, dateFrom, dateTo are provided and enabled=true.
+ */
+export function useInvoicePeriodPreviewWzQuery(
+  customerId: string | undefined,
+  dateFrom: string | undefined,
+  dateTo: string | undefined,
+  enabled = true,
+) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<PeriodPreviewResult>({
+    queryKey: ['invoices', 'period-preview', 'wz', { companyId, customerId, dateFrom, dateTo }],
+    queryFn: () => invoiceService.periodPreviewWz(customerId!, dateFrom!, dateTo!),
+    enabled: enabled && Boolean(companyId) && Boolean(customerId) && Boolean(dateFrom) && Boolean(dateTo),
+    staleTime: 60_000,
   });
 }
 

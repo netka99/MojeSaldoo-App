@@ -102,6 +102,15 @@ class Company(models.Model):
         help_text="Czy firma jest czynnym podatnikiem VAT.",
     )
 
+    INVOICE_RETURNS_FVKOR = "fv_kor"
+    INVOICE_RETURNS_NET = "net_qty"
+    INVOICE_RETURNS_LINES = "lines"
+    INVOICE_RETURNS_CHOICES = [
+        (INVOICE_RETURNS_FVKOR, "Oddzielna korekta FV-KOR (domyślne)"),
+        (INVOICE_RETURNS_NET,   "Netto w ilości (dostarczone − zwroty)"),
+        (INVOICE_RETURNS_LINES, "Osobna linia ze zwrotem"),
+    ]
+
     KSEF_MANDATORY = "mandatory"
     KSEF_VOLUNTARY = "voluntary"
     KSEF_EXEMPT = "exempt"
@@ -146,6 +155,37 @@ class Company(models.Model):
         max_length=20, blank=True, default="",
         help_text="Numer BDO (rejestr odpadów).",
     )
+
+    PRICE_INPUT_NET = "net"
+    PRICE_INPUT_GROSS = "gross"
+    PRICE_INPUT_CHOICES = [
+        (PRICE_INPUT_NET,   "Ceny netto (standard B2B)"),
+        (PRICE_INPUT_GROSS, "Ceny brutto (retail / detaliczne)"),
+    ]
+    price_input_mode = models.CharField(
+        max_length=5,
+        choices=PRICE_INPUT_CHOICES,
+        default=PRICE_INPUT_NET,
+        help_text="Czy firma wprowadza ceny netto czy brutto. Wpływa na obliczenia na fakturach i zamówieniach.",
+    )
+
+    # How the company handles returns on invoices.
+    invoice_returns_mode = models.CharField(
+        max_length=10,
+        choices=INVOICE_RETURNS_CHOICES,
+        default=INVOICE_RETURNS_FVKOR,
+        help_text="Sposób ujmowania zwrotów na fakturach sprzedaży.",
+    )
+
+    # Invoice numbering
+    invoice_number_prefix = models.CharField(max_length=10, default="FV")
+    invoice_number_period = models.CharField(
+        max_length=10,
+        choices=[("yearly", "Roczna"), ("monthly", "Miesięczna")],
+        default="yearly",
+    )
+    invoice_number_padding = models.PositiveSmallIntegerField(default=4)
+    invoice_number_start = models.PositiveIntegerField(default=1)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

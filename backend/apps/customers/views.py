@@ -190,20 +190,63 @@ class CustomerViewSet(viewsets.ModelViewSet):
     _IMPORT_HEADERS = [
         "Nazwa", "Nazwa firmy", "NIP", "Telefon", "Email",
         "Ulica", "Miasto", "Kod pocztowy", "Termin płatności (dni)",
+        "Podmiot3 rola", "Podmiot3 nazwa", "Podmiot3 NIP lub IDWew",
+        "Podmiot3 ulica", "Podmiot3 miasto", "Podmiot3 kod pocztowy",
     ]
 
     @action(detail=False, methods=["get"], url_path="import-template")
     def import_template(self, request):
         """GET /api/customers/import-template/ — download a blank XLSX template."""
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
         wb = Workbook()
         ws = wb.active
         ws.title = "Klienci"
-        ws.append(self._IMPORT_HEADERS)
-        ws.append(["Jan Kowalski", "Piekarnia Kowalski", "1234567890", "600123456",
-                   "jan@piekarnia.pl", "ul. Słoneczna 1", "Warszawa", "00-001", 14])
 
-        for col, width in zip("ABCDEFGHI", [30, 30, 14, 16, 30, 30, 20, 12, 22]):
-            ws.column_dimensions[col].width = width
+        # --- Row 1: headers ---
+        ws.append(self._IMPORT_HEADERS)
+        header_font = Font(bold=True)
+        header_fill = PatternFill("solid", fgColor="D9E1F2")
+        podmiot3_fill = PatternFill("solid", fgColor="E2EFDA")
+        for col_idx, _ in enumerate(self._IMPORT_HEADERS, start=1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = podmiot3_fill if col_idx >= 10 else header_fill
+            cell.alignment = Alignment(wrap_text=True)
+
+        # --- Row 2: hint row (not real data, explains values) ---
+        ws.append([
+            "Wpisz nazwę wyświetlaną", "Opcjonalnie pełna nazwa firmy",
+            "10 cyfr bez myślników", "Telefon", "Email",
+            "Ulica i numer", "Miejscowość", "XX-XXX", "Liczba dni np. 14",
+            "Odbiorca / Faktor / Dokonujący płatności / Pracownik lub (puste)", "Nazwa sklepu/oddziału",
+            "NIP (10 cyfr) lub NIP-numer np. 1234567890-001",
+            "Ulica oddziału", "Miejscowość oddziału", "XX-XXX",
+        ])
+        hint_font = Font(italic=True, color="808080")
+        for col_idx in range(1, len(self._IMPORT_HEADERS) + 1):
+            ws.cell(row=2, column=col_idx).font = hint_font
+
+        # --- Row 3: example without Podmiot3 ---
+        ws.append([
+            "Jan Kowalski", "Piekarnia Kowalski", "1234567890", "600123456",
+            "jan@piekarnia.pl", "ul. Słoneczna 1", "Warszawa", "00-001", 14,
+            "", "", "", "", "", "",
+        ])
+
+        # --- Row 4: example with Podmiot3 ---
+        ws.append([
+            "AS Bylak i Wspólnicy", "AS Bylak i Wspólnicy Sp. j.", "8441866342", "",
+            "", "ul. Leśna 68", "Suwałki", "16-400", 14,
+            "Odbiorca", "Sklep nr 27", "8441866342-27001", "ul. Szpitalna 71", "Suwałki", "16-400",
+        ])
+
+        col_widths = [30, 30, 14, 16, 30, 30, 20, 12, 22, 18, 25, 30, 30, 20, 12]
+        for col_idx, width in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+        ws.row_dimensions[1].height = 30
 
         buf = io.BytesIO()
         wb.save(buf)
@@ -266,6 +309,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
         _UPDATE_FIELDS = [
             "name", "company_name", "nip", "phone", "email",
             "street", "city", "postal_code", "payment_terms",
+            "podmiot3_role", "podmiot3_name", "podmiot3_id_wew",
+            "podmiot3_street", "podmiot3_city", "podmiot3_postal_code",
         ]
         created = updated = 0
 
@@ -348,6 +393,14 @@ class CustomerViewSet(viewsets.ModelViewSet):
         if errors:
             return errors, None
 
+        _ROLE_MAP = {
+            "1": "1", "faktor": "1",
+            "2": "2", "odbiorca": "2",
+            "6": "6", "dokonujący płatności": "6", "dokonujacy platnosci": "6",
+            "11": "11", "pracownik": "11",
+        }
+        p3_role = _ROLE_MAP.get(get("podmiot3 rola").strip().lower())
+
         return [], {
             "name": name,
             "company_name": get("nazwa firmy") or None,
@@ -358,4 +411,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
             "city": get("miasto") or None,
             "postal_code": get("kod pocztowy") or None,
             "payment_terms": payment_terms,
+            "podmiot3_role": p3_role,
+            "podmiot3_name": get("podmiot3 nazwa") or None,
+            "podmiot3_id_wew": get("podmiot3 nip lub idwew") or None,
+            "podmiot3_street": get("podmiot3 ulica") or None,
+            "podmiot3_city": get("podmiot3 miasto") or None,
+            "podmiot3_postal_code": get("podmiot3 kod pocztowy") or None,
         }

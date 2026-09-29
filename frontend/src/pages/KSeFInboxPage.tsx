@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefMarkPaidMutation, useKsefSessionQuery, useKsefTagOpexMutation, useKsefOpexLinesQuery, useKsefLineOpexMutation } from '@/query/use-invoices';
+import { useKsefInboxParseQuery, useKsefInboxQuery, useKsefInboxSyncMutation, useKsefMarkPaidMutation, useKsefSessionQuery, useKsefTagOpexMutation, useKsefInboxVatFlagsMutation, useKsefOpexLinesQuery, useKsefLineOpexMutation } from '@/query/use-invoices';
 import { useLinkInvoiceToPzMutation, useUnmatchedPzQuery, useDeliveryQuery } from '@/query/use-delivery';
 import { useCostProjectsQuery, useInvoiceAnnotationQuery, useSaveInvoiceAnnotationMutation } from '@/query/use-cost-allocation';
 import { useCreateOpexCategoryMutation, useOpexCategoriesQuery } from '@/query/use-cashflow';
@@ -13,6 +13,7 @@ import type { OpexCategory, PzDocumentRef, ReceivedInvoiceMeta } from '@/service
 import { isKorType, OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
 import type { AccountingStatus, InvoiceAnnotationWrite, LineAnnotation, LineSplitWrite } from '@/types/cost-allocation.types';
 import { ACCOUNTING_STATUS_COLORS, ACCOUNTING_STATUS_LABELS } from '@/types/cost-allocation.types';
+import { VatDeductionToggles } from '@/components/features/cashflow/VatDeductionToggles';
 
 const PAGE_SIZE = 20;
 
@@ -205,6 +206,27 @@ export function OpexTagButton({ inv, onOpenManager }: { inv: ReceivedInvoiceMeta
       </button>
       {open && dropdown}
     </div>
+  );
+}
+
+function InboxVatFlags({ inv }: { inv: ReceivedInvoiceMeta }) {
+  const mutation = useKsefInboxVatFlagsMutation();
+  return (
+    <VatDeductionToggles
+      deduction={inv.vatDeduction ?? 'full'}
+      isPrivate={inv.isPrivate ?? false}
+      disabled={mutation.isPending}
+      onDeductionChange={(value) => {
+        mutation.mutate({ ksefNumber: inv.ksefNumber, vat_deduction: value });
+      }}
+      onPrivateChange={(value) => {
+        mutation.mutate({
+          ksefNumber: inv.ksefNumber,
+          is_private: value,
+          vat_deduction: value ? 'none' : 'full',
+        });
+      }}
+    />
   );
 }
 
@@ -1027,7 +1049,10 @@ function InvoiceRow({ inv, downloading, onDownload, onCreatePz, onCreatePzKor, o
           <div className="text-[11px] tabular-nums text-gray-400">VAT {formatAmount(inv.vatAmount, inv.currency)}</div>
         </td>
         <td className="px-4 py-3.5">
-          <OpexTagButton inv={inv} onOpenManager={onOpenCatManager} />
+          <div className="space-y-2">
+            <OpexTagButton inv={inv} onOpenManager={onOpenCatManager} />
+            <InboxVatFlags inv={inv} />
+          </div>
         </td>
         <td className="px-4 py-3.5">
           <button

@@ -13,6 +13,12 @@ import type { OpexCategory } from '@/types/cashflow.types';
 // Single row
 // ---------------------------------------------------------------------------
 
+const KPIR_OPTIONS = [
+  { value: '13', label: 'Pozostałe wydatki (media, usługi, paliwo…)' },
+  { value: '10', label: 'Zakup towarów i materiałów' },
+  { value: '12', label: 'Wynagrodzenia' },
+] as const;
+
 function CategoryRow({ cat, onMoveUp, isFirst }: {
   cat: OpexCategory;
   onMoveUp: () => void;
@@ -46,65 +52,65 @@ function CategoryRow({ cat, onMoveUp, isFirst }: {
 
   return (
     <div className={`flex items-center gap-2 rounded-lg px-3 py-2 transition-colors ${cat.is_active ? '' : 'opacity-50'}`}>
-      {/* Move up */}
-      <button
-        type="button"
-        onClick={onMoveUp}
-        disabled={isFirst || updateMutation.isPending}
-        className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-20 text-sm leading-none"
-        title="Przesuń wyżej"
-      >
-        ↑
-      </button>
-
-      {/* Name — editable inline */}
-      {editing ? (
-        <input
-          autoFocus
-          type="text"
-          value={editName}
-          onChange={(e) => setEditName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void saveEdit();
-            if (e.key === 'Escape') setEditing(false);
-          }}
-          onBlur={() => void saveEdit()}
-          className="flex-1 rounded border border-primary bg-background px-2 py-0.5 text-sm focus:outline-none"
-        />
-      ) : (
-        <span
-          className="flex-1 cursor-pointer text-sm select-none"
-          onClick={startEdit}
-          title="Kliknij aby edytować"
+        {/* Move up */}
+        <button
+          type="button"
+          onClick={onMoveUp}
+          disabled={isFirst || updateMutation.isPending}
+          className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-20 text-sm leading-none"
+          title="Przesuń wyżej"
         >
-          {cat.name}
-        </span>
-      )}
+          ↑
+        </button>
 
-      {/* Hide/show */}
-      <button
-        type="button"
-        onClick={toggleActive}
-        disabled={updateMutation.isPending}
-        className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-        title={cat.is_active ? 'Ukryj kategorię' : 'Pokaż kategorię'}
-      >
-        {cat.is_active ? '👁' : '🙈'}
-      </button>
+        {/* Name — editable inline */}
+        {editing ? (
+          <input
+            autoFocus
+            type="text"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void saveEdit();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            onBlur={() => void saveEdit()}
+            className="flex-1 rounded border border-primary bg-background px-2 py-0.5 text-sm focus:outline-none"
+          />
+        ) : (
+          <span
+            className="flex-1 cursor-pointer text-sm select-none"
+            onClick={startEdit}
+            title="Kliknij aby edytować"
+          >
+            {cat.name}
+          </span>
+        )}
 
-      {/* Delete */}
-      <button
-        type="button"
-        onClick={() => void handleDelete()}
-        disabled={deleteMutation.isPending}
-        className={`shrink-0 text-xs font-medium transition-colors ${
-          confirming ? 'text-destructive' : 'text-muted-foreground hover:text-destructive'
-        }`}
-        title={confirming ? 'Kliknij ponownie aby usunąć' : 'Usuń kategorię'}
-        onBlur={() => setConfirming(false)}
-      >
-        {confirming ? 'Usuń?' : '✕'}
-      </button>
+        {/* Hide/show */}
+        <button
+          type="button"
+          onClick={toggleActive}
+          disabled={updateMutation.isPending}
+          className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+          title={cat.is_active ? 'Ukryj kategorię' : 'Pokaż kategorię'}
+        >
+          {cat.is_active ? '👁' : '🙈'}
+        </button>
+
+        {/* Delete */}
+        <button
+          type="button"
+          onClick={() => void handleDelete()}
+          disabled={deleteMutation.isPending}
+          className={`shrink-0 text-xs font-medium transition-colors ${
+            confirming ? 'text-destructive' : 'text-muted-foreground hover:text-destructive'
+          }`}
+          title={confirming ? 'Kliknij ponownie aby usunąć' : 'Usuń kategorię'}
+          onBlur={() => setConfirming(false)}
+        >
+          {confirming ? 'Usuń?' : '✕'}
+        </button>
     </div>
   );
 }
@@ -120,6 +126,7 @@ interface OpexCategoryManagerProps {
 
 export function OpexCategoryManager({ open, onClose }: OpexCategoryManagerProps) {
   const [newName, setNewName] = useState('');
+  const [newKpir, setNewKpir] = useState<'10' | '12' | '13' | ''>('');
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: categories = [], isLoading } = useAllOpexCategoriesQuery();
   const createMutation = useCreateOpexCategoryMutation();
@@ -130,8 +137,9 @@ export function OpexCategoryManager({ open, onClose }: OpexCategoryManagerProps)
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
-    await createMutation.mutateAsync({ name: newName.trim() });
+    await createMutation.mutateAsync({ name: newName.trim(), kpir_column: newKpir || '13' });
     setNewName('');
+    setNewKpir('');
     inputRef.current?.focus();
   };
 
@@ -147,7 +155,7 @@ export function OpexCategoryManager({ open, onClose }: OpexCategoryManagerProps)
   };
 
   useEffect(() => {
-    if (open) setNewName('');
+    if (open) { setNewName(''); setNewKpir(''); }
   }, [open]);
 
   return (
@@ -203,27 +211,37 @@ export function OpexCategoryManager({ open, onClose }: OpexCategoryManagerProps)
             </div>
 
             {/* Add new */}
-            <div className="border-t border-border px-3 py-3">
-              <div className="flex gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void handleAdd(); }}
-                  placeholder="Nowa kategoria..."
-                  className="flex-1 rounded-lg border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                <Button
-                  size="sm"
-                  onClick={() => void handleAdd()}
-                  disabled={!newName.trim() || createMutation.isPending}
-                  loading={createMutation.isPending}
-                >
-                  Dodaj
-                </Button>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
+            <div className="border-t border-border px-3 pt-3 pb-3 space-y-2">
+              <p className="text-xs font-semibold text-foreground">Nowa kategoria</p>
+              <input
+                ref={inputRef}
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleAdd(); }}
+                placeholder="Nazwa kategorii..."
+                className="w-full rounded-lg border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <select
+                value={newKpir}
+                onChange={(e) => setNewKpir(e.target.value as '10' | '12' | '13')}
+                className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="" disabled>Wybierz typ kosztu w KPiR…</option>
+                {KPIR_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                className="w-full"
+                onClick={() => void handleAdd()}
+                disabled={!newName.trim() || !newKpir || createMutation.isPending}
+                loading={createMutation.isPending}
+              >
+                Dodaj kategorię
+              </Button>
+              <p className="text-xs text-muted-foreground">
                 Kliknij nazwę aby edytować · ↑ przesuń wyżej · 👁 ukryj
               </p>
             </div>

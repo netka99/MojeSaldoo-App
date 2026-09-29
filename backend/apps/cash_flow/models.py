@@ -6,6 +6,8 @@ from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from apps.common.vat import VAT_DEDUCTION_CHOICES, VAT_DEDUCTION_FULL
+
 
 # ---------------------------------------------------------------------------
 # Shared OPEX category vocabulary — used by both QuickExpense and
@@ -29,6 +31,21 @@ OPEX_CATEGORY_CHOICES = [
 OPEX_CATEGORY_LABELS = {k: v for k, v in OPEX_CATEGORY_CHOICES}
 
 
+KPIR_COLUMN_CHOICES = [
+    ("10", "Kol. 10 — Zakup towarów i materiałów"),
+    ("12", "Kol. 12 — Wynagrodzenia"),
+    ("13", "Kol. 13 — Pozostałe wydatki"),
+]
+
+# Hardcoded mapping for built-in categories seeded on company creation.
+KPIR_COLUMN_DEFAULTS = {
+    "raw_materials": "10",
+    "packaging":     "10",
+    "salaries":      "12",
+    # all others default to "13"
+}
+
+
 class CompanyOpexCategory(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     company = models.ForeignKey(
@@ -41,6 +58,12 @@ class CompanyOpexCategory(models.Model):
         max_length=30,
         blank=True,
         help_text="Machine-readable key, e.g. 'raw_materials'. Used to match legacy hardcoded categories.",
+    )
+    kpir_column = models.CharField(
+        max_length=2,
+        choices=KPIR_COLUMN_CHOICES,
+        default="13",
+        help_text="KPiR column this category maps to for the accountant export.",
     )
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveSmallIntegerField(default=0)
@@ -70,7 +93,11 @@ def seed_opex_categories(sender, instance, created, **kwargs):
         CompanyOpexCategory.objects.get_or_create(
             company=instance,
             slug=slug,
-            defaults={"name": name, "sort_order": i},
+            defaults={
+                "name": name,
+                "sort_order": i,
+                "kpir_column": KPIR_COLUMN_DEFAULTS.get(slug, "13"),
+            },
         )
 
 
@@ -267,6 +294,16 @@ class QuickExpense(models.Model):
         help_text="Optional product description (from product catalog or free text)",
     )
     notes = models.CharField(max_length=500, blank=True)
+    vat_deduction = models.CharField(
+        max_length=10,
+        choices=VAT_DEDUCTION_CHOICES,
+        default=VAT_DEDUCTION_FULL,
+        help_text="VAT input share: 100%, 50% passenger car, or 0%.",
+    )
+    is_private = models.BooleanField(
+        default=False,
+        help_text="Personal spend — no VAT deduction and not a business cost.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

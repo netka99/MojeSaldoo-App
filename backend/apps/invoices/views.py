@@ -30,7 +30,15 @@ from apps.activity.models import ActivityLog
 from .filters import InvoiceFilter
 from .models import Invoice
 from .serializers import InvoiceSerializer
-from .services import build_invoice_preview_data, create_invoice_correction, generate_invoice_from_order
+from .services import (
+    build_invoice_preview_data,
+    create_invoice_correction,
+    create_manual_invoice,
+    generate_invoice_from_order,
+    generate_invoice_from_orders,
+    get_period_preview_from_orders,
+    get_period_preview_from_wz,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +76,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 "user",
                 "delivery_document",
             )
-            .prefetch_related("items", "items__product", "items__order_item", "corrections")
+            .prefetch_related("items", "items__product", "items__order_item", "corrections", "invoice_orders")
             .order_by("-created_at")
         )
         return filter_queryset_for_current_company(qs, self.request.user)
@@ -102,6 +110,39 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if instance.status != Invoice.STATUS_DRAFT:
             raise ValidationError({"detail": "Tylko faktury w statusie 'szkic' mogą być usunięte."})
         super().perform_destroy(instance)
+
+    def destroy(self, request, *args, **kwargs):
+        invoice = self.get_object()
+        if invoice.invoice_number:
+            raise ValidationError({'detail': 'Nie można usunąć faktury z nadanym numerem. Użyj anulowania.'})
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['patch'], url_path='set-number')
+    def set_number(self, request, uuid=None):
+        """Set or clear invoice_number on a draft invoice."""
+        invoice = self.get_object()
+        if invoice.status != Invoice.STATUS_DRAFT:
+            raise ValidationError({'detail': 'Numer można zmienić tylko na szkicu.'})
+        number = request.data.get('invoice_number', '').strip() or None
+        if number and Invoice.objects.filter(company=invoice.company, invoice_number=number).exclude(pk=invoice.pk).exists():
+            raise ValidationError({'invoice_number': f"Numer '{number}' jest już zajęty."})
+        invoice.invoice_number = number
+        invoice.save(update_fields=['invoice_number', 'updated_at'])
+        return Response(self.get_serializer(invoice).data)
+
+    @action(detail=False, methods=['get'], url_path='next-number')
+    def next_number(self, request):
+        from datetime import date as _date
+        company = request.user.current_company
+        issue_date_str = request.query_params.get('issue_date', '')
+        is_correction = request.query_params.get('is_correction', 'false').lower() == 'true'
+        try:
+            issue_date = _date.fromisoformat(issue_date_str) if issue_date_str else _date.today()
+        except ValueError:
+            issue_date = _date.today()
+        number = Invoice._next_invoice_number(company.pk, issue_date, is_correction=is_correction)
+        return Response({'next_number': number})
+
 
     @action(
         detail=False,
@@ -138,6 +179,159 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 user=request.user, action="invoice.create",
                 error_detail=flatten_error_value(exc.detail),
                 object_type="order", object_id=str(order.uuid), request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="invoice.create",
+            object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+        )
+        out = InvoiceSerializer(invoice, context=self.get_serializer_context())
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="generate-from-orders")
+    def generate_from_orders_action(self, request):
+        """Create one draft invoice from multiple orders (same customer)."""
+        company = request.user.current_company
+        order_ids = request.data.get("order_ids") or []
+        if not isinstance(order_ids, list):
+            raise ValidationError({"order_ids": "Must be a list of UUIDs."})
+        order_item_ids = request.data.get("order_item_ids", None)
+        if order_item_ids is not None and not isinstance(order_item_ids, list):
+            raise ValidationError({"order_item_ids": "Must be a list of UUIDs or null."})
+        issue_date = _optional_iso_date(request.data, "issue_date")
+        sale_date = _optional_iso_date(request.data, "sale_date")
+        sale_date_to = _optional_iso_date(request.data, "sale_date_to")
+        sale_date_type = request.data.get("sale_date_type", "single") or "single"
+        due_date = _optional_iso_date(request.data, "due_date")
+        pm_raw = request.data.get("payment_method")
+        payment_method = None if pm_raw in (None, "") else pm_raw
+        show_wz_raw = request.data.get("show_wz_numbers", True)
+        show_wz_numbers = bool(show_wz_raw) if not isinstance(show_wz_raw, bool) else show_wz_raw
+        try:
+            invoice = generate_invoice_from_orders(
+                order_ids=order_ids,
+                order_item_ids=order_item_ids,
+                company=company,
+                user=request.user,
+                issue_date=issue_date,
+                sale_date=sale_date,
+                sale_date_to=sale_date_to,
+                sale_date_type=sale_date_type,
+                due_date=due_date,
+                payment_method=payment_method,
+                show_wz_numbers=show_wz_numbers,
+            )
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="invoice.create",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="invoice", object_id="multi-order", request=request,
+            )
+            raise
+        log_success(
+            user=request.user, action="invoice.create",
+            object_type="invoice", object_id=invoice.invoice_number or str(invoice.uuid),
+        )
+        out = InvoiceSerializer(invoice, context=self.get_serializer_context())
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="period-preview/orders")
+    def period_preview_orders(self, request):
+        """
+        GET /api/invoices/period-preview/orders/?customer_id=&date_from=&date_to=
+        Aggregate OrderItems per product for a customer over a date range.
+        Returns items ready for use in a manual invoice.
+        """
+        from apps.customers.models import Customer as CustomerModel
+
+        company = request.user.current_company
+        customer_uuid = request.query_params.get("customer_id")
+        if not customer_uuid:
+            raise ValidationError({"customer_id": "This field is required."})
+        customer = get_object_or_404(CustomerModel, uuid=customer_uuid, company=company)
+
+        date_from = _optional_iso_date(request.query_params, "date_from")
+        date_to = _optional_iso_date(request.query_params, "date_to")
+        if not date_from or not date_to:
+            raise ValidationError({"detail": "date_from and date_to are required."})
+
+        items = get_period_preview_from_orders(
+            customer=customer, company=company, date_from=date_from, date_to=date_to
+        )
+        return Response(items)
+
+    @action(detail=False, methods=["get"], url_path="period-preview/wz")
+    def period_preview_wz(self, request):
+        """
+        GET /api/invoices/period-preview/wz/?customer_id=&date_from=&date_to=
+        Aggregate DeliveryItems (quantity_actual - quantity_returned) per product
+        across WZ documents for a customer over a date range.
+        Returns items ready for use in a manual invoice.
+        """
+        from apps.customers.models import Customer as CustomerModel
+
+        company = request.user.current_company
+        customer_uuid = request.query_params.get("customer_id")
+        if not customer_uuid:
+            raise ValidationError({"customer_id": "This field is required."})
+        customer = get_object_or_404(CustomerModel, uuid=customer_uuid, company=company)
+
+        date_from = _optional_iso_date(request.query_params, "date_from")
+        date_to = _optional_iso_date(request.query_params, "date_to")
+        if not date_from or not date_to:
+            raise ValidationError({"detail": "date_from and date_to are required."})
+
+        items = get_period_preview_from_wz(
+            customer=customer, company=company, date_from=date_from, date_to=date_to
+        )
+        return Response(items)
+
+    @action(detail=False, methods=["post"], url_path="create-manual")
+    def create_manual(self, request):
+        """Create a manual draft invoice without any order (items provided directly)."""
+        company = request.user.current_company
+        from apps.customers.models import Customer as CustomerModel
+        customer_uuid = request.data.get("customer_id")
+        if not customer_uuid:
+            raise ValidationError({"customer_id": "This field is required."})
+        customer = get_object_or_404(CustomerModel, uuid=customer_uuid, company=company)
+        raw_items = request.data.get("items") or []
+        if not isinstance(raw_items, list):
+            raise ValidationError({"items": "Must be a list."})
+        from .serializers import InvoiceItemWriteSerializer
+        items_ser = InvoiceItemWriteSerializer(data=raw_items, many=True)
+        if not items_ser.is_valid():
+            raise ValidationError({"items": items_ser.errors})
+        items_data = items_ser.validated_data
+        issue_date = _optional_iso_date(request.data, "issue_date")
+        sale_date = _optional_iso_date(request.data, "sale_date")
+        sale_date_to = _optional_iso_date(request.data, "sale_date_to")
+        sale_date_type = request.data.get("sale_date_type", "single") or "single"
+        due_date = _optional_iso_date(request.data, "due_date")
+        pm_raw = request.data.get("payment_method")
+        payment_method = None if pm_raw in (None, "") else pm_raw
+        custom_number = request.data.get("invoice_number", "").strip() or None
+        place_of_issue = request.data.get("place_of_issue", "").strip() or None
+        try:
+            invoice = create_manual_invoice(
+                customer=customer,
+                company=company,
+                user=request.user,
+                items_data=items_data,
+                issue_date=issue_date,
+                sale_date=sale_date,
+                sale_date_to=sale_date_to,
+                sale_date_type=sale_date_type,
+                due_date=due_date,
+                payment_method=payment_method,
+                invoice_number=custom_number,
+                place_of_issue=place_of_issue,
+            )
+        except ValidationError as exc:
+            log_error(
+                user=request.user, action="invoice.create",
+                error_detail=flatten_error_value(exc.detail),
+                object_type="invoice", object_id="manual", request=request,
             )
             raise
         log_success(
@@ -229,9 +423,24 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST,
                         )
 
-        invoice.status = Invoice.STATUS_ISSUED
-        invoice.user = request.user
-        invoice.save(update_fields=["status", "user", "updated_at"])
+        # Assign invoice number if this is an unnumbered draft
+        if not invoice.invoice_number:
+            from datetime import date as _date
+            from django.db import transaction as _transaction
+            with _transaction.atomic():
+                from apps.users.models import Company as _Company
+                _Company.objects.select_for_update().get(pk=invoice.company_id)
+                issue_date = invoice.issue_date or _date.today()
+                invoice.invoice_number = Invoice._next_invoice_number(
+                    invoice.company_id, issue_date, is_correction=invoice.is_correction
+                )
+                invoice.status = Invoice.STATUS_ISSUED
+                invoice.user = request.user
+                invoice.save(update_fields=["invoice_number", "status", "user", "updated_at"])
+        else:
+            invoice.status = Invoice.STATUS_ISSUED
+            invoice.user = request.user
+            invoice.save(update_fields=["status", "user", "updated_at"])
         log_activity(
             user=request.user, action="invoice.issue",
             status=ActivityLog.STATUS_SUCCESS,

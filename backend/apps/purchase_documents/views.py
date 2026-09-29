@@ -107,6 +107,8 @@ def _build_proposals(invoice_items, delivery_items):
 class PurchaseDocumentFilter(django_filters.FilterSet):
     issue_date__gte = django_filters.DateFilter(field_name="issue_date", lookup_expr="gte")
     issue_date__lte = django_filters.DateFilter(field_name="issue_date", lookup_expr="lte")
+    created_at__gte = django_filters.DateFilter(field_name="created_at", lookup_expr="date__gte")
+    created_at__lte = django_filters.DateFilter(field_name="created_at", lookup_expr="date__lte")
     opex_category = django_filters.CharFilter(field_name="opex_category", lookup_expr="exact")
     no_category = django_filters.BooleanFilter(field_name="opex_category", lookup_expr="isnull")
     is_paid = django_filters.BooleanFilter(field_name="is_paid")
@@ -220,6 +222,37 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     # Standard actions
     # ------------------------------------------------------------------
+
+    @action(detail=False, methods=["get"], url_path="check-duplicate")
+    def check_duplicate(self, request):
+        """GET /purchase-documents/check-duplicate/?nip=X&invoice_number=Y
+
+        Returns {found: true, document: {...}} when a doc with the same
+        supplier_nip + document_number already exists for this company.
+        """
+        from apps.users.tenant import get_request_company
+        nip = (request.query_params.get("nip") or "").strip()
+        invoice_number = (request.query_params.get("invoice_number") or "").strip()
+        if not nip or not invoice_number:
+            return Response({"found": False})
+        company = get_request_company(request.user)
+        existing = PurchaseDocument.objects.filter(
+            company=company,
+            supplier_nip=nip,
+            document_number=invoice_number,
+        ).values("uuid", "document_number", "doc_type", "issue_date", "supplier_name").first()
+        if existing:
+            return Response({
+                "found": True,
+                "document": {
+                    "uuid": str(existing["uuid"]),
+                    "document_number": existing["document_number"],
+                    "doc_type": existing["doc_type"],
+                    "issue_date": str(existing["issue_date"]) if existing["issue_date"] else None,
+                    "supplier_name": existing["supplier_name"],
+                },
+            })
+        return Response({"found": False})
 
     @action(detail=True, methods=["patch"], url_path="mark-paid")
     def mark_paid(self, request, uuid=None):

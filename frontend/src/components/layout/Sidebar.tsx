@@ -80,6 +80,11 @@ function NavSectionMagazyn() {
             Magazyny
           </ModuleNavItem>
         )}
+        {!warehousesEnabled && productsEnabled && (
+          <AppNavItemLink to="/stock">
+            Stany
+          </AppNavItemLink>
+        )}
         {canInventory && (
           <ModuleNavItem module="warehouses" to="/inventory">
             Inwentaryzacja

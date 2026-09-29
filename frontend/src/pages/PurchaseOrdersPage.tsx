@@ -10,6 +10,8 @@ import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { usePermission } from '@/hooks/usePermission';
 import { useAllSuppliersQuery } from '@/query/use-suppliers';
 import { useWarehouseListQuery } from '@/query/use-warehouses';
+import { useLowStockQuery } from '@/query/use-products';
+import type { LowStockAlert } from '@/services/product.service';
 import {
   useSupplierOrderListQuery,
   useCreateSupplierOrderMutation,
@@ -54,9 +56,10 @@ function statusBadge(s: SupplierOrderStatus): string {
 
 interface CreateModalProps {
   onClose: () => void;
+  prefill?: { productId: string; productName: string; qty: string };
 }
 
-function CreateModal({ onClose }: CreateModalProps) {
+function CreateModal({ onClose, prefill }: CreateModalProps) {
   const { data: suppliers } = useAllSuppliersQuery();
   const createMut = useCreateSupplierOrderMutation();
 
@@ -64,7 +67,11 @@ function CreateModal({ onClose }: CreateModalProps) {
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
   const [expectedDate, setExpectedDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState([{ productId: '', productName: '', qty: '', price: '' }]);
+  const [lines, setLines] = useState(
+    prefill
+      ? [{ productId: prefill.productId, productName: prefill.productName, qty: prefill.qty, price: '' }]
+      : [{ productId: '', productName: '', qty: '', price: '' }]
+  );
   const [productSearch, setProductSearch] = useState('');
 
   // We need product list — import via product query
@@ -263,6 +270,78 @@ function CreateModal({ onClose }: CreateModalProps) {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ─── Low stock banner ─────────────────────────────────────────────────────────
+
+interface LowStockBannerProps {
+  items: LowStockAlert[];
+  onOrderSuggested: (productId: string, productName: string, shortage: string) => void;
+}
+
+function LowStockBanner({ items, onOrderSuggested }: LowStockBannerProps) {
+  const [collapsed, setCollapsed] = React.useState(false);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-amber-600 text-lg">⚠</span>
+          <span className="font-semibold text-amber-900 text-sm">
+            {items.length === 1
+              ? '1 produkt poniżej minimum magazynowego'
+              : `${items.length} produkty poniżej minimum magazynowego`}
+          </span>
+        </div>
+        <button
+          onClick={() => setCollapsed((p) => !p)}
+          className="text-xs text-amber-700 hover:underline"
+        >
+          {collapsed ? 'Pokaż' : 'Zwiń'}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-amber-700 uppercase">
+              <th className="text-left pb-1">Produkt</th>
+              <th className="text-right pb-1">Stan</th>
+              <th className="text-right pb-1">Minimum</th>
+              <th className="text-right pb-1">Do zamówienia</th>
+              <th className="pb-1"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.product_id} className="border-t border-amber-100">
+                <td className="py-1.5 font-medium text-amber-900">{item.product_name}</td>
+                <td className="text-right py-1.5 text-red-700">
+                  {parseFloat(item.quantity_available).toLocaleString('pl-PL')} {item.unit}
+                </td>
+                <td className="text-right py-1.5 text-amber-800">
+                  {parseFloat(item.min_stock_alert).toLocaleString('pl-PL')} {item.unit}
+                </td>
+                <td className="text-right py-1.5 font-semibold text-amber-900">
+                  +{parseFloat(item.shortage).toLocaleString('pl-PL')} {item.unit}
+                </td>
+                <td className="text-right py-1.5 pl-3">
+                  <button
+                    onClick={() => onOrderSuggested(item.product_id, item.product_name, item.shortage)}
+                    className="rounded-lg bg-amber-600 px-2 py-0.5 text-xs text-white hover:bg-amber-700"
+                  >
+                    Zamów
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
@@ -493,6 +572,15 @@ export default function PurchaseOrdersPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<{ productId: string; productName: string; qty: string } | undefined>();
+
+  const lowStockQuery = useLowStockQuery(enabled && canManage);
+  const lowStockItems = lowStockQuery.data ?? [];
+
+  function handleOrderSuggested(productId: string, productName: string, shortage: string) {
+    setCreatePrefill({ productId, productName, qty: shortage });
+    setShowCreate(true);
+  }
 
   const { data, isLoading } = useSupplierOrderListQuery(page, {
     status: statusFilter || undefined,
@@ -559,6 +647,11 @@ export default function PurchaseOrdersPage() {
         </select>
       </div>
 
+      {/* Low stock banner */}
+      {canManage && lowStockItems.length > 0 && (
+        <LowStockBanner items={lowStockItems} onOrderSuggested={handleOrderSuggested} />
+      )}
+
       {/* Table */}
       {isLoading ? (
         <div className="py-20 text-center text-gray-400">Ładowanie…</div>
@@ -620,7 +713,12 @@ export default function PurchaseOrdersPage() {
       )}
 
       {/* Create modal */}
-      {showCreate && <CreateModal onClose={() => setShowCreate(false)} />}
+      {showCreate && (
+        <CreateModal
+          onClose={() => { setShowCreate(false); setCreatePrefill(undefined); }}
+          prefill={createPrefill}
+        />
+      )}
     </div>
   );
 }

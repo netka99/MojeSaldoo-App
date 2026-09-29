@@ -5,6 +5,12 @@ from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 
+from apps.common.vat import (
+    VAT_DEDUCTION_CHOICES,
+    VAT_DEDUCTION_FULL,
+    VAT_DEDUCTION_NONE,
+)
+
 
 class PurchaseDocument(models.Model):
     """
@@ -177,6 +183,17 @@ class PurchaseDocument(models.Model):
         help_text="Notatki dla księgowości (opis kosztów, MPK, itp.).",
     )
 
+    vat_deduction = models.CharField(
+        max_length=10,
+        choices=VAT_DEDUCTION_CHOICES,
+        default=VAT_DEDUCTION_FULL,
+        help_text="VAT input share: 100%, 50% passenger car, or 0%. PAR without NIP is always 0%.",
+    )
+    is_private = models.BooleanField(
+        default=False,
+        help_text="Personal spend — no VAT deduction and not a business cost.",
+    )
+
     notes = models.TextField(blank=True, default="")
 
     # --- Per-line cost categories (index-keyed: "0", "1", … → opex slug) ---
@@ -203,6 +220,9 @@ class PurchaseDocument(models.Model):
         if not self.pk and self.doc_type in (self.DOC_TYPE_PAR, self.DOC_TYPE_PAR_VAT):
             if not self.is_paid:
                 self.is_paid = True
+        # Receipt without NIP never gives VAT deduction (art. 106e / simplified invoice rules).
+        if self.doc_type == self.DOC_TYPE_PAR:
+            self.vat_deduction = VAT_DEDUCTION_NONE
         super().save(*args, **kwargs)
 
     def __str__(self):

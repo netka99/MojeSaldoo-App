@@ -6,6 +6,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.cash_flow.models import OPEX_CATEGORY_CHOICES
+from apps.common.vat import VAT_DEDUCTION_CHOICES, VAT_DEDUCTION_FULL
 
 
 class KSeFSession(models.Model):
@@ -164,6 +165,17 @@ class ReceivedKSeFInvoice(models.Model):
         help_text="Set to classify this invoice as an operating cost (OPEX) rather than a product purchase.",
     )
     opex_tagged_at = models.DateTimeField(null=True, blank=True)
+
+    vat_deduction = models.CharField(
+        max_length=10,
+        choices=VAT_DEDUCTION_CHOICES,
+        default=VAT_DEDUCTION_FULL,
+        help_text="VAT input share. Independent of opex_category (accountant labelling).",
+    )
+    is_private = models.BooleanField(
+        default=False,
+        help_text="Personal spend — no VAT deduction and not a business cost.",
+    )
 
     first_seen_at = models.DateTimeField(auto_now_add=True)
     last_synced_at = models.DateTimeField(auto_now=True)

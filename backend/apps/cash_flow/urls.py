@@ -10,6 +10,7 @@ from .views import (
     CompanyTaxConfigView,
     DailyB2CRevenueViewSet,
     ExpenseChartView,
+    KpirExportView,
     QuickExpenseViewSet,
 )
 
@@ -26,4 +27,5 @@ urlpatterns = [
     path("history/", CashFlowHistoryView.as_view(), name="cash-flow-history"),
     path("period-summary/", CashFlowPeriodSummaryView.as_view(), name="cash-flow-period-summary"),
     path("harmonogram/", CashFlowHarmonogramView.as_view(), name="cash-flow-harmonogram"),
+    path("export-kpir/", KpirExportView.as_view(), name="cash-flow-export-kpir"),
 ]

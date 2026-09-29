@@ -123,6 +123,13 @@ export interface Company {
   regon?: string
   krs?: string
   bdo?: string
+  // Invoice returns mode
+  invoice_returns_mode?: 'fv_kor' | 'net_qty' | 'lines'
+  // Invoice numbering
+  invoice_number_prefix?: string
+  invoice_number_period?: 'yearly' | 'monthly'
+  invoice_number_padding?: number
+  invoice_number_start?: number
 }
 
 export interface CompanyMembership {
@@ -163,4 +170,11 @@ export interface CompanyWrite {
   bdo?: string
   is_vat_payer?: boolean
   ksef_usage?: 'mandatory' | 'voluntary' | 'exempt' | 'none'
+  invoice_returns_mode?: 'fv_kor' | 'net_qty' | 'lines'
+  price_input_mode?: 'net' | 'gross'
+  invoice_number_prefix?: string
+  invoice_number_period?: 'yearly' | 'monthly'
+  invoice_number_padding?: number
+  invoice_number_start?: number
 }
+

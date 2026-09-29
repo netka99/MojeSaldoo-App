@@ -23,7 +23,7 @@ const CORE_MODULES: string[] = [
 
 const TILE_MODULE_MAP: Record<ActivityTile, string[]> = {
   purchasing:      ['purchasing', 'ksef_inbox'],
-  production:      ['production', 'warehouses', 'products'],
+  production:      ['production', 'products'],
   warehouses:      ['warehouses', 'products'],
   cost_allocation: ['cost_allocation', 'ksef_inbox'],
 };
@@ -39,7 +39,7 @@ const ALL_MODULES = [
   'warehouses', 'purchasing', 'production', 'cost_allocation', 'delivery', 'van_routes',
 ];
 
-function computeModulePreview(
+export function computeModulePreview(
   tiles: ActivityTile[],
   deliveryMethod: DeliveryMethod | null,
   taxationForm: TaxationForm,

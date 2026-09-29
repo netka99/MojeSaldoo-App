@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { format } from 'date-fns';
 
 import { Button } from '@/components/ui/Button';
+import { VatDeductionToggles, type VatDeduction } from '@/components/features/cashflow/VatDeductionToggles';
 import { useCreateQuickExpenseMutation } from '@/query/use-cashflow';
 import {
   QUICK_EXPENSE_CATEGORY_LABELS,
@@ -25,6 +26,9 @@ export function QuickExpenseSheet({ open, onClose }: QuickExpenseSheetProps) {
   const [category, setCategory] = useState<QuickExpenseCategory>('other');
   const [costType, setCostType] = useState<CostType>('indirect');
   const [hasVat, setHasVat] = useState(false);
+  const [vatRate, setVatRate] = useState('');
+  const [vatDeduction, setVatDeduction] = useState<VatDeduction>('full');
+  const [isPrivate, setIsPrivate] = useState(false);
   const [vendor, setVendor] = useState('');
   const [date, setDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [showMore, setShowMore] = useState(false);
@@ -37,6 +41,9 @@ export function QuickExpenseSheet({ open, onClose }: QuickExpenseSheetProps) {
     setCategory('other');
     setCostType('indirect');
     setHasVat(false);
+    setVatRate('');
+    setVatDeduction('full');
+    setIsPrivate(false);
     setVendor('');
     setDate(format(new Date(), 'yyyy-MM-dd'));
     setShowMore(false);
@@ -56,12 +63,25 @@ export function QuickExpenseSheet({ open, onClose }: QuickExpenseSheetProps) {
       return;
     }
 
+    if (hasVat && !vatRate) {
+      setError('Wybierz stawkę VAT — bez stawki nie odliczamy VAT-u.');
+      return;
+    }
+
+    const net = hasVat && vatRate
+      ? (parsed / (1 + Number(vatRate) / 100)).toFixed(2)
+      : undefined;
+
     try {
       await mutation.mutateAsync({
         amount: parsed.toFixed(2),
+        amount_net: net,
         category,
         cost_type: costType,
         has_vat: hasVat,
+        vat_rate: hasVat ? vatRate : '',
+        vat_deduction: isPrivate ? 'none' : vatDeduction,
+        is_private: isPrivate,
         vendor,
         date,
       });
@@ -174,11 +194,44 @@ export function QuickExpenseSheet({ open, onClose }: QuickExpenseSheetProps) {
                 <input
                   type="checkbox"
                   checked={hasVat}
-                  onChange={(e) => setHasVat(e.target.checked)}
+                  onChange={(e) => {
+                    setHasVat(e.target.checked);
+                    if (!e.target.checked) setVatRate('');
+                  }}
                   className="h-4 w-4 rounded"
                 />
-                <span className="text-sm">Mam fakturę VAT do odliczenia</span>
+                <span className="text-sm">Mam fakturę / paragon z NIP do odliczenia VAT</span>
               </label>
+
+              {hasVat && (
+                <div className="space-y-2 rounded-xl bg-muted/50 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Stawka VAT (wymagana)</p>
+                  <div className="flex gap-2">
+                    {['5', '8', '23'].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => setVatRate(rate)}
+                        className={`flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
+                          vatRate === rate
+                            ? 'bg-primary text-white'
+                            : 'bg-background text-muted-foreground hover:bg-accent'
+                        }`}
+                      >
+                        {rate}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <VatDeductionToggles
+                deduction={vatDeduction}
+                isPrivate={isPrivate}
+                hidePassengerCar={!hasVat}
+                onDeductionChange={setVatDeduction}
+                onPrivateChange={setIsPrivate}
+              />
 
               {/* Więcej toggle */}
               <button

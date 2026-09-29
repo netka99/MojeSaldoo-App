@@ -348,6 +348,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                   <div className="space-y-0.5">
                     {productsEnabled && <AppNavItemLink to="/products">Produkty</AppNavItemLink>}
                     {warehousesEnabled && <AppNavItemLink to="/warehouses">Magazyny</AppNavItemLink>}
+                    {!warehousesEnabled && productsEnabled && <AppNavItemLink to="/stock">Stany</AppNavItemLink>}
                     {warehousesEnabled && <AppNavItemLink to="/inventory">Inwentaryzacja</AppNavItemLink>}
                     {warehousesEnabled && <AppNavItemLink to="/delivery/new-rw">Odpisy (RW)</AppNavItemLink>}
                   </div>

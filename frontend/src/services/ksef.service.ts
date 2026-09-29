@@ -59,6 +59,8 @@ export function isKorType(invoiceType: string): invoiceType is KorInvoiceType {
   return invoiceType === 'KOR' || invoiceType === 'KOR_ZAL' || invoiceType === 'KOR_ROZ';
 }
 
+export type VatDeduction = 'full' | 'half' | 'none';
+
 export interface ReceivedInvoiceMeta {
   /** UUID of the ReceivedKSeFInvoice DB record — use for PZ linking. */
   id: string;
@@ -79,6 +81,8 @@ export interface ReceivedInvoiceMeta {
   pzDocuments: PzDocumentRef[];
   opex_category: OpexCategory | null;
   opex_tagged_at: string | null;
+  vatDeduction: VatDeduction;
+  isPrivate: boolean;
   isPaid: boolean;
   dueDate: string | null;
 }
@@ -165,10 +169,22 @@ export interface PaperScanResult {
   invoice_number: string;
   issue_date: string;
   total_gross: string;
+  total_net?: string;
+  total_vat?: string;
+  buyer_nip?: string;
+  buyer_nip_matches_company?: boolean;
   raw_text: string;
   lines: PaperScanLine[];
   stored_filename?: string;
-  doc_type?: 'faktura' | 'paragon';
+  doc_type?: string;
+  seller_name_normalized?: boolean;
+  possible_duplicate?: {
+    uuid: string;
+    document_number: string;
+    doc_type: string;
+    issue_date: string | null;
+    supplier_name: string;
+  } | null;
 }
 
 const ksefPath = '/ksef/session/';
@@ -249,6 +265,12 @@ export const ksefService = {
     api.patch<ReceivedInvoiceMeta>(
       `/ksef/inbox/${encodeURIComponent(ksefNumber)}/opex/`,
       { opex_category },
+    ),
+
+  patchInboxVatFlags: (ksefNumber: string, data: { vat_deduction?: VatDeduction; is_private?: boolean }) =>
+    api.patch<ReceivedInvoiceMeta>(
+      `/ksef/inbox/${encodeURIComponent(ksefNumber)}/opex/`,
+      data,
     ),
 
   /**

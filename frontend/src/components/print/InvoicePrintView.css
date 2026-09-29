@@ -160,6 +160,20 @@
   width: 28px;
 }
 
+.invoice-print-prices-note {
+  font-size: 9px;
+  color: #555;
+  margin: -8px 0 10px;
+}
+
+.invoice-print-prices-note--above {
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
+  color: #333;
+  margin: 0 0 6px;
+}
+
 .invoice-print-summary {
   margin-bottom: 14px;
   max-width: 420px;

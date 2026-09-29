@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { IosToggle } from '@/components/ui/IosToggle';
 import { cn } from '@/lib/utils';
+import { usePriceInputMode } from '@/hooks/usePriceInputMode';
 import type { Product, ProductWrite } from '@/types';
 
 const decimalStr = z
@@ -267,21 +268,36 @@ export function ProductForm({
     formState: { errors },
   } = form;
 
+  const { isGross } = usePriceInputMode();
+
   const isService = useWatch({ control, name: 'is_service' });
   const priceNet = useWatch({ control, name: 'price_net' });
+  const priceGross = useWatch({ control, name: 'price_gross' });
   const vatRate = useWatch({ control, name: 'vat_rate' });
   const isResalable = useWatch({ control, name: 'is_resalable' });
   const markupPercent = useWatch({ control, name: 'markup_percent' });
 
-  // Auto-calculate price_gross when price_net or vat_rate changes
+  // Net mode: auto-calculate price_gross from price_net + vat_rate
   useEffect(() => {
+    if (isGross) return;
     const net = priceNet?.trim() ?? '';
     const vat = vatRate?.trim() ?? '';
     if (/^\d+(\.\d{1,2})?$/.test(net) && /^\d+(\.\d{1,2})?$/.test(vat)) {
       const gross = (Number(net) * (1 + Number(vat) / 100)).toFixed(2);
       setValue('price_gross', gross, { shouldValidate: true });
     }
-  }, [priceNet, vatRate, setValue]);
+  }, [isGross, priceNet, vatRate, setValue]);
+
+  // Gross mode: auto-calculate price_net from price_gross + vat_rate
+  useEffect(() => {
+    if (!isGross) return;
+    const gross = priceGross?.trim() ?? '';
+    const vat = vatRate?.trim() ?? '';
+    if (/^\d+(\.\d{1,2})?$/.test(gross) && /^\d+(\.\d{1,2})?$/.test(vat)) {
+      const net = (Number(gross) / (1 + Number(vat) / 100)).toFixed(2);
+      setValue('price_net', net, { shouldValidate: true });
+    }
+  }, [isGross, priceGross, vatRate, setValue]);
 
   const avgCostManual = useWatch({ control, name: 'avg_cost_manual' });
 
@@ -405,31 +421,52 @@ export function ProductForm({
 
         <FormSection title="Cennik i VAT" Icon={IconTag}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Input
-                label="Cena netto sprzedaży"
-                inputMode="decimal"
-                {...register('price_net')}
-                error={errors.price_net?.message}
-                className={inField('price_net')}
-              />
-              {suggestedPriceNet && suggestedPriceNet !== priceNet?.trim() && (
-                <button
-                  type="button"
-                  className="text-xs text-primary underline-offset-2 hover:underline"
-                  onClick={() => setValue('price_net', suggestedPriceNet, { shouldValidate: true })}
-                >
-                  Zastosuj sugerowaną: {suggestedPriceNet} zł
-                </button>
-              )}
-            </div>
-            <Input
-              label="Cena brutto"
-              inputMode="decimal"
-              {...register('price_gross')}
-              error={errors.price_gross?.message}
-              className={inField('price_gross')}
-            />
+            {isGross ? (
+              <>
+                <Input
+                  label="Cena brutto sprzedaży"
+                  inputMode="decimal"
+                  {...register('price_gross')}
+                  error={errors.price_gross?.message}
+                  className={inField('price_gross')}
+                />
+                <Input
+                  label="Cena netto (obliczona)"
+                  inputMode="decimal"
+                  {...register('price_net')}
+                  error={errors.price_net?.message}
+                  className={inField('price_net')}
+                />
+              </>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  <Input
+                    label="Cena netto sprzedaży"
+                    inputMode="decimal"
+                    {...register('price_net')}
+                    error={errors.price_net?.message}
+                    className={inField('price_net')}
+                  />
+                  {suggestedPriceNet && suggestedPriceNet !== priceNet?.trim() && (
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline-offset-2 hover:underline"
+                      onClick={() => setValue('price_net', suggestedPriceNet, { shouldValidate: true })}
+                    >
+                      Zastosuj sugerowaną: {suggestedPriceNet} zł
+                    </button>
+                  )}
+                </div>
+                <Input
+                  label="Cena brutto"
+                  inputMode="decimal"
+                  {...register('price_gross')}
+                  error={errors.price_gross?.message}
+                  className={inField('price_gross')}
+                />
+              </>
+            )}
           </div>
           {!isService && (() => {
             const source = product?.avg_cost_source;

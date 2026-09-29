@@ -13,7 +13,7 @@ from rest_framework.test import APIClient
 
 from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
 from apps.products.serializers import ProductSerializer, WarehouseSerializer
-from apps.users.models import Company, CompanyMembership
+from apps.users.models import Company, CompanyMembership, CompanyModule
 
 
 def _company_with_user(user, name_suffix="org"):
@@ -765,6 +765,92 @@ class WarehouseViewSetAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         wh = Warehouse.objects.get(uuid=response.data["id"])
         self.assertEqual(wh.user, self.user)
+
+
+class SilentDefaultWarehouseTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="silent-wh-user",
+            email="silent-wh@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+
+    def _enable(self, *modules: str) -> None:
+        for module in modules:
+            CompanyModule.objects.update_or_create(
+                company=self.company,
+                module=module,
+                defaults={"is_enabled": True},
+            )
+
+    def test_creates_main_warehouse_when_production_on_and_warehouses_off(self):
+        from apps.products.default_warehouse import ensure_silent_default_warehouse
+
+        self._enable("production")
+        wh = ensure_silent_default_warehouse(self.company, self.user)
+        self.assertIsNotNone(wh)
+        self.assertEqual(wh.name, "Magazyn główny")
+        self.assertEqual(wh.warehouse_type, Warehouse.WarehouseType.MAIN)
+        self.assertTrue(wh.code.startswith("MG"))
+
+    def test_two_companies_get_distinct_codes(self):
+        from apps.products.default_warehouse import ensure_silent_default_warehouse
+
+        other_user = get_user_model().objects.create_user(
+            username="silent-wh-other",
+            email="silent-wh-o@test.com",
+            password="test12345",
+        )
+        other_co = _company_with_user(other_user, "other")
+        CompanyModule.objects.update_or_create(
+            company=self.company, module="production", defaults={"is_enabled": True}
+        )
+        CompanyModule.objects.update_or_create(
+            company=other_co, module="production", defaults={"is_enabled": True}
+        )
+        a = ensure_silent_default_warehouse(self.company, self.user)
+        b = ensure_silent_default_warehouse(other_co, other_user)
+        self.assertNotEqual(a.code, b.code)
+        self.assertEqual(Warehouse.objects.filter(company=self.company).count(), 1)
+        self.assertEqual(Warehouse.objects.filter(company=other_co).count(), 1)
+
+    def test_does_not_create_when_warehouses_module_on(self):
+        from apps.products.default_warehouse import ensure_silent_default_warehouse
+
+        self._enable("production", "warehouses")
+        self.assertIsNone(ensure_silent_default_warehouse(self.company, self.user))
+        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
+
+    def test_does_not_create_without_stock_ledger(self):
+        from apps.products.default_warehouse import ensure_silent_default_warehouse
+
+        self.assertIsNone(ensure_silent_default_warehouse(self.company, self.user))
+        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
+
+    def test_is_idempotent(self):
+        from apps.products.default_warehouse import ensure_silent_default_warehouse
+
+        self._enable("purchasing")
+        first = ensure_silent_default_warehouse(self.company, self.user)
+        second = ensure_silent_default_warehouse(self.company, self.user)
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(Warehouse.objects.filter(company=self.company).count(), 1)
+
+    def test_warehouse_list_lazy_creates_silent_mg(self):
+        self._enable("production")
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
+        response = client.get(reverse("warehouse-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        codes = {row["code"] for row in response.data["results"]}
+        self.assertEqual(len(codes), 1)
+        self.assertTrue(next(iter(codes)).startswith("MG"))
+        self.assertEqual(Warehouse.objects.get(company=self.company).name, "Magazyn główny")
 
 
 class ProductUpdateStockAPITests(TestCase):
@@ -1781,3 +1867,110 @@ class WarehouseBatchesAPITests(TestCase):
         self.assertEqual(first["quantity_remaining"], "60.00")
         self.assertEqual(first["unit_cost"], "2.50")
         self.assertEqual(first["received_date"], "2026-01-01")
+
+
+class LowStockAPITests(TestCase):
+    """GET /api/products/low-stock/ — returns products below min_stock_alert."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="lowstock-user",
+            email="lowstock@test.com",
+            password="test12345",
+        )
+        self.other = User.objects.create_user(
+            username="lowstock-other",
+            email="lowstock-other@test.com",
+            password="test12345",
+        )
+        self.co = _company_with_user(self.user)
+        self.co_other = _company_with_user(self.other)
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        self.other.current_company = self.co_other
+        self.other.save(update_fields=["current_company"])
+
+        self.wh = Warehouse.objects.create(
+            user=self.user, company=self.co, code="MG1", name="Magazyn"
+        )
+        # Product below threshold: available 30, min_stock_alert 100 → shortage 70
+        self.prod_low = Product.objects.create(
+            user=self.user, company=self.co, name="Mąka T500", unit="kg",
+            min_stock_alert=Decimal("100.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co, product=self.prod_low, warehouse=self.wh,
+            quantity_available=Decimal("30.00"),
+        )
+        # Product exactly at threshold — should NOT appear
+        self.prod_ok = Product.objects.create(
+            user=self.user, company=self.co, name="Cukier", unit="kg",
+            min_stock_alert=Decimal("50.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co, product=self.prod_ok, warehouse=self.wh,
+            quantity_available=Decimal("50.00"),
+        )
+        # Product with no min_stock_alert (0) — should NOT appear
+        self.prod_no_alert = Product.objects.create(
+            user=self.user, company=self.co, name="Sól", unit="kg",
+            min_stock_alert=Decimal("0.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co, product=self.prod_no_alert, warehouse=self.wh,
+            quantity_available=Decimal("5.00"),
+        )
+        # Other company low-stock product — must NOT be visible to self.user
+        wh_other = Warehouse.objects.create(
+            user=self.other, company=self.co_other, code="OW1", name="Other"
+        )
+        prod_other = Product.objects.create(
+            user=self.other, company=self.co_other, name="Drożdże", unit="g",
+            min_stock_alert=Decimal("200.00"),
+        )
+        ProductStock.objects.create(
+            company=self.co_other, product=prod_other, warehouse=wh_other,
+            quantity_available=Decimal("10.00"),
+        )
+
+        self.url = reverse("product-low-stock")
+
+    def test_requires_auth(self):
+        r = self.client.get(self.url)
+        self.assertIn(r.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_returns_only_low_stock_products(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+        item = r.data[0]
+        self.assertEqual(item["product_name"], "Mąka T500")
+        self.assertEqual(item["unit"], "kg")
+        self.assertEqual(item["quantity_available"], "30.00")
+        self.assertEqual(item["min_stock_alert"], "100.00")
+        self.assertEqual(item["shortage"], "70.00")
+
+    def test_excludes_products_at_or_above_threshold(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        names = [i["product_name"] for i in r.data]
+        self.assertNotIn("Cukier", names)
+        self.assertNotIn("Sól", names)
+
+    def test_excludes_other_company_products(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        names = [i["product_name"] for i in r.data]
+        self.assertNotIn("Drożdże", names)
+
+    def test_response_contains_product_id(self):
+        self.client.force_authenticate(user=self.user)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("product_id", r.data[0])
+        self.assertEqual(r.data[0]["product_id"], str(self.prod_low.uuid))

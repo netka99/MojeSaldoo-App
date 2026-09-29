@@ -568,6 +568,57 @@ class ProductViewSet(viewsets.ModelViewSet):
         result.sort(key=lambda x: x["delivery_date"] or "")
         return Response(result)
 
+    @action(detail=False, methods=["get"], url_path="low-stock")
+    def low_stock(self, request):
+        """
+        GET /api/products/low-stock/
+
+        Products where total available stock (across all warehouses) is below
+        the product's ``min_stock_alert`` threshold.
+
+        Returns:
+          [
+            {
+              "product_id": "<uuid>",
+              "product_name": "Mąka T500",
+              "unit": "kg",
+              "quantity_available": "45.00",
+              "min_stock_alert": "200.00",
+              "shortage": "155.00"   // how much to order to reach minimum
+            },
+            ...
+          ]
+        """
+        company = request.user.current_company
+        rows = (
+            ProductStock.objects.filter(
+                company=company,
+                product__is_active=True,
+                product__min_stock_alert__gt=0,
+            )
+            .values("product__uuid", "product__name", "product__unit", "product__min_stock_alert")
+            .annotate(
+                quantity_available=Coalesce(
+                    Sum("quantity_available"), Value(Decimal("0")), output_field=DecimalField()
+                )
+            )
+        )
+        result = []
+        for row in rows:
+            avail = row["quantity_available"]
+            minimum = row["product__min_stock_alert"]
+            if avail < minimum:
+                result.append({
+                    "product_id": str(row["product__uuid"]),
+                    "product_name": row["product__name"],
+                    "unit": row["product__unit"] or "",
+                    "quantity_available": f"{avail:.2f}",
+                    "min_stock_alert": f"{minimum:.2f}",
+                    "shortage": f"{minimum - avail:.2f}",
+                })
+        result.sort(key=lambda x: x["product_name"])
+        return Response(result)
+
     @action(detail=False, methods=["get"], url_path="stock-snapshot")
     def stock_snapshot(self, request):
         """Current stock in one warehouse (only lines with ``quantity_available`` > 0)."""
@@ -641,6 +692,11 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     ordering = ["code"]
 
     def get_queryset(self) -> QuerySet:
+        company = getattr(self.request.user, "current_company", None)
+        if company:
+            from .default_warehouse import ensure_silent_default_warehouse
+
+            ensure_silent_default_warehouse(company, self.request.user)
         qs = Warehouse.objects.all().order_by("code")
         return filter_queryset_for_current_company(qs, self.request.user)
 
@@ -1176,7 +1232,7 @@ class CustomerProductPriceViewSet(viewsets.ModelViewSet):
         qs = filter_queryset_for_current_company(qs, self.request.user)
         customer_id = self.request.query_params.get("customer")
         if customer_id:
-            qs = qs.filter(customer_id=customer_id)
+            qs = qs.filter(customer__uuid=customer_id)
         return qs
 
     def perform_create(self, serializer):

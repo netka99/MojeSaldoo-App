@@ -54,6 +54,7 @@ export type InvoicePrintLineRow = {
   quantity: string;
   unit: string;
   unit_price_net: string;
+  unit_price_gross?: string;
   vat_rate: string;
   line_net: string;
   line_vat: string;
@@ -70,6 +71,7 @@ function buildLineRows(preview: InvoicePreviewPayload): InvoicePrintLineRow[] {
       quantity: it.quantity,
       unit: it.unit || '—',
       unit_price_net: it.unit_price_net,
+      unit_price_gross: it.unit_price_gross,
       vat_rate: it.vat_rate,
       line_net: it.line_net,
       line_vat: it.line_vat,
@@ -83,6 +85,7 @@ function buildLineRows(preview: InvoicePreviewPayload): InvoicePrintLineRow[] {
     quantity: line.quantity_display || line.quantity,
     unit: line.product_unit || '—',
     unit_price_net: line.unit_price_net,
+    unit_price_gross: line.unit_price_gross,
     vat_rate: line.vat_rate_display || line.vat_rate,
     line_net: line.line_net,
     line_vat: line.line_vat,
@@ -134,6 +137,7 @@ export function InvoicePrintView({ preview, bankAccount }: InvoicePrintViewProps
   const companyLines = companyLinesFromPreview(preview);
   const vatRows = vatSummaryRows(preview);
   const currency = meta?.currency || 'PLN';
+  const pricesIncludeVat = meta?.prices_include_vat ?? false;
 
   return (
     <div className="invoice-print-scope" data-testid="invoice-print-root">
@@ -189,6 +193,11 @@ export function InvoicePrintView({ preview, bankAccount }: InvoicePrintViewProps
       </section>
 
       <div className="invoice-print-table-wrap">
+        {pricesIncludeVat && (
+          <p className="invoice-print-prices-note invoice-print-prices-note--above">
+            Faktura wystawiona w cenach brutto w walucie {currency}
+          </p>
+        )}
         <table className="invoice-print-table" aria-label="Pozycje faktury">
           <thead>
             <tr>
@@ -207,6 +216,11 @@ export function InvoicePrintView({ preview, bankAccount }: InvoicePrintViewProps
               <th className="num" scope="col">
                 VAT %
               </th>
+              {pricesIncludeVat && (
+                <th className="num" scope="col">
+                  Cena brutto
+                </th>
+              )}
               <th className="num" scope="col">
                 Wartość netto
               </th>
@@ -230,6 +244,11 @@ export function InvoicePrintView({ preview, bankAccount }: InvoicePrintViewProps
                   {row.unit_price_net} {currency}
                 </td>
                 <td className="num">{row.vat_rate}</td>
+                {pricesIncludeVat && (
+                  <td className="num">
+                    {row.unit_price_gross ?? row.unit_price_net} {currency}
+                  </td>
+                )}
                 <td className="num">
                   {row.line_net} {currency}
                 </td>
@@ -295,6 +314,12 @@ export function InvoicePrintView({ preview, bankAccount }: InvoicePrintViewProps
           <strong>Rachunek bankowy:</strong> {bankAccount?.trim() ? bankAccount : '—'}
         </p>
       </section>
+
+      {invoice.show_wz_numbers && invoice.wz_numbers && invoice.wz_numbers.length > 0 ? (
+        <section className="invoice-print-notes" aria-label="Dokumenty WZ">
+          <strong>Dokumenty WZ:</strong> {invoice.wz_numbers.join(', ')}
+        </section>
+      ) : null}
 
       {invoice.notes ? (
         <section className="invoice-print-notes" aria-label="Uwagi">

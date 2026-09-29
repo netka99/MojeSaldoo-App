@@ -4,6 +4,8 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.common.vat import net_from_gross
+
 from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
 
 from apps.customers.models import Customer
@@ -66,6 +68,18 @@ class OrderItemSerializer(UUIDModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("Quantity must be greater than zero")
         return value
+
+    def validate(self, data):
+        """When only unit_price_gross is provided, derive unit_price_net via Decimal rounding."""
+        net = data.get("unit_price_net")
+        gross = data.get("unit_price_gross")
+        vat = data.get("vat_rate", Decimal("0"))
+        if net is None and gross is not None:
+            data["unit_price_net"] = net_from_gross(gross, vat)
+        elif gross is None and net is not None:
+            # derive gross from net so line_total_gross is correct
+            data["unit_price_gross"] = (net * (1 + vat / 100)).quantize(Decimal("0.01"))
+        return data
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

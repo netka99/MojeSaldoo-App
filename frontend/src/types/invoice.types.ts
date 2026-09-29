@@ -51,8 +51,10 @@ export interface Invoice {
   id: string;
   company: string;
   user: number | null;
-  order: Order;
+  order: Order | null;
+  order_ids?: string[];
   customer: string;
+  customer_name: string;
   delivery_document: string | null;
   invoice_number: string | null;
   issue_date: string;
@@ -75,12 +77,12 @@ export interface Invoice {
   corrects_invoice_id: string | null;
   corrects_invoice_number: string | null;
   correction_reason: string;
-  corrections: { id: string; invoice_number: string | null }[];
+  corrections?: { id: string; invoice_number: string | null }[];
   paid_at: string | null;
   notes: string;
 
   // --- KSeF FA-3 optional fields ---
-  ksef_invoice_type: KsefInvoiceType;
+  ksef_invoice_type?: KsefInvoiceType;
   // Adnotacje
   annotation_mpp: boolean;
   annotation_kasowa: boolean;
@@ -103,6 +105,8 @@ export interface Invoice {
   footer_text: string;
   extra_notes: string;
   prices_include_vat: boolean;
+  place_of_issue: string;
+  show_wz_numbers: boolean;
 
   created_at: string;
   updated_at: string;
@@ -197,6 +201,60 @@ export interface GenerateInvoiceFromOrderBody extends InvoiceKsefOptions {
   payment_method?: InvoicePaymentMethod;
 }
 
+/** Body for `POST /api/invoices/generate-from-orders/` (multi-order). */
+export type SaleDateType = 'single' | 'period' | 'issue' | 'various';
+
+export interface GenerateInvoiceFromOrdersBody extends InvoiceKsefOptions {
+  order_ids: string[];
+  /** Optional: if provided, only these order item UUIDs are included (partial-order invoicing). */
+  order_item_ids?: string[];
+  issue_date?: string;
+  sale_date?: string;
+  sale_date_to?: string;
+  sale_date_type?: SaleDateType;
+  due_date?: string;
+  payment_method?: InvoicePaymentMethod;
+  show_wz_numbers?: boolean;
+}
+
+/** One item returned by the period-preview endpoints. */
+export interface PeriodPreviewItem {
+  product_id: string | null;
+  product_name: string;
+  product_unit: string;
+  qty: string;
+  unit_price_net: string;
+  vat_rate: string;
+}
+
+export type PeriodPreviewResult = PeriodPreviewItem[];
+
+/** One item for manual invoice creation. */
+export interface InvoiceItemWrite {
+  product?: string | null;
+  product_name: string;
+  product_unit?: string;
+  quantity: string;
+  unit_price_net?: string;
+  unit_price_gross?: string;
+  vat_rate: string;
+}
+
+/** Body for `POST /api/invoices/create-manual/`. */
+export interface CreateManualInvoiceBody extends InvoiceKsefOptions {
+  customer_id: string;
+  items: InvoiceItemWrite[];
+  issue_date: string;
+  sale_date: string;
+  due_date: string;
+  payment_method?: InvoicePaymentMethod;
+  notes?: string;
+  invoice_number?: string;
+  place_of_issue?: string;
+  sale_date_to?: string;
+  sale_date_type?: SaleDateType;
+}
+
 /** `GET /api/invoices/:id/preview/` — payload for HTML / print layout. */
 export interface InvoicePreviewLine {
   position: number;
@@ -206,6 +264,7 @@ export interface InvoicePreviewLine {
   quantity: string;
   quantity_display: string;
   unit_price_net: string;
+  unit_price_gross?: string;
   vat_rate: string;
   vat_rate_display: string;
   line_net: string;
@@ -240,6 +299,7 @@ export interface InvoicePreviewItemRow {
   quantity: string;
   unit: string;
   unit_price_net: string;
+  unit_price_gross?: string;
   vat_rate: string;
   line_net: string;
   line_vat: string;
@@ -258,6 +318,7 @@ export interface InvoicePreviewPayload {
     title: string;
     currency: string;
     locale: string;
+    prices_include_vat?: boolean;
   };
   seller: {
     name: string;
@@ -284,6 +345,8 @@ export interface InvoicePreviewPayload {
     notes: string;
     order_number: string;
     delivery_document_number: string;
+    wz_numbers?: string[];
+    show_wz_numbers?: boolean;
   };
   totals: {
     subtotal_net: string;

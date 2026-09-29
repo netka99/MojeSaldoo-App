@@ -44,6 +44,46 @@ class Customer(models.Model):
         help_text="Nabywca jest członkiem grupy VAT (GV). Rzadko stosowane.",
     )
 
+    # --- KSeF / FA-3 Podmiot3 (trzecia strona faktury) ---
+    PODMIOT3_ROLE_CHOICES = [
+        ("1", "Faktor"),
+        ("2", "Odbiorca"),
+        ("3", "Podmiot pierwotny"),
+        ("4", "Dodatkowy nabywca"),
+        ("5", "Wystawca faktury"),
+        ("6", "Dokonujący płatności"),
+        ("7", "JST – wystawca"),
+        ("8", "JST – odbiorca"),
+        ("9", "Członek GV – wystawca"),
+        ("10", "Członek GV – odbiorca"),
+        ("11", "Pracownik"),
+    ]
+    podmiot3_role = models.CharField(
+        max_length=2,
+        blank=True,
+        null=True,
+        choices=PODMIOT3_ROLE_CHOICES,
+        help_text=(
+            "Rola trzeciej strony faktury FA-3: "
+            "1=Faktor, 2=Odbiorca, 3=Podmiot pierwotny, "
+            "4=Dodatkowy nabywca, 5=Wystawca faktury, "
+            "6=Dokonujący płatności, 7=JST wystawca, 8=JST odbiorca, "
+            "9=GV wystawca, 10=GV odbiorca, 11=Pracownik."
+        ),
+    )
+    podmiot3_name = models.CharField(max_length=255, blank=True, null=True)
+    podmiot3_nip = models.CharField(max_length=10, blank=True, null=True)
+    podmiot3_id_wew = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        help_text="Wewnętrzny identyfikator Podmiot3 (IDWew w FA-3), np. NIP-numer_sklepu.",
+    )
+    podmiot3_street = models.CharField(max_length=255, blank=True, null=True)
+    podmiot3_city = models.CharField(max_length=100, blank=True, null=True)
+    podmiot3_postal_code = models.CharField(max_length=10, blank=True, null=True)
+    podmiot3_country = models.CharField(max_length=2, blank=True, null=True, default="PL")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

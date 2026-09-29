@@ -1,6 +1,15 @@
 import { api } from './api';
 import type { Product, ProductWrite, StockMovementListItem, StockSnapshot } from '../types';
 
+export interface LowStockAlert {
+  product_id: string;
+  product_name: string;
+  unit: string;
+  quantity_available: string;
+  min_stock_alert: string;
+  shortage: string;
+}
+
 interface PaginatedResponse<T> {
   count: number;
   next: string | null;
@@ -82,6 +91,9 @@ export const productService = {
 
   fetchStockSnapshot: (warehouseId: string) =>
     api.get<StockSnapshot>('/products/stock-snapshot/', { params: { warehouse_id: warehouseId } }),
+
+  fetchLowStock: () =>
+    api.get<LowStockAlert[]>('/products/low-stock/'),
 
   fetchStockMovements: (params?: {
     product?: string;

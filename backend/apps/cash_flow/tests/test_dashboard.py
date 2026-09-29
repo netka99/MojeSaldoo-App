@@ -19,6 +19,7 @@ from apps.invoices.models import Invoice
 from apps.ksef.models import ReceivedKSeFInvoice
 
 from apps.cash_flow.models import CompanyTaxConfig, DailyB2CRevenue, QuickExpense
+from apps.purchase_documents.models import PurchaseDocument
 from apps.cash_flow.services import (
     _get_vat_nalezny,
     _get_vat_naliczony,
@@ -326,16 +327,49 @@ class VatNaliczonyTests(TestCase):
         vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
         self.assertEqual(vat.quantize(_CENT), Decimal("230.00"))
 
+    def test_ksef_vat_counted_without_opex_category(self):
+        """opex_category is accountant labelling, not a VAT gate."""
+        _make_received_invoice(
+            self.company,
+            gross=Decimal("1230.00"), vat=Decimal("230.00"),
+            net=Decimal("1000.00"), issue_date=datetime.date(2025, 8, 10),
+            opex_category=None,
+        )
+        vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
+        self.assertEqual(vat.quantize(_CENT), Decimal("230.00"))
+
     def test_quick_expense_with_vat_deducted(self):
-        # amount=123 gross → VAT = 123 * 23/123 = 23.00
         QuickExpense.objects.create(
             company=self.company,
             amount=Decimal("123.00"),
             has_vat=True,
+            vat_rate="23",
             date=datetime.date(2025, 8, 5),
         )
         vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
-        self.assertAlmostEqual(float(vat), 23.0, places=1)
+        self.assertEqual(vat.quantize(_CENT), Decimal("23.00"))
+
+    def test_quick_expense_uses_document_rate_not_23(self):
+        QuickExpense.objects.create(
+            company=self.company,
+            amount=Decimal("108.00"),
+            has_vat=True,
+            vat_rate="8",
+            date=datetime.date(2025, 8, 5),
+        )
+        vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
+        self.assertEqual(vat.quantize(_CENT), Decimal("8.00"))
+
+    def test_quick_expense_without_rate_does_not_invent_23(self):
+        QuickExpense.objects.create(
+            company=self.company,
+            amount=Decimal("123.00"),
+            has_vat=True,
+            vat_rate="",
+            date=datetime.date(2025, 8, 5),
+        )
+        vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
+        self.assertEqual(vat, Decimal("0.00"))
 
     def test_quick_expense_without_vat_not_deducted(self):
         QuickExpense.objects.create(
@@ -357,6 +391,52 @@ class VatNaliczonyTests(TestCase):
         )
         result = compute_dashboard(self.company, "2025-08")
         self.assertGreaterEqual(result["month"]["vat_to_pay"], 0.0)
+
+    def test_passenger_car_purchase_deducts_half_vat(self):
+        PurchaseDocument.objects.create(
+            company=self.company,
+            doc_type=PurchaseDocument.DOC_TYPE_FZ,
+            status=PurchaseDocument.STATUS_REGISTERED,
+            document_number="FV/CAR/1",
+            issue_date=datetime.date(2025, 8, 5),
+            total_net=Decimal("200.00"),
+            total_vat=Decimal("46.00"),
+            total_gross=Decimal("246.00"),
+            vat_deduction="half",
+        )
+        vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
+        self.assertEqual(vat.quantize(_CENT), Decimal("23.00"))
+
+    def test_private_purchase_has_zero_input_vat(self):
+        PurchaseDocument.objects.create(
+            company=self.company,
+            doc_type=PurchaseDocument.DOC_TYPE_PAR_VAT,
+            status=PurchaseDocument.STATUS_REGISTERED,
+            document_number="PARVAT/PRIV/1",
+            issue_date=datetime.date(2025, 8, 5),
+            total_net=Decimal("100.00"),
+            total_vat=Decimal("23.00"),
+            total_gross=Decimal("123.00"),
+            vat_deduction="full",
+            is_private=True,
+        )
+        vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
+        self.assertEqual(vat, Decimal("0.00"))
+
+    def test_par_without_nip_has_zero_input_vat(self):
+        PurchaseDocument.objects.create(
+            company=self.company,
+            doc_type=PurchaseDocument.DOC_TYPE_PAR,
+            status=PurchaseDocument.STATUS_REGISTERED,
+            document_number="PAR/1",
+            issue_date=datetime.date(2025, 8, 5),
+            total_net=Decimal("50.00"),
+            total_vat=Decimal("0.00"),
+            total_gross=Decimal("50.00"),
+            vat_deduction="full",
+        )
+        vat = _get_vat_naliczony(self.company, self.config, PERIOD_START, PERIOD_END)
+        self.assertEqual(vat, Decimal("0.00"))
 
 
 # ---------------------------------------------------------------------------

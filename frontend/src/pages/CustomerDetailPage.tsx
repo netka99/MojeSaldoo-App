@@ -15,6 +15,7 @@ import {
 } from '@/query/use-customers';
 import { useOrdersByDateQuery } from '@/query/use-orders';
 import { useDeliveryByCustomerQuery } from '@/query/use-delivery';
+import { useInvoiceListQuery } from '@/query/use-invoices';
 import { useAllProductsQuery } from '@/query/use-products';
 import { CustomerForm } from '@/components/features/CustomerForm';
 import { authStorage } from '@/services/api';
@@ -197,9 +198,15 @@ function orderStatusLeftBorderClass(status: Order['status']): string {
 
 
 /* ── Summary cards ──────────────────────────────────────────────── */
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
   return (
-    <div className="flex-1 rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
+    <div
+      className={cn(
+        'flex-1 rounded-2xl bg-surface-card px-4 py-3 shadow-soft',
+        onClick && 'cursor-pointer active:scale-95 transition-transform',
+      )}
+      onClick={onClick}
+    >
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-1 text-[18px] font-bold tabular-nums text-foreground">{value}</p>
     </div>
@@ -558,6 +565,10 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
   // Delivery docs for this customer (for WZ/ZW counts per order row)
   const { data: deliveryDocs = [] } = useDeliveryByCustomerQuery(customerId);
 
+  // Invoices for this customer
+  const { data: customerInvoicesData } = useInvoiceListQuery(1, { customer: customerId });
+  const customerInvoiceCount = customerInvoicesData?.count ?? 0;
+
   /* ── Derived stats ── */
   const dayTotal = orders.reduce(
     (sum: number, o: Order) => sum + (parseFloat(String(o.total_gross)) || 0),
@@ -637,10 +648,17 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               <StatCard
                 label="Zamówienia"
                 value={orders.length > 0 ? `${orders.length} (${money(dayTotal)})` : '—'}
+                onClick={() => document.getElementById('orders-section')?.scrollIntoView({ behavior: 'smooth' })}
               />
               <StatCard
                 label="WZ bez faktury"
                 value={uninvoicedWz.length > 0 ? String(uninvoicedWz.length) : '—'}
+                onClick={() => navigate(`/delivery?customer_id=${customerId}`)}
+              />
+              <StatCard
+                label="Faktury"
+                value={customerInvoiceCount > 0 ? String(customerInvoiceCount) : '—'}
+                onClick={() => navigate(`/invoices?customer=${customerId}`)}
               />
             </div>
 
@@ -754,7 +772,7 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
             <CustomerPricesSection customerId={customerId} />
 
             {/* Orders list for this date */}
-            <section aria-label="Zamówienia klienta">
+            <section id="orders-section" aria-label="Zamówienia klienta">
               <h2 className="mb-2 px-1 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Zamówienia tego dnia ({orders.length})
               </h2>

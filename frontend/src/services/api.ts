@@ -57,8 +57,9 @@ function drfFieldMessages(body: Record<string, unknown>): string | null {
   const messages: string[] = [];
   for (const [key, val] of Object.entries(body)) {
     if (key === 'detail' || key === 'message' || val == null) continue;
-    if (typeof val === 'string') messages.push(`${key}: ${val}`);
-    else if (key === 'stock' && Array.isArray(val) && val.length > 0) {
+    if (typeof val === 'string') {
+      messages.push(`${key}: ${val}`);
+    } else if (key === 'stock' && Array.isArray(val) && val.length > 0) {
       const rows = val.filter((v): v is Record<string, unknown> => v != null && typeof v === 'object');
       if (rows.length) {
         const parts = rows.map((row) => {
@@ -71,8 +72,18 @@ function drfFieldMessages(body: Record<string, unknown>): string | null {
         messages.push(`Niewystarczający stan: ${parts.join('; ')}`);
       }
     } else if (Array.isArray(val)) {
+      // Array of strings: field-level errors e.g. ["Wymagana poprawna liczba."]
       const strs = val.filter((v): v is string => typeof v === 'string');
-      if (strs.length) messages.push(`${key}: ${strs.join(', ')}`);
+      if (strs.length) {
+        messages.push(`${key}: ${strs.join(', ')}`);
+      } else {
+        // Array of objects: nested serializer errors e.g. items_write: [{vat_rate: ["..."]}]
+        const objRows = val.filter((v): v is Record<string, unknown> => v != null && typeof v === 'object');
+        objRows.forEach((row, i) => {
+          const sub = drfFieldMessages(row);
+          if (sub) messages.push(`${key}[${i}]: ${sub}`);
+        });
+      }
     }
   }
   return messages.length ? messages.join(' · ') : null;
@@ -108,6 +119,8 @@ export interface AuthUser {
   is_vat_payer?: boolean;
   /** KSeF usage mode for the company: mandatory | voluntary | exempt | none. */
   ksef_usage?: 'mandatory' | 'voluntary' | 'exempt' | 'none' | null;
+  /** Whether the company enters prices as net (B2B) or gross (retail). */
+  price_input_mode?: 'net' | 'gross' | null;
 }
 
 export interface AuthResponse {

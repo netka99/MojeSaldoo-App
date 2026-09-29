@@ -19,6 +19,7 @@ class UserSerializer(UUIDModelSerializer):
     modules = serializers.SerializerMethodField()
     is_vat_payer = serializers.SerializerMethodField()
     ksef_usage = serializers.SerializerMethodField()
+    price_input_mode = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -40,6 +41,7 @@ class UserSerializer(UUIDModelSerializer):
             "ryczalt_category",
             "is_vat_payer",
             "ksef_usage",
+            "price_input_mode",
             "modules",
         ]
         extra_kwargs = {"password": {"write_only": True}}
@@ -104,6 +106,11 @@ class UserSerializer(UUIDModelSerializer):
             return None
         return obj.current_company.ksef_usage
 
+    def get_price_input_mode(self, obj) -> str | None:
+        if not obj.current_company_id:
+            return None
+        return obj.current_company.price_input_mode
+
     def get_modules(self, obj) -> dict:
         if not obj.current_company_id:
             return {}
@@ -137,6 +144,13 @@ class CompanySerializer(UUIDModelSerializer):
             "bdo",
             "is_vat_payer",
             "ksef_usage",
+            "invoice_returns_mode",
+            "price_input_mode",
+            # Invoice numbering
+            "invoice_number_prefix",
+            "invoice_number_period",
+            "invoice_number_padding",
+            "invoice_number_start",
             "created_at",
             "updated_at",
         ]

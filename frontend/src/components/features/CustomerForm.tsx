@@ -83,6 +83,13 @@ export const customerFormSchema = z.object({
   // KSeF FA-3 Podmiot2 flags
   is_jst: z.boolean(),
   is_gv_member: z.boolean(),
+  // KSeF FA-3 Podmiot3
+  podmiot3_role: z.enum(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '']),
+  podmiot3_name: z.string().max(255),
+  podmiot3_id_wew: z.string().max(64),
+  podmiot3_street: z.string().max(255),
+  podmiot3_city: z.string().max(100),
+  podmiot3_postal_code: z.string().max(10),
 });
 
 export type CustomerFormValues = z.infer<typeof customerFormSchema>;
@@ -104,6 +111,12 @@ const EMPTY_CUSTOMER_DEFAULTS: CustomerFormValues = {
   is_active: true,
   is_jst: false,
   is_gv_member: false,
+  podmiot3_role: '',
+  podmiot3_name: '',
+  podmiot3_id_wew: '',
+  podmiot3_street: '',
+  podmiot3_city: '',
+  podmiot3_postal_code: '',
 };
 
 function customerToFormDefaults(customer: Customer): CustomerFormValues {
@@ -124,6 +137,12 @@ function customerToFormDefaults(customer: Customer): CustomerFormValues {
     is_active: customer.is_active,
     is_jst: customer.is_jst ?? false,
     is_gv_member: customer.is_gv_member ?? false,
+    podmiot3_role: (customer.podmiot3_role ?? '') as '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | '11' | '',
+    podmiot3_name: customer.podmiot3_name ?? '',
+    podmiot3_id_wew: customer.podmiot3_id_wew ?? '',
+    podmiot3_street: customer.podmiot3_street ?? '',
+    podmiot3_city: customer.podmiot3_city ?? '',
+    podmiot3_postal_code: customer.podmiot3_postal_code ?? '',
   };
 }
 
@@ -147,6 +166,12 @@ function formValuesToCustomerWrite(values: CustomerFormValues, id?: string): Cus
     is_active: values.is_active,
     is_jst: values.is_jst,
     is_gv_member: values.is_gv_member,
+    podmiot3_role: values.podmiot3_role || null,
+    podmiot3_name: values.podmiot3_name.trim() || null,
+    podmiot3_id_wew: values.podmiot3_id_wew.trim() || null,
+    podmiot3_street: values.podmiot3_street.trim() || null,
+    podmiot3_city: values.podmiot3_city.trim() || null,
+    podmiot3_postal_code: values.podmiot3_postal_code.trim() || null,
   };
 }
 
@@ -371,8 +396,8 @@ export function CustomerForm({
               </div>
               <Button
                 type="button"
-                variant="outline"
-                className="mb-[1px] h-11 shrink-0 px-3 text-sm"
+                variant="default"
+                className="mb-[26px] h-9 rounded-xl shrink-0 px-4 text-sm"
                 onClick={handleNipLookup}
                 loading={nipLookup.isPending}
                 disabled={nipLookup.isPending}
@@ -403,7 +428,7 @@ export function CustomerForm({
             />
             <Input
               label="Telefon"
-              placeholder="+48 600 000 000"
+              placeholder="600 000 000"
               {...register('phone')}
               error={errors.phone?.message}
               className={inField('phone')}
@@ -531,6 +556,79 @@ export function CustomerForm({
             />
           )}
         />
+      </FormSection>
+
+      <FormSection title="KSeF — Podmiot3 (trzecia strona)" Icon={IconKsef}>
+        <p className="text-sm text-muted-foreground">
+          Trzecia strona faktury FA-3 — wypełnij tylko jeśli faktura dotyczy faktora (cesja) lub gdy odbiorca towaru
+          różni się od nabywcy. Pozostaw rolę pustą jeśli nie dotyczy.
+        </p>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-foreground">Rola</label>
+          <select
+            {...register('podmiot3_role')}
+            disabled={isLoading}
+            className={cn(
+              ksefFieldInputClass,
+              'w-full appearance-none',
+              errors.podmiot3_role && 'ring-2 ring-destructive/40',
+            )}
+          >
+            <option value="">— brak Podmiot3 —</option>
+            <option value="1">Faktor (1) — firma faktoringowa</option>
+            <option value="2">Odbiorca (2) — jednostka wewnętrzna / oddział nabywcy</option>
+            <option value="3">Podmiot pierwotny (3) — po przejęciu / przekształceniu</option>
+            <option value="4">Dodatkowy nabywca (4) — kolejny nabywca obok Podmiot2</option>
+            <option value="5">Wystawca faktury (5) — wystawia w imieniu podatnika</option>
+            <option value="6">Dokonujący płatności (6) — reguluje zobowiązanie za nabywcę</option>
+            <option value="7">JST – wystawca (7) — jednostka samorządu terytorialnego wystawia</option>
+            <option value="8">JST – odbiorca (8) — jednostka samorządu terytorialnego odbiera</option>
+            <option value="9">Członek GV – wystawca (9) — członek grupy VAT wystawia</option>
+            <option value="10">Członek GV – odbiorca (10) — członek grupy VAT odbiera</option>
+            <option value="11">Pracownik (11) — zakup na rzecz pracodawcy</option>
+          </select>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input
+            label="Nazwa"
+            placeholder="np. Sklep nr 27"
+            {...register('podmiot3_name')}
+            error={errors.podmiot3_name?.message}
+            className={inField('podmiot3_name')}
+          />
+          <Input
+            label="NIP lub IDWew"
+            placeholder="np. 8441866342 lub 8441866342-27001"
+            maxLength={64}
+            {...register('podmiot3_id_wew')}
+            error={errors.podmiot3_id_wew?.message}
+            helperText="NIP jeśli firma z NIP; IDWew (np. NIP-numer_sklepu) jeśli oddział bez NIP."
+            className={inField('podmiot3_id_wew')}
+          />
+        </div>
+        <Input
+          label="Ulica"
+          placeholder="ul. Przykładowa 1"
+          {...register('podmiot3_street')}
+          error={errors.podmiot3_street?.message}
+          className={inField('podmiot3_street')}
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input
+            label="Kod pocztowy"
+            placeholder="00-000"
+            {...register('podmiot3_postal_code')}
+            error={errors.podmiot3_postal_code?.message}
+            className={inField('podmiot3_postal_code')}
+          />
+          <Input
+            label="Miasto"
+            placeholder="Suwałki"
+            {...register('podmiot3_city')}
+            error={errors.podmiot3_city?.message}
+            className={inField('podmiot3_city')}
+          />
+        </div>
       </FormSection>
 
       <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">

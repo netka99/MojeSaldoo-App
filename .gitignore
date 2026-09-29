@@ -37,5 +37,8 @@ yarn-error.log*
 backend/.env
 backend/media/
 
+# Local paper scans / accounting photos (PII — do not commit)
+Dokumenty/
+
 # Claude Code internal
 .claude/worktrees/

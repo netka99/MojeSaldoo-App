@@ -99,6 +99,8 @@ export interface PurchaseDocument {
   is_paid: boolean;
   paid_at: string | null;
   opex_category: string | null;
+  vat_deduction: 'full' | 'half' | 'none';
+  is_private: boolean;
   accounting_status: 'pending' | 'annotated' | 'booked';
   accounting_notes: string;
   total_net: string;
@@ -124,6 +126,8 @@ export interface PurchaseDocumentWrite {
   payment_method?: PaymentMethod;
   is_paid?: boolean;
   opex_category?: string | null;
+  vat_deduction?: 'full' | 'half' | 'none';
+  is_private?: boolean;
   accounting_status?: 'pending' | 'annotated' | 'booked';
   accounting_notes?: string;
   total_net?: string;
@@ -144,6 +148,17 @@ export interface PurchaseDocumentWrite {
   }>;
 }
 
+export interface DuplicateCheckResult {
+  found: boolean;
+  document?: {
+    uuid: string;
+    document_number: string;
+    doc_type: PurchaseDocDocType;
+    issue_date: string | null;
+    supplier_name: string;
+  };
+}
+
 export interface PaginatedPurchaseDocuments {
   count: number;
   next: string | null;
@@ -162,6 +177,8 @@ export type PurchaseDocListParams = {
   opex_category?: string;
   issue_date__gte?: string;
   issue_date__lte?: string;
+  created_at__gte?: string;
+  created_at__lte?: string;
   is_paid?: boolean;
   has_pz?: boolean;
 };
@@ -209,4 +226,9 @@ export const purchaseDocumentService = {
 
   confirmLineMatches: (id: string, payload: ConfirmLineMatchesPayload) =>
     api.post<PurchaseDocument>(`${basePath}${id}/confirm-line-matches/`, payload),
+
+  checkDuplicate: (nip: string, invoiceNumber: string) =>
+    api.get<DuplicateCheckResult>(`${basePath}check-duplicate/`, {
+      params: { nip, invoice_number: invoiceNumber },
+    }),
 };

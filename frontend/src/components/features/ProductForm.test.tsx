@@ -8,6 +8,10 @@ import userEvent from '@testing-library/user-event';
 import { ProductForm, productFormSchema } from './ProductForm';
 import type { Product } from '@/types';
 
+vi.mock('@/hooks/usePriceInputMode', () => ({
+  usePriceInputMode: () => ({ mode: 'net' as const, isGross: false, priceLabel: 'Cena netto' }),
+}));
+
 vi.mock('framer-motion', () => {
   function passthrough(Tag: 'section') {
     return function MotionMock({

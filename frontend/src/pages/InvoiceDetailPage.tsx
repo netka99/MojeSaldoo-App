@@ -7,7 +7,9 @@ import { INVOICE_KSEF_STATUS_LABELS_PL } from '@/constants/invoiceKsefStatusPl';
 import { INVOICE_STATUS_LABELS_PL } from '@/constants/invoiceStatusPl';
 import {
   useCreateCorrectionMutation,
+  useDeleteInvoiceMutation,
   useFetchKsefStatusMutation,
+  useInvoiceNextNumberQuery,
   useInvoicePreviewQuery,
   useInvoiceQuery,
   useIssueInvoiceMutation,
@@ -16,6 +18,7 @@ import {
   useMarkPaidInvoiceMutation,
   useMarkUnpaidInvoiceMutation,
   useSendToKsefMutation,
+  useSetInvoiceNumberMutation,
 } from '@/query/use-invoices';
 import { useMyCompaniesQuery } from '@/query/use-companies';
 import { useAuth } from '@/context/AuthContext';
@@ -25,7 +28,7 @@ import { cn } from '@/lib/utils';
 import { openInvoicePrintWindow } from '@/lib/openInvoicePrintWindow';
 import { invoiceService } from '@/services/invoice.service';
 import { invoiceKsefStatusBadgeClassName, invoiceStatusBadgeClassName } from './InvoicesPage';
-import type { InvoicePreviewLine } from '@/types';
+import type { Invoice, InvoicePreviewLine } from '@/types';
 
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
 
@@ -57,6 +60,121 @@ function AddressBlock({ title, lines }: { title: string; lines: string[] }) {
         )}
       </div>
     </div>
+  );
+}
+
+function DraftInvoiceNumberRow({ invoice }: { invoice: Invoice }) {
+  const setNumberMutation = useSetInvoiceNumberMutation();
+  const { data: nextNumData } = useInvoiceNextNumberQuery(invoice.issue_date);
+  const autoNumber = nextNumData?.next_number ?? '…';
+
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState(invoice.invoice_number ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const displayNumber = invoice.invoice_number ?? autoNumber;
+
+  async function handleSave() {
+    setError(null);
+    try {
+      await setNumberMutation.mutateAsync({ id: invoice.id, invoiceNumber: input.trim() || null });
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się zapisać numeru');
+    }
+  }
+
+  function handleEdit() {
+    setInput(invoice.invoice_number ?? '');
+    setEditing(true);
+  }
+
+  function handleCancel() {
+    setEditing(false);
+    setError(null);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {editing ? (
+        <>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void handleSave(); if (e.key === 'Escape') handleCancel(); }}
+            placeholder={autoNumber}
+            className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25 w-52"
+            autoFocus
+          />
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={setNumberMutation.isPending}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 transition-colors disabled:opacity-60"
+          >
+            {setNumberMutation.isPending ? 'Zapisywanie…' : 'Zapisz'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            Anuluj
+          </button>
+          {!input && (
+            <span className="text-xs text-muted-foreground">Pusty = automatyczny: <span className="font-mono">{autoNumber}</span></span>
+          )}
+          {error && <p className="text-xs text-destructive w-full">{error}</p>}
+        </>
+      ) : (
+        <>
+          <span className="font-semibold text-foreground">{displayNumber}</span>
+          <button
+            type="button"
+            onClick={handleEdit}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Zmień numer faktury"
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" stroke="currentColor" strokeWidth={1.5}>
+              <path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DraftActionsFooter({ invoice, onIssue, issuing }: { invoice: Invoice; onIssue: () => void; issuing: boolean }) {
+  const navigate = useNavigate();
+  const deleteMutation = useDeleteInvoiceMutation();
+
+  async function handleDelete() {
+    if (!window.confirm('Usunąć ten szkic? Tej operacji nie można cofnąć.')) return;
+    await deleteMutation.mutateAsync(invoice.id);
+    navigate('/invoices');
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void handleDelete()}
+        disabled={deleteMutation.isPending}
+        className="rounded-xl border border-destructive/30 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-60"
+      >
+        {deleteMutation.isPending ? 'Usuwanie…' : 'Usuń szkic'}
+      </button>
+      <button
+        type="button"
+        onClick={onIssue}
+        disabled={issuing}
+        className="rounded-xl bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors disabled:opacity-60"
+      >
+        {issuing ? 'Wystawianie…' : 'Wystaw fakturę →'}
+      </button>
+    </>
   );
 }
 
@@ -276,7 +394,6 @@ export function InvoiceDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.ksef_status]);
 
-  const showIssue = invoice?.status === 'draft';
   const showMarkPaid =
     invoice?.status === 'issued' ||
     invoice?.status === 'sent' ||
@@ -360,7 +477,7 @@ export function InvoiceDetailPage() {
               <p className="mt-1 text-sm text-muted-foreground">
                 Zamówienie:{' '}
                 <Link
-                  to={`/orders/${invoice.order.id}`}
+                  to={invoice.order ? `/orders/${invoice.order.id}` : '#'}
                   className="font-medium text-primary hover:underline"
                 >
                   {preview.invoice.order_number}
@@ -383,16 +500,6 @@ export function InvoiceDetailPage() {
 
           <div className="flex flex-col gap-2 sm:items-end">
             <div className="flex flex-wrap gap-2">
-              {canInvoices && showIssue && (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => void onIssue()}
-                  disabled={issueM.isPending || fetching}
-                >
-                  {issueM.isPending ? 'Wystawianie…' : 'Wystaw'}
-                </Button>
-              )}
               {canInvoices && showMarkPaid && (
                 <Button
                   type="button"
@@ -415,16 +522,18 @@ export function InvoiceDetailPage() {
                   {markUnpaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako nieopłaconą'}
                 </Button>
               )}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={onPrintInvoice}
-                disabled={!preview || loading}
-              >
-                Drukuj fakturę
-              </Button>
-              {canInvoices && (
+              {invoice?.status !== 'draft' && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={onPrintInvoice}
+                  disabled={!preview || loading}
+                >
+                  Drukuj fakturę
+                </Button>
+              )}
+              {canInvoices && invoice?.status !== 'draft' && (
                 <Button
                   type="button"
                   size="sm"
@@ -503,6 +612,7 @@ export function InvoiceDetailPage() {
           </div>
         </div>
 
+
         {/* KSeF error message if invoice was rejected */}
         {invoice?.ksef_status === 'rejected' && invoice.ksef_error_message && (
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
@@ -529,10 +639,25 @@ export function InvoiceDetailPage() {
           <>
             <Card className="shadow-sm">
               <CardHeader className="border-b border-border pb-4">
-                <CardTitle className="text-base">Dane faktury</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Dane faktury</CardTitle>
+                  {(preview.invoice.status === 'draft' || invoice?.status === 'draft') && (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                      Szkic
+                    </span>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="grid gap-4 pt-4 sm:grid-cols-2">
-                <div className="text-sm">
+                <div className="text-sm space-y-1">
+                  <p className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Numer faktury: </span>
+                    {preview.invoice.status === 'draft' && invoice ? (
+                      <DraftInvoiceNumberRow invoice={invoice} />
+                    ) : (
+                      <span className="font-semibold">{preview.invoice.invoice_number || invoice?.invoice_number || '—'}</span>
+                    )}
+                  </p>
                   <p>
                     <span className="text-muted-foreground">Data wystawienia: </span>
                     {formatPreviewDate(preview.invoice.issue_date)}
@@ -555,6 +680,12 @@ export function InvoiceDetailPage() {
                       {preview.invoice.delivery_document_number}
                     </p>
                   ) : null}
+                  {preview.invoice.show_wz_numbers && preview.invoice.wz_numbers && preview.invoice.wz_numbers.length > 0 ? (
+                    <p>
+                      <span className="text-muted-foreground">Dokumenty WZ: </span>
+                      {preview.invoice.wz_numbers.join(', ')}
+                    </p>
+                  ) : null}
                 </div>
                 {preview.invoice.notes ? (
                   <div className="text-sm">
@@ -575,6 +706,11 @@ export function InvoiceDetailPage() {
                 <CardTitle className="text-base">Pozycje</CardTitle>
               </CardHeader>
               <CardContent className="pt-4">
+                {preview.meta?.prices_include_vat && (
+                  <p className="mb-3 text-center text-xs italic text-muted-foreground">
+                    Faktura wystawiona w cenach brutto w walucie PLN
+                  </p>
+                )}
                 <div className="overflow-x-auto rounded-2xl border border-border">
                   <table className="min-w-full divide-y divide-border text-sm" aria-label="Pozycje faktury">
                     <thead className="bg-muted/50">
@@ -585,9 +721,12 @@ export function InvoiceDetailPage() {
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">Ilość</th>
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cena netto</th>
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT %</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Netto</th>
+                        {preview.meta?.prices_include_vat && (
+                          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cena brutto</th>
+                        )}
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Wartość netto</th>
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Brutto</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Wartość brutto</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border bg-card">
@@ -614,6 +753,11 @@ export function InvoiceDetailPage() {
                           <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
                             {line.vat_rate_display}
                           </td>
+                          {preview.meta?.prices_include_vat && (
+                            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                              {line.unit_price_gross ?? '—'}
+                            </td>
+                          )}
                           <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{line.line_net}</td>
                           <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{line.line_vat}</td>
                           <td className="whitespace-nowrap px-3 py-2 text-right font-medium tabular-nums">
@@ -647,6 +791,16 @@ export function InvoiceDetailPage() {
               </CardContent>
             </Card>
           </>
+        )}
+
+        {canInvoices && (preview.invoice.status === 'draft' || invoice?.status === 'draft') && invoice && (
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <DraftActionsFooter
+              invoice={invoice}
+              onIssue={() => void onIssue()}
+              issuing={issueM.isPending}
+            />
+          </div>
         )}
       </div>
     </>

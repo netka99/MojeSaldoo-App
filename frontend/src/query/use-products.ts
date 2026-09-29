@@ -91,6 +91,15 @@ export function useStockSnapshotQuery(warehouseId: string | undefined) {
   });
 }
 
+export function useLowStockQuery(enabled = true) {
+  return useQuery({
+    queryKey: [...productKeys.all, 'low-stock'] as const,
+    queryFn: () => productService.fetchLowStock(),
+    enabled,
+    staleTime: 2 * 60 * 1000, // 2 min
+  });
+}
+
 export function useAllProductsQuery() {
   return useQuery({
     queryKey: [...productKeys.lists(), 'all'],

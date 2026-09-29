@@ -8,7 +8,7 @@
  *        /purchase-documents/:id/edit
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
@@ -17,7 +17,9 @@ import {
   usePatchPurchaseDocumentMutation,
   usePurchaseDocumentQuery,
 } from '@/query/use-purchase-documents';
-import type { PurchaseDocDocType, PurchaseDocumentWrite } from '@/services/purchase-document.service';
+import type { PurchaseDocDocType, PurchaseDocumentWrite, DuplicateCheckResult } from '@/services/purchase-document.service';
+import { purchaseDocumentService } from '@/services/purchase-document.service';
+import { VatDeductionToggles, type VatDeduction } from '@/components/features/cashflow/VatDeductionToggles';
 
 interface ScannerState {
   docType?: PurchaseDocDocType;
@@ -101,6 +103,10 @@ function PurchaseDocumentFormInner({
   const [totalNet, setTotalNet] = useState(existingDoc?.total_net ?? '');
   const [totalVat, setTotalVat] = useState(existingDoc?.total_vat ?? '');
   const [notes, setNotes] = useState(existingDoc?.notes ?? '');
+  const [vatDeduction, setVatDeduction] = useState<VatDeduction>(
+    existingDoc?.vat_deduction ?? 'full',
+  );
+  const [isPrivate, setIsPrivate] = useState(existingDoc?.is_private ?? false);
   const [lines, setLines] = useState(() =>
     (existingDoc?.items ?? []).map((item, i) => ({
       id: i,
@@ -113,6 +119,22 @@ function PurchaseDocumentFormInner({
     }))
   );
   const [error, setError] = useState<string | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateCheckResult['document'] | null>(null);
+  const dupCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function checkDuplicate(nip: string, invoiceNumber: string) {
+    if (dupCheckTimer.current) clearTimeout(dupCheckTimer.current);
+    setDuplicateWarning(null);
+    if (!nip.trim() || !invoiceNumber.trim()) return;
+    dupCheckTimer.current = setTimeout(async () => {
+      try {
+        const result = await purchaseDocumentService.checkDuplicate(nip.trim(), invoiceNumber.trim());
+        setDuplicateWarning(result.found ? result.document ?? null : null);
+      } catch {
+        // ignore — non-critical
+      }
+    }, 400);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -144,6 +166,8 @@ function PurchaseDocumentFormInner({
       total_net: lineTotals ? lineTotals.net.toFixed(2) : (totalNet ? parseFloat(totalNet).toFixed(2) : '0.00'),
       total_vat: lineTotals ? lineTotals.vat.toFixed(2) : (totalVat ? parseFloat(totalVat).toFixed(2) : '0.00'),
       notes: notes.trim(),
+      vat_deduction: docType === 'PAR' ? 'none' : isPrivate ? 'none' : vatDeduction,
+      is_private: isPrivate,
       ocr_raw_filename: scannerState.ocr_raw_filename ?? existingDoc?.ocr_raw_filename ?? '',
       ...(lines.length > 0 && {
         items_write: lines.filter((l) => l.product_name.trim()).map((l) => ({
@@ -151,7 +175,7 @@ function PurchaseDocumentFormInner({
           unit: l.unit || 'szt',
           quantity: l.quantity || '1',
           unit_price_gross: l.unit_price_gross || '0',
-          vat_rate: l.vat_rate || '23',
+          vat_rate: l.vat_rate || '',
         })),
       }),
     };
@@ -209,7 +233,15 @@ function PurchaseDocumentFormInner({
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setDocType(value)}
+                  onClick={() => {
+                    setDocType(value);
+                    if (value === 'PAR') {
+                      setVatDeduction('none');
+                      setIsPrivate(false);
+                    } else if (vatDeduction === 'none' && !isPrivate) {
+                      setVatDeduction('full');
+                    }
+                  }}
                   className={cn(
                     'flex flex-col items-center justify-center rounded-xl border-2 px-3 py-3 text-center transition-all',
                     docType === value
@@ -251,6 +283,7 @@ function PurchaseDocumentFormInner({
                 type="text"
                 value={supplierNip}
                 onChange={(e) => setSupplierNip(e.target.value)}
+                onBlur={(e) => checkDuplicate(e.target.value, documentNumber)}
                 placeholder="10 cyfr"
                 maxLength={10}
                 className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
@@ -271,10 +304,23 @@ function PurchaseDocumentFormInner({
                 type="text"
                 value={documentNumber}
                 onChange={(e) => setDocumentNumber(e.target.value)}
+                onBlur={(e) => checkDuplicate(supplierNip, e.target.value)}
                 placeholder="np. FV/2026/001, nr paragonu"
                 className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
               />
             </div>
+
+            {duplicateWarning && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-[13px] font-medium text-amber-800">
+                  Ten dokument już jest w systemie
+                </p>
+                <p className="mt-0.5 text-[12px] text-amber-700">
+                  {duplicateWarning.supplier_name && `${duplicateWarning.supplier_name} · `}
+                  Nr: {duplicateWarning.document_number}
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -466,6 +512,19 @@ function PurchaseDocumentFormInner({
               </div>
             )}
           </div>
+
+          {/* VAT deduction */}
+          {docType !== 'PAR' && (
+            <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
+              <h2 className="text-[15px] font-semibold text-gray-900">Odliczenie VAT</h2>
+              <VatDeductionToggles
+                deduction={vatDeduction}
+                isPrivate={isPrivate}
+                onDeductionChange={setVatDeduction}
+                onPrivateChange={setIsPrivate}
+              />
+            </div>
+          )}
 
           {/* Notes */}
           <div className="rounded-2xl bg-white p-5 shadow-sm">

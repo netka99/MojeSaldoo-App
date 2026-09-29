@@ -7,7 +7,7 @@ from .models import CompanyOpexCategory, CompanyTaxConfig, DailyB2CRevenue, Quic
 class CompanyOpexCategorySerializer(UUIDModelSerializer):
     class Meta:
         model = CompanyOpexCategory
-        fields = ["id", "name", "slug", "is_active", "sort_order"]
+        fields = ["id", "name", "slug", "kpir_column", "is_active", "sort_order"]
         read_only_fields = ["id"]
 
 
@@ -47,6 +47,8 @@ class QuickExpenseSerializer(UUIDModelSerializer):
             "category",
             "cost_type",
             "has_vat",
+            "vat_deduction",
+            "is_private",
             "vendor",
             "document_number",
             "document_type",

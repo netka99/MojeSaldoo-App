@@ -79,6 +79,27 @@ def _build_address_lines(street: str, postal_code: str, city: str) -> tuple[str,
     return l1, l2
 
 
+def _build_p6_xml(invoice) -> str:
+    """
+    Zwraca XML dla pola P_6 / OkresFa zgodnie z wybranym wariantem sale_date_type.
+
+    Warianty FA-3:
+      single  → <P_6>YYYY-MM-DD</P_6>
+      period  → <OkresFa><P_6_Od>...</P_6_Od><P_6_Do>...</P_6_Do></OkresFa>
+      issue   → brak (data wystawienia = data wykonania)
+      various → brak (różne daty per wiersz)
+    """
+    sdt = getattr(invoice, "sale_date_type", "single") or "single"
+    if sdt == "period":
+        date_from = _fmt_date(invoice.sale_date)
+        date_to = _fmt_date(invoice.sale_date_to) if invoice.sale_date_to else date_from
+        return f"<OkresFa><P_6_Od>{date_from}</P_6_Od><P_6_Do>{date_to}</P_6_Do></OkresFa>"
+    elif sdt in ("issue", "various"):
+        return ""
+    else:  # single (default)
+        return f"<P_6>{_fmt_date(invoice.sale_date)}</P_6>"
+
+
 def generate_fa3_xml(invoice) -> str:
     """
     Build FA-3 KSeF XML for the given Invoice instance.
@@ -153,6 +174,38 @@ def generate_fa3_xml(invoice) -> str:
     # JST / GV from customer (defaults: 2 = nie dotyczy)
     jst_val = "1" if getattr(customer, "is_jst", False) else "2"
     gv_val = "1" if getattr(customer, "is_gv_member", False) else "2"
+
+    # Podmiot3 (optional third party: faktor or odbiorca)
+    podmiot3_role = (getattr(customer, "podmiot3_role", "") or "").strip()
+    podmiot3_xml = ""
+    if podmiot3_role:
+        p3_name = (getattr(customer, "podmiot3_name", "") or "").strip()
+        p3_id_wew = (getattr(customer, "podmiot3_id_wew", "") or "").strip()
+        p3_l1, p3_l2 = _build_address_lines(
+            street=getattr(customer, "podmiot3_street", "") or "",
+            postal_code=getattr(customer, "podmiot3_postal_code", "") or "",
+            city=getattr(customer, "podmiot3_city", "") or "",
+        )
+        p3_country = "PL"
+        # Auto-detect: 10 digits = NIP, anything else = IDWew (e.g. "8441866342-27001")
+        if p3_id_wew and p3_id_wew.isdigit() and len(p3_id_wew) == 10:
+            ident_inner = f"\n      <NIP>{_escape(p3_id_wew)}</NIP>"
+        elif p3_id_wew:
+            ident_inner = f"\n      <IDWew>{_escape(p3_id_wew)}</IDWew>"
+        else:
+            ident_inner = ""
+        podmiot3_xml = f"""
+  <Podmiot3>
+    <DaneIdentyfikacyjne>{ident_inner}
+      <Nazwa>{_escape(p3_name)}</Nazwa>
+    </DaneIdentyfikacyjne>
+    <Adres>
+      <KodKraju>{p3_country}</KodKraju>
+      <AdresL1>{_escape(p3_l1)}</AdresL1>
+      <AdresL2>{_escape(p3_l2)}</AdresL2>
+    </Adres>
+    <Rola>{podmiot3_role}</Rola>
+  </Podmiot3>"""
 
     # --- VAT summary ---
     # For KOR: show the DIFFERENCE (corrected − original); may be negative.
@@ -298,6 +351,22 @@ def generate_fa3_xml(invoice) -> str:
     if footer:
         stopka_xml = f"\n    <StopkaFaktury>{_escape(footer)}</StopkaFaktury>"
 
+    # --- WZ: numery dokumentów magazynowych (FA-3 pole fakultatywne, max 1000, po P_2) ---
+    wz_xml = ""
+    if getattr(invoice, "show_wz_numbers", False):
+        from apps.delivery.models import DeliveryDocument
+        order_ids = list(invoice.invoice_orders.values_list("order_id", flat=True))
+        if order_ids:
+            wz_nums = list(
+                DeliveryDocument.objects.filter(
+                    order_id__in=order_ids,
+                    document_type=DeliveryDocument.DOC_TYPE_WZ,
+                ).values_list("document_number", flat=True).order_by("issue_date")
+            )
+            wz_nums = [n for n in wz_nums if n][:1000]
+            for num in wz_nums:
+                wz_xml += f"\n    <WZ>{_escape(num)}</WZ>"
+
     # --- Platnosc extras ---
     # Bank account: only emit for transfer payments
     bank_xml = ""
@@ -396,13 +465,13 @@ def generate_fa3_xml(invoice) -> str:
     </Adres>
     <JST>{jst_val}</JST>
     <GV>{gv_val}</GV>
-  </Podmiot2>
+  </Podmiot2>{podmiot3_xml}
   <Fa>
     <KodWaluty>PLN</KodWaluty>
     <P_1>{_fmt_date(invoice.issue_date)}</P_1>
-    <P_1M>{_escape(company.city or "Warszawa")}</P_1M>
-    <P_2>{_escape(invoice.invoice_number)}</P_2>
-    <P_6>{_fmt_date(invoice.sale_date)}</P_6>{vat_fields_xml}
+    <P_1M>{_escape(invoice.place_of_issue or company.city or "Warszawa")}</P_1M>
+    <P_2>{_escape(invoice.invoice_number)}</P_2>{wz_xml}
+    {_build_p6_xml(invoice)}{vat_fields_xml}
     <P_15>{_fmt_amount(total_gross)}</P_15>{adnotacje_xml}{p106e_xml}
     <RodzajFaktury>{rodzaj_faktury}</RodzajFaktury>{dane_kor_xml}
     {lines_xml}{stopka_xml}

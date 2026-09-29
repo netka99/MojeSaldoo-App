@@ -76,7 +76,7 @@ describe('purchaseOrderService', () => {
   });
 
   it('send calls POST /purchase-orders/:id/send/', async () => {
-    mocks.post.mockResolvedValue({ ...stubOrder, status: 'sent' });
+    mocks.post.mockResolvedValue({ id: 'zo-1', status: 'sent' });
     await purchaseOrderService.send('zo-1');
     expect(mocks.post).toHaveBeenCalledWith('/purchase-orders/zo-1/send/');
   });

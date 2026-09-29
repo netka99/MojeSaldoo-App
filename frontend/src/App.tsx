@@ -100,8 +100,17 @@ const SupplierCreatePage = lazy(() =>
   import('./pages/SupplierCreatePage').then((m) => ({ default: m.SupplierCreatePage })),
 );
 const InvoicesPage = lazy(() => import('./pages/InvoicesPage').then((m) => ({ default: m.InvoicesPage })));
-const InvoiceCreatePage = lazy(() =>
-  import('./pages/InvoiceCreatePage').then((m) => ({ default: m.InvoiceCreatePage })),
+const InvoiceNewLandingPage = lazy(() =>
+  import('./pages/InvoiceNewLandingPage').then((m) => ({ default: m.InvoiceNewLandingPage })),
+);
+const InvoiceFromOrdersPage = lazy(() =>
+  import('./pages/InvoiceFromOrdersPage').then((m) => ({ default: m.InvoiceFromOrdersPage })),
+);
+const InvoicePeriodPage = lazy(() =>
+  import('./pages/InvoicePeriodPage').then((m) => ({ default: m.InvoicePeriodPage })),
+);
+const InvoiceManualPage = lazy(() =>
+  import('./pages/InvoiceManualPage').then((m) => ({ default: m.InvoiceManualPage })),
 );
 const InvoiceDetailPage = lazy(() =>
   import('./pages/InvoiceDetailPage').then((m) => ({ default: m.InvoiceDetailPage })),
@@ -156,6 +165,9 @@ const ProductionOrdersPage = lazy(() =>
 );
 const InventoryPage = lazy(() =>
   import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage })),
+);
+const StockPage = lazy(() =>
+  import('./pages/StockPage').then((m) => ({ default: m.StockPage })),
 );
 
 const RWCreatePage = lazy(() =>
@@ -334,6 +346,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/stock"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <StockPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/orders"
                   element={
                     <ModuleRouteGate module="orders">
@@ -473,7 +493,31 @@ function App() {
                   path="/invoices/new"
                   element={
                     <ModuleRouteGate module="invoicing">
-                      <InvoiceCreatePage />
+                      <InvoiceNewLandingPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/new/orders"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <InvoiceFromOrdersPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/new/period"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <InvoicePeriodPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/new/manual"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <InvoiceManualPage />
                     </ModuleRouteGate>
                   }
                 />

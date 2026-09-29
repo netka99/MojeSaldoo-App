@@ -116,6 +116,8 @@ describe('QuickExpenseSheet', () => {
         category: 'fuel',
         cost_type: 'indirect',
         has_vat: false,
+        vat_deduction: 'full',
+        is_private: false,
       }),
     );
   });
@@ -194,18 +196,31 @@ describe('QuickExpenseSheet', () => {
     );
   });
 
+  it('requires a VAT rate when the VAT checkbox is on', async () => {
+    const mutateAsync = setupMutation();
+    const user = userEvent.setup();
+    renderSheet(true);
+
+    await user.click(screen.getByLabelText(/Mam fakturę/));
+    await user.type(screen.getByPlaceholderText('0.00'), '300');
+    await user.click(screen.getByRole('button', { name: /Zapisz wydatek/ }));
+
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByText(/Wybierz stawkę VAT/)).toBeInTheDocument();
+  });
+
   it('has_vat toggles correctly via checkbox', async () => {
     const mutateAsync = setupMutation();
     const user = userEvent.setup();
     renderSheet(true);
 
-    const checkbox = screen.getByRole('checkbox');
-    await user.click(checkbox);
+    await user.click(screen.getByLabelText(/Mam fakturę/));
+    await user.click(screen.getByRole('button', { name: '23%' }));
     await user.type(screen.getByPlaceholderText('0.00'), '300');
     await user.click(screen.getByRole('button', { name: /Zapisz wydatek/ }));
 
     expect(mutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ has_vat: true }),
+      expect.objectContaining({ has_vat: true, vat_rate: '23' }),
     );
   });
 });
