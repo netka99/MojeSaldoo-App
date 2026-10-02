@@ -57,6 +57,7 @@ class Customer(models.Model):
         ("9", "Członek GV – wystawca"),
         ("10", "Członek GV – odbiorca"),
         ("11", "Pracownik"),
+        ("12", "Rola inna"),
     ]
     podmiot3_role = models.CharField(
         max_length=2,
@@ -78,6 +79,10 @@ class Customer(models.Model):
         blank=True,
         null=True,
         help_text="Wewnętrzny identyfikator Podmiot3 (IDWew w FA-3), np. NIP-numer_sklepu.",
+    )
+    podmiot3_role_opis = models.CharField(
+        max_length=256, blank=True, null=True,
+        help_text="Opis roli podmiotu innego (OpisRoli w FA-3). Wymagany gdy podmiot3_role='12' (Rola inna).",
     )
     podmiot3_street = models.CharField(max_length=255, blank=True, null=True)
     podmiot3_city = models.CharField(max_length=100, blank=True, null=True)

@@ -417,12 +417,24 @@ def validate_invoice_for_ksef(invoice) -> tuple[list[str], list[str]]:
     # ------------------------------------------------------------------
     # 7. KSEF INVOICE TYPE
     # ------------------------------------------------------------------
+    if invoice.is_correction:
+        if not (getattr(invoice, "correction_reason", "") or "").strip():
+            errors.append(
+                "Faktura korygująca (KOR) musi zawierać powód korekty (PrzyczynaKorekty w FA-3)."
+            )
+        if not invoice.corrects_invoice_id:
+            errors.append(
+                "Faktura korygująca musi być powiązana z oryginalną fakturą."
+            )
+
     ksef_type = getattr(invoice, "ksef_invoice_type", "VAT") or "VAT"
-    if not invoice.is_correction and ksef_type in ("ZAL", "ROZ"):
-        errors.append(
-            f"Typ faktury '{ksef_type}' (zaliczkowa/rozliczeniowa) nie jest jeszcze obsługiwany "
-            f"w generatorze FA-3. Zmień rodzaj faktury na 'VAT' lub skontaktuj się z pomocą techniczną."
-        )
+    if not invoice.is_correction and ksef_type == "ROZ":
+        from apps.invoices.models import InvoiceAdvance
+        if not InvoiceAdvance.objects.filter(roz_invoice=invoice).exists():
+            errors.append(
+                "Faktura rozliczeniowa (ROZ) musi mieć przypisaną co najmniej jedną "
+                "fakturę zaliczkową (ZAL). Edytuj fakturę i dodaj powiązane faktury ZAL."
+            )
 
     # ------------------------------------------------------------------
     # 8. ANNOTATION MUTUAL EXCLUSIONS

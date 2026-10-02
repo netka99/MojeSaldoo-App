@@ -312,6 +312,19 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         payment_method = None if pm_raw in (None, "") else pm_raw
         custom_number = request.data.get("invoice_number", "").strip() or None
         place_of_issue = request.data.get("place_of_issue", "").strip() or None
+        ksef_invoice_type = request.data.get("ksef_invoice_type", "VAT") or "VAT"
+        advance_invoice_ids = request.data.get("advance_invoice_ids") or []
+        if not isinstance(advance_invoice_ids, list):
+            raise ValidationError({"advance_invoice_ids": "Must be a list of UUIDs."})
+        payment_received_at = _optional_iso_date(request.data, "payment_received_at")
+        other_payment_description = request.data.get("other_payment_description", "").strip() or None
+        due_date_description = request.data.get("due_date_description", "").strip() or None
+        contracts_raw = request.data.get("contracts") or []
+        if not isinstance(contracts_raw, list):
+            raise ValidationError({"contracts": "Must be a list."})
+        purchase_orders_raw = request.data.get("purchase_orders") or []
+        if not isinstance(purchase_orders_raw, list):
+            raise ValidationError({"purchase_orders": "Must be a list."})
         try:
             invoice = create_manual_invoice(
                 customer=customer,
@@ -326,6 +339,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 payment_method=payment_method,
                 invoice_number=custom_number,
                 place_of_issue=place_of_issue,
+                ksef_invoice_type=ksef_invoice_type,
+                advance_invoice_ids=advance_invoice_ids or None,
+                payment_received_at=payment_received_at,
+                other_payment_description=other_payment_description,
+                due_date_description=due_date_description,
+                contracts=contracts_raw or None,
+                purchase_orders=purchase_orders_raw or None,
             )
         except ValidationError as exc:
             log_error(
@@ -340,6 +360,47 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         )
         out = InvoiceSerializer(invoice, context=self.get_serializer_context())
         return Response(out.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="available-zal")
+    def available_zal(self, request):
+        """
+        GET /api/invoices/available-zal/?customer_id=<uuid>
+        Returns issued/sent/paid ZAL invoices for the customer that are not yet
+        fully settled by a ROZ invoice.
+        """
+        from apps.customers.models import Customer as CustomerModel
+        from apps.invoices.models import InvoiceAdvance
+
+        company = request.user.current_company
+        customer_uuid = request.query_params.get("customer_id")
+        if not customer_uuid:
+            raise ValidationError({"customer_id": "This field is required."})
+        customer = get_object_or_404(CustomerModel, uuid=customer_uuid, company=company)
+
+        zal_invoices = Invoice.objects.filter(
+            company=company,
+            customer=customer,
+            ksef_invoice_type=Invoice.KSEF_TYPE_ZAL,
+            status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_SENT, Invoice.STATUS_PAID],
+        ).order_by("issue_date")
+
+        # Exclude ZAL invoices already fully settled
+        settled_zal_ids = set(
+            InvoiceAdvance.objects.filter(
+                zal_invoice__in=zal_invoices,
+            ).values_list("zal_invoice_id", flat=True)
+        )
+        available = [z for z in zal_invoices if z.id not in settled_zal_ids]
+
+        return Response([
+            {
+                "id": str(z.uuid),
+                "invoice_number": z.invoice_number,
+                "issue_date": z.issue_date.isoformat(),
+                "total_gross": str(z.total_gross),
+            }
+            for z in available
+        ])
 
     @action(detail=True, methods=["post"], url_path="issue")
     def issue(self, request, uuid=None):

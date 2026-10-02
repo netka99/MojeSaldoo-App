@@ -433,14 +433,35 @@ def create_manual_invoice(
     payment_method: str | None = None,
     invoice_number: str | None = None,
     place_of_issue: str | None = None,
+    ksef_invoice_type: str = "VAT",
+    advance_invoice_ids: list | None = None,
+    payment_received_at: date | None = None,
+    other_payment_description: str | None = None,
+    due_date_description: str | None = None,
+    contracts: list | None = None,
+    purchase_orders: list | None = None,
 ) -> Invoice:
     """
     Create a draft invoice manually (no order required).
     items_data: [{"product_name": str, "product_unit": str, "quantity": str,
                    "unit_price_net": str, "vat_rate": str, "product": uuid_str|None}]
+    For ROZ invoices: advance_invoice_ids must be a non-empty list of ZAL invoice UUIDs.
     """
     if not items_data:
         raise ValidationError("Faktura musi zawierać co najmniej jedną pozycję.")
+
+    # Validate ksef_invoice_type
+    valid_types = [Invoice.KSEF_TYPE_VAT, Invoice.KSEF_TYPE_ZAL, Invoice.KSEF_TYPE_ROZ]
+    if ksef_invoice_type not in valid_types:
+        raise ValidationError({"ksef_invoice_type": f"Nieprawidłowy typ faktury: {ksef_invoice_type}."})
+
+    # ROZ requires at least one ZAL invoice
+    if ksef_invoice_type == Invoice.KSEF_TYPE_ROZ and not advance_invoice_ids:
+        raise ValidationError({
+            "advance_invoice_ids": (
+                "Faktura rozliczeniowa (ROZ) musi wskazywać co najmniej jedną fakturę zaliczkową (ZAL)."
+            )
+        })
 
     resolved_issue = issue_date or timezone.localdate()
     resolved_sale = sale_date or resolved_issue
@@ -477,6 +498,12 @@ def create_manual_invoice(
         bank_swift=company.bank_swift or "",
         bank_name=company.bank_name or "",
         place_of_issue=place_of_issue or "",
+        ksef_invoice_type=ksef_invoice_type,
+        payment_received_at=payment_received_at,
+        other_payment_description=other_payment_description or "",
+        due_date_description=due_date_description or "",
+        contracts=contracts or [],
+        purchase_orders=purchase_orders or [],
     )
     invoice.save()
 
@@ -518,6 +545,39 @@ def create_manual_invoice(
 
     recalculate_invoice_totals(invoice)
     invoice.save(update_fields=["subtotal_net", "subtotal_gross", "vat_amount", "total_gross", "updated_at"])
+
+    # Link ZAL invoices for ROZ
+    if ksef_invoice_type == Invoice.KSEF_TYPE_ROZ and advance_invoice_ids:
+        from apps.invoices.models import InvoiceAdvance
+        zal_invoices = list(Invoice.objects.filter(
+            uuid__in=advance_invoice_ids,
+            company=company,
+            ksef_invoice_type=Invoice.KSEF_TYPE_ZAL,
+            customer=customer,
+        ))
+        found_ids = {str(z.uuid) for z in zal_invoices}
+        missing = [uid for uid in advance_invoice_ids if uid not in found_ids]
+        if missing:
+            raise ValidationError({
+                "advance_invoice_ids": (
+                    "Nie znaleziono faktur zaliczkowych lub nie należą do tego klienta: "
+                    + ", ".join(missing)
+                )
+            })
+        total_zal = sum(z.total_gross for z in zal_invoices)
+        if invoice.total_gross > total_zal + Decimal("0.01"):
+            raise ValidationError({
+                "advance_invoice_ids": (
+                    f"Kwota faktury rozliczeniowej ({invoice.total_gross} zł) "
+                    f"przekracza łączną wartość faktur zaliczkowych ({total_zal} zł)."
+                )
+            })
+        for zal in zal_invoices:
+            InvoiceAdvance.objects.create(
+                roz_invoice=invoice,
+                zal_invoice=zal,
+                deduction_amount=zal.total_gross,
+            )
 
     _deduct_stock_for_invoice_items(
         invoice=invoice,

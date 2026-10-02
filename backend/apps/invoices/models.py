@@ -33,9 +33,14 @@ class Invoice(models.Model):
     ]
 
     PAYMENT_METHOD_CHOICES = [
-        ("transfer", "Przelew"),
+        ("transfer", "Przelew bankowy"),
         ("cash", "Gotówka"),
-        ("card", "Karta"),
+        ("card", "Karta płatnicza"),
+        ("voucher", "Bon"),
+        ("check", "Czek"),
+        ("credit", "Kredyt"),
+        ("mobile", "Płatność mobilna"),
+        ("other", "Inna forma płatności"),
     ]
     STATUS_CHOICES = [
         (STATUS_DRAFT, "Draft"),
@@ -279,6 +284,36 @@ class Invoice(models.Model):
         max_length=256, blank=True, default="",
         help_text="Warunki skonta — opis rabatu za wcześniejszą płatność (opcjonalnie, max 256 znaków).",
     )
+    other_payment_description = models.CharField(
+        max_length=256, blank=True, default="",
+        help_text="Opis innej formy płatności (InnyRodzajPlatnosci w FA-3). "
+                  "Wymagane gdy payment_method='other'.",
+    )
+    payment_received_at = models.DateField(
+        null=True, blank=True,
+        help_text="Data otrzymania zapłaty (P_IZ / DataZaplaty w FA-3). "
+                  "Gdy ustawione → <P_IZ>1</P_IZ> + <DataZaplaty> w XML KSeF. "
+                  "Przy gotówce ustaw = data wystawienia. Zostaw puste dla przelewów.",
+    )
+    due_date_description = models.CharField(
+        max_length=256, blank=True, default="",
+        help_text="Opis terminu płatności (OpisTerminuPlatnosci w FA-3). "
+                  "Gdy ustawiony — zastępuje datę due_date w XML (<OpisTerminuPlatnosci> zamiast <Termin>). "
+                  "Np. 'Płatność przy odbiorze', 'Przelew w ciągu 7 dni od dostawy'.",
+    )
+
+    # Warunki transakcji — umowy i zamówienia klienta (FA-3 WarunkiTransakcji)
+    # Format: [{"date": "YYYY-MM-DD", "number": "..."}, ...]  (oba pola opcjonalne)
+    contracts = models.JSONField(
+        default=list, blank=True,
+        help_text="Lista umów powiązanych z fakturą (Umowa w FA-3 WarunkiTransakcji). "
+                  "Format: [{\"date\": \"YYYY-MM-DD\", \"number\": \"NR\"}, ...]",
+    )
+    purchase_orders = models.JSONField(
+        default=list, blank=True,
+        help_text="Lista zamówień klienta (Zamowienie w FA-3 WarunkiTransakcji). "
+                  "Format: [{\"date\": \"YYYY-MM-DD\", \"number\": \"NR\"}, ...]",
+    )
 
     # Dokumenty WZ — numery magazynowych dokumentów wydania zewnętrznego
     wz_numbers = models.JSONField(
@@ -505,3 +540,44 @@ class InvoiceOrder(models.Model):
 
     def __str__(self):
         return f"{self.invoice_id} ↔ {self.order_id}"
+
+
+class InvoiceAdvance(models.Model):
+    """
+    Junction table linking a ROZ (settlement) invoice to one or more ZAL (advance) invoices.
+    deduction_amount: amount deducted from this ZAL on the ROZ.
+                      None = full ZAL total_gross is deducted.
+    """
+
+    roz_invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="advance_links",
+    )
+    zal_invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name="settlement_links",
+    )
+    deduction_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Amount deducted from this ZAL on the ROZ. Null = full ZAL total_gross.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["roz_invoice", "zal_invoice"],
+                name="invoices_advance_roz_zal_uniq",
+            )
+        ]
+        ordering = ["created_at"]
+        verbose_name = "Invoice advance link"
+        verbose_name_plural = "Invoice advance links"
+
+    def __str__(self):
+        return f"ROZ {self.roz_invoice_id} ← ZAL {self.zal_invoice_id}"

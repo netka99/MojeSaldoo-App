@@ -5,11 +5,36 @@
 
 import type { Order } from './order.types';
 
-/** `Invoice.payment_method`. */
-export type InvoicePaymentMethod = 'transfer' | 'cash' | 'card';
+/** `Invoice.payment_method`. Maps to FA-3 FormaPlatnosci codes 1–8. */
+export type InvoicePaymentMethod =
+  | 'transfer'   // 6 = przelew
+  | 'cash'       // 1 = gotówka
+  | 'card'       // 2 = karta
+  | 'voucher'    // 3 = bon
+  | 'check'      // 4 = czek
+  | 'credit'     // 5 = kredyt
+  | 'mobile'     // 7 = mobilna
+  | 'other';     // 8 = inna (requires other_payment_description)
 
 /** FA-3 RodzajFaktury (KOR is derived from is_correction, not set here). */
 export type KsefInvoiceType = 'VAT' | 'ZAL' | 'ROZ';
+
+/** One ZAL invoice linked to a ROZ invoice (read-only, from serializer). */
+export interface AdvanceInvoiceLink {
+  id: string;
+  invoice_number: string | null;
+  issue_date: string;
+  total_gross: string;
+  deduction_amount: string;
+}
+
+/** Item returned by `GET /api/invoices/available-zal/?customer_id=<uuid>`. */
+export interface AvailableZalInvoice {
+  id: string;
+  invoice_number: string | null;
+  issue_date: string;
+  total_gross: string;
+}
 
 /** `Invoice.status` (local lifecycle; not KSeF). */
 export type InvoiceStatus =
@@ -78,6 +103,7 @@ export interface Invoice {
   corrects_invoice_number: string | null;
   correction_reason: string;
   corrections?: { id: string; invoice_number: string | null }[];
+  advance_invoices_data?: AdvanceInvoiceLink[];
   paid_at: string | null;
   notes: string;
 
@@ -100,7 +126,15 @@ export interface Invoice {
   payment_link: string;
   ksef_payment_id: string;
   discount_conditions: string;
+  /** ISO date (YYYY-MM-DD). When set → P_IZ=1 + DataZaplaty in FA-3 KSeF XML. */
+  payment_received_at: string | null;
+  /** Description for payment_method='other' (InnyRodzajPlatnosci in FA-3). */
+  other_payment_description: string;
+  /** Text description of payment term (OpisTerminuPlatnosci in FA-3). When set, replaces due_date in XML. */
+  due_date_description: string;
   // Dokumenty i stopka
+  contracts: { date?: string; number?: string }[];
+  purchase_orders: { date?: string; number?: string }[];
   wz_numbers: string[];
   footer_text: string;
   extra_notes: string;
@@ -146,10 +180,18 @@ export interface InvoiceKsefOptions {
   payment_link?: string;
   ksef_payment_id?: string;
   discount_conditions?: string;
+  /** ISO date (YYYY-MM-DD) or null. P_IZ / DataZaplaty in FA-3 XML. */
+  payment_received_at?: string | null;
+  /** Description for payment_method='other'. */
+  other_payment_description?: string;
+  /** Text description of payment term replacing due_date in XML. */
+  due_date_description?: string;
   wz_numbers?: string[];
   footer_text?: string;
   extra_notes?: string;
   prices_include_vat?: boolean;
+  contracts?: { date?: string; number?: string }[];
+  purchase_orders?: { date?: string; number?: string }[];
 }
 
 /** `POST /api/invoices/` — writable fields (`status` is server / action controlled). */
@@ -253,6 +295,8 @@ export interface CreateManualInvoiceBody extends InvoiceKsefOptions {
   place_of_issue?: string;
   sale_date_to?: string;
   sale_date_type?: SaleDateType;
+  /** UUIDs of ZAL invoices to link when ksef_invoice_type === 'ROZ'. */
+  advance_invoice_ids?: string[];
 }
 
 /** `GET /api/invoices/:id/preview/` — payload for HTML / print layout. */

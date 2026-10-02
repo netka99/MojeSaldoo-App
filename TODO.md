@@ -24,7 +24,72 @@
     - removing an account
 
 
-- Nie wprowadzone - Faktury zaliczkowe (ZAL) i rozliczeniowe (ROZ) - sprawdzic czy potrzebne!
+---
+
+## Testowanie manualne — Faktury ZAL / ROZ
+
+Faktury zaliczkowe (ZAL) i rozliczeniowe (ROZ) są w pełni zaimplementowane.
+Poniżej instrukcja jak to przetestować ręcznie.
+
+### Wymagania wstępne
+- Zaloguj się jako firma z wypełnionym NIP
+- Miej aktywnego klienta z NIP-em
+
+### Krok 1: Wystaw fakturę zaliczkową (ZAL)
+
+1. Wejdź na `/invoices/new/manual`
+2. W prawym górnym rogu zmień typ faktury z `Podstawowa` na `Zaliczkowa`
+3. Wybierz klienta
+4. Dodaj pozycję (np. "Zaliczka na usługę", cena 500 zł, VAT 23%)
+5. Ustaw daty i metodę płatności
+6. Kliknij **Wystaw fakturę** → zostaniesz przeniesiony na stronę faktury
+7. Zweryfikuj:
+   - Faktura ma typ `ZAL` (widoczny w sekcji KSeF opcje)
+   - Status: `Szkic` → kliknij **Wystaw** → status zmienia się na `Wystawiona`
+
+### Krok 2: Wystaw fakturę rozliczeniową (ROZ)
+
+1. Wejdź na `/invoices/new/manual`
+2. Zmień typ faktury na `Rozliczeniowa`
+3. Wybierz **tego samego klienta** co przy ZAL
+4. W sekcji **"Faktury zaliczkowe (ZAL) do rozliczenia"** powinna pojawić się lista dostępnych ZAL
+   - Zaznacz checkboxem fakturę zaliczkową z Kroku 1
+5. Dodaj pozycję rozliczeniową (np. "Rozliczenie usługi", cena 300 zł — może być mniej niż ZAL)
+6. Kliknij **Wystaw fakturę**
+7. Zweryfikuj na stronie faktury:
+   - Typ: `ROZ`
+   - Sekcja **"Faktury zaliczkowe"** wyświetla powiązaną ZAL z numerem i kwotą
+   - KSeF XML (pobierz przez przycisk XML): powinien zawierać blok `<Rozliczenie>` z `<Obciazenia>` i `<Odliczenia>`
+
+### Przypadki błędów (powinny być blokowane)
+
+- **ROZ bez ZAL**: przycisk "Wystaw fakturę" jest wyszarzony gdy nie wybrano żadnej ZAL (przy typie ROZ)
+- **ROZ kwota > ZAL suma**: backend zwróci błąd 400 — np. ZAL = 100 zł, ROZ pozycja = 200 zł
+- **ZAL z innego klienta**: nie pojawi się na liście do wyboru
+- **ZAL już rozliczona**: nie pojawi się na liście (endpoint `/api/invoices/available-zal/` wyklucza)
+
+### Weryfikacja w panelu KSeF
+
+1. Wystaw ZAL → kliknij "Wyślij do KSeF" → brak błędu o "zablokowanym typie ZAL"
+2. Wystaw ROZ (z przypisaną ZAL) → pobierz XML → sprawdź w XML:
+   ```xml
+   <Rozliczenie>
+     <Obciazenia>
+       <WartoscObciazen>300.00</WartoscObciazen>
+     </Obciazenia>
+     <Odliczenia>
+       <NrFaZaliczkowej>ZAL/2026/...</NrFaZaliczkowej>
+       <WartoscOdliczen>500.00</WartoscOdliczen>
+     </Odliczenia>
+     <P_15ZAL>0</P_15ZAL>
+   </Rozliczenie>
+   ```
+3. Sprawdź pole `<P_15ZAL>` — kwota pozostała do zapłaty po zaliczkach:
+   - Przykład: ROZ = 1000 zł, ZAL = 300 zł → `<P_15ZAL>700</P_15ZAL>`
+   - Przykład: ROZ = 200 zł, ZAL = 500 zł → `<P_15ZAL>0</P_15ZAL>` (nie może być ujemne)
+   - Gdy ZAL była wysłana do KSeF: zamiast `<NrFaZaliczkowej>` pojawia się `<NrKSeFFaZaliczkowej>` z numerem KSeF
+
+---
 
 - Poprawić magazyny, FIFO nie widoczne, lista produktow, lot, data
 - Jak rozwiązać wpisywanie faktur z pdf - scan - AI?

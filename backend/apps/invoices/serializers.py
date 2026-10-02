@@ -153,4 +153,23 @@ class InvoiceSerializer(UUIDModelSerializer):
             {"id": str(c.id), "invoice_number": c.invoice_number}
             for c in instance.corrections.all()
         ]
+        # ZAL invoices linked to this ROZ invoice
+        from apps.invoices.models import InvoiceAdvance
+        links = InvoiceAdvance.objects.filter(
+            roz_invoice=instance
+        ).select_related("zal_invoice")
+        data["advance_invoices_data"] = [
+            {
+                "id": str(link.zal_invoice.uuid),
+                "invoice_number": link.zal_invoice.invoice_number,
+                "issue_date": link.zal_invoice.issue_date.isoformat(),
+                "total_gross": str(link.zal_invoice.total_gross),
+                "deduction_amount": str(
+                    link.deduction_amount
+                    if link.deduction_amount is not None
+                    else link.zal_invoice.total_gross
+                ),
+            }
+            for link in links
+        ]
         return data

@@ -1005,7 +1005,7 @@ class BuildInvoicePreviewDataTests(TestCase):
         self.assertEqual(inv["order"], str(self.order.uuid))
         self.assertEqual(inv["customer"], str(self.customer.uuid))
         self.assertIsNone(inv["delivery_document"])
-        self.assertEqual(inv["payment_method_label"], "Przelew")
+        self.assertEqual(inv["payment_method_label"], "Przelew bankowy")
         self.assertEqual(inv["ksef_status"], "pending")
         self.assertIsNone(inv["ksef_sent_at"])
         self.assertIsNone(inv["paid_at"])
@@ -2629,3 +2629,639 @@ class GenerateFromOrdersApiTests(TestCase):
             "due_date": "2026-09-29",
         }, format="json")
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ZAL / ROZ (advance / settlement) invoice tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ZalRozServiceTests(TestCase):
+    """Unit tests for create_manual_invoice with ksef_invoice_type ZAL / ROZ."""
+
+    def setUp(self):
+        from apps.invoices.services import create_manual_invoice
+        self._create = create_manual_invoice
+
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="zalroz-svc-user",
+            email="zalroz-svc@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(name="ZAL Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.customer = Customer.objects.create(name="ZAL Cust", company=self.company)
+
+    def _item(self, name="Svc", price="100.00", vat="23", qty="1"):
+        return {
+            "product_name": name,
+            "product_unit": "szt",
+            "quantity": qty,
+            "unit_price_net": price,
+            "vat_rate": vat,
+        }
+
+    def _make_zal(self, gross="100.00"):
+        """Helper: create and issue a ZAL invoice so it appears in available-ZAL."""
+        inv = self._create(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item(price=gross, vat="0")],
+            ksef_invoice_type="ZAL",
+        )
+        inv.status = Invoice.STATUS_ISSUED
+        inv.save(update_fields=["status"])
+        return inv
+
+    # ── ZAL creation ────────────────────────────────────────────────────────
+
+    def test_create_zal_sets_ksef_type(self):
+        inv = self._create(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item()],
+            ksef_invoice_type="ZAL",
+        )
+        self.assertEqual(inv.ksef_invoice_type, Invoice.KSEF_TYPE_ZAL)
+        self.assertEqual(inv.status, Invoice.STATUS_DRAFT)
+
+    def test_create_vat_default_type(self):
+        inv = self._create(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item()],
+        )
+        self.assertEqual(inv.ksef_invoice_type, Invoice.KSEF_TYPE_VAT)
+
+    def test_invalid_ksef_type_raises(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        with self.assertRaises(DRFValidationError):
+            self._create(
+                customer=self.customer,
+                company=self.company,
+                user=self.user,
+                items_data=[self._item()],
+                ksef_invoice_type="BOGUS",
+            )
+
+    # ── ROZ creation ────────────────────────────────────────────────────────
+
+    def test_create_roz_links_advance_invoices(self):
+        from apps.invoices.models import InvoiceAdvance
+        zal = self._make_zal(gross="200.00")
+
+        roz = self._create(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item(price="150.00", vat="0")],
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        self.assertEqual(roz.ksef_invoice_type, Invoice.KSEF_TYPE_ROZ)
+        links = InvoiceAdvance.objects.filter(roz_invoice=roz)
+        self.assertEqual(links.count(), 1)
+        self.assertEqual(links.first().zal_invoice_id, zal.id)
+        self.assertEqual(links.first().deduction_amount, zal.total_gross)
+
+    def test_roz_without_advance_ids_raises(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        with self.assertRaises(DRFValidationError):
+            self._create(
+                customer=self.customer,
+                company=self.company,
+                user=self.user,
+                items_data=[self._item()],
+                ksef_invoice_type="ROZ",
+                advance_invoice_ids=None,
+            )
+
+    def test_roz_with_empty_advance_ids_raises(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        with self.assertRaises(DRFValidationError):
+            self._create(
+                customer=self.customer,
+                company=self.company,
+                user=self.user,
+                items_data=[self._item()],
+                ksef_invoice_type="ROZ",
+                advance_invoice_ids=[],
+            )
+
+    def test_roz_total_exceeds_zal_sum_raises(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        zal = self._make_zal(gross="50.00")
+        with self.assertRaises(DRFValidationError) as ctx:
+            self._create(
+                customer=self.customer,
+                company=self.company,
+                user=self.user,
+                items_data=[self._item(price="200.00", vat="0")],
+                ksef_invoice_type="ROZ",
+                advance_invoice_ids=[str(zal.uuid)],
+            )
+        self.assertIn("advance_invoice_ids", str(ctx.exception.detail))
+
+    def test_roz_with_wrong_customer_zal_raises(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        other_customer = Customer.objects.create(name="Other Cust", company=self.company)
+        zal = self._create(
+            customer=other_customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item(price="300.00", vat="0")],
+            ksef_invoice_type="ZAL",
+        )
+        zal.status = Invoice.STATUS_ISSUED
+        zal.save(update_fields=["status"])
+        with self.assertRaises(DRFValidationError):
+            self._create(
+                customer=self.customer,
+                company=self.company,
+                user=self.user,
+                items_data=[self._item(price="100.00", vat="0")],
+                ksef_invoice_type="ROZ",
+                advance_invoice_ids=[str(zal.uuid)],
+            )
+
+    def test_roz_with_nonexistent_zal_uuid_raises(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        fake_uuid = str(uuid.uuid4())
+        with self.assertRaises(DRFValidationError):
+            self._create(
+                customer=self.customer,
+                company=self.company,
+                user=self.user,
+                items_data=[self._item()],
+                ksef_invoice_type="ROZ",
+                advance_invoice_ids=[fake_uuid],
+            )
+
+    def test_roz_links_multiple_zal_invoices(self):
+        from apps.invoices.models import InvoiceAdvance
+        zal1 = self._make_zal(gross="100.00")
+        zal2 = self._make_zal(gross="150.00")
+
+        roz = self._create(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item(price="200.00", vat="0")],
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal1.uuid), str(zal2.uuid)],
+        )
+        self.assertEqual(InvoiceAdvance.objects.filter(roz_invoice=roz).count(), 2)
+
+
+class ZalRozAvailableEndpointTests(TestCase):
+    """API tests for GET /api/invoices/available-zal/."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="avail-zal-user",
+            email="avail-zal@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(name="Avail ZAL Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.company, module="invoicing", defaults={"is_enabled": True})
+        self.customer = Customer.objects.create(name="Avail Cust", company=self.company)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.url = "/api/invoices/available-zal/"
+
+    def _make_zal(self, status=Invoice.STATUS_ISSUED, gross="100.00"):
+        from apps.invoices.services import create_manual_invoice
+        inv = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "Item",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": gross,
+                "vat_rate": "0",
+            }],
+            ksef_invoice_type="ZAL",
+        )
+        inv.status = status
+        inv.save(update_fields=["status"])
+        return inv
+
+    def test_returns_available_zal_for_customer(self):
+        zal = self._make_zal()
+        r = self.client.get(self.url, {"customer_id": str(self.customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]["id"], str(zal.uuid))
+
+    def test_draft_zal_not_included(self):
+        self._make_zal(status=Invoice.STATUS_DRAFT)
+        r = self.client.get(self.url, {"customer_id": str(self.customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 0)
+
+    def test_settled_zal_excluded(self):
+        from apps.invoices.models import InvoiceAdvance
+        from apps.invoices.services import create_manual_invoice
+        zal = self._make_zal()
+        roz = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "ROZ Item",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "80.00",
+                "vat_rate": "0",
+            }],
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        r = self.client.get(self.url, {"customer_id": str(self.customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 0)
+
+    def test_missing_customer_id_returns_400(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_wrong_company_customer_returns_404(self):
+        other_company = Company.objects.create(name="Other Co")
+        other_customer = Customer.objects.create(name="Other Cust", company=other_company)
+        r = self.client.get(self.url, {"customer_id": str(other_customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_response_fields(self):
+        zal = self._make_zal(gross="123.00")
+        r = self.client.get(self.url, {"customer_id": str(self.customer.uuid)})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        item = r.data[0]
+        self.assertIn("id", item)
+        self.assertIn("invoice_number", item)
+        self.assertIn("issue_date", item)
+        self.assertIn("total_gross", item)
+
+
+class ZalRozCreateManualApiTests(TestCase):
+    """API tests: POST /api/invoices/create-manual/ with ZAL and ROZ types."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="cm-zalroz-user",
+            email="cm-zalroz@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(name="CM ZAL Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.get_or_create(company=self.company, module="invoicing", defaults={"is_enabled": True})
+        self.customer = Customer.objects.create(name="CM Cust", company=self.company)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.url = "/api/invoices/create-manual/"
+
+    def _item_payload(self, name="Prod", price="100.00", vat="0"):
+        return {"product_name": name, "product_unit": "szt", "quantity": "1",
+                "unit_price_net": price, "vat_rate": vat}
+
+    def _base_payload(self, **overrides):
+        payload = {
+            "customer_id": str(self.customer.uuid),
+            "items": [self._item_payload()],
+            "issue_date": "2026-09-01",
+            "sale_date": "2026-09-01",
+            "due_date": "2026-09-15",
+            "payment_method": "transfer",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _create_zal_issued(self, gross="200.00"):
+        from apps.invoices.services import create_manual_invoice
+        inv = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[self._item_payload(price=gross)],
+            ksef_invoice_type="ZAL",
+        )
+        inv.status = Invoice.STATUS_ISSUED
+        inv.save(update_fields=["status"])
+        return inv
+
+    def test_create_zal_via_api(self):
+        payload = self._base_payload(ksef_invoice_type="ZAL")
+        r = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        inv = Invoice.objects.get(uuid=r.data["id"])
+        self.assertEqual(inv.ksef_invoice_type, Invoice.KSEF_TYPE_ZAL)
+
+    def test_create_roz_via_api(self):
+        zal = self._create_zal_issued(gross="300.00")
+        payload = self._base_payload(
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        r = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        inv = Invoice.objects.get(uuid=r.data["id"])
+        self.assertEqual(inv.ksef_invoice_type, Invoice.KSEF_TYPE_ROZ)
+        self.assertEqual(inv.advance_links.count(), 1)
+
+    def test_roz_without_advance_ids_returns_400(self):
+        payload = self._base_payload(ksef_invoice_type="ROZ")
+        r = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_roz_total_over_zal_returns_400(self):
+        zal = self._create_zal_issued(gross="50.00")
+        payload = self._base_payload(
+            ksef_invoice_type="ROZ",
+            items=[self._item_payload(price="200.00")],
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        r = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_advance_invoices_data_in_response(self):
+        zal = self._create_zal_issued(gross="300.00")
+        payload = self._base_payload(
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        r = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        # Serializer should include advance_invoices_data on retrieval
+        detail_r = self.client.get(f"/api/invoices/{r.data['id']}/")
+        self.assertEqual(detail_r.status_code, status.HTTP_200_OK)
+        self.assertIn("advance_invoices_data", detail_r.data)
+        self.assertEqual(len(detail_r.data["advance_invoices_data"]), 1)
+        self.assertEqual(detail_r.data["advance_invoices_data"][0]["id"], str(zal.uuid))
+
+
+class ZalRozKsefValidatorTests(TestCase):
+    """Tests for KSeF validator allowing ZAL and correctly blocking ROZ without links."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="ksef-zalroz-user",
+            email="ksef-zalroz@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(name="KSeF ZAL Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.customer = Customer.objects.create(
+            name="KSeF Cust",
+            company=self.company,
+            nip="1234567890",
+        )
+
+    def _make_invoice(self, ksef_type="VAT"):
+        from apps.invoices.services import create_manual_invoice
+        inv = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "X",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "100.00",
+                "vat_rate": "23",
+            }],
+            ksef_invoice_type=ksef_type,
+        )
+        inv.status = Invoice.STATUS_ISSUED
+        inv.save(update_fields=["status"])
+        return inv
+
+    def test_zal_passes_validator(self):
+        from apps.ksef.validators import validate_invoice_for_ksef
+        inv = self._make_invoice("ZAL")
+        errors, _warnings = validate_invoice_for_ksef(inv)
+        # ZAL with customer NIP should not raise advance-link errors
+        zal_errors = [e for e in errors if "zaliczkow" in e.lower() or "rozliczeniow" in e.lower()]
+        self.assertEqual(zal_errors, [])
+
+    def test_roz_without_links_fails_validator(self):
+        from apps.ksef.validators import validate_invoice_for_ksef
+        # Manually create ROZ without InvoiceAdvance links
+        from apps.invoices.services import create_manual_invoice
+        from apps.invoices.models import InvoiceAdvance
+        # Create a ZAL first so ROZ can be created
+        zal = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "ZAL item",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "500.00",
+                "vat_rate": "23",
+            }],
+            ksef_invoice_type="ZAL",
+        )
+        zal.status = Invoice.STATUS_ISSUED
+        zal.save(update_fields=["status"])
+
+        roz = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "ROZ item",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "100.00",
+                "vat_rate": "23",
+            }],
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        # Delete the link to simulate ROZ without links
+        InvoiceAdvance.objects.filter(roz_invoice=roz).delete()
+        roz.status = Invoice.STATUS_ISSUED
+        roz.save(update_fields=["status"])
+
+        errors, _warnings = validate_invoice_for_ksef(roz)
+        roz_errors = [e for e in errors if "ROZ" in e or "zaliczkow" in e.lower()]
+        self.assertTrue(len(roz_errors) > 0, f"Expected ROZ error, got: {errors}")
+
+    def test_roz_with_links_passes_validator(self):
+        from apps.ksef.validators import validate_invoice_for_ksef
+        from apps.invoices.services import create_manual_invoice
+        zal = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "ZAL item",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "500.00",
+                "vat_rate": "23",
+            }],
+            ksef_invoice_type="ZAL",
+        )
+        zal.status = Invoice.STATUS_ISSUED
+        zal.save(update_fields=["status"])
+
+        roz = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "ROZ item",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "100.00",
+                "vat_rate": "23",
+            }],
+            ksef_invoice_type="ROZ",
+            advance_invoice_ids=[str(zal.uuid)],
+        )
+        roz.status = Invoice.STATUS_ISSUED
+        roz.save(update_fields=["status"])
+
+        errors, _warnings = validate_invoice_for_ksef(roz)
+        roz_errors = [e for e in errors if "ROZ" in e and "zaliczkow" in e.lower()]
+        self.assertEqual(roz_errors, [], f"Unexpected ROZ errors: {errors}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P_IZ — payment received (informacja o zapłacie)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaymentReceivedAtTests(TestCase):
+    """Tests for payment_received_at → P_IZ / DataZaplaty in FA-3 XML."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="piz-user",
+            email="piz@test.com",
+            password="test12345",
+        )
+        self.company = Company.objects.create(
+            name="P_IZ Co",
+            nip="9876543210",
+            address="ul. Piekarska 1",
+            city="Kraków",
+            postal_code="31-000",
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.customer = Customer.objects.create(
+            name="P_IZ Cust",
+            company=self.company,
+            nip="1234567890",
+        )
+
+    def _make_invoice(self, payment_received_at=None, payment_method="cash"):
+        from apps.invoices.services import create_manual_invoice
+        inv = create_manual_invoice(
+            customer=self.customer,
+            company=self.company,
+            user=self.user,
+            items_data=[{
+                "product_name": "Chleb",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "5.00",
+                "vat_rate": "5",
+            }],
+            payment_method=payment_method,
+            payment_received_at=payment_received_at,
+        )
+        inv.invoice_number = "FV/2026/0001"
+        inv.status = Invoice.STATUS_ISSUED
+        inv.save(update_fields=["invoice_number", "status"])
+        return inv
+
+    def test_no_p_iz_when_payment_received_at_not_set(self):
+        from apps.ksef.xml_generator import generate_fa3_xml
+        inv = self._make_invoice(payment_received_at=None, payment_method="transfer")
+        xml = generate_fa3_xml(inv)
+        self.assertNotIn("<P_IZ>", xml)
+        self.assertNotIn("<DataZaplaty>", xml)
+
+    def test_p_iz_present_when_payment_received_at_set(self):
+        from apps.ksef.xml_generator import generate_fa3_xml
+        inv = self._make_invoice(
+            payment_received_at=date(2026, 9, 5),
+            payment_method="cash",
+        )
+        xml = generate_fa3_xml(inv)
+        self.assertIn("<P_IZ>1</P_IZ>", xml)
+        self.assertIn("<DataZaplaty>2026-09-05</DataZaplaty>", xml)
+
+    def test_p_iz_inside_platnosc_block(self):
+        from apps.ksef.xml_generator import generate_fa3_xml
+        inv = self._make_invoice(
+            payment_received_at=date(2026, 9, 5),
+            payment_method="cash",
+        )
+        xml = generate_fa3_xml(inv)
+        platnosc_start = xml.index("<Platnosc>")
+        platnosc_end = xml.index("</Platnosc>")
+        platnosc_block = xml[platnosc_start:platnosc_end]
+        self.assertIn("<P_IZ>1</P_IZ>", platnosc_block)
+        self.assertIn("<DataZaplaty>2026-09-05</DataZaplaty>", platnosc_block)
+
+    def test_create_manual_invoice_stores_payment_received_at(self):
+        inv = self._make_invoice(
+            payment_received_at=date(2026, 10, 1),
+            payment_method="cash",
+        )
+        inv.refresh_from_db()
+        self.assertEqual(inv.payment_received_at, date(2026, 10, 1))
+
+    def test_create_manual_api_accepts_payment_received_at(self):
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        from apps.users.models import CompanyModule
+        CompanyModule.objects.get_or_create(
+            company=self.company, module="invoicing", defaults={"is_enabled": True}
+        )
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        r = client.post("/api/invoices/create-manual/", {
+            "customer_id": str(self.customer.uuid),
+            "items": [{
+                "product_name": "Bułka",
+                "product_unit": "szt",
+                "quantity": "1",
+                "unit_price_net": "1.50",
+                "vat_rate": "5",
+            }],
+            "issue_date": "2026-09-10",
+            "sale_date": "2026-09-10",
+            "due_date": "2026-09-10",
+            "payment_method": "cash",
+            "payment_received_at": "2026-09-10",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        inv = Invoice.objects.get(uuid=r.data["id"])
+        self.assertEqual(str(inv.payment_received_at), "2026-09-10")

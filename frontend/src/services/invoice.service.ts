@@ -1,5 +1,6 @@
 import { api } from './api';
 import type {
+  AvailableZalInvoice,
   CreateCorrectionBody,
   CreateManualInvoiceBody,
   GenerateInvoiceFromOrderBody,
@@ -146,5 +147,15 @@ export const invoiceService = {
   periodPreviewWz: (customerId: string, dateFrom: string, dateTo: string) =>
     api.get<PeriodPreviewResult>(`${basePath}period-preview/wz/`, {
       params: { customer_id: customerId, date_from: dateFrom, date_to: dateTo },
+    }),
+
+  /**
+   * Returns issued/sent/paid ZAL invoices for a customer that are not yet
+   * settled by any ROZ invoice.
+   * Used when invoiceType === 'ROZ' to show checkboxes for selecting ZAL invoices.
+   */
+  fetchAvailableZal: (customerId: string) =>
+    api.get<AvailableZalInvoice[]>(`${basePath}available-zal/`, {
+      params: { customer_id: customerId },
     }),
 };

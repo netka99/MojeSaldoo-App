@@ -3,6 +3,7 @@ import { useAuth } from '@/context/AuthContext';
 import { invoiceService, type InvoiceListParams, type InvoiceSummary } from '@/services/invoice.service';
 import { ksefService, type ReceivedInvoicesResult, type ParsedInvoiceResult, type OpexCategory, type PaperScanResult, type KorMatchResult } from '@/services/ksef.service';
 import type {
+  AvailableZalInvoice,
   CreateManualInvoiceBody,
   GenerateInvoiceFromOrderBody,
   GenerateInvoiceFromOrdersBody,
@@ -420,6 +421,21 @@ export function useInvoicePeriodPreviewWzQuery(
     queryFn: () => invoiceService.periodPreviewWz(customerId!, dateFrom!, dateTo!),
     enabled: enabled && Boolean(companyId) && Boolean(customerId) && Boolean(dateFrom) && Boolean(dateTo),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Returns issued/sent/paid ZAL invoices not yet settled by a ROZ invoice.
+ * Enabled only when invoiceType === 'ROZ' and a customer is selected.
+ */
+export function useAvailableZalQuery(customerId: string | null, enabled = true) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery<AvailableZalInvoice[]>({
+    queryKey: ['invoices', 'available-zal', { companyId, customerId }],
+    queryFn: () => invoiceService.fetchAvailableZal(customerId!),
+    enabled: enabled && Boolean(companyId) && Boolean(customerId),
+    staleTime: 30_000,
   });
 }
 

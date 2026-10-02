@@ -5,12 +5,13 @@ import { authStorage } from '@/services/api';
 import { invoiceService } from '@/services/invoice.service';
 import { useAllProductsQuery } from '@/query/use-products';
 import { useAllActiveCustomersQuery } from '@/query/use-customers';
-import { useCreateManualInvoiceMutation } from '@/query/use-invoices';
+import { useCreateManualInvoiceMutation, useAvailableZalQuery } from '@/query/use-invoices';
 import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import { usePriceInputMode } from '@/hooks/usePriceInputMode';
 import { InvoiceKsefOptions } from '@/components/features/invoicing/InvoiceKsefOptions';
 import { cn } from '@/lib/utils';
 import type {
+  AvailableZalInvoice,
   InvoiceKsefOptions as KsefOptionsType,
   InvoiceItemWrite,
   InvoicePaymentMethod,
@@ -157,8 +158,13 @@ function lineFromProduct(p: ProductOption, isGross: boolean): LineItem {
 
 const PAYMENT_OPTIONS: { value: InvoicePaymentMethod; label: string }[] = [
   { value: 'transfer', label: 'Przelew bankowy' },
-  { value: 'cash', label: 'Gotówka przy odbiorze' },
+  { value: 'cash', label: 'Gotówka' },
   { value: 'card', label: 'Karta płatnicza' },
+  { value: 'voucher', label: 'Bon' },
+  { value: 'check', label: 'Czek' },
+  { value: 'credit', label: 'Kredyt' },
+  { value: 'mobile', label: 'Płatność mobilna' },
+  { value: 'other', label: 'Inna forma płatności' },
 ];
 
 const TERM_OPTIONS = [7, 14, 21, 30, 60];
@@ -218,15 +224,13 @@ const INVOICE_TYPE_OPTIONS: { value: KsefInvoiceType; label: string; shortLabel:
     value: 'ZAL',
     label: 'Zaliczkowa',
     shortLabel: 'Zaliczkowa',
-    desc: 'Faktura zaliczkowa (ZAL) — wystawiana przed dostawą po otrzymaniu zaliczki. Wymaga późniejszej faktury rozliczeniowej.',
-    warning: 'Typ ZAL jest obsługiwany przez KSeF, ale generowanie XML jest w trakcie implementacji. Wysyłka zostanie zablokowana.',
+    desc: 'Faktura zaliczkowa (ZAL) — wystawiana przed dostawą po otrzymaniu zaliczki. Wymaga późniejszej faktury rozliczeniowej (ROZ).',
   },
   {
     value: 'ROZ',
     label: 'Rozliczeniowa',
     shortLabel: 'Rozliczeniowa',
-    desc: 'Faktura rozliczeniowa (ROZ) — rozlicza wcześniej wystawione faktury zaliczkowe.',
-    warning: 'Typ ROZ jest obsługiwany przez KSeF, ale generowanie XML jest w trakcie implementacji. Wysyłka zostanie zablokowana.',
+    desc: 'Faktura rozliczeniowa (ROZ) — rozlicza wcześniej wystawione faktury zaliczkowe (ZAL). Wybierz faktury ZAL do rozliczenia poniżej.',
   },
 ];
 
@@ -467,30 +471,333 @@ function LineRow({
   );
 }
 
-/* ─── Annotation tooltip ─────────────────────────────────────────────── */
+/* ─── Annotations section ────────────────────────────────────────────── */
 
-function AnnotationTooltip({ text }: { text: string }) {
+const ANNOTATIONS: {
+  key: keyof KsefOptionsType;
+  label: string;
+  desc: string;
+}[] = [
+  { key: 'annotation_mpp',        label: 'MPP — Mechanizm podzielonej płatności', desc: 'Wymagany gdy faktura opiewa na ≥15 000 zł brutto i zawiera towary/usługi z załącznika nr 15 do ustawy VAT. Nabywca płaci VAT na osobny rachunek VAT.' },
+  { key: 'annotation_kasowa',     label: 'Metoda kasowa',                          desc: 'Zaznacz jeśli rozliczasz VAT metodą kasową (art. 21 ust. 1). Obowiązek podatkowy powstaje z chwilą zapłaty, nie wystawienia faktury.' },
+  { key: 'annotation_odwrotne',   label: 'Odwrotne obciążenie',                   desc: 'Podatek VAT rozlicza nabywca (np. złom, odpady, usługi budowlane w podwykonawstwie B2B).' },
+  { key: 'annotation_trojstronna',label: 'Procedura trójstronna uproszczona',      desc: 'Wewnątrzwspólnotowe transakcje łańcuchowe z trzema podmiotami z różnych krajów UE (art. 135 ust. 1 pkt 4).' },
+  { key: 'annotation_zwolnienie', label: 'Dostawa zwolniona z VAT',               desc: 'Towary/usługi zwolnione z VAT (art. 43 ust. 1, art. 113 ust. 1 i 9 lub art. 82 ust. 3).' },
+  { key: 'annotation_marza',      label: 'Procedura marży',                        desc: 'Sprzedaż towarów używanych, dzieł sztuki, antyków lub biur podróży (art. 119/120). VAT od marży, nie od całej ceny.' },
+  { key: 'annotation_oss',        label: 'Procedura OSS',                          desc: 'Sprzedaż B2C do konsumentów w innych krajach UE przez platformę OSS (limit 10 000 EUR).' },
+  { key: 'annotation_tp',         label: 'TP — Powiązania między stronami',        desc: 'Nabywca i sprzedawca są podmiotami powiązanymi (rodzina, udziały ≥25%, wspólny zarząd). Wymagane w JPK.' },
+  { key: 'annotation_fp',         label: 'FP — Faktura do paragonu',               desc: 'Faktura wystawiana na podstawie wcześniej wydrukowanego paragonu z kasy fiskalnej (art. 109 ust. 3d).' },
+];
+
+function AnnotationsSection({
+  value,
+  onChange,
+}: {
+  value: KsefOptionsType;
+  onChange: (patch: Partial<KsefOptionsType>) => void;
+}) {
   const [open, setOpen] = useState(false);
+  const activeCount = ANNOTATIONS.filter((a) => value[a.key]).length;
+
   return (
-    <div className="relative">
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <button
         type="button"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        className="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus:outline-none"
-        aria-label="Więcej informacji"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50"
       >
-        <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Adnotacje VAT</span>
+          {activeCount > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              {activeCount} aktywne
+            </span>
+          )}
+        </div>
+        <svg
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+          className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')}
+        >
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="divide-y divide-slate-100 border-t border-slate-100">
+          {ANNOTATIONS.map((a) => {
+            const isOss = value.annotation_oss;
+            const disabledByOss = a.key === 'annotation_marza' && !!isOss;
+            return (
+            <label key={a.key} className={cn('flex items-start gap-3 px-4 py-3', disabledByOss ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-slate-50/70')}>
+              <input
+                type="checkbox"
+                checked={!!value[a.key]}
+                disabled={disabledByOss}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  if (a.key === 'annotation_oss' && checked) {
+                    onChange({ annotation_oss: true, annotation_marza: false });
+                  } else {
+                    onChange({ [a.key]: checked });
+                  }
+                }}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              />
+              <div className="min-w-0">
+                <span className="block text-sm font-medium text-slate-800">{a.label}</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">{a.desc}</span>
+                {disabledByOss && (
+                  <span className="mt-1 block text-[11px] text-amber-600">Niedostępne gdy zaznaczono Procedurę OSS</span>
+                )}
+              </div>
+            </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Transaction conditions (Warunki transakcji) accordion ─────────── */
+
+type ContractEntry = { date: string; number: string };
+
+function TransactionConditionsSection({
+  contracts,
+  onContractsChange,
+  purchaseOrders,
+  onPurchaseOrdersChange,
+}: {
+  contracts: ContractEntry[];
+  onContractsChange: (v: ContractEntry[]) => void;
+  purchaseOrders: ContractEntry[];
+  onPurchaseOrdersChange: (v: ContractEntry[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const hasData = contracts.some(c => c.date || c.number) || purchaseOrders.some(p => p.date || p.number);
+
+  function addContract() {
+    onContractsChange([...contracts, { date: '', number: '' }]);
+    if (!open) setOpen(true);
+  }
+  function removeContract(i: number) {
+    onContractsChange(contracts.filter((_, idx) => idx !== i));
+  }
+  function updateContract(i: number, field: 'date' | 'number', val: string) {
+    onContractsChange(contracts.map((c, idx) => idx === i ? { ...c, [field]: val } : c));
+  }
+  function addPO() {
+    onPurchaseOrdersChange([...purchaseOrders, { date: '', number: '' }]);
+    if (!open) setOpen(true);
+  }
+  function removePO(i: number) {
+    onPurchaseOrdersChange(purchaseOrders.filter((_, idx) => idx !== i));
+  }
+  function updatePO(i: number, field: 'date' | 'number', val: string) {
+    onPurchaseOrdersChange(purchaseOrders.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
+  }
+
+  return (
+    <div className="rounded-3xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between px-5 py-4 text-left"
+      >
+        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Warunki transakcji (umowy, zamówienia)
+          {hasData && (
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+              {contracts.filter(c => c.date || c.number).length + purchaseOrders.filter(p => p.date || p.number).length}
+            </span>
+          )}
+        </span>
+        <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {open && (
-        <div className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
-          <div className="absolute -bottom-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-b border-r border-slate-200 bg-white" />
-          <p className="text-xs leading-relaxed text-slate-600">{text}</p>
+        <div className="border-t border-border/40 px-5 pb-5 pt-4 space-y-5">
+
+          {/* Umowy */}
+          <div>
+            <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Umowy</p>
+            {contracts.map((c, i) => (
+              <div key={i} className="mb-2 flex items-end gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Data umowy</label>
+                  <input
+                    type="date"
+                    value={c.date}
+                    onChange={e => updateContract(i, 'date', e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Numer umowy</label>
+                  <input
+                    type="text"
+                    placeholder="np. UMOWA/2026/001"
+                    value={c.number}
+                    onChange={e => updateContract(i, 'number', e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeContract(i)}
+                  className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"
+                  aria-label="Usuń umowę"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
+                    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addContract}
+              className="mt-1 text-sm font-medium text-primary hover:underline"
+            >
+              + Dodaj umowę
+            </button>
+          </div>
+
+          {/* Zamówienia klienta */}
+          <div>
+            <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Zamówienia klienta (PO)</p>
+            {purchaseOrders.map((p, i) => (
+              <div key={i} className="mb-2 flex items-end gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Data zamówienia</label>
+                  <input
+                    type="date"
+                    value={p.date}
+                    onChange={e => updatePO(i, 'date', e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Numer zamówienia</label>
+                  <input
+                    type="text"
+                    placeholder="np. ZAM/2026/001"
+                    value={p.number}
+                    onChange={e => updatePO(i, 'number', e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removePO(i)}
+                  className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"
+                  aria-label="Usuń zamówienie"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
+                    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addPO}
+              className="mt-1 text-sm font-medium text-primary hover:underline"
+            >
+              + Dodaj zamówienie
+            </button>
+          </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── ZAL selection section (for ROZ invoices) ───────────────────────── */
+
+function ZalSelectionSection({
+  availableZal,
+  selectedIds,
+  onChange,
+  customerId,
+}: {
+  availableZal: AvailableZalInvoice[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  customerId: string;
+}) {
+  function toggle(id: string) {
+    onChange(
+      selectedIds.includes(id)
+        ? selectedIds.filter((x) => x !== id)
+        : [...selectedIds, id],
+    );
+  }
+
+  const totalSelected = availableZal
+    .filter((z) => selectedIds.includes(z.id))
+    .reduce((sum, z) => sum + parseFloat(z.total_gross || '0'), 0);
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3.5">
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700">
+          Faktury zaliczkowe (ZAL) do rozliczenia
+        </span>
+        {selectedIds.length > 0 && (
+          <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+            {selectedIds.length} wybrano · {pln.format(totalSelected)}
+          </span>
+        )}
+      </div>
+
+      {!customerId ? (
+        <p className="text-xs text-slate-500">Wybierz klienta, aby zobaczyć dostępne faktury zaliczkowe.</p>
+      ) : availableZal.length === 0 ? (
+        <p className="text-xs text-slate-500">
+          Brak nierozliczonych faktur zaliczkowych (ZAL) dla tego klienta.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {availableZal.map((zal) => {
+            const checked = selectedIds.includes(zal.id);
+            return (
+              <label
+                key={zal.id}
+                className={cn(
+                  'flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 transition-colors',
+                  checked
+                    ? 'border-amber-400 bg-amber-100'
+                    : 'border-amber-200/70 bg-white hover:bg-amber-50',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(zal.id)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600"
+                />
+                <div className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-slate-800">
+                    {zal.invoice_number ?? '—'}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {formatDateMed(zal.issue_date)} · {pln.format(parseFloat(zal.total_gross))} brutto
+                  </span>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      {selectedIds.length === 0 && Boolean(customerId) && availableZal.length > 0 && (
+        <p className="mt-2 text-[11px] text-amber-700">
+          Zaznacz przynajmniej jedną fakturę zaliczkową, aby wystawić fakturę ROZ.
+        </p>
       )}
     </div>
   );
@@ -636,10 +943,16 @@ function InvoiceManualPageContent() {
 
   /* ── Payment & KSeF ── */
   const [paymentMethod, setPaymentMethod] = useState<InvoicePaymentMethod>('transfer');
+  const [paymentReceivedAt, setPaymentReceivedAt] = useState<string | null>(null);
+  const [otherPaymentDescription, setOtherPaymentDescription] = useState('');
+  const [dueDateDescription, setDueDateDescription] = useState('');
   const [invoiceType, setInvoiceType] = useState<KsefInvoiceType>('VAT');
+  const [selectedZalIds, setSelectedZalIds] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
   const [ksefOptions, setKsefOptions] = useState<KsefOptionsType>({});
   const [ksefOpen, setKsefOpen] = useState(false);
+  const [contracts, setContracts] = useState<{ date: string; number: string }[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<{ date: string; number: string }[]>([]);
   const [invoiceNumberOverride, setInvoiceNumberOverride] = useState('');
   const [numberEditingHeader, setNumberEditingHeader] = useState(false);
   const [placeOfIssue, setPlaceOfIssue] = useState('');
@@ -651,6 +964,12 @@ function InvoiceManualPageContent() {
     queryFn: () => invoiceService.nextNumber(issueDate).then((r) => r),
     staleTime: 30_000,
   });
+
+  /* ── Available ZAL invoices (for ROZ type) ── */
+  const { data: availableZal = [] } = useAvailableZalQuery(
+    customerId || null,
+    invoiceType === 'ROZ' && Boolean(customerId),
+  );
 
   /* ── Company defaults ── */
   const resolved = useResolvedCompanyId();
@@ -666,6 +985,15 @@ function InvoiceManualPageContent() {
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company?.bank_account_iban, company?.bank_swift, company?.bank_name]);
+
+  /* Auto-set payment received date for cash payments */
+  useEffect(() => {
+    if (paymentMethod === 'cash') {
+      setPaymentReceivedAt((prev) => prev ?? issueDate);
+    } else {
+      setPaymentReceivedAt(null);
+    }
+  }, [paymentMethod, issueDate]);
 
   /* Warn on tab close */
   useEffect(() => {
@@ -753,7 +1081,10 @@ function InvoiceManualPageContent() {
 
   const vatGroups = useMemo(() => buildVatGroups(lines, isGross), [lines, isGross]);
 
-  const canSubmit = customerId !== '' && lines.some((l) => l.product_name.trim() && l.unit_price_net);
+  const canSubmit =
+    customerId !== '' &&
+    lines.some((l) => l.product_name.trim() && l.unit_price_net) &&
+    (invoiceType !== 'ROZ' || selectedZalIds.length > 0);
 
   function linesLabel(n: number) {
     if (n === 1) return '1 pozycja';
@@ -793,6 +1124,16 @@ function InvoiceManualPageContent() {
         prices_include_vat: isGross,
         invoice_number: invoiceNumberOverride.trim() || undefined,
         place_of_issue: placeOfIssue.trim() || undefined,
+        advance_invoice_ids: invoiceType === 'ROZ' ? selectedZalIds : undefined,
+        payment_received_at: paymentReceivedAt || undefined,
+        other_payment_description: paymentMethod === 'other' ? otherPaymentDescription : undefined,
+        due_date_description: dueDateDescription.trim() || undefined,
+        contracts: contracts.filter(c => c.date || c.number).length > 0
+          ? contracts.filter(c => c.date || c.number)
+          : undefined,
+        purchase_orders: purchaseOrders.filter(p => p.date || p.number).length > 0
+          ? purchaseOrders.filter(p => p.date || p.number)
+          : undefined,
       });
       navigate(`/invoices/${inv.id}`);
     } catch (e) {
@@ -856,13 +1197,13 @@ function InvoiceManualPageContent() {
       {/* ── Scrollable content ── */}
       <div className="flex flex-col gap-5 px-4 pt-5 pb-[calc(76px+90px+env(safe-area-inset-bottom))] md:pb-[calc(90px+env(safe-area-inset-bottom))]">
 
-        {/* ── Numer faktury + daty ── */}
+        {/* ── Numer faktury + data wystawienia ── */}
         <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] md:rounded-3xl">
-          <div className="grid grid-cols-2 divide-x divide-slate-100 md:grid-cols-4">
+          <div className="grid grid-cols-2 divide-x divide-slate-100">
 
             {/* Numer faktury */}
-            <div className="flex flex-col gap-1 px-4 py-3.5 md:px-5">
-              <span className="text-[10px] font-medium text-muted-foreground">Numer faktury</span>
+            <div className="flex flex-col gap-0.5 px-4 py-3.5 md:px-5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Numer faktury</span>
               {numberEditingHeader ? (
                 <input
                   type="text"
@@ -872,7 +1213,7 @@ function InvoiceManualPageContent() {
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setNumberEditingHeader(false); }}
                   placeholder={nextNumberData?.next_number ?? '…'}
                   autoFocus
-                  className="w-full rounded-md border border-primary/30 bg-transparent px-1.5 py-0.5 text-sm font-semibold text-foreground placeholder:font-normal placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="w-full rounded-md border border-primary/30 bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground placeholder:font-normal placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               ) : (
                 <button
@@ -880,26 +1221,26 @@ function InvoiceManualPageContent() {
                   onClick={() => setNumberEditingHeader(true)}
                   className="group flex items-center gap-1.5 text-left"
                 >
-                  <span className="text-sm font-semibold text-foreground">
+                  <span className="text-sm font-medium text-slate-800">
                     {invoiceNumberOverride || nextNumberData?.next_number || '—'}
                   </span>
-                  <svg className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <svg className="h-3.5 w-3.5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
                     <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" strokeLinejoin="round"/>
                     <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </button>
               )}
-              {!invoiceNumberOverride && (
-                <span className="text-[10px] text-muted-foreground/60">Nadany automatycznie</span>
-              )}
+              <span className="text-[10px] text-slate-400">
+                {invoiceNumberOverride ? 'Własny numer' : 'Nadany automatycznie'}
+              </span>
             </div>
 
             {/* Data wystawienia */}
-            <div className="flex flex-col gap-1 px-4 py-3.5 md:px-5">
-              <span className="text-[10px] font-medium text-muted-foreground">Data wystawienia</span>
+            <div className="flex flex-col gap-0.5 px-4 py-3.5 md:px-5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Data wystawienia</span>
               <label className="group flex cursor-pointer items-center gap-1.5">
-                <span className="text-sm font-semibold text-foreground">{formatDateMed(issueDate)}</span>
-                <svg className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round"/></svg>
+                <span className="text-sm font-medium text-slate-800">{formatDateMed(issueDate)}</span>
+                <svg className="h-3.5 w-3.5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round"/></svg>
                 <input
                   type="date"
                   value={issueDate}
@@ -907,28 +1248,7 @@ function InvoiceManualPageContent() {
                   className="sr-only"
                 />
               </label>
-            </div>
-
-            {/* Data sprzedaży */}
-            <div className="flex flex-col gap-1 px-4 py-3.5 md:px-5">
-              <span className="text-[10px] font-medium text-muted-foreground">Data sprzedaży</span>
-              <label className="group flex cursor-pointer items-center gap-1.5">
-                <span className="text-sm font-semibold text-foreground">{formatDateMed(saleDate)}</span>
-                <svg className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round"/></svg>
-                <input
-                  type="date"
-                  value={saleDate}
-                  onChange={(e) => setSaleDate(e.target.value)}
-                  className="sr-only"
-                />
-              </label>
-            </div>
-
-            {/* Termin płatności */}
-            <div className="flex flex-col gap-1 px-4 py-3.5 md:px-5">
-              <span className="text-[10px] font-medium text-muted-foreground">Termin płatności</span>
-              <span className="text-sm font-semibold text-foreground">{formatDateMed(dueDate)}</span>
-              <span className="text-[10px] text-muted-foreground/60">{paymentTermDays} dni</span>
+              <span className="text-[10px] text-slate-400">Kliknij, aby zmienić</span>
             </div>
 
           </div>
@@ -1053,10 +1373,6 @@ function InvoiceManualPageContent() {
                 <p className="mt-2 max-w-md text-[11px] capitalize text-slate-400">
                   Słownie: {plnToWords(totalGross)}
                 </p>
-                <p className="mt-2 flex items-center gap-1 text-[11px] font-medium text-emerald-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  Poprawne przeliczenie
-                </p>
               </div>
               <div className="w-full space-y-2 text-xs md:w-72">
                 <div className="flex items-center justify-between text-slate-500">
@@ -1110,6 +1426,44 @@ function InvoiceManualPageContent() {
                 </div>
               </div>
 
+              {/* Opis innej formy płatności — tylko przy 'other' */}
+              {paymentMethod === 'other' && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Opis formy płatności <span className="normal-case font-normal text-destructive">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={otherPaymentDescription}
+                    onChange={(e) => setOtherPaymentDescription(e.target.value)}
+                    placeholder="Np. płatność blikiem, kompensata..."
+                    maxLength={256}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Wymagane przy innej formie płatności (InnyRodzajPlatnosci w KSeF).
+                  </p>
+                </div>
+              )}
+
+              {/* Data otrzymania zapłaty — tylko przy gotówce */}
+              {paymentMethod === 'cash' && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Data otrzymania zapłaty
+                  </label>
+                  <input
+                    type="date"
+                    value={paymentReceivedAt ?? issueDate}
+                    onChange={(e) => setPaymentReceivedAt(e.target.value || null)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Przy gotówce = data wystawienia. Pojawi się jako P_IZ w XML KSeF.
+                  </p>
+                </div>
+              )}
+
               {/* Termin płatności (dni) */}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1129,9 +1483,23 @@ function InvoiceManualPageContent() {
                     <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><ChevronDownIcon /></span>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    → {formatDateMed(dueDate)}
+                    → {dueDateDescription.trim() ? '—' : formatDateMed(dueDate)}
                   </span>
                 </div>
+                {/* Opcjonalny opis terminu zamiast daty */}
+                <input
+                  type="text"
+                  value={dueDateDescription}
+                  onChange={(e) => setDueDateDescription(e.target.value)}
+                  placeholder="Opis terminu (opcjonalnie) — np. Płatność przy odbiorze"
+                  maxLength={256}
+                  className="mt-1.5 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm placeholder:text-slate-400/70 focus:outline-none focus:ring-2 focus:ring-primary/25"
+                />
+                {dueDateDescription.trim() && (
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Opis zastąpi datę terminu w XML KSeF (OpisTerminuPlatnosci).
+                  </p>
+                )}
               </div>
 
               {/* Wybierz datę albo okres (P_6) */}
@@ -1152,6 +1520,16 @@ function InvoiceManualPageContent() {
                   </select>
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><ChevronDownIcon /></span>
                 </div>
+                {saleDateType === 'issue' && (
+                  <p className="mt-1.5 text-[11px] text-slate-400">
+                    Data sprzedaży = data wystawienia ({formatDateMed(issueDate)}). Brak osobnego pola P_6 w KSeF.
+                  </p>
+                )}
+                {saleDateType === 'various' && (
+                  <p className="mt-1.5 text-[11px] text-slate-400">
+                    Brak wspólnej daty — KSeF nie wymaga podania daty w nagłówku. Stosuj gdy pozycje dotyczą różnych okresów.
+                  </p>
+                )}
               </div>
 
               {/* Data dostawy/wykonania — tylko dla 'single' */}
@@ -1200,49 +1578,24 @@ function InvoiceManualPageContent() {
                 </>
               )}
 
-              {/* Adnotacje */}
-              <div className="md:col-span-3">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Adnotacje
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  {/* MPP */}
-                  <div className="flex items-center gap-1.5">
-                    <label className={cn(
-                      'flex cursor-pointer items-center gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors',
-                      ksefOptions.annotation_mpp
-                        ? 'border-primary/40 bg-primary/5 text-primary'
-                        : 'border-input bg-background text-foreground hover:border-primary/30',
-                    )}>
-                      <input
-                        type="checkbox"
-                        checked={!!ksefOptions.annotation_mpp}
-                        onChange={(e) => setKsefOptions((prev) => ({ ...prev, annotation_mpp: e.target.checked }))}
-                        className="h-3.5 w-3.5 accent-primary"
-                      />
-                      <span className="font-medium">Mechanizm podzielonej płatności</span>
-                    </label>
-                    <AnnotationTooltip text="Zaznacz gdy wartość faktury przekracza 15 000 zł brutto i dotyczy towarów/usług z załącznika nr 15 do ustawy o VAT. Przy płatności bank automatycznie rozdziela kwotę VAT na specjalny rachunek VAT nabywcy." />
-                  </div>
-                  {/* Metoda kasowa */}
-                  <div className="flex items-center gap-1.5">
-                    <label className={cn(
-                      'flex cursor-pointer items-center gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors',
-                      ksefOptions.annotation_kasowa
-                        ? 'border-primary/40 bg-primary/5 text-primary'
-                        : 'border-input bg-background text-foreground hover:border-primary/30',
-                    )}>
-                      <input
-                        type="checkbox"
-                        checked={!!ksefOptions.annotation_kasowa}
-                        onChange={(e) => setKsefOptions((prev) => ({ ...prev, annotation_kasowa: e.target.checked }))}
-                        className="h-3.5 w-3.5 accent-primary"
-                      />
-                      <span className="font-medium">Metoda kasowa</span>
-                    </label>
-                    <AnnotationTooltip text="Zaznacz jeśli rozliczasz VAT metodą kasową (mały podatnik VAT). Obowiązek podatkowy powstaje dopiero w momencie otrzymania zapłaty od nabywcy, a nie w dniu wystawienia faktury." />
-                  </div>
+              {/* Faktury zaliczkowe ZAL — widoczne tylko przy ROZ */}
+              {invoiceType === 'ROZ' && (
+                <div className="md:col-span-3">
+                  <ZalSelectionSection
+                    availableZal={availableZal}
+                    selectedIds={selectedZalIds}
+                    onChange={setSelectedZalIds}
+                    customerId={customerId}
+                  />
                 </div>
+              )}
+
+              {/* Adnotacje — zwijana sekcja */}
+              <div className="md:col-span-3">
+                <AnnotationsSection
+                  value={ksefOptions}
+                  onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+                />
               </div>
 
               {/* Miejsce wystawienia */}
@@ -1275,6 +1628,14 @@ function InvoiceManualPageContent() {
             </div>
           </div>
         </div>
+
+        {/* ══ Warunki transakcji accordion ══ */}
+        <TransactionConditionsSection
+          contracts={contracts}
+          onContractsChange={setContracts}
+          purchaseOrders={purchaseOrders}
+          onPurchaseOrdersChange={setPurchaseOrders}
+        />
 
         {/* ══ KSeF accordion ══ */}
         <div className="rounded-3xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">

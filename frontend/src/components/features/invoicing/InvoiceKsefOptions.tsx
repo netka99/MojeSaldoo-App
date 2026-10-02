@@ -12,48 +12,21 @@
  *     paymentMethod={paymentMethod}
  *   />
  */
-import type { InvoiceKsefOptions as KsefOptionsType, KsefInvoiceType } from '@/types';
+import { useState } from 'react';
+import type { InvoiceKsefOptions as KsefOptionsType } from '@/types';
 import { Accordion } from '@/components/ui/Accordion';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils';
 
+function maskIban(iban: string): string {
+  const clean = iban.replace(/\s/g, '');
+  if (clean.length < 8) return iban;
+  return clean.slice(0, 4) + ' •••• •••• •••• ' + clean.slice(-4);
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
-function AnnotationRow({
-  label,
-  description,
-  checked,
-  onChange,
-  warn,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  warn?: string;
-}) {
-  return (
-    <label className="flex cursor-pointer gap-3 rounded-lg p-2 transition-colors hover:bg-muted/30">
-      <div className="mt-0.5 shrink-0">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-input accent-primary"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-      </div>
-      <div className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
-        <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
-        {warn && checked && (
-          <span className="mt-1 block text-xs font-medium text-amber-600">{warn}</span>
-        )}
-      </div>
-    </label>
-  );
-}
 
 function TagInput({
   label,
@@ -136,188 +109,85 @@ export type InvoiceKsefOptionsProps = {
   value: KsefOptionsType;
   onChange: (patch: Partial<KsefOptionsType>) => void;
   /** Current payment method — bank section auto-opens when 'transfer'. */
-  paymentMethod?: 'transfer' | 'cash' | 'card';
+  paymentMethod?: import('@/types').InvoicePaymentMethod;
 };
-
-const KSEF_TYPE_OPTIONS: { value: KsefInvoiceType; label: string; description: string }[] = [
-  { value: 'VAT', label: 'Podstawowa', description: 'Standardowa faktura VAT — najczęstszy przypadek.' },
-  {
-    value: 'ZAL',
-    label: 'Zaliczkowa',
-    description: 'Faktura zaliczkowa (ZAL) — wystawiana przed dostawą po otrzymaniu zaliczki. Wymaga późniejszej faktury rozliczeniowej.',
-  },
-  {
-    value: 'ROZ',
-    label: 'Rozliczeniowa',
-    description: 'Faktura rozliczeniowa (ROZ) — rozlicza wcześniej wystawione faktury zaliczkowe.',
-  },
-];
-
-const selectClass = cn(
-  'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-);
 
 export function InvoiceKsefOptions({ value, onChange, paymentMethod }: InvoiceKsefOptionsProps) {
   const set = <K extends keyof KsefOptionsType>(key: K, v: KsefOptionsType[K]) =>
     onChange({ [key]: v } as Partial<KsefOptionsType>);
 
-  const bankOpen = paymentMethod === 'transfer' && Boolean(value.bank_account_iban);
-
-  const activeAnnotations = [
-    value.annotation_mpp,
-    value.annotation_kasowa,
-    value.annotation_odwrotne,
-    value.annotation_trojstronna,
-    value.annotation_zwolnienie,
-    value.annotation_marza,
-    value.annotation_tp,
-    value.annotation_fp,
-    value.annotation_oss,
-  ].filter(Boolean).length;
+  const [bankEditing, setBankEditing] = useState(false);
+  const hasBankFromSettings = Boolean(value.bank_account_iban);
+  const bankOpen = paymentMethod === 'transfer' && hasBankFromSettings;
 
   return (
     <div className="space-y-3">
-      {/* ── Invoice type ── */}
-      <Accordion
-        title="Rodzaj faktury"
-        description={
-          value.ksef_invoice_type && value.ksef_invoice_type !== 'VAT'
-            ? `Wybrany: ${KSEF_TYPE_OPTIONS.find((o) => o.value === value.ksef_invoice_type)?.label}`
-            : 'Podstawowa (domyślna) — zmień tylko dla zaliczkowych lub rozliczeniowych'
-        }
-        defaultOpen={false}
-      >
-        <div className="space-y-2">
-          {KSEF_TYPE_OPTIONS.map((opt) => (
-            <label key={opt.value} className="flex cursor-pointer gap-3 rounded-lg p-2 hover:bg-muted/30">
-              <input
-                type="radio"
-                className="mt-0.5 h-4 w-4 accent-primary"
-                name="ksef_invoice_type"
-                value={opt.value}
-                checked={(value.ksef_invoice_type ?? 'VAT') === opt.value}
-                onChange={() => set('ksef_invoice_type', opt.value)}
-              />
-              <span>
-                <span className="block text-sm font-medium">{opt.label}</span>
-                <span className="block text-xs text-muted-foreground">{opt.description}</span>
-                {opt.value !== 'VAT' && (
-                  <span className="mt-1 block text-xs text-amber-600">
-                    Uwaga: typ {opt.value} jest obsługiwany przez KSeF, ale generowanie XML dla zaliczkowych/rozliczeniowych
-                    jest w trakcie implementacji. Wysyłka zostanie zablokowana.
-                  </span>
-                )}
-              </span>
-            </label>
-          ))}
-        </div>
-      </Accordion>
-
-      {/* ── Annotations ── */}
-      <Accordion
-        title={`Adnotacje FA-3 ${activeAnnotations > 0 ? `(${activeAnnotations} aktywnych)` : '(opcjonalne)'}`}
-        description="Znaczniki wymagane przepisami VAT — MPP, odwrotne obciążenie, zwolnienia, powiązania i inne"
-        defaultOpen={activeAnnotations > 0}
-      >
-        <div className="space-y-1 divide-y divide-border/50">
-          <AnnotationRow
-            label="MPP — Mechanizm podzielonej płatności"
-            description="Wymagany gdy faktura opiewa na ≥15 000 PLN brutto i zawiera towary/usługi z załącznika 15 do ustawy VAT (np. stal, elektronika, paliwa). Nabywca musi zapłacić VAT na osobny rachunek VAT."
-            checked={value.annotation_mpp ?? false}
-            onChange={(v) => set('annotation_mpp', v)}
-          />
-          <AnnotationRow
-            label="Metoda kasowa"
-            description="Zaznacz jeśli rozliczasz VAT metodą kasową (art. 21 ust. 1 ustawy VAT). Dotyczy małych podatników, u których obowiązek podatkowy powstaje z chwilą zapłaty."
-            checked={value.annotation_kasowa ?? false}
-            onChange={(v) => set('annotation_kasowa', v)}
-          />
-          <AnnotationRow
-            label="Odwrotne obciążenie"
-            description="Stosuj gdy podatek VAT rozlicza nabywca a nie sprzedawca (np. złom, odpady, usługi budowlane w podwykonawstwie B2B, niektóre usługi elektroniczne)."
-            checked={value.annotation_odwrotne ?? false}
-            onChange={(v) => set('annotation_odwrotne', v)}
-          />
-          <AnnotationRow
-            label="Procedura trójstronna uproszczona"
-            description="Wewnątrzwspólnotowe transakcje łańcuchowe z trzema podmiotami z różnych krajów UE (art. 135 ust. 1 pkt 4 ustawy VAT). Rzadko stosowane."
-            checked={value.annotation_trojstronna ?? false}
-            onChange={(v) => set('annotation_trojstronna', v)}
-          />
-          <AnnotationRow
-            label="Dostawa zwolniona z VAT"
-            description="Zaznacz gdy sprzedajesz towary lub usługi zwolnione z podatku VAT na podstawie art. 43 ust. 1, art. 113 ust. 1 i 9 lub art. 82 ust. 3 (np. usługi medyczne, edukacyjne, finansowe, małe podmioty do limitu 200 000 PLN)."
-            checked={value.annotation_zwolnienie ?? false}
-            onChange={(v) => set('annotation_zwolnienie', v)}
-            warn="Nie można łączyć ze zwolnieniem z VAT i mechanizmem MPP jednocześnie."
-          />
-          <AnnotationRow
-            label="Procedura marży"
-            description="Dotyczy sprzedaży towarów używanych, dzieł sztuki, antyków lub biur podróży (art. 119 lub 120 ustawy VAT). VAT jest obliczany od marży, nie od całej ceny."
-            checked={value.annotation_marza ?? false}
-            onChange={(v) => set('annotation_marza', v)}
-          />
-          <AnnotationRow
-            label="Procedura OSS (One Stop Shop)"
-            description="Sprzedaż B2C do konsumentów w innych krajach UE przez platformę OSS. Dotyczy sklepów internetowych przekraczających limit 10 000 EUR."
-            checked={value.annotation_oss ?? false}
-            onChange={(v) => set('annotation_oss', v)}
-          />
-          <AnnotationRow
-            label="TP — Powiązania między stronami"
-            description="Wymagany zgodnie z §10 ust. 4 pkt 3 rozporządzenia JPK gdy nabywca i sprzedawca są podmiotami powiązanymi (rodzina, udziały ≥25%, wspólny zarząd itp.)."
-            checked={value.annotation_tp ?? false}
-            onChange={(v) => set('annotation_tp', v)}
-          />
-          <AnnotationRow
-            label="FP — Faktura do paragonu fiskalnego"
-            description="Zaznacz gdy wystawiasz fakturę na podstawie wcześniej wydrukowanego paragonu z kasy fiskalnej (art. 109 ust. 3d ustawy VAT). Faktura jest powiązana z paragonem w ewidencji JPK."
-            checked={value.annotation_fp ?? false}
-            onChange={(v) => set('annotation_fp', v)}
-          />
-        </div>
-      </Accordion>
-
       {/* ── Bank account ── */}
-      <Accordion
-        title="Dane bankowe i płatność"
-        description="Numer rachunku bankowego, SWIFT, link do płatności, skonto"
-        defaultOpen={bankOpen}
-      >
-        <div className="space-y-4">
-          <Input
-            label="Numer rachunku IBAN"
-            placeholder="np. PL12 1234 5678 9012 3456 7890 1234"
-            value={value.bank_account_iban ?? ''}
-            onChange={(e) => set('bank_account_iban', e.target.value)}
-          />
-          <p className="mt-0 text-xs text-muted-foreground">
-            Wymagany przy formie płatności &quot;przelew&quot;. Rachunek nie jest wysyłany do KSeF przy gotówce.
+      {hasBankFromSettings && !bankEditing ? (
+        /* Dane z ustawień — tylko info + link */
+        <div className="flex items-center justify-between gap-3 px-1 py-0.5">
+          <p className="text-xs text-slate-400">
+            Dane bankowe pobrane z ustawień firmy:{' '}
+            <span className="font-mono text-slate-600">{maskIban(value.bank_account_iban ?? '')}</span>
           </p>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setBankEditing(true)}
+            className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Zmień
+          </button>
+        </div>
+      ) : (
+        /* Pola edycji — widoczne po kliknięciu "Zmień" lub gdy brak IBAN w ustawieniach */
+        <Accordion
+          title="Dane bankowe"
+          description="Numer rachunku IBAN, SWIFT, nazwa banku"
+          defaultOpen
+        >
+          <div className="space-y-4">
+            {hasBankFromSettings && (
+              <button
+                type="button"
+                onClick={() => setBankEditing(false)}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                ← Przywróć dane z ustawień firmy
+              </button>
+            )}
             <Input
-              label="Kod SWIFT / BIC"
-              placeholder="np. PKOPPLPW"
-              value={value.bank_swift ?? ''}
-              onChange={(e) => set('bank_swift', e.target.value)}
+              label="Numer rachunku IBAN"
+              placeholder="np. PL12 1234 5678 9012 3456 7890 1234"
+              value={value.bank_account_iban ?? ''}
+              onChange={(e) => set('bank_account_iban', e.target.value)}
             />
-            <Input
-              label="Nazwa banku"
-              placeholder="np. PKO Bank Polski"
-              value={value.bank_name ?? ''}
-              onChange={(e) => set('bank_name', e.target.value)}
-            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Kod SWIFT / BIC"
+                placeholder="np. PKOPPLPW"
+                value={value.bank_swift ?? ''}
+                onChange={(e) => set('bank_swift', e.target.value)}
+              />
+              <Input
+                label="Nazwa banku"
+                placeholder="np. PKO Bank Polski"
+                value={value.bank_name ?? ''}
+                onChange={(e) => set('bank_name', e.target.value)}
+              />
+            </div>
           </div>
+        </Accordion>
+      )}
+
+      {/* Link do płatności + skonto — zawsze widoczne w accordion */}
+      <Accordion title="Płatność elektroniczna i skonto" description="Link do bramki, identyfikator KSeF, warunki skonta" defaultOpen={false}>
+        <div className="space-y-4">
           <Input
             label="Link do płatności online (opcjonalnie)"
             placeholder="https://platnosc.example.com/faktura/..."
             value={value.payment_link ?? ''}
             onChange={(e) => set('payment_link', e.target.value)}
           />
-          <p className="text-xs text-muted-foreground">
-            Link do bramki płatniczej (max 512 znaków). Wysyłany do KSeF i widoczny dla nabywcy.
-          </p>
           <Input
             label="Identyfikator płatności KSeF (opcjonalnie)"
             placeholder="np. 001ABC123DEF4"
