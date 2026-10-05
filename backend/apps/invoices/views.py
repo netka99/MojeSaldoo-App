@@ -207,6 +207,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         payment_method = None if pm_raw in (None, "") else pm_raw
         show_wz_raw = request.data.get("show_wz_numbers", True)
         show_wz_numbers = bool(show_wz_raw) if not isinstance(show_wz_raw, bool) else show_wz_raw
+        item_quantities = request.data.get("item_quantities", None)
+        if item_quantities is not None and not isinstance(item_quantities, dict):
+            raise ValidationError({"item_quantities": "Must be an object of order item UUID to quantity."})
         try:
             invoice = generate_invoice_from_orders(
                 order_ids=order_ids,
@@ -220,6 +223,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 due_date=due_date,
                 payment_method=payment_method,
                 show_wz_numbers=show_wz_numbers,
+                form_data=request.data,
+                item_quantities=item_quantities,
             )
         except ValidationError as exc:
             log_error(
@@ -346,6 +351,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 due_date_description=due_date_description,
                 contracts=contracts_raw or None,
                 purchase_orders=purchase_orders_raw or None,
+                form_data=request.data,
             )
         except ValidationError as exc:
             log_error(

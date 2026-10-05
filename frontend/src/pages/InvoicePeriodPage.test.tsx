@@ -42,6 +42,8 @@ vi.mock('@/query/use-invoices', async (importOriginal) => {
       isPending: false,
     }),
     useInvoicePeriodPreviewWzQuery: (...args: unknown[]) => useInvoicePeriodPreviewWzQueryMock(...args),
+    useAvailableZalQuery: () => ({ data: [] }),
+    useInvoiceNextNumberQuery: () => ({ data: { next_number: 'FV/1/10/2026' } }),
   };
 });
 
@@ -278,7 +280,7 @@ describe('InvoicePeriodPage', () => {
     await user.click(screen.getByRole('button', { name: /Dalej/i }));
 
     // Step 2 — submit
-    await screen.findByText(/Data wystawienia/i);
+    await screen.findByLabelText(/Data wystawienia/i);
     await user.click(screen.getByRole('button', { name: /Wystaw fakturę/i }));
 
     await waitFor(() => {

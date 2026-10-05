@@ -3,21 +3,23 @@
 @tailwind utilities;
 
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
+/* Opacity only. A leftover transform would trap position:sticky and position:fixed
+   inside the page, so the header and action bar would scroll with the content. */
 .animate-page-enter {
-  animation: page-enter 0.25s ease-out both;
+  animation: page-enter 0.25s ease-out;
 }
 
 /* Luminous Ledger — design tokens (hex / project-specific; page bg uses ksef-flow --background) */
 :root {
-  /* Page / screen tone aligned with ksef-flow hsl(220 20% 97%) */
-  --surface: hsl(220 20% 97%);
-  --surface-low: hsl(220 14% 96%);
-  --surface-container: hsl(220 13% 94%);
-  --surface-highest: hsl(220 13% 91%);
+  /* Page background — exact iOS light mode #F2F2F7 */
+  --surface: hsl(240 11% 96%);
+  --surface-low: hsl(240 9% 94%);
+  --surface-container: hsl(240 8% 92%);
+  --surface-highest: hsl(240 8% 88%);
   --surface-card: #ffffff;
 
   --primary: #5856d6;
@@ -42,7 +44,7 @@
    * Shadcn / Tailwind hsl(var(--name)) — core neutrals aligned with ksef-flow
    * https://github.com/netka99/ksef-flow/blob/main/src/index.css
    */
-  --background: 220 20% 97%;
+  --background: 240 11% 96%;
   --foreground: 220 20% 10%;
   --card: 0 0% 100%;
   --card-foreground: 220 20% 10%;
@@ -87,6 +89,64 @@
   * {
     @apply border-border;
   }
+}
+
+/* Form controls — iOS UITextField: 17px body, ~36px tall, visible edge on a white card.
+   44px is the list-row tap target, not the height of a text field. */
+@layer components {
+  .field-ios {
+    @apply w-full rounded-lg border px-3 py-2 text-sm leading-5 text-slate-900
+           shadow-none placeholder:text-slate-500
+           transition-colors
+           focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/30;
+    background-color: #F2F2F7;
+    border-color: #AEAEB2;
+  }
+  .field-ios-tall {
+    @apply field-ios py-2.5;
+  }
+  /* Compact field — inline controls in line-item rows (price, unit, etc.) */
+  .field-ios-sm {
+    @apply rounded-lg border px-2.5 py-1.5 text-sm font-medium leading-5 text-slate-900
+           shadow-none placeholder:text-slate-500
+           transition-colors
+           focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/30;
+    background-color: #F2F2F7;
+    border-color: #AEAEB2;
+  }
+  /* Inline select — same surface as a text field, not a capsule */
+  .select-pill {
+    @apply cursor-pointer appearance-none rounded-lg border
+           py-2 pl-3 pr-8 text-sm font-medium leading-5 text-slate-900 shadow-none
+           transition-colors
+           focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/30;
+    background-color: #F2F2F7;
+    border-color: #AEAEB2;
+  }
+  /* Date input — same surface as select-pill */
+  .date-pill {
+    @apply cursor-pointer rounded-lg border
+           px-3 py-2 text-sm font-medium leading-5 text-slate-900 shadow-none
+           transition-colors
+           focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/30;
+    background-color: #F2F2F7;
+    border-color: #AEAEB2;
+  }
+  .date-pill::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.7;
+  }
+}
+
+/* iOS-style card shadows — defined here so they always compile */
+.shadow-apple-sm {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.10);
+}
+.shadow-apple-md {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 8px 24px rgba(0,0,0,0.14);
+}
+.shadow-apple-float {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12), 0 16px 48px rgba(0,0,0,0.18);
 }
 
 body {

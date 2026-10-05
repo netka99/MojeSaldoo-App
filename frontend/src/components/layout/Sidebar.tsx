@@ -270,7 +270,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-background md:flex"
+      className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col self-start border-r border-border bg-background md:flex"
       aria-label="Boczne menu"
     >
       <div className="border-b border-border p-4">

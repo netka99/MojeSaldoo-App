@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.db.models import Sum
@@ -205,6 +205,137 @@ def generate_invoice_from_order(
     return invoice
 
 
+_ANNOTATION_FIELDS = (
+    "annotation_mpp",
+    "annotation_kasowa",
+    "annotation_odwrotne",
+    "annotation_trojstronna",
+    "annotation_zwolnienie",
+    "annotation_marza",
+    "annotation_tp",
+    "annotation_fp",
+    "annotation_oss",
+)
+
+_TEXT_FIELDS = {
+    "footer_text": 3500,
+    "extra_notes": None,
+    "payment_link": 512,
+    "ksef_payment_id": 50,
+    "discount_conditions": 256,
+    "other_payment_description": 256,
+    "due_date_description": 256,
+    "place_of_issue": 100,
+    "bank_account_iban": 34,
+    "bank_swift": 11,
+    "bank_name": 100,
+}
+
+
+def apply_submitted_invoice_fields(invoice, data, *, company, customer):
+    """Persist KSeF and header fields sent with create-manual and generate-from-orders."""
+    from datetime import date as date_cls
+
+    if not isinstance(data, dict):
+        return invoice
+
+    update: list[str] = []
+
+    for name in _ANNOTATION_FIELDS:
+        if name in data:
+            setattr(invoice, name, bool(data.get(name)))
+            update.append(name)
+
+    for name, max_len in _TEXT_FIELDS.items():
+        if name not in data or data.get(name) is None:
+            continue
+        text = str(data.get(name)).strip()
+        if max_len:
+            text = text[:max_len]
+        setattr(invoice, name, text)
+        update.append(name)
+
+    if isinstance(data.get("wz_numbers"), list):
+        invoice.wz_numbers = [str(x).strip() for x in data["wz_numbers"] if str(x).strip()]
+        update.append("wz_numbers")
+    if isinstance(data.get("contracts"), list):
+        invoice.contracts = data["contracts"]
+        update.append("contracts")
+    if isinstance(data.get("purchase_orders"), list):
+        invoice.purchase_orders = data["purchase_orders"]
+        update.append("purchase_orders")
+    if "prices_include_vat" in data:
+        invoice.prices_include_vat = bool(data.get("prices_include_vat"))
+        update.append("prices_include_vat")
+    if "show_wz_numbers" in data:
+        raw = data.get("show_wz_numbers")
+        invoice.show_wz_numbers = raw if isinstance(raw, bool) else bool(raw)
+        update.append("show_wz_numbers")
+    if "payment_received_at" in data:
+        raw = data.get("payment_received_at")
+        invoice.payment_received_at = None if raw in (None, "") else date_cls.fromisoformat(str(raw)[:10])
+        update.append("payment_received_at")
+
+    custom = str(data.get("invoice_number") or "").strip()
+    if custom and custom != (invoice.invoice_number or ""):
+        if Invoice.objects.filter(company=company, invoice_number=custom).exclude(pk=invoice.pk).exists():
+            raise ValidationError({"invoice_number": f"Numer faktury '{custom}' jest już zajęty."})
+        invoice.invoice_number = custom
+        update.append("invoice_number")
+
+    ksef_type = data.get("ksef_invoice_type") or None
+    if ksef_type:
+        valid_types = [Invoice.KSEF_TYPE_VAT, Invoice.KSEF_TYPE_ZAL, Invoice.KSEF_TYPE_ROZ]
+        if ksef_type not in valid_types:
+            raise ValidationError({"ksef_invoice_type": f"Nieprawidłowy typ faktury: {ksef_type}."})
+        invoice.ksef_invoice_type = ksef_type
+        update.append("ksef_invoice_type")
+
+    if update:
+        invoice.save(update_fields=list(dict.fromkeys(update)) + ["updated_at"])
+
+    advance_ids = data.get("advance_invoice_ids") or []
+    if (
+        invoice.ksef_invoice_type == Invoice.KSEF_TYPE_ROZ
+        and advance_ids
+        and not invoice.advance_links.exists()
+    ):
+        from apps.invoices.models import InvoiceAdvance
+        if not isinstance(advance_ids, list):
+            raise ValidationError({"advance_invoice_ids": "Must be a list of UUIDs."})
+        zal_invoices = list(Invoice.objects.filter(
+            uuid__in=advance_ids,
+            company=company,
+            ksef_invoice_type=Invoice.KSEF_TYPE_ZAL,
+            customer=customer,
+        ))
+        found_ids = {str(z.uuid) for z in zal_invoices}
+        missing = [uid for uid in advance_ids if str(uid) not in found_ids]
+        if missing:
+            raise ValidationError({
+                "advance_invoice_ids": (
+                    "Nie znaleziono faktur zaliczkowych lub nie należą do tego klienta: "
+                    + ", ".join(str(m) for m in missing)
+                )
+            })
+        total_zal = sum(z.total_gross for z in zal_invoices)
+        if invoice.total_gross > total_zal + Decimal("0.01"):
+            raise ValidationError({
+                "advance_invoice_ids": (
+                    f"Kwota faktury rozliczeniowej ({invoice.total_gross} zł) "
+                    f"przekracza łączną wartość faktur zaliczkowych ({total_zal} zł)."
+                )
+            })
+        for zal in zal_invoices:
+            InvoiceAdvance.objects.create(
+                roz_invoice=invoice,
+                zal_invoice=zal,
+                deduction_amount=zal.total_gross,
+            )
+
+    return invoice
+
+
 @transaction.atomic
 def generate_invoice_from_orders(
     *,
@@ -219,6 +350,8 @@ def generate_invoice_from_orders(
     due_date: date | None = None,
     payment_method: str | None = None,
     show_wz_numbers: bool = True,
+    form_data: dict | None = None,
+    item_quantities: dict | None = None,
 ) -> Invoice:
     """
     Create a draft invoice from one or more orders belonging to the same customer.
@@ -284,12 +417,25 @@ def generate_invoice_from_orders(
     # Collect lines from all orders
     returns_mode = getattr(company, "invoice_returns_mode", "fv_kor")
     item_ids_set = {str(uid) for uid in order_item_ids} if order_item_ids is not None else None
+    qty_overrides: dict[str, object] = {}
+    if item_quantities is not None:
+        if not isinstance(item_quantities, dict):
+            raise ValidationError({"item_quantities": "Must be an object of order item UUID to quantity."})
+        qty_overrides = {str(key): value for key, value in item_quantities.items()}
     all_lines: list[tuple[OrderItem, Decimal]] = []
     for order in orders:
         for oi in order.items.all().select_related("product"):
             if item_ids_set is not None and str(oi.uuid) not in item_ids_set:
                 continue
             qty = billable_quantity(oi, returns_mode=returns_mode)
+            if str(oi.uuid) in qty_overrides:
+                raw = str(qty_overrides[str(oi.uuid)]).replace(",", ".").strip()
+                try:
+                    qty = Decimal(raw)
+                except InvalidOperation:
+                    raise ValidationError({"item_quantities": "Nieprawidłowa ilość."})
+                if qty < 0:
+                    raise ValidationError({"item_quantities": "Ilość nie może być ujemna."})
             if qty > 0:
                 all_lines.append((oi, qty))
 
@@ -362,6 +508,8 @@ def generate_invoice_from_orders(
 
     recalculate_invoice_totals(invoice)
     invoice.save(update_fields=["subtotal_net", "subtotal_gross", "vat_amount", "total_gross", "updated_at"])
+    if form_data:
+        apply_submitted_invoice_fields(invoice, form_data, company=company, customer=customer)
     return invoice
 
 
@@ -440,6 +588,7 @@ def create_manual_invoice(
     due_date_description: str | None = None,
     contracts: list | None = None,
     purchase_orders: list | None = None,
+    form_data: dict | None = None,
 ) -> Invoice:
     """
     Create a draft invoice manually (no order required).
@@ -585,6 +734,9 @@ def create_manual_invoice(
         company=company,
         user=user,
     )
+
+    if form_data:
+        apply_submitted_invoice_fields(invoice, form_data, company=company, customer=customer)
 
     return invoice
 

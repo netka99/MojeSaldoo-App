@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { authStorage } from '@/services/api';
@@ -44,7 +45,7 @@ function addDaysIso(isoYmd: string, days: number): string {
   ].join('-');
 }
 
-function formatDateMed(isoDate: string): string {
+export function formatDateMed(isoDate: string): string {
   const d = new Date(isoDate);
   return isNaN(d.getTime()) ? isoDate : plDate.format(d);
 }
@@ -78,7 +79,7 @@ function chunkToWords(n: number): string {
   return parts.join(' ');
 }
 
-function plnToWords(amount: number): string {
+export function plnToWords(amount: number): string {
   const zloty = Math.floor(Math.abs(amount));
   const grosze = Math.round((Math.abs(amount) - zloty) * 100);
   if (zloty === 0 && grosze === 0) return 'zero złotych 00/100';
@@ -211,6 +212,48 @@ function ChevronDownIcon() {
   return <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
+type SectionIconName = 'hash' | 'calendar' | 'user' | 'list' | 'receipt' | 'card' | 'sliders' | 'file' | 'bank' | 'truck' | 'link' | 'tag' | 'scroll';
+
+function SectionIcon({ name, className = 'h-4 w-4' }: { name: SectionIconName; className?: string }) {
+  const props = { className, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true } as const;
+  switch (name) {
+    case 'hash':
+      return <svg {...props}><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+    case 'calendar':
+      return <svg {...props}><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round" /></svg>;
+    case 'user':
+      return <svg {...props}><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" strokeLinecap="round" /><circle cx="12" cy="7" r="4" /></svg>;
+    case 'list':
+      return <svg {...props}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" /></svg>;
+    case 'receipt':
+      return <svg {...props}><path d="M6 2h12v20l-3-2-3 2-3-2-3 2V2z" strokeLinejoin="round" /><path d="M9 7h6M9 11h6M9 15h4" strokeLinecap="round" /></svg>;
+    case 'card':
+      return <svg {...props}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" strokeLinecap="round" /></svg>;
+    case 'sliders':
+      return <svg {...props}><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4" strokeLinecap="round" /></svg>;
+    case 'file':
+      return <svg {...props}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" strokeLinejoin="round" /><path d="M14 2v6h6M8 13h8M8 17h5" strokeLinecap="round" /></svg>;
+    case 'bank':
+      return <svg {...props}><path d="M3 10h18M5 10v8M10 10v8M14 10v8M19 10v8M3 18h18M12 3l9 7H3l9-7z" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+    case 'truck':
+      return <svg {...props}><path d="M1 7h13v10H1zM14 10h5l3 3v4h-8" strokeLinejoin="round" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="18" r="2" /></svg>;
+    case 'link':
+      return <svg {...props}><path d="M10 13a5 5 0 007.5.5l2-2a5 5 0 00-7-7l-1.5 1.5" strokeLinecap="round" /><path d="M14 11a5 5 0 00-7.5-.5l-2 2a5 5 0 007 7L13 18" strokeLinecap="round" /></svg>;
+    case 'tag':
+      return <svg {...props}><path d="M20 13l-7 7-9-9V4h7l9 9z" strokeLinejoin="round" /><circle cx="7.5" cy="7.5" r="1" /></svg>;
+    case 'scroll':
+      return <svg {...props}><path d="M8 4h11a2 2 0 012 2v12a2 2 0 01-2 2H8" strokeLinejoin="round" /><path d="M8 4a2 2 0 00-2 2v14a2 2 0 104 0V6" strokeLinecap="round" /></svg>;
+  }
+}
+
+export function SectionMark({ name }: { name: SectionIconName }) {
+  return (
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary" aria-hidden>
+      <SectionIcon name={name} />
+    </span>
+  );
+}
+
 /* ─── Invoice type dropdown ──────────────────────────────────────────── */
 
 const INVOICE_TYPE_OPTIONS: { value: KsefInvoiceType; label: string; shortLabel: string; desc: string; warning?: string }[] = [
@@ -234,7 +277,7 @@ const INVOICE_TYPE_OPTIONS: { value: KsefInvoiceType; label: string; shortLabel:
   },
 ];
 
-function InvoiceTypeDropdown({
+export function InvoiceTypeDropdown({
   value,
   onChange,
 }: {
@@ -251,7 +294,7 @@ function InvoiceTypeDropdown({
         <select
           value={value}
           onChange={(e) => onChange(e.target.value as KsefInvoiceType)}
-          className="cursor-pointer appearance-none rounded-full border border-slate-200 bg-white py-1 pl-3 pr-7 text-[13px] font-semibold text-slate-700 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          className="select-pill cursor-pointer"
         >
           {INVOICE_TYPE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -331,10 +374,10 @@ function LineRow({
 
   const unitLabel = line.product_unit === 'szt' ? 'szt.' : (line.product_unit || 'szt.');
 
-  const fieldClass = 'w-full rounded-xl border border-slate-200 bg-slate-50/50 px-2.5 py-2 text-xs font-medium text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25';
+  const fieldClass = 'w-full field-ios-sm';
 
   return (
-    <div className="rounded-2xl border border-slate-200/70 bg-white p-3 transition duration-200 hover:border-primary/30 hover:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] md:flex md:items-center md:gap-4 md:p-4">
+    <div className="rounded-xl border border-[#AEAEB2] bg-[#F2F2F7] p-3 md:flex md:items-center md:gap-4 md:p-4">
       <div className="flex min-w-0 items-start justify-between gap-3 md:w-72 md:shrink-0">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-100 bg-indigo-50 text-sm font-bold text-primary md:h-11 md:w-11 md:rounded-2xl md:text-lg" aria-hidden>
@@ -343,7 +386,7 @@ function LineRow({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               {line.product_id ? (
-                <p className="break-words text-xs font-bold text-slate-800 md:text-sm">{line.product_name}</p>
+                <p className="break-words text-sm font-semibold text-slate-900">{line.product_name}</p>
               ) : (
                 <input
                   type="text"
@@ -356,7 +399,7 @@ function LineRow({
               )}
             </div>
             {(line.sku || line.stock_total != null) && (
-              <p className="mt-0.5 truncate text-[10px] text-slate-400 md:text-xs">
+              <p className="mt-0.5 truncate text-xs text-slate-600">
                 {line.sku && `SKU: ${line.sku}`}
                 {line.sku && line.stock_total != null && ' • '}
                 {line.stock_total != null && `Magazyn: ${line.stock_total} ${line.product_unit}`}
@@ -376,7 +419,7 @@ function LineRow({
 
       <div className="mt-2.5 flex flex-1 flex-wrap items-center gap-2 border-t border-slate-200/50 pt-2.5 md:mt-0 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-6 md:border-0 md:pt-0">
         <div className="flex flex-wrap items-center gap-2 md:justify-self-start">
-        <div className="flex items-center rounded-2xl border border-slate-200/80 bg-slate-50 p-0.5 md:p-1">
+        <div className="flex items-center rounded-lg border border-[#AEAEB2] bg-white p-0.5">
           <button
             type="button"
             onClick={() => adjustQty(-1)}
@@ -392,7 +435,7 @@ function LineRow({
             onChange={(e) => onUpdate({ quantity: toDecimalInput(e.target.value) })}
             onFocus={(e) => e.target.select()}
             aria-label="Ilość"
-            className="w-8 bg-transparent text-center text-xs font-bold tabular-nums text-slate-900 focus:outline-none md:w-12 md:text-sm"
+            className="w-10 bg-transparent text-center text-sm font-semibold tabular-nums text-slate-900 focus:outline-none"
           />
           <button
             type="button"
@@ -405,7 +448,7 @@ function LineRow({
         </div>
 
         {line.product_id ? (
-          <span className="text-xs font-medium text-slate-500">{unitLabel}</span>
+          <span className="text-sm font-medium text-slate-700">{unitLabel}</span>
         ) : (
           <input
             type="text"
@@ -426,33 +469,38 @@ function LineRow({
             onFocus={(e) => e.target.select()}
             placeholder="0,00"
             aria-label={priceLabel}
-            className={cn(fieldClass, 'pr-7 text-right font-semibold')}
+            className={cn(fieldClass, 'bg-white pr-7 text-right font-semibold')}
           />
-          <span className="pointer-events-none absolute right-2.5 top-2 text-xs font-medium text-slate-400">zł</span>
+          <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-600">zł</span>
         </div>
 
         {line.product_id ? (
-          <span className="hidden rounded-lg bg-slate-100 px-2 py-1 text-[12px] font-semibold text-slate-500 md:inline">
+          <span className="hidden rounded-lg border border-[#AEAEB2] bg-white px-2.5 py-1.5 text-sm font-medium text-slate-800 md:inline">
             {line.vat_rate === 'zw' ? 'ZW' : `VAT ${line.vat_rate}%`}
           </span>
         ) : (
-          <select
-            value={line.vat_rate}
-            onChange={(e) => onUpdate({ vat_rate: e.target.value })}
-            aria-label="Stawka VAT"
-            className="hidden rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-[12px] font-semibold text-slate-500 focus:outline-none focus:ring-1 focus:ring-primary md:inline"
-          >
-            {['0', '5', '8', '23', 'zw'].map((r) => (
-              <option key={r} value={r}>{r === 'zw' ? 'ZW' : `VAT ${r}%`}</option>
-            ))}
-          </select>
+          <div className="relative hidden md:block">
+            <select
+              value={line.vat_rate}
+              onChange={(e) => onUpdate({ vat_rate: e.target.value })}
+              aria-label="Stawka VAT"
+              className="select-pill bg-white"
+            >
+              {['0', '5', '8', '23', 'zw'].map((r) => (
+                <option key={r} value={r}>{r === 'zw' ? 'ZW' : `VAT ${r}%`}</option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </span>
+          </div>
         )}
         </div>
 
         <div className="ml-auto flex items-center gap-3 md:ml-0 md:justify-self-end">
           <div className="text-right">
-            <p className="text-xs font-bold tabular-nums text-slate-900 md:text-sm">{pln.format(lineGross)}</p>
-            <p className="text-[10px] tabular-nums text-slate-400 md:text-[11px]">
+            <p className="text-sm font-semibold tabular-nums text-slate-900">{pln.format(lineGross)}</p>
+            <p className="text-xs tabular-nums text-slate-600">
               netto: {pln.format(lineNet)}
               <span className="md:hidden"> • {line.vat_rate === 'zw' ? 'ZW' : `VAT ${line.vat_rate}%`}</span>
             </p>
@@ -467,6 +515,90 @@ function LineRow({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─── Faktura details accordion ──────────────────────────────────────── */
+
+export function InvoiceDetailsAccordion({
+  footerText, onFooterTextChange,
+  dueDateDescription, onDueDateDescriptionChange,
+  placeOfIssue, onPlaceOfIssueChange,
+}: {
+  footerText: string; onFooterTextChange: (v: string) => void;
+  dueDateDescription: string; onDueDateDescriptionChange: (v: string) => void;
+  placeOfIssue: string; onPlaceOfIssueChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const filledCount = [footerText.trim(), dueDateDescription.trim(), placeOfIssue.trim()].filter(Boolean).length;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 bg-white px-4 py-3.5 text-left hover:bg-slate-50 md:px-6"
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <SectionIcon name="file" />
+          </span>
+          <span className="text-sm font-semibold text-slate-900">Faktura</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {!open && filledCount > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">{filledCount} ustawione</span>
+          )}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+            className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')}>
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-4 border-t border-slate-200 px-4 py-4 md:px-6">
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-800">Stopka faktury</label>
+            <textarea
+              value={footerText}
+              onChange={(e) => onFooterTextChange(e.target.value)}
+              rows={3}
+              placeholder="Np. Numer zamówienia: ZAM/2026/09/88, dane kontaktowe, informacje o gwarancji…"
+              className="field-ios-tall w-full resize-none"
+            />
+            <p className="mt-1.5 text-xs text-slate-500">{footerText.length} / 3 500 znaków</p>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-800">Opis terminu płatności</label>
+            <input
+              type="text"
+              value={dueDateDescription}
+              onChange={(e) => onDueDateDescriptionChange(e.target.value)}
+              placeholder="Np. Płatność przy odbiorze"
+              maxLength={256}
+              className="field-ios w-full"
+            />
+            <p className="mt-1.5 text-xs text-slate-500">Zastąpi datę terminu w KSeF</p>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-800">Miejsce wystawienia</label>
+            <input
+              type="text"
+              value={placeOfIssue}
+              onChange={(e) => onPlaceOfIssueChange(e.target.value)}
+              placeholder="Np. Kraków"
+              className="field-ios w-full"
+            />
+            <p className="mt-1.5 text-xs text-slate-500">Domyślnie: miasto firmy</p>
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
@@ -489,7 +621,7 @@ const ANNOTATIONS: {
   { key: 'annotation_fp',         label: 'FP — Faktura do paragonu',               desc: 'Faktura wystawiana na podstawie wcześniej wydrukowanego paragonu z kasy fiskalnej (art. 109 ust. 3d).' },
 ];
 
-function AnnotationsSection({
+export function AnnotationsSection({
   value,
   onChange,
 }: {
@@ -500,30 +632,35 @@ function AnnotationsSection({
   const activeCount = ANNOTATIONS.filter((a) => value[a.key]).length;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50"
+        className="flex w-full items-center justify-between gap-3 bg-white px-4 py-3.5 text-left hover:bg-slate-50 md:px-6"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Adnotacje VAT</span>
-          {activeCount > 0 && (
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <SectionIcon name="tag" />
+          </span>
+          <span className="text-sm font-semibold text-slate-900">Adnotacje VAT</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {!open && activeCount > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
               {activeCount} aktywne
             </span>
           )}
-        </div>
-        <svg
-          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
-          className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')}
-        >
-          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+          <svg
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+            className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')}
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
       </button>
 
       {open && (
-        <div className="divide-y divide-slate-100 border-t border-slate-100">
+        <div className="divide-y divide-slate-200 border-t border-slate-200">
           {ANNOTATIONS.map((a) => {
             const isOss = value.annotation_oss;
             const disabledByOss = a.key === 'annotation_marza' && !!isOss;
@@ -563,7 +700,7 @@ function AnnotationsSection({
 
 type ContractEntry = { date: string; number: string };
 
-function TransactionConditionsSection({
+export function TransactionConditionsSection({
   contracts,
   onContractsChange,
   purchaseOrders,
@@ -575,8 +712,6 @@ function TransactionConditionsSection({
   onPurchaseOrdersChange: (v: ContractEntry[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-
-  const hasData = contracts.some(c => c.date || c.number) || purchaseOrders.some(p => p.date || p.number);
 
   function addContract() {
     onContractsChange([...contracts, { date: '', number: '' }]);
@@ -599,50 +734,57 @@ function TransactionConditionsSection({
     onPurchaseOrdersChange(purchaseOrders.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
   }
 
+  const filledCount = contracts.filter(c => c.date || c.number).length + purchaseOrders.filter(p => p.date || p.number).length;
+
   return (
-    <div className="rounded-3xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="flex w-full items-center justify-between px-5 py-4 text-left"
+        className="flex w-full items-center justify-between gap-3 bg-white px-4 py-3.5 text-left hover:bg-slate-50 md:px-6"
       >
-        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Warunki transakcji (umowy, zamówienia)
-          {hasData && (
-            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-              {contracts.filter(c => c.date || c.number).length + purchaseOrders.filter(p => p.date || p.number).length}
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <SectionIcon name="scroll" />
+          </span>
+          <span className="min-w-0 text-sm font-semibold text-slate-900">Warunki transakcji</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {!open && filledCount > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+              {filledCount === 1 ? '1 pozycja' : filledCount < 5 ? `${filledCount} pozycje` : `${filledCount} pozycji`}
             </span>
           )}
+          <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </span>
-        <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
-          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
       </button>
       {open && (
-        <div className="border-t border-border/40 px-5 pb-5 pt-4 space-y-5">
+        <div className="flex flex-col gap-4 border-t border-slate-200 px-4 py-4 md:px-6">
 
           {/* Umowy */}
           <div>
-            <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Umowy</p>
+            <p className="mb-2.5 text-sm font-medium text-slate-700">Umowy</p>
             {contracts.map((c, i) => (
               <div key={i} className="mb-2 flex items-end gap-2">
                 <div className="flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">Data umowy</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Data umowy</label>
                   <input
                     type="date"
                     value={c.date}
                     onChange={e => updateContract(i, 'date', e.target.value)}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full field-ios-tall"
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">Numer umowy</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Numer umowy</label>
                   <input
                     type="text"
                     placeholder="np. UMOWA/2026/001"
                     value={c.number}
                     onChange={e => updateContract(i, 'number', e.target.value)}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full field-ios-tall"
                   />
                 </div>
                 <button
@@ -668,26 +810,26 @@ function TransactionConditionsSection({
 
           {/* Zamówienia klienta */}
           <div>
-            <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Zamówienia klienta (PO)</p>
+            <p className="mb-2.5 text-sm font-medium text-slate-700">Zamówienia klienta (PO)</p>
             {purchaseOrders.map((p, i) => (
               <div key={i} className="mb-2 flex items-end gap-2">
                 <div className="flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">Data zamówienia</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Data zamówienia</label>
                   <input
                     type="date"
                     value={p.date}
                     onChange={e => updatePO(i, 'date', e.target.value)}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full field-ios-tall"
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">Numer zamówienia</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Numer zamówienia</label>
                   <input
                     type="text"
                     placeholder="np. ZAM/2026/001"
                     value={p.number}
                     onChange={e => updatePO(i, 'number', e.target.value)}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full field-ios-tall"
                   />
                 </div>
                 <button
@@ -718,7 +860,7 @@ function TransactionConditionsSection({
 
 /* ─── ZAL selection section (for ROZ invoices) ───────────────────────── */
 
-function ZalSelectionSection({
+export function ZalSelectionSection({
   availableZal,
   selectedIds,
   onChange,
@@ -851,7 +993,7 @@ function ProductSearchBar({
   }
 
   return (
-    <div ref={wrapRef} className="flex flex-col gap-2 rounded-2xl border-2 border-dashed border-slate-200/90 bg-slate-50/40 p-3 transition hover:border-primary/40 md:flex-row md:items-center md:p-4">
+    <div ref={wrapRef} className="flex flex-col gap-2 rounded-xl border border-dashed border-[#AEAEB2] bg-white p-3 md:flex-row md:items-center md:p-4">
       <div className="relative min-w-0 flex-1">
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
           <SearchIcon />
@@ -927,6 +1069,7 @@ function InvoiceManualPageContent() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const customerWrapRef = useRef<HTMLDivElement>(null);
+  const skipCustomerAutoOpen = useRef(true);
 
   /* ── Lines ── */
   const [lines, setLines] = useState<LineItem[]>([]);
@@ -948,9 +1091,8 @@ function InvoiceManualPageContent() {
   const [dueDateDescription, setDueDateDescription] = useState('');
   const [invoiceType, setInvoiceType] = useState<KsefInvoiceType>('VAT');
   const [selectedZalIds, setSelectedZalIds] = useState<string[]>([]);
-  const [notes, setNotes] = useState('');
+  const [notes] = useState('');
   const [ksefOptions, setKsefOptions] = useState<KsefOptionsType>({});
-  const [ksefOpen, setKsefOpen] = useState(false);
   const [contracts, setContracts] = useState<{ date: string; number: string }[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<{ date: string; number: string }[]>([]);
   const [invoiceNumberOverride, setInvoiceNumberOverride] = useState('');
@@ -1080,6 +1222,8 @@ function InvoiceManualPageContent() {
   }, 0), [isGross, lines]);
 
   const vatGroups = useMemo(() => buildVatGroups(lines, isGross), [lines, isGross]);
+  const amountInWords = plnToWords(totalGross);
+  const amountInWordsLabel = amountInWords.charAt(0).toUpperCase() + amountInWords.slice(1);
 
   const canSubmit =
     customerId !== '' &&
@@ -1143,11 +1287,13 @@ function InvoiceManualPageContent() {
 
   /* ───────────────────────── RENDER ──────────────────────────────── */
 
-  return (
-    <div className="relative mx-auto flex w-full max-w-5xl flex-col">
+  return createPortal(
+    <div className="fixed inset-x-0 top-0 bottom-[83px] z-30 flex flex-col bg-[#F2F2F7] md:bottom-0 md:left-64">
 
-      <header className="sticky top-0 z-20 border-b border-slate-200/60 bg-white/80 px-4 py-3 backdrop-blur-md md:px-8 md:py-0 md:h-20">
-        <div className="flex items-center justify-between gap-3 md:h-full">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto w-full max-w-5xl px-4 py-3 md:flex md:h-20 md:items-center md:px-8 md:py-0">
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3 md:gap-4">
             <button
               type="button"
@@ -1188,22 +1334,24 @@ function InvoiceManualPageContent() {
               <InvoiceTypeDropdown value={invoiceType} onChange={setInvoiceType} />
             </div>
           </div>
-        </div>
-        <div className="mt-2 flex items-center md:hidden">
-          <InvoiceTypeDropdown value={invoiceType} onChange={setInvoiceType} />
+          </div>
+          <div className="mt-2 flex items-center md:hidden">
+            <InvoiceTypeDropdown value={invoiceType} onChange={setInvoiceType} />
+          </div>
         </div>
       </header>
 
-      {/* ── Scrollable content ── */}
-      <div className="flex flex-col gap-5 px-4 pt-5 pb-[calc(76px+90px+env(safe-area-inset-bottom))] md:pb-[calc(90px+env(safe-area-inset-bottom))]">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-4 py-4">
 
         {/* ── Numer faktury + data wystawienia ── */}
-        <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] md:rounded-3xl">
-          <div className="grid grid-cols-2 divide-x divide-slate-100">
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+          <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-2 md:px-6">
 
-            {/* Numer faktury */}
-            <div className="flex flex-col gap-0.5 px-4 py-3.5 md:px-5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Numer faktury</span>
+            <div>
+              <div className="mb-1.5 flex items-center gap-2.5">
+                <SectionMark name="hash" />
+                <h2 className="text-sm font-semibold text-slate-900">Numer faktury</h2>
+              </div>
               {numberEditingHeader ? (
                 <input
                   type="text"
@@ -1213,50 +1361,54 @@ function InvoiceManualPageContent() {
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setNumberEditingHeader(false); }}
                   placeholder={nextNumberData?.next_number ?? '…'}
                   autoFocus
-                  className="w-full rounded-md border border-primary/30 bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground placeholder:font-normal placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="field-ios w-full"
                 />
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setNumberEditingHeader(true)}
-                  className="group flex items-center gap-1.5 text-left"
-                >
-                  <span className="text-sm font-medium text-slate-800">
+                <div className="flex h-[38px] items-center gap-1">
+                  <span className="truncate rounded-lg bg-primary/10 px-2.5 py-1 text-base font-semibold tracking-tight text-primary">
                     {invoiceNumberOverride || nextNumberData?.next_number || '—'}
                   </span>
-                  <svg className="h-3.5 w-3.5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setNumberEditingHeader(true)}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-primary hover:bg-primary/10"
+                    aria-label="Zmień numer faktury"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
               )}
-              <span className="text-[10px] text-slate-400">
+              <p className="mt-1.5 text-xs text-slate-500">
                 {invoiceNumberOverride ? 'Własny numer' : 'Nadany automatycznie'}
-              </span>
+              </p>
             </div>
 
-            {/* Data wystawienia */}
-            <div className="flex flex-col gap-0.5 px-4 py-3.5 md:px-5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Data wystawienia</span>
-              <label className="group flex cursor-pointer items-center gap-1.5">
-                <span className="text-sm font-medium text-slate-800">{formatDateMed(issueDate)}</span>
-                <svg className="h-3.5 w-3.5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round"/></svg>
-                <input
-                  type="date"
-                  value={issueDate}
-                  onChange={(e) => setIssueDate(e.target.value)}
-                  className="sr-only"
-                />
-              </label>
-              <span className="text-[10px] text-slate-400">Kliknij, aby zmienić</span>
+            <div>
+              <div className="mb-1.5 flex items-center gap-2.5">
+                <SectionMark name="calendar" />
+                <label htmlFor="issue-date" className="text-sm font-semibold text-slate-900">Data wystawienia</label>
+              </div>
+              <input
+                id="issue-date"
+                type="date"
+                value={issueDate}
+                onChange={(e) => setIssueDate(e.target.value)}
+                className="date-pill w-full"
+              />
             </div>
 
           </div>
-        </div>
+        </section>
 
-        <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] md:rounded-3xl md:p-6">
-          <div className="mb-2.5 flex items-center justify-between md:mb-4">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Klient</h2>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-apple-sm transition hover:shadow-apple-md md:rounded-3xl md:p-6">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <SectionMark name="user" />
+              <h2 className="text-sm font-semibold text-slate-900">Klient</h2>
+            </div>
             {customerId && (
               <button type="button" onClick={clearCustomer} className="flex items-center gap-0.5 text-xs font-semibold text-primary hover:text-primary/80">
                 <span className="md:hidden">Zmień</span>
@@ -1268,15 +1420,27 @@ function InvoiceManualPageContent() {
 
           {!customerId ? (
             <div ref={customerWrapRef} className="relative">
-              <input
-                type="text"
-                value={customerSearch}
-                onChange={(e) => { setCustomerSearch(e.target.value); setCustomerId(''); setShowCustomerDropdown(true); }}
-                onFocus={() => setShowCustomerDropdown(true)}
-                placeholder="Wyszukaj klienta po nazwie lub NIP…"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25"
-                autoFocus
-              />
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                  <SearchIcon />
+                </span>
+                <input
+                  type="text"
+                  value={customerSearch}
+                  onChange={(e) => { setCustomerSearch(e.target.value); setCustomerId(''); setShowCustomerDropdown(true); }}
+                  onClick={() => setShowCustomerDropdown(true)}
+                  onFocus={() => {
+                    if (skipCustomerAutoOpen.current) {
+                      skipCustomerAutoOpen.current = false;
+                      return;
+                    }
+                    setShowCustomerDropdown(true);
+                  }}
+                  placeholder="Wyszukaj klienta po nazwie lub NIP…"
+                  className="field-ios w-full pl-9"
+                  autoFocus
+                />
+              </div>
               {showCustomerDropdown && customers.length > 0 && (
                 <ul className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-lg">
                   {customers.map((c) => (
@@ -1324,11 +1488,12 @@ function InvoiceManualPageContent() {
           )}
         </section>
 
-        <section className="space-y-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] md:rounded-3xl md:p-6">
+        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-apple-sm md:rounded-3xl md:p-6">
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold tracking-tight text-slate-900 md:text-base">Pozycje faktury</h2>
+                <SectionMark name="list" />
+                <h2 className="text-sm font-semibold text-slate-900">Pozycje faktury</h2>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 md:hidden">{lines.length}</span>
               </div>
             </div>
@@ -1362,75 +1527,132 @@ function InvoiceManualPageContent() {
           />
         </section>
 
-        <div className="flex flex-col gap-5">
-
-          <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] md:rounded-3xl md:p-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 md:text-xs">
-                  Podsumowanie kwot
-                </h2>
-                <p className="mt-2 max-w-md text-[11px] capitalize text-slate-400">
-                  Słownie: {plnToWords(totalGross)}
-                </p>
-              </div>
-              <div className="w-full space-y-2 text-xs md:w-72">
-                <div className="flex items-center justify-between text-slate-500">
-                  <span>Wartość netto</span>
-                  <span className="font-medium text-slate-800">{pln.format(totalNet)}</span>
-                </div>
-                {vatGroups.length === 0 ? (
-                  <div className="flex items-center justify-between text-slate-500">
-                    <span>VAT</span>
-                    <span className="font-medium text-slate-800">{pln.format(0)}</span>
-                  </div>
-                ) : (
-                  vatGroups.map((g) => (
-                    <div key={g.rate} className="flex items-center justify-between text-slate-500">
-                      <span>Stawka VAT {g.rate}</span>
-                      <span className="font-medium text-slate-800">{pln.format(g.vatAmt)}</span>
-                    </div>
-                  ))
-                )}
-                <div className="flex items-baseline justify-between border-t border-slate-100 pt-3">
-                  <span className="text-sm font-bold text-slate-900">Do zapłaty (Brutto)</span>
-                  <span className="text-2xl font-bold tracking-tight text-primary">{pln.format(totalGross)}</span>
-                </div>
-              </div>
+        {/* ── Podsumowanie kwot ── */}
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+          <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5 md:px-6">
+            <SectionMark name="receipt" />
+            <h2 className="text-sm font-semibold text-slate-900">Podsumowanie kwot</h2>
+          </div>
+          <div className="divide-y divide-slate-100 border-t border-slate-100">
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+              <span className="text-sm text-slate-500">Wartość netto</span>
+              <span className="text-sm font-medium tabular-nums text-slate-800">{pln.format(totalNet)}</span>
             </div>
-          </section>
+            {vatGroups.length === 0 ? (
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                <span className="text-sm text-slate-500">VAT</span>
+                <span className="text-sm font-medium tabular-nums text-slate-800">{pln.format(0)}</span>
+              </div>
+            ) : (
+              vatGroups.map((g) => (
+                <div key={g.rate} className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                  <span className="text-sm text-slate-500">Stawka VAT {g.rate}</span>
+                  <span className="text-sm font-medium tabular-nums text-slate-800">{pln.format(g.vatAmt)}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="border-t border-slate-100 bg-primary/5 px-4 py-4 md:px-6">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-sm font-semibold text-slate-800">Do zapłaty</span>
+              <span className="text-3xl font-bold tabular-nums tracking-tight text-primary">{pln.format(totalGross)}</span>
+            </div>
+            <p className="mt-1.5 text-sm text-slate-600">
+              Słownie: {amountInWordsLabel}
+            </p>
+          </div>
+        </section>
 
-          {/* ── Płatność i dostawa ── */}
-          <div className="rounded-3xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Płatność i dostawa
-            </h2>
-            <div className="grid gap-3.5 md:grid-cols-3">
+        {/* ── Płatność i dostawa ── */}
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+          <div className="divide-y divide-slate-100">
 
-              {/* Metoda płatności */}
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Metoda płatności
-                </label>
-                <div className="relative">
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as InvoicePaymentMethod)}
-                    className="w-full appearance-none rounded-xl border border-input bg-background px-3 py-2.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                  >
-                    {PAYMENT_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><ChevronDownIcon /></span>
+            {/* Nagłówek sekcji */}
+            <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5 md:px-6">
+              <SectionMark name="card" />
+              <h2 className="text-sm font-semibold text-slate-900">Płatność i dostawa</h2>
+            </div>
+
+            <div className="flex flex-col gap-4 px-4 py-4 md:px-6">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">Metoda płatności</label>
+                  <div className="relative">
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as InvoicePaymentMethod)}
+                      className="select-pill w-full"
+                    >
+                      {PAYMENT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">Termin płatności</label>
+                  <div className="relative">
+                    <select
+                      value={paymentTermDays}
+                      onChange={(e) => setPaymentTermDays(Number(e.target.value))}
+                      className="select-pill w-full"
+                    >
+                      {TERM_OPTIONS.map((d) => (
+                        <option key={d} value={d}>{termLabel(d)}</option>
+                      ))}
+                    </select>
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  </div>
+                  {!dueDateDescription.trim() && (
+                    <p className="mt-1.5 text-sm text-slate-700">do {formatDateMed(dueDate)}</p>
+                  )}
                 </div>
               </div>
 
-              {/* Opis innej formy płatności — tylko przy 'other' */}
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-800">Data sprzedaży</label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative sm:w-56 sm:shrink-0">
+                    <select
+                      value={saleDateType}
+                      onChange={(e) => setSaleDateType(e.target.value as typeof saleDateType)}
+                      className="select-pill w-full"
+                    >
+                      <option value="single">Konkretna data</option>
+                      <option value="period">Okres od–do</option>
+                      <option value="issue">= data wystawienia</option>
+                      <option value="various">Różne daty</option>
+                    </select>
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  </div>
+                  {saleDateType === 'single' && (
+                    <input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="date-pill w-full sm:w-52" required />
+                  )}
+                  {saleDateType === 'period' && (
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="date-pill min-w-0 flex-1" required />
+                      <span className="text-base text-slate-500">—</span>
+                      <input type="date" value={saleDateTo} onChange={(e) => setSaleDateTo(e.target.value)} className="date-pill min-w-0 flex-1" required />
+                    </div>
+                  )}
+                  {saleDateType === 'issue' && (
+                    <p className="text-sm text-slate-800">{formatDateMed(issueDate)}</p>
+                  )}
+                </div>
+              </div>
+
               {paymentMethod === 'other' && (
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Opis formy płatności <span className="normal-case font-normal text-destructive">*</span>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">
+                    Opis formy płatności <span className="text-destructive">*</span>
                   </label>
                   <input
                     type="text"
@@ -1438,229 +1660,73 @@ function InvoiceManualPageContent() {
                     onChange={(e) => setOtherPaymentDescription(e.target.value)}
                     placeholder="Np. płatność blikiem, kompensata..."
                     maxLength={256}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+                    className="w-full field-ios"
                   />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Wymagane przy innej formie płatności (InnyRodzajPlatnosci w KSeF).
-                  </p>
                 </div>
               )}
 
-              {/* Data otrzymania zapłaty — tylko przy gotówce */}
               {paymentMethod === 'cash' && (
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Data otrzymania zapłaty
-                  </label>
+                <div className="sm:max-w-xs">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">Data otrzymania zapłaty</label>
                   <input
                     type="date"
                     value={paymentReceivedAt ?? issueDate}
                     onChange={(e) => setPaymentReceivedAt(e.target.value || null)}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Przy gotówce = data wystawienia. Pojawi się jako P_IZ w XML KSeF.
-                  </p>
-                </div>
-              )}
-
-              {/* Termin płatności (dni) */}
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Termin płatności
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <select
-                      value={paymentTermDays}
-                      onChange={(e) => setPaymentTermDays(Number(e.target.value))}
-                      className="w-full appearance-none rounded-xl border border-input bg-background px-3 py-2.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                    >
-                      {TERM_OPTIONS.map((d) => (
-                        <option key={d} value={d}>{termLabel(d)}</option>
-                      ))}
-                    </select>
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><ChevronDownIcon /></span>
-                  </div>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    → {dueDateDescription.trim() ? '—' : formatDateMed(dueDate)}
-                  </span>
-                </div>
-                {/* Opcjonalny opis terminu zamiast daty */}
-                <input
-                  type="text"
-                  value={dueDateDescription}
-                  onChange={(e) => setDueDateDescription(e.target.value)}
-                  placeholder="Opis terminu (opcjonalnie) — np. Płatność przy odbiorze"
-                  maxLength={256}
-                  className="mt-1.5 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm placeholder:text-slate-400/70 focus:outline-none focus:ring-2 focus:ring-primary/25"
-                />
-                {dueDateDescription.trim() && (
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Opis zastąpi datę terminu w XML KSeF (OpisTerminuPlatnosci).
-                  </p>
-                )}
-              </div>
-
-              {/* Wybierz datę albo okres (P_6) */}
-              <div className="md:col-span-3">
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Wybierz datę albo okres, którego dotyczy faktura
-                </label>
-                <div className="relative">
-                  <select
-                    value={saleDateType}
-                    onChange={(e) => setSaleDateType(e.target.value as typeof saleDateType)}
-                    className="w-full appearance-none rounded-xl border border-input bg-background px-3 py-2.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                  >
-                    <option value="single">Wspólna dla całej faktury data dokonania lub zakończenia dostawy towarów lub wykonania usługi</option>
-                    <option value="period">Okres, którego dotyczy faktura (art. 19a ust. 3/4/5)</option>
-                    <option value="issue">Data wystawienia jest taka sama jak data wykonania czynności</option>
-                    <option value="various">Różne daty dla poszczególnych towarów lub usług</option>
-                  </select>
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><ChevronDownIcon /></span>
-                </div>
-                {saleDateType === 'issue' && (
-                  <p className="mt-1.5 text-[11px] text-slate-400">
-                    Data sprzedaży = data wystawienia ({formatDateMed(issueDate)}). Brak osobnego pola P_6 w KSeF.
-                  </p>
-                )}
-                {saleDateType === 'various' && (
-                  <p className="mt-1.5 text-[11px] text-slate-400">
-                    Brak wspólnej daty — KSeF nie wymaga podania daty w nagłówku. Stosuj gdy pozycje dotyczą różnych okresów.
-                  </p>
-                )}
-              </div>
-
-              {/* Data dostawy/wykonania — tylko dla 'single' */}
-              {saleDateType === 'single' && (
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Data dostawy / wykonania usługi
-                  </label>
-                  <input
-                    type="date"
-                    value={saleDate}
-                    onChange={(e) => setSaleDate(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                    required
+                    className="date-pill w-full"
                   />
                 </div>
               )}
+            </div>
 
-              {/* Zakres dat — tylko dla 'period' */}
-              {saleDateType === 'period' && (
-                <>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Data początkowa okresu
-                    </label>
-                    <input
-                      type="date"
-                      value={saleDate}
-                      onChange={(e) => setSaleDate(e.target.value)}
-                      className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Data końcowa okresu
-                    </label>
-                    <input
-                      type="date"
-                      value={saleDateTo}
-                      onChange={(e) => setSaleDateTo(e.target.value)}
-                      className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                      required
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* Faktury zaliczkowe ZAL — widoczne tylko przy ROZ */}
-              {invoiceType === 'ROZ' && (
-                <div className="md:col-span-3">
-                  <ZalSelectionSection
-                    availableZal={availableZal}
-                    selectedIds={selectedZalIds}
-                    onChange={setSelectedZalIds}
-                    customerId={customerId}
-                  />
-                </div>
-              )}
-
-              {/* Adnotacje — zwijana sekcja */}
-              <div className="md:col-span-3">
-                <AnnotationsSection
-                  value={ksefOptions}
-                  onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+            {/* Faktury zaliczkowe ZAL */}
+            {invoiceType === 'ROZ' && (
+              <div className="px-4 py-3.5 md:px-6">
+                <ZalSelectionSection
+                  availableZal={availableZal}
+                  selectedIds={selectedZalIds}
+                  onChange={setSelectedZalIds}
+                  customerId={customerId}
                 />
               </div>
+            )}
+          </div>
+        </section>
 
-              {/* Miejsce wystawienia */}
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Miejsce wystawienia <span className="normal-case font-normal">(opcjonalne)</span>
-                </label>
-                <input
-                  type="text"
-                  value={placeOfIssue}
-                  onChange={(e) => setPlaceOfIssue(e.target.value)}
-                  placeholder="Domyślnie: miasto firmy"
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                />
-              </div>
-
-              {/* Uwagi */}
-              <div className="md:col-span-3">
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Uwagi na fakturze
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Np. Numer zamówienia klienta: ZAM/2026/09/88"
-                  className="w-full resize-none rounded-xl border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                />
-              </div>
+        {/* ── Dodatkowe opcje — pola fakultatywne ── */}
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+          <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5">
+            <SectionMark name="sliders" />
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Dodatkowe opcje</h2>
+              <p className="text-xs text-slate-400">Nie są wymagane do wystawienia faktury</p>
             </div>
           </div>
-        </div>
-
-        {/* ══ Warunki transakcji accordion ══ */}
-        <TransactionConditionsSection
-          contracts={contracts}
-          onContractsChange={setContracts}
-          purchaseOrders={purchaseOrders}
-          onPurchaseOrdersChange={setPurchaseOrders}
-        />
-
-        {/* ══ KSeF accordion ══ */}
-        <div className="rounded-3xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setKsefOpen((v) => !v)}
-            className="flex w-full items-center justify-between px-5 py-4 text-left"
-          >
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Opcje KSeF (adnotacje, oznaczenia…)
-            </span>
-            <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 text-muted-foreground transition-transform', ksefOpen && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
-              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          {ksefOpen && (
-            <div className="border-t border-border/40 px-5 pb-5 pt-4">
-              <InvoiceKsefOptions
-                value={ksefOptions}
-                onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
-                paymentMethod={paymentMethod}
-              />
-            </div>
-          )}
-        </div>
+          <div className="divide-y divide-slate-200 border-t border-slate-200">
+            <InvoiceDetailsAccordion
+              footerText={ksefOptions.footer_text ?? ''}
+              onFooterTextChange={(v) => setKsefOptions((prev) => ({ ...prev, footer_text: v }))}
+              dueDateDescription={dueDateDescription}
+              onDueDateDescriptionChange={setDueDateDescription}
+              placeOfIssue={placeOfIssue}
+              onPlaceOfIssueChange={setPlaceOfIssue}
+            />
+            <InvoiceKsefOptions
+              value={ksefOptions}
+              onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+              paymentMethod={paymentMethod}
+            />
+            <AnnotationsSection
+              value={ksefOptions}
+              onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+            />
+            <TransactionConditionsSection
+              contracts={contracts}
+              onContractsChange={setContracts}
+              purchaseOrders={purchaseOrders}
+              onPurchaseOrdersChange={setPurchaseOrders}
+            />
+          </div>
+        </section>
 
         {/* Error */}
         {submitError && (
@@ -1669,9 +1735,10 @@ function InvoiceManualPageContent() {
           </p>
         )}
       </div>
+      </div>
 
-      {/* ── Fixed bottom action bar ── */}
-      <div className="fixed bottom-[83px] left-0 right-0 z-30 border-t border-border/40 bg-background/95 px-4 pb-3 pt-3 backdrop-blur md:bottom-0">
+      {/* ── Bottom action bar. Sits under the scroller, so it does not move with the form. ── */}
+      <div className="shrink-0 border-t border-slate-200 bg-white px-4 pb-3 pt-3">
         {/* Desktop layout */}
         <div className="hidden items-center gap-3 sm:flex">
           <button
@@ -1689,14 +1756,9 @@ function InvoiceManualPageContent() {
           >
             Zapisz jako wersję roboczą
           </button>
-          {/* Pill */}
-          <div className="ml-auto flex items-center gap-2.5 rounded-full bg-primary/10 px-4 py-1.5">
-            <span className="text-[13px] font-semibold tabular-nums text-primary">
-              {linesLabel(lines.filter((l) => l.product_name.trim()).length)}
-            </span>
-            <span className="h-1 w-1 rounded-full bg-primary/40" />
-            <span className="text-[13px] font-bold tabular-nums text-primary">{pln.format(totalGross)} brutto</span>
-          </div>
+          <span className="ml-auto text-sm font-semibold tabular-nums text-slate-900">
+            {pln.format(totalGross)} brutto
+          </span>
           <button
             type="button"
             onClick={() => void onSubmit()}
@@ -1715,13 +1777,9 @@ function InvoiceManualPageContent() {
 
         {/* Mobile layout */}
         <div className="flex items-center gap-2 sm:hidden">
-          {/* Count pill */}
-          <div className="flex flex-col items-start rounded-2xl bg-primary/10 px-3 py-1.5 leading-tight">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-              {lines.filter((l) => l.product_name.trim()).length} pozycji
-            </span>
-            <span className="text-[13px] font-bold tabular-nums text-primary">{pln.format(totalGross)} brutto</span>
-          </div>
+          <span className="min-w-0 text-sm font-semibold tabular-nums text-slate-900">
+            {pln.format(totalGross)}
+          </span>
           <button
             type="button"
             onClick={() => void onSubmit()}
@@ -1745,6 +1803,7 @@ function InvoiceManualPageContent() {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

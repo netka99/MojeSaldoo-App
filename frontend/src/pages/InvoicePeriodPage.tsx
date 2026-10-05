@@ -4,6 +4,7 @@ import { authStorage } from '@/services/api';
 import { useAllActiveCustomersQuery } from '@/query/use-customers';
 import { useOrderListQuery } from '@/query/use-orders';
 import {
+  useAvailableZalQuery,
   useCreateManualInvoiceMutation,
   useGenerateFromOrdersMutation,
   useInvoicePeriodPreviewWzQuery,
@@ -12,12 +13,23 @@ import {
 import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import { usePriceInputMode } from '@/hooks/usePriceInputMode';
 import { InvoiceKsefOptions } from '@/components/features/invoicing/InvoiceKsefOptions';
+import {
+  AnnotationsSection,
+  InvoiceDetailsAccordion,
+  InvoiceTypeDropdown,
+  SectionMark,
+  TransactionConditionsSection,
+  ZalSelectionSection,
+  formatDateMed,
+  plnToWords,
+} from '@/pages/InvoiceManualPage';
 import { cn } from '@/lib/utils';
 import type {
   Order,
   InvoiceKsefOptions as KsefOptionsType,
   InvoiceItemWrite,
   InvoicePaymentMethod,
+  KsefInvoiceType,
   Company,
   PeriodPreviewItem,
 } from '@/types';
@@ -26,11 +38,20 @@ import type {
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
-const inputCls =
-  'w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25 disabled:opacity-50';
+const inputCls = 'field-ios';
+const cardCls = 'rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl';
 
-const selectCls =
-  'w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25 disabled:opacity-50';
+const PAYMENT_OPTIONS: { value: InvoicePaymentMethod; label: string }[] = [
+  { value: 'transfer', label: 'Przelew bankowy' },
+  { value: 'cash', label: 'Gotówka' },
+  { value: 'card', label: 'Karta płatnicza' },
+  { value: 'voucher', label: 'Bon' },
+  { value: 'check', label: 'Czek' },
+  { value: 'credit', label: 'Kredyt' },
+  { value: 'mobile', label: 'Płatność mobilna' },
+  { value: 'other', label: 'Inna forma płatności' },
+];
+const TERM_OPTIONS = [7, 14, 21, 30, 60];
 
 function todayIso(): string {
   const d = new Date();
@@ -54,11 +75,21 @@ function toDecimalInput(v: string): string {
   return v.replace(',', '.');
 }
 
-const PAYMENT_OPTIONS: { value: InvoicePaymentMethod; label: string }[] = [
-  { value: 'transfer', label: 'Przelew' },
-  { value: 'cash', label: 'Gotówka' },
-  { value: 'card', label: 'Karta' },
-];
+function formatQty(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  return Number.isInteger(n) ? String(n) : parseFloat(n.toFixed(3)).toString();
+}
+
+function defaultOrderItemQty(item: OrderItem): string {
+  const delivered = parseNum(item.quantity_delivered);
+  return formatQty(delivered > 0 ? delivered : parseNum(item.quantity));
+}
+
+function linesCountLabel(n: number): string {
+  if (n === 1) return '1 pozycja';
+  if (n >= 2 && n <= 4) return `${n} pozycje`;
+  return `${n} pozycji`;
+}
 
 /* ─── OrderItem type (matches server items array) ─────────────────── */
 
@@ -191,7 +222,7 @@ function OrderRow({
     .reduce((sum, i) => sum + itemGross(i), 0);
 
   return (
-    <div className={cn('rounded-2xl bg-surface-card shadow-soft overflow-hidden transition-all', selectedCount > 0 && 'ring-2 ring-primary/40')}>
+    <div className={cn(cardCls, 'overflow-hidden transition-all', selectedCount > 0 && 'ring-2 ring-primary/40')}>
       {/* Order header */}
       <div className="flex items-center gap-3 px-4 py-3">
         <button type="button" onClick={() => onToggleAll(order)} aria-pressed={fullySelected}>
@@ -288,7 +319,7 @@ function EditItemRow({
     : parseNum(item.qty) * parseNum(item.unit_price_net) * (1 + parseNum(item.vat_rate) / 100);
 
   return (
-    <div className="rounded-2xl bg-surface-card shadow-soft overflow-hidden">
+    <div className={cn(cardCls, 'overflow-hidden')}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -324,24 +355,24 @@ function EditItemRow({
       {expanded && (
         <div className="border-t border-border/40 px-4 pb-4 pt-3 flex flex-col gap-3">
           <div>
-            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Produkt / opis</label>
+            <label className="mb-1.5 block text-sm font-medium text-slate-800">Produkt / opis</label>
             <input type="text" value={item.product_name} onChange={(e) => onUpdate({ product_name: e.target.value })} placeholder="Nazwa produktu…" className={inputCls} />
           </div>
           <div className="grid grid-cols-4 gap-2">
             <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Ilość</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-800">Ilość</label>
               <input type="text" inputMode="decimal" value={item.qty} onChange={(e) => onUpdate({ qty: toDecimalInput(e.target.value) })} onFocus={(e) => e.target.select()} className={inputCls} />
             </div>
             <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">J.m.</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-800">J.m.</label>
               <input type="text" value={item.product_unit} onChange={(e) => onUpdate({ product_unit: e.target.value })} placeholder="szt" className={inputCls} />
             </div>
             <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{priceLabel}</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-800">{priceLabel}</label>
               <input type="text" inputMode="decimal" value={item.unit_price_net} onChange={(e) => onUpdate({ unit_price_net: toDecimalInput(e.target.value) })} onFocus={(e) => e.target.select()} placeholder="0.00" className={inputCls} />
             </div>
             <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">VAT %</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-800">VAT %</label>
               <input type="number" min="0" max="100" step="1" value={item.vat_rate} onChange={(e) => onUpdate({ vat_rate: e.target.value })} className={inputCls} />
             </div>
           </div>
@@ -355,72 +386,80 @@ function EditItemRow({
   );
 }
 
-/* ─── Dates section ─────────────────────────────────────────────────── */
 
-function DatesSection({
-  issueDate, saleDate, saleDateTo, saleDateType, dueDate, paymentMethod, showWzNumbers,
-  onIssueDate, onSaleDate, onSaleDateTo, onSaleDateType, onDueDate, onPaymentMethod, onShowWzNumbers,
+/* ─── Step 2 line (quantity editable, price from the source document) ─ */
+
+function PeriodQtyRow({
+  name, unit, qty, unitPrice, vatRate, priceIsGross, onQty,
 }: {
-  issueDate: string; saleDate: string; saleDateTo: string;
-  saleDateType: 'single' | 'period' | 'issue' | 'various';
-  dueDate: string; paymentMethod: InvoicePaymentMethod; showWzNumbers: boolean;
-  onIssueDate: (v: string) => void; onSaleDate: (v: string) => void;
-  onSaleDateTo: (v: string) => void; onSaleDateType: (v: 'single' | 'period' | 'issue' | 'various') => void;
-  onDueDate: (v: string) => void; onPaymentMethod: (v: InvoicePaymentMethod) => void;
-  onShowWzNumbers: (v: boolean) => void;
+  name: string;
+  unit: string;
+  qty: string;
+  unitPrice: string;
+  vatRate: string;
+  priceIsGross: boolean;
+  onQty: (qty: string) => void;
 }) {
+  const initial = (name || '?').charAt(0).toUpperCase();
+  const unitLabel = unit === 'szt' ? 'szt.' : (unit || 'szt.');
+  const qtyN = parseNum(qty);
+  const price = parseNum(unitPrice);
+  const vat = parseNum(vatRate);
+  const lineGross = priceIsGross ? qtyN * price : qtyN * price * (1 + vat / 100);
+  const lineNet = lineGross / (1 + vat / 100);
+
+  function adjustQty(delta: number) {
+    const next = Math.max(0.01, qtyN + delta);
+    onQty(formatQty(next));
+  }
+
   return (
-    <div className="rounded-2xl bg-surface-card p-4 shadow-soft">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dane faktury</h2>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data wystawienia</label>
-          <input type="date" value={issueDate} onChange={(e) => onIssueDate(e.target.value)} className={inputCls} required />
+    <div className="rounded-xl border border-[#AEAEB2] bg-[#F2F2F7] p-3 md:flex md:items-center md:gap-4 md:p-4">
+      <div className="flex min-w-0 items-center gap-3 md:w-72 md:shrink-0">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-100 bg-indigo-50 text-sm font-bold text-primary md:h-11 md:w-11 md:rounded-2xl md:text-lg" aria-hidden>
+          {initial}
         </div>
-        <div className="col-span-2">
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Wybierz datę albo okres, którego dotyczy faktura
-          </label>
-          <select value={saleDateType} onChange={(e) => onSaleDateType(e.target.value as typeof saleDateType)} className={selectCls}>
-            <option value="single">Wspólna data dokonania lub zakończenia dostawy towarów lub wykonania usługi</option>
-            <option value="period">Okres, którego dotyczy faktura (art. 19a ust. 3/4/5)</option>
-            <option value="issue">Data wystawienia = data wykonania czynności</option>
-            <option value="various">Różne daty dla poszczególnych towarów lub usług</option>
-          </select>
+        <p className="min-w-0 break-words text-sm font-semibold text-slate-900">{name}</p>
+      </div>
+      <div className="mt-2.5 flex flex-1 flex-wrap items-center gap-2 border-t border-slate-200/50 pt-2.5 md:mt-0 md:border-0 md:pt-0">
+        <div className="flex items-center rounded-lg border border-[#AEAEB2] bg-white p-0.5">
+          <button
+            type="button"
+            onClick={() => adjustQty(-1)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-100 md:h-8 md:w-8 md:rounded-xl"
+            aria-label="Zmniejsz ilość"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M5 12h14" strokeLinecap="round" /></svg>
+          </button>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={qty}
+            onChange={(e) => onQty(toDecimalInput(e.target.value))}
+            onFocus={(e) => e.target.select()}
+            aria-label={`Ilość ${name}`}
+            className="w-10 bg-transparent text-center text-sm font-semibold tabular-nums text-slate-900 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => adjustQty(1)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-white transition hover:bg-primary/90 md:h-8 md:w-8 md:rounded-xl"
+            aria-label="Zwiększ ilość"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
+          </button>
         </div>
-        {saleDateType === 'single' && (
-          <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data dostawy / wykonania usługi</label>
-            <input type="date" value={saleDate} onChange={(e) => onSaleDate(e.target.value)} className={inputCls} required />
-          </div>
-        )}
-        {saleDateType === 'period' && (
-          <>
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data początkowa okresu</label>
-              <input type="date" value={saleDate} onChange={(e) => onSaleDate(e.target.value)} className={inputCls} required />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data końcowa okresu</label>
-              <input type="date" value={saleDateTo} onChange={(e) => onSaleDateTo(e.target.value)} className={inputCls} required />
-            </div>
-          </>
-        )}
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Termin płatności</label>
-          <input type="date" value={dueDate} onChange={(e) => onDueDate(e.target.value)} className={inputCls} required />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Forma płatności</label>
-          <select value={paymentMethod} onChange={(e) => onPaymentMethod(e.target.value as InvoicePaymentMethod)} className={selectCls}>
-            {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-        <div className="col-span-2">
-          <label className="flex cursor-pointer items-center gap-2.5 text-sm">
-            <input type="checkbox" checked={showWzNumbers} onChange={(e) => onShowWzNumbers(e.target.checked)} className="h-4 w-4 accent-primary" />
-            <span>Pokaż numery dokumentów WZ na fakturze</span>
-          </label>
+        <span className="text-sm font-medium text-slate-700">{unitLabel}</span>
+        <span className="inline-flex w-24 items-center justify-end rounded-lg border border-[#AEAEB2] bg-white px-2.5 py-1.5 text-sm font-semibold tabular-nums text-slate-900 md:w-28">
+          {price.toFixed(2)}
+          <span className="ml-1 font-medium text-slate-600">zł</span>
+        </span>
+        <span className="rounded-lg border border-[#AEAEB2] bg-white px-2.5 py-1.5 text-sm font-medium text-slate-800">
+          {vatRate === 'zw' ? 'ZW' : `VAT ${vatRate}%`}
+        </span>
+        <div className="ml-auto text-right">
+          <p className="text-sm font-semibold tabular-nums text-slate-900">{pln.format(lineGross)}</p>
+          <p className="text-xs tabular-nums text-slate-600">netto: {pln.format(lineNet)}</p>
         </div>
       </div>
     </div>
@@ -448,6 +487,7 @@ function InvoicePeriodPageContent() {
   const [customerName, setCustomerName] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const skipCustomerAutoOpen = useRef(true);
   const customerPaymentTerms = useRef<number>(14);
   const customerWrapRef = useRef<HTMLDivElement>(null);
 
@@ -461,6 +501,7 @@ function InvoicePeriodPageContent() {
 
   /* Orders mode — item-level selection */
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [itemQtyOverrides, setItemQtyOverrides] = useState<Record<string, string>>({});
 
   /* WZ mode — aggregated editable items */
   const [wzLoaded, setWzLoaded] = useState(false);
@@ -475,10 +516,20 @@ function InvoicePeriodPageContent() {
   const [saleDate, setSaleDate] = useState(dateFrom);  // pre-fill from date range
   const [saleDateTo, setSaleDateTo] = useState(dateTo);  // pre-fill from date range
   const [saleDateType, setSaleDateType] = useState<'single' | 'period' | 'issue' | 'various'>('period');  // period default for period invoicing
-  const [dueDate, setDueDate] = useState(addDaysIso(todayIso(), 14));
+  const [paymentTermDays, setPaymentTermDays] = useState(14);
+  const dueDate = addDaysIso(issueDate, paymentTermDays);
   const [paymentMethod, setPaymentMethod] = useState<InvoicePaymentMethod>('transfer');
+  const [paymentReceivedAt, setPaymentReceivedAt] = useState<string | null>(null);
+  const [otherPaymentDescription, setOtherPaymentDescription] = useState('');
+  const [invoiceType, setInvoiceType] = useState<KsefInvoiceType>('VAT');
+  const [invoiceNumberOverride, setInvoiceNumberOverride] = useState('');
+  const [numberEditing, setNumberEditing] = useState(false);
+  const [placeOfIssue, setPlaceOfIssue] = useState('');
+  const [dueDateDescription, setDueDateDescription] = useState('');
+  const [contracts, setContracts] = useState<{ date: string; number: string }[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<{ date: string; number: string }[]>([]);
+  const [selectedZalIds, setSelectedZalIds] = useState<string[]>([]);
   const [ksefOptions, setKsefOptions] = useState<KsefOptionsType>({});
-  const [ksefOpen, setKsefOpen] = useState(false);
   const [showWzNumbers, setShowWzNumbers] = useState(true);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -509,6 +560,14 @@ function InvoicePeriodPageContent() {
 
   /* ── Next number preview (step 2) ── */
   const { data: nextNumData } = useInvoiceNextNumberQuery(issueDate, step === 2);
+  const { data: availableZal = [] } = useAvailableZalQuery(
+    customerId || null,
+    invoiceType === 'ROZ' && Boolean(customerId),
+  );
+
+  useEffect(() => {
+    if (paymentMethod === 'cash') setPaymentReceivedAt((prev) => prev ?? issueDate);
+  }, [paymentMethod, issueDate]);
 
   /* ── Queries ── */
 
@@ -597,6 +656,10 @@ function InvoicePeriodPageContent() {
     });
   }
 
+  function orderItemQty(item: OrderItem): string {
+    return itemQtyOverrides[item.id] ?? defaultOrderItemQty(item);
+  }
+
   function toggleItem(itemId: string) {
     setSelectedItemIds((prev) => {
       const next = new Set(prev);
@@ -624,13 +687,13 @@ function InvoicePeriodPageContent() {
     for (const order of orders) {
       for (const item of getOrderItems(order)) {
         if (!selectedItemIds.has(item.id)) continue;
-        const qty = parseNum(item.quantity_delivered && parseNum(item.quantity_delivered) > 0 ? item.quantity_delivered : item.quantity);
+        const qty = parseNum(orderItemQty(item));
         total += qty * parseNum(item.unit_price_net) * (1 + parseNum(item.vat_rate) / 100);
       }
     }
     return total;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItemIds, orders]);
+  }, [selectedItemIds, orders, itemQtyOverrides]);
 
   const wzTotalGross = useMemo(
     () => editItems.reduce((sum, i) => {
@@ -643,6 +706,44 @@ function InvoicePeriodPageContent() {
   );
 
   const totalGross = source === 'orders' ? ordersTotalGross : wzTotalGross;
+  const totalNet = useMemo(() => {
+    const rows = source === 'orders'
+      ? orders.flatMap((order) => getOrderItems(order).filter((item) => selectedItemIds.has(item.id)).map((item) => ({
+          qty: parseNum(orderItemQty(item)),
+          price: parseNum(item.unit_price_net),
+          vat: parseNum(item.vat_rate),
+        })))
+      : editItems.map((i) => ({ qty: parseNum(i.qty), price: parseNum(i.unit_price_net), vat: parseNum(i.vat_rate) }));
+    return rows.reduce((sum, row) => {
+      const gross = isGross ? row.qty * row.price : row.qty * row.price * (1 + row.vat / 100);
+      return sum + gross / (1 + row.vat / 100);
+    }, 0);
+  }, [source, orders, selectedItemIds, editItems, isGross, itemQtyOverrides]);
+  const vatGroups = useMemo(() => {
+    const map = new Map<string, number>();
+    const rows = source === 'orders'
+      ? orders.flatMap((order) => getOrderItems(order).filter((item) => selectedItemIds.has(item.id)).map((item) => ({
+          qty: parseNum(orderItemQty(item)),
+          price: parseNum(item.unit_price_net),
+          vat: parseNum(item.vat_rate),
+          rate: String(item.vat_rate),
+        })))
+      : editItems.map((i) => ({
+          qty: parseNum(i.qty),
+          price: parseNum(i.unit_price_net),
+          vat: parseNum(i.vat_rate),
+          rate: i.vat_rate,
+        }));
+    for (const row of rows) {
+      const gross = isGross ? row.qty * row.price : row.qty * row.price * (1 + row.vat / 100);
+      const net = gross / (1 + row.vat / 100);
+      const key = row.rate === 'zw' ? 'ZW' : `${row.rate}%`;
+      map.set(key, (map.get(key) ?? 0) + (gross - net));
+    }
+    return [...map.entries()];
+  }, [source, orders, selectedItemIds, editItems, isGross, itemQtyOverrides]);
+  const amountInWords = plnToWords(totalGross);
+  const amountInWordsLabel = amountInWords ? amountInWords.charAt(0).toUpperCase() + amountInWords.slice(1) : '';
 
   /* Auto-fill sale date */
   useEffect(() => {
@@ -666,7 +767,7 @@ function InvoicePeriodPageContent() {
     setShowCustomerDropdown(false);
     const t = typeof c.payment_terms === 'number' && Number.isFinite(c.payment_terms) ? c.payment_terms : 14;
     customerPaymentTerms.current = t;
-    setDueDate(addDaysIso(issueDate, t));
+    setPaymentTermDays(TERM_OPTIONS.reduce((prev, curr) => Math.abs(curr - t) < Math.abs(prev - t) ? curr : prev));
   }
 
   function handleWzLoad() {
@@ -704,11 +805,7 @@ function InvoicePeriodPageContent() {
     for (const order of orders) {
       for (const item of (order.items ?? []) as OrderItem[]) {
         if (!selectedItemIds.has(item.id)) continue;
-        const qty = parseNum(
-          item.quantity_delivered && parseNum(item.quantity_delivered) > 0
-            ? item.quantity_delivered
-            : item.quantity,
-        );
+        const qty = parseNum(orderItemQty(item));
         const gross = qty * parseNum(item.unit_price_net) * (1 + parseNum(item.vat_rate) / 100);
         const existing = map.get(item.product_name);
         if (existing) {
@@ -720,34 +817,59 @@ function InvoicePeriodPageContent() {
       }
     }
     return [...map.values()];
-  }, [source, selectedItemIds, orders, editItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [source, selectedItemIds, orders, editItems, itemQtyOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Can proceed to step 2 */
   const canGoStep2 = customerId !== '' && (source === 'orders'
-    ? selectedItemIds.size > 0
-    : editItems.length > 0 && editItems.every((i) => i.product_name.trim() !== '' && i.unit_price_net !== ''));
+    ? orders.some((order) => getOrderItems(order).some((item) => selectedItemIds.has(item.id) && parseNum(orderItemQty(item)) > 0))
+    : editItems.length > 0 && editItems.every((i) => i.product_name.trim() !== '' && i.unit_price_net !== '' && parseNum(i.qty) > 0));
 
   /* ── Submit ── */
 
   const generateFromOrders = useGenerateFromOrdersMutation();
   const createManual = useCreateManualInvoiceMutation();
 
+  const filledContracts = contracts.filter((c) => c.date || c.number);
+  const filledOrders = purchaseOrders.filter((p) => p.date || p.number);
+  const invoiceExtras = {
+    ...ksefOptions,
+    ksef_invoice_type: invoiceType,
+    prices_include_vat: isGross,
+    invoice_number: invoiceNumberOverride.trim() || undefined,
+    place_of_issue: placeOfIssue.trim() || undefined,
+    advance_invoice_ids: invoiceType === 'ROZ' ? selectedZalIds : undefined,
+    payment_received_at: paymentMethod === 'cash' ? (paymentReceivedAt || issueDate) : undefined,
+    other_payment_description: paymentMethod === 'other' ? otherPaymentDescription : undefined,
+    due_date_description: dueDateDescription.trim() || undefined,
+    contracts: filledContracts.length > 0 ? filledContracts : undefined,
+    purchase_orders: filledOrders.length > 0 ? filledOrders : undefined,
+    show_wz_numbers: showWzNumbers,
+  };
+
   async function onSubmit() {
     setSubmitError(null);
     try {
       if (source === 'orders') {
         if (activeOrderIds.length === 0) { setSubmitError('Zaznacz co najmniej jedną pozycję.'); return; }
+        const itemQuantities: Record<string, string> = {};
+        for (const order of orders) {
+          for (const item of getOrderItems(order)) {
+            if (!selectedItemIds.has(item.id)) continue;
+            const qty = orderItemQty(item);
+            if (qty !== defaultOrderItemQty(item)) itemQuantities[item.id] = qty;
+          }
+        }
         const inv = await generateFromOrders.mutateAsync({
           order_ids: activeOrderIds,
           order_item_ids: [...selectedItemIds],
+          ...(Object.keys(itemQuantities).length > 0 ? { item_quantities: itemQuantities } : {}),
           issue_date: issueDate,
           sale_date: saleDate,
           sale_date_to: saleDateType === 'period' ? saleDateTo : undefined,
           sale_date_type: saleDateType,
           due_date: dueDate,
           payment_method: paymentMethod,
-          show_wz_numbers: showWzNumbers,
-          ...ksefOptions,
+          ...invoiceExtras,
         });
         navigate(`/invoices/${inv.id}`);
       } else {
@@ -771,7 +893,7 @@ function InvoicePeriodPageContent() {
           sale_date_type: saleDateType,
           due_date: dueDate,
           payment_method: paymentMethod,
-          ...ksefOptions,
+          ...invoiceExtras,
         });
         navigate(`/invoices/${inv.id}`);
       }
@@ -785,28 +907,36 @@ function InvoicePeriodPageContent() {
   /* ─────────────────────────── RENDER ──────────────────────────────── */
 
   return (
-    <div className="relative mx-auto flex w-full max-w-3xl flex-col">
-      {/* Header */}
-      <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-border/40 bg-background/95 px-4 py-3 backdrop-blur">
-        <button
-          type="button"
-          onClick={() => (step > 1 ? setStep(1) : navigate(-1))}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
-          aria-label="Wróć"
-        >
-          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2}>
-            <path d="M19 12H5m0 0l7 7M5 12l7-7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <div className="flex min-w-0 flex-col">
-          <h1 className="text-[17px] font-semibold tracking-tight text-foreground leading-tight">Faktura zbiorcza</h1>
-          {customerName && <p className="text-xs text-muted-foreground truncate">{customerName}</p>}
+    <div className="relative mx-auto flex w-full max-w-5xl flex-col">
+      <header className="border-b border-slate-200 bg-white px-4 py-3 md:px-8">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => (step > 1 ? setStep(1) : navigate(-1))}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200 md:h-10 md:w-10"
+              aria-label="Wróć"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2.5}>
+                <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-bold tracking-tight text-slate-900 md:text-xl">Faktura zbiorcza</h1>
+              <p className="truncate text-xs text-slate-500">
+                {customerName || 'Wybierz klienta i dokumenty'}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            {step === 2 && <InvoiceTypeDropdown value={invoiceType} onChange={setInvoiceType} />}
+            <StepDots step={step} />
+          </div>
         </div>
-        <StepDots step={step} />
-      </div>
+      </header>
 
       <div className={cn(
-          'flex flex-col gap-4 px-4 pt-4',
+          'flex flex-col gap-3 px-4 pt-4',
           step === 1
             ? 'pb-[calc(83px+16px+env(safe-area-inset-bottom))] md:pb-6'
             : 'pb-[calc(83px+80px+env(safe-area-inset-bottom))] md:pb-[calc(80px+env(safe-area-inset-bottom))]',
@@ -816,14 +946,24 @@ function InvoicePeriodPageContent() {
         {step === 1 && (
           <>
             {/* Customer */}
-            <div className="rounded-2xl bg-surface-card p-4 shadow-soft">
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Klient</h2>
+            <div className={cn(cardCls, 'p-4 md:p-6')}>
+              <div className="mb-3 flex items-center gap-2.5">
+                <SectionMark name="user" />
+                <h2 className="text-sm font-semibold text-slate-900">Klient</h2>
+              </div>
               <div ref={customerWrapRef} className="relative">
                 <input
                   type="text"
                   value={customerSearch}
                   onChange={(e) => { setCustomerSearch(e.target.value); setCustomerId(''); setCustomerName(''); setShowCustomerDropdown(true); }}
-                  onFocus={() => setShowCustomerDropdown(true)}
+                  onClick={() => setShowCustomerDropdown(true)}
+                  onFocus={() => {
+                    if (skipCustomerAutoOpen.current) {
+                      skipCustomerAutoOpen.current = false;
+                      return;
+                    }
+                    setShowCustomerDropdown(true);
+                  }}
                   placeholder="Wyszukaj klienta…"
                   className={inputCls}
                   autoFocus
@@ -847,8 +987,11 @@ function InvoicePeriodPageContent() {
             </div>
 
             {/* Source toggle */}
-            <div className="rounded-2xl bg-surface-card p-4 shadow-soft">
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Źródło danych</h2>
+            <div className={cn(cardCls, 'p-4 md:p-6')}>
+              <div className="mb-3 flex items-center gap-2.5">
+                <SectionMark name="list" />
+                <h2 className="text-sm font-semibold text-slate-900">Źródło danych</h2>
+              </div>
               <div className="flex gap-2 rounded-xl bg-muted p-1">
                 {(['orders', 'wz'] as const).map((s) => (
                   <button
@@ -867,16 +1010,19 @@ function InvoicePeriodPageContent() {
             </div>
 
             {/* Date range */}
-            <div className="rounded-2xl bg-surface-card p-4 shadow-soft">
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Zakres dat</h2>
+            <div className={cn(cardCls, 'p-4 md:p-6')}>
+              <div className="mb-3 flex items-center gap-2.5">
+                <SectionMark name="calendar" />
+                <h2 className="text-sm font-semibold text-slate-900">Zakres dat</h2>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Od</label>
-                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">Od</label>
+                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="date-pill w-full" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Do</label>
-                  <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setSaleDate(e.target.value); }} className={inputCls} />
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">Do</label>
+                  <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setSaleDate(e.target.value); }} className="date-pill w-full" />
                 </div>
               </div>
 
@@ -924,12 +1070,12 @@ function InvoicePeriodPageContent() {
                     value={orderSearch}
                     onChange={(e) => setOrderSearch(e.target.value)}
                     placeholder="Szukaj po numerze zamówienia…"
-                    className="w-full rounded-xl border border-input bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+                    className="field-ios w-full pl-9"
                   />
                 </div>
 
                 <div className="flex items-center justify-between px-1">
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <h2 className="text-sm font-semibold text-slate-900">
                     Zamówienia — {customerName}
                     {ordersAll.length > 0 && (
                       <span className="ml-1 text-foreground">
@@ -951,14 +1097,14 @@ function InvoicePeriodPageContent() {
                 )}
 
                 {!ordersLoading && ordersAll.length === 0 && (
-                  <div className="rounded-2xl bg-surface-card px-4 py-8 shadow-soft text-center">
-                    <p className="text-sm text-muted-foreground">Brak zamówień w wybranym zakresie dat.</p>
+                  <div className={cn(cardCls, 'px-4 py-8 text-center')}>
+                    <p className="text-sm text-slate-600">Brak zamówień w wybranym zakresie dat.</p>
                   </div>
                 )}
 
                 {!ordersLoading && ordersAll.length > 0 && orders.length === 0 && (
-                  <div className="rounded-2xl bg-surface-card px-4 py-8 shadow-soft text-center">
-                    <p className="text-sm text-muted-foreground">Brak wyników dla „{orderSearch}".</p>
+                  <div className={cn(cardCls, 'px-4 py-8 text-center')}>
+                    <p className="text-sm text-slate-600">Brak wyników dla „{orderSearch}".</p>
                   </div>
                 )}
 
@@ -980,13 +1126,13 @@ function InvoicePeriodPageContent() {
             {source === 'wz' && wzLoaded && !wzPreview.isFetching && (
               <>
                 {editItems.length === 0 ? (
-                  <div className="rounded-2xl bg-surface-card px-4 py-8 shadow-soft text-center">
-                    <p className="text-sm text-muted-foreground">Brak WZ w wybranym zakresie dat.</p>
+                  <div className={cn(cardCls, 'px-4 py-8 text-center')}>
+                    <p className="text-sm text-slate-600">Brak WZ w wybranym zakresie dat.</p>
                   </div>
                 ) : (
                   <>
                     <div className="flex items-center justify-between px-1">
-                      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <h2 className="text-sm font-semibold text-slate-900">
                         Pozycje ({editItems.length})
                       </h2>
                       <span className="text-xs text-muted-foreground">Kliknij, by edytować</span>
@@ -1062,62 +1208,235 @@ function InvoicePeriodPageContent() {
               type="button"
               onClick={() => setStep(2)}
               disabled={!canGoStep2}
-              className={cn('w-full rounded-xl py-3 text-base font-semibold transition-colors', canGoStep2 ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'cursor-not-allowed bg-muted text-muted-foreground')}
+              className={cn('w-full rounded-2xl py-2.5 text-sm font-semibold transition-colors', canGoStep2 ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'cursor-not-allowed bg-muted text-muted-foreground')}
             >
               Dalej →
             </button>
           </>
         )}
 
-        {/* ── Step 2: Summary + dates + KSeF ── */}
         {step === 2 && (
           <>
-            <div className="rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 p-4 shadow-soft">
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary">Podsumowanie</h2>
-              <div className="flex items-baseline justify-between">
-                <span className="text-sm text-muted-foreground">Razem brutto</span>
-                <span className="text-xl font-bold text-foreground">{pln.format(totalGross)}</span>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {source === 'orders'
-                  ? `${activeOrderIds.length} ${activeOrderIds.length === 1 ? 'zamówienie' : activeOrderIds.length < 5 ? 'zamówienia' : 'zamówień'} · ${selectedItemIds.size} pozycji`
-                  : `${editItems.length} ${editItems.length === 1 ? 'pozycja' : editItems.length < 5 ? 'pozycje' : 'pozycji'}`}
-                {' · '}Klient: <span className="font-medium text-foreground">{customerName}</span>
-              </p>
-            </div>
-
-            {/* Next number preview */}
-            <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-sm">
-              <span className="text-muted-foreground">Numer faktury zostanie nadany: </span>
-              <span className="font-mono font-semibold">{nextNumData?.next_number ?? '—'}</span>
-            </div>
-
-            <DatesSection
-              issueDate={issueDate} saleDate={saleDate} saleDateTo={saleDateTo}
-              saleDateType={saleDateType} dueDate={dueDate} paymentMethod={paymentMethod}
-              showWzNumbers={showWzNumbers}
-              onIssueDate={setIssueDate} onSaleDate={setSaleDate} onSaleDateTo={setSaleDateTo}
-              onSaleDateType={setSaleDateType} onDueDate={setDueDate} onPaymentMethod={setPaymentMethod}
-              onShowWzNumbers={setShowWzNumbers}
-            />
-
-            <div className="rounded-2xl bg-surface-card shadow-soft overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setKsefOpen((v) => !v)}
-                className="flex w-full items-center justify-between px-4 py-3 text-left"
-              >
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Opcje KSeF (opcjonalne)</span>
-                <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 text-muted-foreground transition-transform', ksefOpen && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
-                  <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              {ksefOpen && (
-                <div className="border-t border-border/40 px-4 pb-4 pt-3">
-                  <InvoiceKsefOptions value={ksefOptions} onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))} paymentMethod={paymentMethod} />
+            <section className={cardCls}>
+              <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-2 md:px-6">
+                <div>
+                  <div className="mb-1.5 flex items-center gap-2.5">
+                    <SectionMark name="hash" />
+                    <h2 className="text-sm font-semibold text-slate-900">Numer faktury</h2>
+                  </div>
+                  {numberEditing ? (
+                    <input
+                      type="text"
+                      value={invoiceNumberOverride}
+                      onChange={(e) => setInvoiceNumberOverride(e.target.value)}
+                      onBlur={() => setNumberEditing(false)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setNumberEditing(false); }}
+                      placeholder={nextNumData?.next_number ?? '…'}
+                      autoFocus
+                      className="field-ios w-full"
+                    />
+                  ) : (
+                    <div className="flex h-[38px] items-center gap-1">
+                      <span className="truncate rounded-lg bg-primary/10 px-2.5 py-1 text-base font-semibold tracking-tight text-primary">
+                        {invoiceNumberOverride || nextNumData?.next_number || '—'}
+                      </span>
+                      <button type="button" onClick={() => setNumberEditing(true)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-primary hover:bg-primary/10" aria-label="Zmień numer faktury">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  <p className="mt-1.5 text-xs text-slate-500">{invoiceNumberOverride ? 'Własny numer' : 'Nadany automatycznie'}</p>
                 </div>
-              )}
-            </div>
+                <div>
+                  <div className="mb-1.5 flex items-center gap-2.5">
+                    <SectionMark name="calendar" />
+                    <label htmlFor="period-issue-date" className="text-sm font-semibold text-slate-900">Data wystawienia</label>
+                  </div>
+                  <input id="period-issue-date" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} className="date-pill w-full" />
+                </div>
+              </div>
+            </section>
+
+            <section className={cn(cardCls, 'p-4 md:p-6')}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <SectionMark name="list" />
+                  <h2 className="text-sm font-semibold text-slate-900">Pozycje faktury</h2>
+                </div>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                  {linesCountLabel(source === 'orders'
+                    ? orders.reduce((n, order) => n + getOrderItems(order).filter((item) => selectedItemIds.has(item.id)).length, 0)
+                    : editItems.length)}
+                </span>
+              </div>
+              <div className="flex flex-col gap-2.5">
+                {source === 'orders'
+                  ? orders.flatMap((order) => getOrderItems(order).filter((item) => selectedItemIds.has(item.id)).map((item) => (
+                    <PeriodQtyRow
+                      key={item.id}
+                      name={item.product_name}
+                      unit={item.product_unit}
+                      qty={orderItemQty(item)}
+                      unitPrice={String(item.unit_price_net ?? '')}
+                      vatRate={String(item.vat_rate ?? '0')}
+                      priceIsGross={false}
+                      onQty={(qty) => setItemQtyOverrides((prev) => ({ ...prev, [item.id]: qty }))}
+                    />
+                  )))
+                  : editItems.map((item) => (
+                    <PeriodQtyRow
+                      key={item.id}
+                      name={item.product_name || 'Brak nazwy'}
+                      unit={item.product_unit}
+                      qty={item.qty}
+                      unitPrice={item.unit_price_net}
+                      vatRate={item.vat_rate}
+                      priceIsGross={isGross}
+                      onQty={(qty) => updateEditItem(item.id, { qty })}
+                    />
+                  ))}
+              </div>
+            </section>
+
+            <section className={cn(cardCls, 'overflow-hidden')}>
+              <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5 md:px-6">
+                <SectionMark name="receipt" />
+                <h2 className="text-sm font-semibold text-slate-900">Podsumowanie kwot</h2>
+              </div>
+              <div className="divide-y divide-slate-100 border-t border-slate-100">
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                  <span className="text-sm text-slate-500">Wartość netto</span>
+                  <span className="text-sm font-medium tabular-nums text-slate-800">{pln.format(totalNet)}</span>
+                </div>
+                {vatGroups.length === 0 ? (
+                  <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                    <span className="text-sm text-slate-500">VAT</span>
+                    <span className="text-sm font-medium tabular-nums text-slate-800">{pln.format(0)}</span>
+                  </div>
+                ) : vatGroups.map(([rate, vatAmt]) => (
+                  <div key={rate} className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                    <span className="text-sm text-slate-500">Stawka VAT {rate}</span>
+                    <span className="text-sm font-medium tabular-nums text-slate-800">{pln.format(vatAmt)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-slate-100 bg-primary/5 px-4 py-4 md:px-6">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-sm font-semibold text-slate-800">Do zapłaty</span>
+                  <span className="text-3xl font-bold tabular-nums tracking-tight text-primary">{pln.format(totalGross)}</span>
+                </div>
+                <p className="mt-1.5 text-sm text-slate-600">Słownie: {amountInWordsLabel}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {source === 'orders'
+                    ? `${activeOrderIds.length} zamówień · ${selectedItemIds.size} pozycji`
+                    : `${editItems.length} pozycji z WZ`}
+                  {customerName ? ` · ${customerName}` : ''}
+                </p>
+              </div>
+            </section>
+
+            <section className={cardCls}>
+              <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5 md:px-6">
+                <SectionMark name="card" />
+                <h2 className="text-sm font-semibold text-slate-900">Płatność i dostawa</h2>
+              </div>
+              <div className="flex flex-col gap-4 border-t border-slate-100 px-4 py-4 md:px-6">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-800">Metoda płatności</label>
+                    <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as InvoicePaymentMethod)} className="select-pill w-full">
+                      {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-800">Termin płatności</label>
+                    <select value={paymentTermDays} onChange={(e) => setPaymentTermDays(Number(e.target.value))} className="select-pill w-full">
+                      {TERM_OPTIONS.map((d) => <option key={d} value={d}>{d} dni</option>)}
+                    </select>
+                    {!dueDateDescription.trim() && <p className="mt-1.5 text-sm text-slate-700">do {formatDateMed(dueDate)}</p>}
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-800">Data sprzedaży</label>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <select value={saleDateType} onChange={(e) => setSaleDateType(e.target.value as typeof saleDateType)} className="select-pill w-full sm:w-56">
+                      <option value="single">Konkretna data</option>
+                      <option value="period">Okres od–do</option>
+                      <option value="issue">= data wystawienia</option>
+                      <option value="various">Różne daty</option>
+                    </select>
+                    {saleDateType === 'single' && (
+                      <input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="date-pill w-full sm:w-52" />
+                    )}
+                    {saleDateType === 'period' && (
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="date-pill w-full sm:w-52" />
+                        <span className="text-slate-500">—</span>
+                        <input type="date" value={saleDateTo} onChange={(e) => setSaleDateTo(e.target.value)} className="date-pill w-full sm:w-52" />
+                      </div>
+                    )}
+                    {saleDateType === 'issue' && <p className="text-sm text-slate-800">{formatDateMed(issueDate)}</p>}
+                  </div>
+                </div>
+                {paymentMethod === 'other' && (
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-800">Opis formy płatności</label>
+                    <input type="text" value={otherPaymentDescription} onChange={(e) => setOtherPaymentDescription(e.target.value)} maxLength={256} placeholder="Np. płatność blikiem, kompensata..." className="field-ios w-full" />
+                  </div>
+                )}
+                {paymentMethod === 'cash' && (
+                  <div className="sm:max-w-xs">
+                    <label className="mb-1.5 block text-sm font-medium text-slate-800">Data otrzymania zapłaty</label>
+                    <input type="date" value={paymentReceivedAt ?? issueDate} onChange={(e) => setPaymentReceivedAt(e.target.value || null)} className="date-pill w-full" />
+                  </div>
+                )}
+                {invoiceType === 'ROZ' && (
+                  <ZalSelectionSection availableZal={availableZal} selectedIds={selectedZalIds} onChange={setSelectedZalIds} customerId={customerId} />
+                )}
+              </div>
+            </section>
+
+            <section className={cn(cardCls, 'overflow-hidden')}>
+              <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5">
+                <SectionMark name="sliders" />
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">Dodatkowe opcje</h2>
+                  <p className="text-xs text-slate-500">Nie są wymagane do wystawienia faktury</p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-200 border-t border-slate-200">
+                <label className="flex items-center justify-between gap-3 px-4 py-3.5 md:px-6">
+                  <span className="text-sm font-medium text-slate-800">Pokaż numery WZ z dostaw</span>
+                  <input type="checkbox" checked={showWzNumbers} onChange={(e) => setShowWzNumbers(e.target.checked)} className="h-4 w-4 accent-primary" />
+                </label>
+                <InvoiceDetailsAccordion
+                  footerText={ksefOptions.footer_text ?? ''}
+                  onFooterTextChange={(v) => setKsefOptions((prev) => ({ ...prev, footer_text: v }))}
+                  dueDateDescription={dueDateDescription}
+                  onDueDateDescriptionChange={setDueDateDescription}
+                  placeOfIssue={placeOfIssue}
+                  onPlaceOfIssueChange={setPlaceOfIssue}
+                />
+                <InvoiceKsefOptions
+                  value={ksefOptions}
+                  onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+                  paymentMethod={paymentMethod}
+                />
+                <AnnotationsSection
+                  value={ksefOptions}
+                  onChange={(patch) => setKsefOptions((prev) => ({ ...prev, ...patch }))}
+                />
+                <TransactionConditionsSection
+                  contracts={contracts}
+                  onContractsChange={setContracts}
+                  purchaseOrders={purchaseOrders}
+                  onPurchaseOrdersChange={setPurchaseOrders}
+                />
+              </div>
+            </section>
 
             {submitError && (
               <p className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
@@ -1130,21 +1449,23 @@ function InvoicePeriodPageContent() {
 
       {/* ── Fixed bottom bar (step 2 only — step 1 summary lives under the list) ── */}
       {step === 2 && (
-      <div className="fixed left-0 right-0 z-30 bottom-[83px] md:bottom-0 border-t border-border/40 bg-background/95 backdrop-blur">
-        <div className="mx-auto w-full max-w-3xl px-4 pb-3 pt-3">
-          <div className="flex gap-3">
-            <button type="button" onClick={() => setStep(1)} className="rounded-xl border border-border px-4 py-3 text-sm font-semibold text-foreground hover:bg-muted transition-colors">
-              ← Wstecz
-            </button>
-            <button
-              type="button"
-              onClick={() => void onSubmit()}
-              disabled={isSubmitting || !customerId || (source === 'orders' ? activeOrderIds.length === 0 : editItems.length === 0)}
-              className={cn('flex-1 rounded-xl py-3 text-base font-semibold transition-colors', !isSubmitting && canGoStep2 ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'cursor-not-allowed bg-muted text-muted-foreground')}
-            >
-              {isSubmitting ? 'Tworzenie faktury…' : `Wystaw fakturę — ${pln.format(totalGross)}`}
-            </button>
-          </div>
+      <div className="fixed bottom-[83px] left-0 right-0 z-40 border-t border-slate-200 bg-white px-4 pb-3 pt-3 md:bottom-0 md:left-64">
+        <div className="mx-auto flex w-full max-w-5xl items-center gap-3">
+          <button type="button" onClick={() => setStep(1)} className="rounded-2xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground hover:bg-muted">
+            ← Wstecz
+          </button>
+          <span className="ml-auto text-sm font-semibold tabular-nums text-slate-900">{pln.format(totalGross)} brutto</span>
+          <button
+            type="button"
+            onClick={() => void onSubmit()}
+            disabled={isSubmitting || !canGoStep2}
+            className={cn(
+              'rounded-2xl py-2.5 pl-5 pr-4 text-sm font-semibold',
+              !isSubmitting && canGoStep2 ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'cursor-not-allowed bg-muted text-muted-foreground',
+            )}
+          >
+            {isSubmitting ? 'Tworzenie…' : 'Wystaw fakturę'}
+          </button>
         </div>
       </div>
       )}

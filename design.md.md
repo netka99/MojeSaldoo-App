@@ -1,5 +1,9 @@
 # Comprehensive Specification: MojeSaldoo Apple-Inspired Light System
 
+> Aktualny wygląd pól, selectów, przycisków i kart jest w [`design.md`](design.md). Przy rozbieżności (kolor primary, kapsułki, wysokość pól) wygrywa `design.md`. Ten dokument zostaje jako starszy szkic kierunku.
+
+
+
 ## 1. Executive Summary & Design Philosophy
 
 Projekt zakłada transformację MojeSaldoo w aplikację biznesową klasy **Craft-First SaaS** (wzorowaną na standardach Apple, Linear, Vercel). 

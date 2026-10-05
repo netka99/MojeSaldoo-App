@@ -2218,6 +2218,21 @@ class GenerateFromOrdersTests(TestCase):
         self.assertEqual(inv.items.count(), 2)
         self.assertEqual(inv.customer, self.customer)
 
+    def test_item_quantities_override_billed_qty(self):
+        inv = generate_invoice_from_orders(
+            order_ids=[str(self.order.uuid)],
+            order_item_ids=[str(self.item1.uuid)],
+            item_quantities={str(self.item1.uuid): "3"},
+            company=self.company,
+            user=self.user,
+            issue_date=date(2026, 9, 15),
+            sale_date=date(2026, 9, 10),
+            due_date=date(2026, 9, 29),
+        )
+        line = inv.items.get()
+        self.assertEqual(line.quantity, Decimal("3"))
+        self.assertEqual(line.product_name, "Bread")
+
     def test_generates_invoice_for_selected_items_only(self):
         inv = generate_invoice_from_orders(
             order_ids=[str(self.order.uuid)],

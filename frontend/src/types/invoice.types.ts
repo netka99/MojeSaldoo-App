@@ -257,6 +257,12 @@ export interface GenerateInvoiceFromOrdersBody extends InvoiceKsefOptions {
   due_date?: string;
   payment_method?: InvoicePaymentMethod;
   show_wz_numbers?: boolean;
+  invoice_number?: string;
+  place_of_issue?: string;
+  /** UUIDs of ZAL invoices to link when ksef_invoice_type === 'ROZ'. */
+  advance_invoice_ids?: string[];
+  /** Order item UUID → quantity. Only lines the user changed; others use the delivered quantity. */
+  item_quantities?: Record<string, string>;
 }
 
 /** One item returned by the period-preview endpoints. */
