@@ -180,10 +180,16 @@ function toAppError(error: unknown): Error {
         : Array.isArray(detail) && detail.every((d): d is string => typeof d === 'string')
           ? detail.join(' · ')
           : null;
+    // DRF ValidationError("plain string") serializes as a root-level string array ["..."]
+    const rootArrayStr =
+      Array.isArray(body) && body.every((d): d is string => typeof d === 'string')
+        ? (body as string[]).join(' · ')
+        : null;
     const fieldStr =
       body && typeof body === 'object' && !Array.isArray(body) ? drfFieldMessages(body as Record<string, unknown>) : null;
     const msg =
       detailStr ||
+      rootArrayStr ||
       (typeof body?.message === 'string' ? body.message : null) ||
       fieldStr ||
       ax.message ||

@@ -141,21 +141,21 @@ function KsefDot({ status }: { status: InvoiceKsefStatus }) {
     pending:  'bg-amber-400',
     sent:     'bg-blue-500',
     rejected: 'bg-red-500',
-    not_sent: 'bg-gray-300',
+    not_sent: 'bg-gray-400',
   };
   const textColor: Record<InvoiceKsefStatus, string> = {
     accepted: 'text-emerald-700',
     pending:  'text-amber-700',
     sent:     'text-blue-700',
     rejected: 'text-red-600',
-    not_sent: 'text-gray-400',
+    not_sent: 'text-gray-500',
   };
   const label: Record<InvoiceKsefStatus, string> = {
     accepted: 'Przyjęta',
     pending:  'Oczekuje',
     sent:     'W KSeF',
     rejected: 'Błąd',
-    not_sent: '—',
+    not_sent: 'Nie wysłana',
   };
   return (
     <span className="flex items-center gap-1.5" title={INVOICE_KSEF_STATUS_LABELS_PL[status]}>
@@ -881,7 +881,6 @@ function InvoicesPageContent() {
                   </div>
                 </th>
                 <th scope="col" className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500">Klient</th>
-                <SortableHeader label="Data wystawienia" field="issue_date" ordering={ordering} openColumn={openColumnFilter} colRef={issueDateRef} onSort={f => { setOrdering(f); resetPage(); }} onOpen={setOpenColumnFilter} ascLabel="Najstarsze" descLabel="Najnowsze" ascShort="Najstarsze" descShort="Najnowsze" />
                 <SortableHeader label="Termin płatności" field="due_date" ordering={ordering} openColumn={openColumnFilter} colRef={dueDateRef} onSort={f => { setOrdering(f); resetPage(); }} onOpen={setOpenColumnFilter} ascLabel="Najwcześniejszy" descLabel="Najpóźniejszy" ascShort="Najwcześniej" descShort="Najpóźniej" />
                 <SortableHeader label="Wartość brutto" field="total_gross" ordering={ordering} openColumn={openColumnFilter} colRef={totalGrossRef} onSort={f => { setOrdering(f); resetPage(); }} onOpen={setOpenColumnFilter} align="right" />
                 <th scope="col" className="whitespace-nowrap px-4 py-3">
@@ -1000,15 +999,21 @@ function InvoicesPageContent() {
                       ))}
                       {row.order && (
                         <Link to={`/orders/${row.order.id}`} className="text-[12px] text-gray-400 hover:text-[#5856D6] hover:underline">
-                          Zamówienie
+                          {row.order.order_number ?? 'Zamówienie'}
                         </Link>
+                      )}
+                      {!row.order && row.order_numbers && row.order_numbers.length > 0 && (
+                        <span className="text-[12px] text-gray-400">
+                          {row.order_numbers.length === 1
+                            ? row.order_numbers[0]
+                            : `${row.order_numbers.length} zamówień`}
+                        </span>
                       )}
                     </div>
                   </td>
                   <td className="max-w-[180px] truncate px-4 py-3.5 text-[14px] text-gray-600" title={row.customer_name || row.order?.customer_name}>
                     {row.customer_name || row.order?.customer_name || '—'}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3.5 text-[14px] text-gray-500">{formatDate(row.issue_date)}</td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-[14px] text-gray-500">{formatDate(row.due_date)}</td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-right text-[14px] font-semibold tabular-nums text-gray-900">
                     {formatGross(row.total_gross)}
@@ -1063,7 +1068,7 @@ function InvoicesPageContent() {
                 </tr>
                 {expandedRows.has(row.id) && row.items?.length > 0 && (
                   <tr className="bg-gray-50/50">
-                    <td colSpan={selectionMode ? 8 : 7} className="px-6 pb-3 pt-0">
+                    <td colSpan={selectionMode ? 7 : 6} className="px-6 pb-3 pt-0">
                       <table className="w-full text-[13px]">
                         <thead>
                           <tr className="border-b border-gray-100">

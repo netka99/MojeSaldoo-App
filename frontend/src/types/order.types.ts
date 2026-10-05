@@ -64,6 +64,7 @@ export interface Order {
   confirmed_at: string | null;
   delivered_at: string | null;
   items: OrderItem[];
+  has_active_invoice?: boolean;
 }
 
 /**

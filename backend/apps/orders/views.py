@@ -2,7 +2,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Exists, OuterRef, QuerySet
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
@@ -61,10 +61,25 @@ class OrderViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self) -> QuerySet:
+        from apps.invoices.models import Invoice, InvoiceOrder
+        _active = ["draft", "issued", "sent", "paid", "overdue"]
+        has_legacy = Invoice.objects.filter(
+            order=OuterRef("pk"),
+            status__in=_active,
+            is_correction=False,
+        )
+        has_multi = InvoiceOrder.objects.filter(
+            order=OuterRef("pk"),
+            invoice__status__in=_active,
+            invoice__is_correction=False,
+        )
         qs = (
             Order.objects.all()
             .select_related("customer", "company", "user")
             .prefetch_related("items", "items__product")
+            .annotate(
+                has_active_invoice=Exists(has_legacy) | Exists(has_multi)
+            )
         )
         return filter_queryset_for_current_company(qs, self.request.user)
 

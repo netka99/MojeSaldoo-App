@@ -37,8 +37,13 @@ function NavSectionSprzedaz() {
           </ModuleNavItem>
         )}
         {canInvoices && (
-          <ModuleNavItem module="invoicing" to="/invoices">
-            Faktury
+          <ModuleNavItem module="invoicing" to="/invoices" end>
+            Lista faktur
+          </ModuleNavItem>
+        )}
+        {canInvoices && (
+          <ModuleNavItem module="invoicing" to="/invoices/new" className="pl-7 text-muted-foreground">
+            Nowa faktura
           </ModuleNavItem>
         )}
         {reportingEnabled && canReports && (

@@ -78,6 +78,21 @@ export interface Invoice {
   user: number | null;
   order: Order | null;
   order_ids?: string[];
+  order_numbers?: string[];
+  orders_summary?: {
+    id: string;
+    order_number: string | null;
+    delivery_date: string | null;
+    item_count: number;
+    items: {
+      product_name: string;
+      product_unit: string;
+      quantity: string;
+      unit_price_net: string;
+      vat_rate: string;
+      line_gross: string;
+    }[];
+  }[];
   customer: string;
   customer_name: string;
   delivery_document: string | null;

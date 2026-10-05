@@ -109,6 +109,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         if instance.status != Invoice.STATUS_DRAFT:
             raise ValidationError({"detail": "Tylko faktury w statusie 'szkic' mogą być usunięte."})
+        # Revert linked orders from 'invoiced' back to 'delivered' before deleting
+        from apps.orders.models import Order
+        linked_order_ids = list(instance.invoice_orders.values_list("order_id", flat=True))
+        if instance.order_id:
+            linked_order_ids.append(instance.order_id)
+        if linked_order_ids:
+            Order.objects.filter(pk__in=linked_order_ids, status=Order.STATUS_INVOICED).update(
+                status=Order.STATUS_DELIVERED
+            )
         super().perform_destroy(instance)
 
     def destroy(self, request, *args, **kwargs):

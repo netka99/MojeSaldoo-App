@@ -221,11 +221,13 @@ function OrderRow({
     .filter((i) => selectedItemIds.has(i.id))
     .reduce((sum, i) => sum + itemGross(i), 0);
 
+  const alreadyInvoiced = !!order.has_active_invoice;
+
   return (
-    <div className={cn(cardCls, 'overflow-hidden transition-all', selectedCount > 0 && 'ring-2 ring-primary/40')}>
+    <div className={cn(cardCls, 'overflow-hidden transition-all', !alreadyInvoiced && selectedCount > 0 && 'ring-2 ring-primary/40', alreadyInvoiced && 'opacity-60')}>
       {/* Order header */}
       <div className="flex items-center gap-3 px-4 py-3">
-        <button type="button" onClick={() => onToggleAll(order)} aria-pressed={fullySelected}>
+        <button type="button" onClick={() => !alreadyInvoiced && onToggleAll(order)} aria-pressed={fullySelected} disabled={alreadyInvoiced}>
           <CheckCircle checked={fullySelected} partial={partial} />
         </button>
 
@@ -234,6 +236,9 @@ function OrderRow({
             {order.order_number ?? '—'}
             {order.delivery_date && (
               <span className="ml-2 font-normal text-muted-foreground">· {order.delivery_date}</span>
+            )}
+            {alreadyInvoiced && (
+              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Zafakturowane</span>
             )}
           </p>
           {selectedCount > 0 ? (
@@ -275,8 +280,9 @@ function OrderRow({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => onToggleItem(item.id)}
-                className={cn('flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors', sel && 'bg-primary/5')}
+                onClick={() => !alreadyInvoiced && onToggleItem(item.id)}
+                disabled={alreadyInvoiced}
+                className={cn('flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors', sel && 'bg-primary/5', alreadyInvoiced && 'cursor-default')}
               >
                 <CheckCircle checked={sel} />
                 <div className="min-w-0 flex-1">
@@ -668,7 +674,7 @@ function InvoicePeriodPageContent() {
     });
   }
 
-  const allItemIds = useMemo(() => orders.flatMap((o) => getOrderItemIds(o)), [orders]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allItemIds = useMemo(() => orders.filter((o) => !o.has_active_invoice).flatMap((o) => getOrderItemIds(o)), [orders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleAllItems() {
     const allSel = allItemIds.length > 0 && allItemIds.every((id) => selectedItemIds.has(id));
@@ -1438,11 +1444,6 @@ function InvoicePeriodPageContent() {
               </div>
             </section>
 
-            {submitError && (
-              <p className="rounded-2xl border border-destructive/35 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
-                {submitError}
-              </p>
-            )}
           </>
         )}
       </div>
@@ -1450,8 +1451,15 @@ function InvoicePeriodPageContent() {
       {/* ── Fixed bottom bar (step 2 only — step 1 summary lives under the list) ── */}
       {step === 2 && (
       <div className="fixed bottom-[83px] left-0 right-0 z-40 border-t border-slate-200 bg-white px-4 pb-3 pt-3 md:bottom-0 md:left-64">
+        {submitError && (
+          <div className="mx-auto mb-2 w-full max-w-5xl">
+            <p className="rounded-xl border border-destructive/35 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+              {submitError}
+            </p>
+          </div>
+        )}
         <div className="mx-auto flex w-full max-w-5xl items-center gap-3">
-          <button type="button" onClick={() => setStep(1)} className="rounded-2xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground hover:bg-muted">
+          <button type="button" onClick={() => { setStep(1); setSubmitError(null); }} className="rounded-2xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground hover:bg-muted">
             ← Wstecz
           </button>
           <span className="ml-auto text-sm font-semibold tabular-nums text-slate-900">{pln.format(totalGross)} brutto</span>

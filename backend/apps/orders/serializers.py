@@ -112,6 +112,7 @@ class OrderSerializer(UUIDModelSerializer):
         source="customer.payment_terms",
         read_only=True,
     )
+    has_active_invoice = serializers.BooleanField(read_only=True, default=False)
 
     class Meta:
         model = Order
@@ -139,8 +140,9 @@ class OrderSerializer(UUIDModelSerializer):
             "confirmed_at",
             "delivered_at",
             "items",
+            "has_active_invoice",
         ]
-        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user"]
+        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

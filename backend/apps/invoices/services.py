@@ -202,6 +202,12 @@ def generate_invoice_from_order(
             "updated_at",
         ]
     )
+
+    # Mark the source order as invoiced
+    if order.status != Order.STATUS_INVOICED:
+        order.status = Order.STATUS_INVOICED
+        order.save(update_fields=["status"])
+
     return invoice
 
 
@@ -481,9 +487,12 @@ def generate_invoice_from_orders(
     )
     invoice.save()
 
-    # Link orders via M2M junction
+    # Link orders via M2M junction and mark them as invoiced
     for order in orders:
         InvoiceOrder.objects.create(invoice=invoice, order=order)
+        if order.status != Order.STATUS_INVOICED:
+            order.status = Order.STATUS_INVOICED
+            order.save(update_fields=["status"])
 
     # Create line items
     for oi, qty in all_lines:
@@ -877,11 +886,27 @@ def get_period_preview_from_orders(
     Aggregate OrderItems per product for a customer in [date_from, date_to].
     Returns a list of dicts suitable for use as manual invoice items.
     """
+    _active_invoice_statuses = ["draft", "issued", "sent", "paid", "overdue"]
+    already_invoiced_via_legacy = Invoice.objects.filter(
+        company=company,
+        order__isnull=False,
+        status__in=_active_invoice_statuses,
+        is_correction=False,
+    ).values_list("order_id", flat=True)
+    already_invoiced_via_multi = Invoice.objects.filter(
+        company=company,
+        invoice_orders__order__isnull=False,
+        status__in=_active_invoice_statuses,
+        is_correction=False,
+    ).values_list("invoice_orders__order_id", flat=True)
+
     orders = Order.objects.filter(
         company=company,
         customer=customer,
         delivery_date__range=[date_from, date_to],
         status__in=list(_ORDER_STATUSES_INVOICEABLE),
+    ).exclude(
+        pk__in=list(already_invoiced_via_legacy) + list(already_invoiced_via_multi)
     ).prefetch_related("items__product")
 
     returns_mode = getattr(company, "invoice_returns_mode", "fv_kor")

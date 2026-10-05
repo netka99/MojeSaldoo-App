@@ -178,6 +178,78 @@ function DraftActionsFooter({ invoice, onIssue, issuing }: { invoice: Invoice; o
   );
 }
 
+type OrderSummaryRow = NonNullable<Invoice['orders_summary']>[number];
+
+function OrderAccordion({ order }: { order: OrderSummaryRow }) {
+  const [open, setOpen] = useState(false);
+  const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50/60 md:px-6"
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-slate-800">
+            <Link
+              to={`/orders/${order.id}`}
+              className="text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {order.order_number ?? order.id.slice(0, 8)}
+            </Link>
+          </span>
+          {order.delivery_date && (
+            <span className="text-xs text-slate-400">{order.delivery_date}</span>
+          )}
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+            {order.item_count} {order.item_count === 1 ? 'pozycja' : order.item_count < 5 ? 'pozycje' : 'pozycji'}
+          </span>
+        </div>
+        <svg
+          className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')}
+          viewBox="0 0 20 20" fill="currentColor"
+        >
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open && order.items.length > 0 && (
+        <div className="border-t border-slate-100 bg-slate-50/40 px-4 pb-3 pt-2 md:px-6">
+          <table className="min-w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="pb-1.5 pt-1 text-left font-medium text-slate-400">Produkt</th>
+                <th className="pb-1.5 pt-1 text-right font-medium text-slate-400 pr-4">Ilość</th>
+                <th className="pb-1.5 pt-1 text-right font-medium text-slate-400 pr-4">VAT</th>
+                <th className="pb-1.5 pt-1 text-right font-medium text-slate-400">Brutto</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {order.items.map((item, i) => (
+                <tr key={i}>
+                  <td className="py-1.5 text-slate-700">{item.product_name}</td>
+                  <td className="py-1.5 text-right tabular-nums text-slate-500 pr-4">
+                    {parseFloat(item.quantity) % 1 === 0
+                      ? parseInt(item.quantity)
+                      : parseFloat(item.quantity).toFixed(2)}{' '}
+                    {item.product_unit}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums text-slate-400 pr-4">{item.vat_rate}%</td>
+                  <td className="py-1.5 text-right tabular-nums font-medium text-slate-800">
+                    {pln.format(parseFloat(item.line_gross))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
@@ -399,14 +471,14 @@ export function InvoiceDetailPage() {
     invoice?.status === 'sent' ||
     invoice?.status === 'overdue';
   const showMarkUnpaid = invoice?.status === 'paid';
-  const showSendToKsef = invoice?.status === 'issued' && invoice.ksef_status === 'not_sent';
+  const showSendToKsef = invoice?.status === 'issued' && invoice?.ksef_status === 'not_sent';
   const showResendKsef = invoice?.ksef_status === 'rejected';
   const showKsefRefresh = invoice?.ksef_status === 'pending';
   const showCreateCorrection =
     !invoice?.is_correction &&
     (invoice?.status === 'issued' || invoice?.status === 'sent' || invoice?.status === 'paid');
 
-  const numberLabel = invoice?.invoice_number ?? preview?.invoice.invoice_number ?? id.slice(0, 8);
+  const numberLabel = invoice?.invoice_number ?? preview?.invoice?.invoice_number ?? id.slice(0, 8);
 
   return (
     <>
@@ -473,7 +545,7 @@ export function InvoiceDetailPage() {
                 Powód: <span className="text-foreground">{invoice.correction_reason}</span>
               </p>
             )}
-            {invoice && preview?.invoice.order_number ? (
+            {invoice && preview?.invoice.order_number && !invoice.orders_summary?.length ? (
               <p className="mt-1 text-sm text-muted-foreground">
                 Zamówienie:{' '}
                 <Link
@@ -499,7 +571,82 @@ export function InvoiceDetailPage() {
           </div>
 
           <div className="flex flex-col gap-2 sm:items-end">
+            {/* Secondary actions row — document tools and status changes */}
+            {invoice?.status !== 'draft' && (
+              <div className="flex flex-wrap gap-2">
+                {invoice?.status !== 'draft' && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={onPrintInvoice}
+                    disabled={!preview || loading}
+                  >
+                    Drukuj fakturę
+                  </Button>
+                )}
+                {canInvoices && invoice?.status !== 'draft' && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void onDownloadXml()}
+                    disabled={!invoice || xmlDownloading}
+                    loading={xmlDownloading}
+                  >
+                    Pobierz XML (KSeF)
+                  </Button>
+                )}
+                {canInvoices && invoice?.upo_received && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void onDownloadUpo()}
+                    disabled={upoDownloading}
+                    loading={upoDownloading}
+                  >
+                    {upoDownloading ? 'Pobieranie…' : 'Pobierz UPO'}
+                  </Button>
+                )}
+                {canInvoices && showCreateCorrection && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => navigate(`/invoices/${id}/correction/new`)}
+                    disabled={createCorrectionM.isPending}
+                  >
+                    Utwórz korektę FV
+                  </Button>
+                )}
+                {canInvoices && showMarkUnpaid && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void onMarkUnpaid()}
+                    disabled={markUnpaidM.isPending || fetching}
+                  >
+                    {markUnpaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako nieopłaconą'}
+                  </Button>
+                )}
+              </div>
+            )}
+            {/* Primary actions row */}
             <div className="flex flex-wrap gap-2">
+              {canInvoices && showKsefRefresh && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void onRefreshKsefStatus()}
+                  disabled={isPolling || fetchKsefStatusM.isPending}
+                  loading={isPolling || fetchKsefStatusM.isPending}
+                >
+                  {isPolling ? 'Sprawdzanie…' : 'Odśwież status KSeF'}
+                </Button>
+              )}
               {canInvoices && showMarkPaid && (
                 <Button
                   type="button"
@@ -511,54 +658,6 @@ export function InvoiceDetailPage() {
                   {markPaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako opłaconą'}
                 </Button>
               )}
-              {canInvoices && showMarkUnpaid && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void onMarkUnpaid()}
-                  disabled={markUnpaidM.isPending || fetching}
-                >
-                  {markUnpaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako nieopłaconą'}
-                </Button>
-              )}
-              {invoice?.status !== 'draft' && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={onPrintInvoice}
-                  disabled={!preview || loading}
-                >
-                  Drukuj fakturę
-                </Button>
-              )}
-              {canInvoices && invoice?.status !== 'draft' && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void onDownloadXml()}
-                  disabled={!invoice || xmlDownloading}
-                  loading={xmlDownloading}
-                >
-                  Pobierz XML (KSeF)
-                </Button>
-              )}
-
-              {canInvoices && invoice?.upo_received && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void onDownloadUpo()}
-                  disabled={upoDownloading}
-                  loading={upoDownloading}
-                >
-                  {upoDownloading ? 'Pobieranie…' : 'Pobierz UPO'}
-                </Button>
-              )}
-
               {canInvoices && (showSendToKsef || showResendKsef) && (
                 <Button
                   type="button"
@@ -572,30 +671,6 @@ export function InvoiceDetailPage() {
                     : showResendKsef
                     ? 'Wyślij ponownie do KSeF'
                     : 'Wyślij do KSeF'}
-                </Button>
-              )}
-
-              {canInvoices && showKsefRefresh && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void onRefreshKsefStatus()}
-                  disabled={isPolling || fetchKsefStatusM.isPending}
-                  loading={isPolling || fetchKsefStatusM.isPending}
-                >
-                  {isPolling ? 'Sprawdzanie…' : 'Odśwież status KSeF'}
-                </Button>
-              )}
-              {canInvoices && showCreateCorrection && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => navigate(`/invoices/${id}/correction/new`)}
-                  disabled={createCorrectionM.isPending}
-                >
-                  Utwórz korektę FV
                 </Button>
               )}
             </div>
@@ -790,10 +865,26 @@ export function InvoiceDetailPage() {
                 </p>
               </CardContent>
             </Card>
+
+            {/* Linked orders — after invoice content, visually separated as auxiliary context */}
+            {invoice?.orders_summary && invoice.orders_summary.length > 0 && (
+              <div className="mt-2">
+                <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Powiązane zamówienia
+                </p>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 md:rounded-3xl overflow-hidden">
+                  <div className="divide-y divide-slate-100">
+                    {invoice.orders_summary.map((o) => (
+                      <OrderAccordion key={o.id} order={o} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 
-        {canInvoices && (preview.invoice.status === 'draft' || invoice?.status === 'draft') && invoice && (
+        {canInvoices && (preview?.invoice?.status === 'draft' || invoice?.status === 'draft') && invoice && (
           <div className="flex items-center justify-end gap-3 pt-2">
             <DraftActionsFooter
               invoice={invoice}

@@ -91,6 +91,8 @@ class InvoiceSerializer(UUIDModelSerializer):
     manual_items = InvoiceItemWriteSerializer(many=True, write_only=True, required=False)
     # Read-only list of order UUIDs linked via M2M
     order_ids = serializers.SerializerMethodField(read_only=True)
+    order_numbers = serializers.SerializerMethodField(read_only=True)
+    orders_summary = serializers.SerializerMethodField(read_only=True)
     # Resolved customer name — from direct FK or via order
     customer_name = serializers.SerializerMethodField(read_only=True)
 
@@ -111,6 +113,51 @@ class InvoiceSerializer(UUIDModelSerializer):
             str(io.order.uuid)
             for io in instance.invoice_orders.select_related("order").all()
         ]
+
+    def get_order_numbers(self, instance):
+        """Order numbers from M2M junction (multi-order invoices)."""
+        numbers = [
+            io.order.order_number
+            for io in instance.invoice_orders.select_related("order").all()
+            if io.order.order_number
+        ]
+        if not numbers and instance.order_id and instance.order.order_number:
+            numbers = [instance.order.order_number]
+        return numbers
+
+    def get_orders_summary(self, instance):
+        """Mini summary of linked orders with line items for accordion preview."""
+        def _order_dict(o):
+            items = [
+                {
+                    "product_name": oi.product_name or (oi.product.name if oi.product_id else ""),
+                    "product_unit": oi.product_unit or (oi.product.unit if oi.product_id else "") or "",
+                    "quantity": str(oi.quantity),
+                    "unit_price_net": str(oi.unit_price_net),
+                    "vat_rate": str(oi.vat_rate),
+                    "line_gross": str(oi.line_total_gross),
+                }
+                for oi in o.items.select_related("product").all()
+            ]
+            return {
+                "id": str(o.uuid),
+                "order_number": o.order_number,
+                "delivery_date": str(o.delivery_date) if o.delivery_date else None,
+                "item_count": len(items),
+                "items": items,
+            }
+
+        rows = [
+            _order_dict(io.order)
+            for io in instance.invoice_orders
+                .select_related("order")
+                .prefetch_related("order__items__product")
+                .all()
+        ]
+        if not rows and instance.order_id:
+            instance.order.items.select_related("product")
+            rows = [_order_dict(instance.order)]
+        return rows
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
