@@ -1159,20 +1159,43 @@ function PaperScannerPageInner() {
 
             {/* ── pozycje dokumentu ────────────────────────────────── */}
             <section className="rounded-2xl bg-card p-5 shadow-[0_2px_12px_rgba(26,28,31,0.07)]">
-              <div className="mb-4 flex items-center justify-between">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 className="text-[15px] font-semibold text-foreground">Pozycje</h2>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setUnifiedLines((prev) => [
-                    ...prev,
-                    { id: Date.now(), product_name: '', quantity: '1', unit: 'szt', unit_price_gross: '', vat_rate: '' },
-                  ])}
-                  className="rounded-lg border border-dashed border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-                >
-                  + Dodaj pozycję
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Bulk VAT setter */}
+                  <div className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-2.5 py-1.5">
+                    <span className="text-[12px] font-medium text-muted-foreground">VAT dla wszystkich:</span>
+                    <select
+                      className="bg-transparent text-[12px] font-semibold text-foreground focus:outline-none cursor-pointer"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const rate = e.target.value;
+                        if (!rate) return;
+                        setUnifiedLines((prev) => prev.map((l) => ({ ...l, vat_rate: rate })));
+                        e.target.value = '';
+                      }}
+                    >
+                      <option value="" disabled>wybierz…</option>
+                      <option value="23">23%</option>
+                      <option value="8">8%</option>
+                      <option value="5">5%</option>
+                      <option value="0">0%</option>
+                      <option value="zw">zw</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUnifiedLines((prev) => [
+                      ...prev,
+                      { id: Date.now(), product_name: '', quantity: '1', unit: 'szt', unit_price_gross: '', vat_rate: '' },
+                    ])}
+                    className="rounded-lg border border-dashed border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                  >
+                    + Dodaj pozycję
+                  </button>
+                </div>
               </div>
 
               {/* sum mismatch alert */}

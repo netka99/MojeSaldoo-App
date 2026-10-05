@@ -1875,9 +1875,13 @@ def _parse_vat_totals(text: str) -> tuple[str, str]:
     """Return (total_net, total_vat) from PTU / VAT summary lines. Never invents a rate."""
     total_vat = ""
     total_net = ""
-    m = re.search(r"SUMA\s+PTU\s*[:\s]*([\d\s]+[,.]\s?\d{2})", text, re.IGNORECASE)
+
+    # Format 1: "SUMA PTU=7,67" or "SUMA PTU: 7,67" (Biedronka, Lidl, etc.)
+    m = re.search(r"SUMA\s+PTU\s*[=:\s]+([ \d]+[,.]\s?\d{2})", text, re.IGNORECASE)
     if m:
         total_vat = _normalize_pln(m.group(1))
+
+    # Format 2: "Kwota VAT / Suma VAT / VAT razem: X"
     if not total_vat:
         m = re.search(
             r"(?:Kwota\s*VAT|Suma\s*VAT|VAT\s*razem)\s*[:\s]*([\d\s]+[,.]\s?\d{2})",
@@ -1886,14 +1890,26 @@ def _parse_vat_totals(text: str) -> tuple[str, str]:
         )
         if m:
             total_vat = _normalize_pln(m.group(1))
-    m = re.search(
-        r"(?:Razem\s*netto|Suma\s*netto|Netto\s*razem|Wartość\s*netto)\s*[:\s]*([\d\s]+[,.]\s?\d{2})",
-        text,
-        re.IGNORECASE,
-    )
-    if m:
-        total_net = _normalize_pln(m.group(1))
-    if not total_net or not total_vat:
+
+    # Format 3: Biedronka inline: "PTU: C5%=7,67" or "PTU C5%=7,67"
+    if not total_vat:
+        ptu_inline_re = re.compile(
+            r"PTU\s*[:\s]*[A-Z]\s*[\d,.]+\s*%\s*=\s*([\d\s]+[,.]\d{2})",
+            re.IGNORECASE,
+        )
+        vat_sum = 0.0
+        found = False
+        for pm in ptu_inline_re.finditer(text):
+            try:
+                vat_sum += float(_normalize_pln(pm.group(1)).replace(",", "."))
+                found = True
+            except ValueError:
+                pass
+        if found:
+            total_vat = f"{vat_sum:.2f}"
+
+    # Format 4: "PTU A 23% netto vat brutto" table (Zabka, Carrefour)
+    if not total_vat:
         ptu_re = re.compile(
             r"PTU\s+[A-Z]\s+[\d,.]+\s*%\s+([\d\s]+[,.]\d{2})\s+([\d\s]+[,.]\d{2})\s+([\d\s]+[,.]\d{2})",
             re.IGNORECASE,
@@ -1912,6 +1928,17 @@ def _parse_vat_totals(text: str) -> tuple[str, str]:
                 total_net = f"{net_sum:.2f}"
             if not total_vat:
                 total_vat = f"{vat_sum:.2f}"
+
+    # Net amount
+    if not total_net:
+        m = re.search(
+            r"(?:Razem\s*netto|Suma\s*netto|Netto\s*razem|Wartość\s*netto)\s*[:\s]*([\d\s]+[,.]\d{2})",
+            text,
+            re.IGNORECASE,
+        )
+        if m:
+            total_net = _normalize_pln(m.group(1))
+
     return total_net, total_vat
 
 
