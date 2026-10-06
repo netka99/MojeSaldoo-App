@@ -14,6 +14,8 @@ import {
 import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 import { usePeriodSummaryQuery, useHistoryQuery, useExpenseChartQuery } from '@/query/use-cashflow';
 import { CashFlowSkeleton } from './CashFlowSkeleton';
+import { cn } from '@/lib/utils';
+import { statusGreenClass, statusOrangeClass, statusRedClass } from '@/lib/reportSurface';
 import { QUICK_EXPENSE_CATEGORY_LABELS } from '@/types/cashflow.types';
 
 // ---------------------------------------------------------------------------
@@ -356,7 +358,7 @@ export function PeriodSummaryTab() {
           {/* Summary cards 2×2 */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {/* Przychód */}
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-5">
+            <div className={cn('rounded-2xl border p-5', statusGreenClass)}>
               <p className="mb-2 text-sm font-medium text-muted-foreground">Mój przychód</p>
               <p className="text-3xl font-bold tracking-tight text-green-700">
                 {pln.format(data.revenue_total)}
@@ -380,7 +382,7 @@ export function PeriodSummaryTab() {
                 ? Math.round((data.profit_net / data.revenue_total) * 100)
                 : null;
               return (
-                <div className={`rounded-2xl border p-5 ${isLoss ? 'border-red-200 bg-red-50' : 'border-primary/20 bg-primary/5'}`}>
+                <div className={`rounded-2xl border p-5 ${isLoss ? statusRedClass : 'border-primary/20 bg-primary/5'}`}>
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="mb-2 text-sm font-medium text-muted-foreground">
@@ -417,7 +419,7 @@ export function PeriodSummaryTab() {
             })()}
 
             {/* Podatki */}
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
+            <div className={cn('rounded-2xl border p-5', statusRedClass)}>
               <p className="mb-2 text-sm font-medium text-muted-foreground">Zapłaciłam państwu</p>
               <p className="text-3xl font-bold tracking-tight text-red-700">
                 {pln.format(data.taxes_total)}
@@ -448,7 +450,7 @@ export function PeriodSummaryTab() {
             </div>
 
             {/* Koszty */}
-            <div className="rounded-2xl border border-orange-200 bg-orange-50 p-5">
+            <div className={cn('rounded-2xl border p-5', statusOrangeClass)}>
               <p className="mb-2 text-sm font-medium text-muted-foreground">Zapłaciłam dostawcom</p>
               <p className="text-3xl font-bold tracking-tight text-orange-700">
                 {pln.format(data.costs_suppliers + data.costs_quick + data.costs_fixed_total)}

@@ -216,7 +216,7 @@ export function CertificateUploadPage() {
             <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>
                 <dt className="text-muted-foreground">Podmiot (subject)</dt>
-                <dd className="font-mono text-xs break-all">{status.subject_name ?? '—'}</dd>
+                <dd className="text-xs break-all">{status.subject_name ?? '—'}</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Ważny do</dt>

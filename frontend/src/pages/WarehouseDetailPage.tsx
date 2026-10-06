@@ -267,7 +267,7 @@ export function WarehouseDetailPage() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground">
+                              <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
                                 {row.product_sku ?? '—'}
                               </td>
                               <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-foreground">

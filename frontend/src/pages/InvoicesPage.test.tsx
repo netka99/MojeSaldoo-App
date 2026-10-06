@@ -74,6 +74,7 @@ vi.mock('@/query/use-invoices', async (importOriginal) => {
 vi.mock('@/query/use-customers', () => ({
   useCustomerListQuery: (page: number, search: string) =>
     useCustomerListQueryMock(page, search),
+  useCustomerQuery: () => ({ data: undefined }),
 }));
 
 vi.mock('@/hooks/usePermission', () => ({
@@ -286,8 +287,10 @@ describe('InvoicesPage', () => {
     ).toHaveAttribute('href', '/invoices/inv-1');
     expect(within(table).getByText('Klient testowy')).toBeInTheDocument();
     expect(within(table).getByText('Nieopłacona')).toBeInTheDocument();
-    // KSeF column shows short text "—" for not_sent status
-    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
+    const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
+    expect(within(table).getByText(plDate.format(new Date('2026-05-15T12:00:00')))).toBeInTheDocument();
+    expect(within(table).getByText(plDate.format(new Date('2026-05-29T12:00:00')))).toBeInTheDocument();
+    expect(within(table).getByText('Nie wysłana')).toBeInTheDocument();
   });
 
   it('applies status and ksef filters to the list query', async () => {

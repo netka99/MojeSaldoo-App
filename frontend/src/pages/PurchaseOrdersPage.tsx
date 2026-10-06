@@ -461,7 +461,7 @@ function OrderRow({ order, canManage }: OrderRowProps) {
         className="border-b hover:bg-gray-50 cursor-pointer"
         onClick={() => setExpanded((p) => !p)}
       >
-        <td className="px-4 py-3 font-mono text-sm text-blue-700">{order.document_number}</td>
+        <td className="px-4 py-3 text-sm text-blue-700">{order.document_number}</td>
         <td className="px-4 py-3 text-sm">{order.supplier_name || <span className="text-gray-400">—</span>}</td>
         <td className="px-4 py-3 text-sm">{fmtDate(order.issue_date)}</td>
         <td className="px-4 py-3 text-sm">{fmtDate(order.expected_delivery_date)}</td>

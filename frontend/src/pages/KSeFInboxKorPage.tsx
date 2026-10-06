@@ -120,7 +120,7 @@ export function KSeFInboxKorPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-xs text-muted-foreground break-all font-mono">{ksefNumber}</p>
+          <p className="text-xs text-muted-foreground break-all ">{ksefNumber}</p>
         </CardContent>
       </Card>
 
@@ -139,7 +139,7 @@ export function KSeFInboxKorPage() {
         <div className="rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 space-y-1">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Nie znaleziono powiązanego PZ</p>
           <p className="text-xs text-amber-700 dark:text-amber-400">
-            Oryginalna faktura KSeF <span className="font-mono">{match.original_ksef_number}</span>{' '}
+            Oryginalna faktura KSeF <span className="">{match.original_ksef_number}</span>{' '}
             {match.original_invoice
               ? 'jest w skrzynce, ale nie ma przypisanego PZ.'
               : 'nie jest jeszcze w skrzynce — wykonaj synchronizację.'}
@@ -159,7 +159,7 @@ export function KSeFInboxKorPage() {
             <p><span className="text-muted-foreground">Nr: </span>{match.original_invoice.invoiceNumber || '—'}</p>
             <p><span className="text-muted-foreground">Data: </span>{match.original_invoice.issueDate ?? '—'}</p>
             <p><span className="text-muted-foreground">Dostawca: </span>{match.original_invoice.seller.name}</p>
-            <p className="text-xs text-muted-foreground font-mono">{match.original_invoice.ksefNumber}</p>
+            <p className="text-xs text-muted-foreground ">{match.original_invoice.ksefNumber}</p>
           </CardContent>
         </Card>
       )}

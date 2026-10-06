@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import type { ModuleName } from '@/types';
 
 const itemClass = cn(
-  'flex w-full items-center rounded-2xl px-3 py-2 text-sm font-medium transition-colors',
+  'flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-sm font-medium transition-colors',
   'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
 );
 
@@ -30,13 +30,15 @@ export interface AppNavItemLinkProps {
   end?: boolean
   children: ReactNode
   className?: string
+  icon?: ReactNode
 }
 
 /** Primary nav link (no module check). */
-export function AppNavItemLink({ to, end, children, className }: AppNavItemLinkProps) {
+export function AppNavItemLink({ to, end, children, className, icon }: AppNavItemLinkProps) {
   const active = useNavActive(to, end);
   return (
     <Link to={to} className={cn(itemClass, active && activeItemClass, className)}>
+      {icon}
       {children}
     </Link>
   );
@@ -48,16 +50,17 @@ export interface ModuleNavItemProps {
   end?: boolean
   children: ReactNode
   className?: string
+  icon?: ReactNode
 }
 
 /** Renders a nav link only if `module` is enabled for the current company. */
-export function ModuleNavItem({ module, to, end, children, className }: ModuleNavItemProps) {
+export function ModuleNavItem({ module, to, end, children, className, icon }: ModuleNavItemProps) {
   const enabled = useModuleGuard(module);
   if (!enabled) {
     return null;
   }
   return (
-    <AppNavItemLink to={to} end={end} className={className}>
+    <AppNavItemLink to={to} end={end} className={className} icon={icon}>
       {children}
     </AppNavItemLink>
   );

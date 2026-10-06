@@ -12,6 +12,7 @@ import { PeriodSummaryTab } from '@/components/features/cashflow/PeriodSummaryTa
 import { TaxConfigSetup } from '@/components/features/cashflow/TaxConfigSetup';
 import { TaxSettingsModal } from '@/components/features/cashflow/TaxSettingsModal';
 import { PageExplainer } from '@/components/ui/PageExplainer';
+import { statusGoldClass, statusGreenClass, statusOrangeClass, statusRedClass } from '@/lib/reportSurface';
 import type { TaxObligation } from '@/types/cashflow.types';
 
 // ---------------------------------------------------------------------------
@@ -267,7 +268,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
       {/* ── Wynik — wyśrodkowany kafelek (lejek: 3 inputy → 1 wynik) ── */}
       <div className="grid grid-cols-3 gap-2">
         <div />
-        <div className={`rounded-xl border p-3 text-center ${isLoss ? 'border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20' : 'border-green-200 bg-green-50/40 dark:border-green-900 dark:bg-green-950/20'}`}>
+        <div className={`rounded-2xl border p-3 text-center ${isLoss ? statusRedClass : statusGreenClass}`}>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Wynik</p>
           <p className={`mt-1 text-base font-bold tabular-nums ${isLoss ? 'text-destructive' : 'text-green-700'}`}>
             {formatPln(wynik)}
@@ -304,7 +305,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
 
       {/* ── Outstanding banner — current month only ── */}
       {isCurrentMonth && outstandingTotal > 0 && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-yellow-200 bg-yellow-50/60 px-4 py-3 dark:border-yellow-800 dark:bg-yellow-950/20">
+        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${statusGoldClass}`}>
           <p className="text-sm text-yellow-800 dark:text-yellow-300">
             <span className="font-semibold">+{formatPln(outstandingTotal)}</span> oczekuje
             {overdueAmount > 0 && (
@@ -370,7 +371,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
 
       {/* ── Alerts ── */}
       {month.tax_threshold_alert && (
-        <div className={`rounded-xl border px-4 py-3 ${month.tax_threshold_alert.type === 'crossed' ? 'border-red-300 bg-red-50' : 'border-amber-300 bg-amber-50'}`}>
+        <div className={`rounded-2xl border px-4 py-3 ${month.tax_threshold_alert.type === 'crossed' ? statusRedClass : statusGoldClass}`}>
           <div className="flex items-start gap-3">
             <span className="shrink-0 text-lg">
               {month.tax_threshold_alert.type === 'crossed' ? '🔴' : '⚠️'}
@@ -396,7 +397,7 @@ function PrzegladTab({ currentMonth, setCurrentMonth, onAddKoszty, onOpenConfig 
       )}
 
       {month.uncategorized_ksef_count > 0 && (
-        <div className="rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 dark:border-orange-700 dark:bg-orange-950">
+        <div className={`rounded-2xl border px-4 py-3 ${statusOrangeClass}`}>
           <p className="text-sm font-medium text-orange-800 dark:text-orange-200">
             {month.uncategorized_ksef_count === 1
               ? '1 faktura zakupowa bez kategorii'

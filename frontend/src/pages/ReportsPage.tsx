@@ -15,6 +15,7 @@ import { authStorage } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { reportingService } from '@/services/reporting.service';
 import { cn } from '@/lib/utils';
+import { ReportShell, reportButtonClass, reportCardClass, reportLabelClass, reportSectionTitleClass, reportSubtitleClass, reportThClass, reportTitleClass, statusGoldClass, statusPurpleClass } from '@/lib/reportSurface';
 import type { KsefStatusReport } from '@/types/reporting.types';
 import { useFixedCostsQuery } from '@/query/use-fixed-costs';
 import { FIXED_COST_CATEGORY_LABELS, type FixedCostCategory } from '@/types/fixed-costs.types';
@@ -113,14 +114,11 @@ function formatQty(value: string | number): string {
   return new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 }).format(n);
 }
 
-const inputClass = cn(
-  'flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm',
-  'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
+const inputClass = 'date-pill';
 
 const tableClass = 'w-full border-collapse text-sm';
-const thClass = 'border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground';
-const tdClass = 'border-b px-3 py-2';
+const thClass = reportThClass;
+const tdClass = 'border-b border-slate-100 px-3 py-3 text-sm text-slate-700';
 
 export function KsefStatusDonut({ report }: { report: KsefStatusReport }) {
   const background = useMemo(() => buildKsefConicGradient(report), [report]);
@@ -263,11 +261,11 @@ function ReportsPageContent() {
     ordersNeededMonthly !== null ? Math.ceil(ordersNeededMonthly / 4.33) : null;
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-start justify-between gap-4">
+    <ReportShell>
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Raporty</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className={reportTitleClass}>Raporty</h1>
+          <p className={reportSubtitleClass}>
             Podsumowanie sprzedaży, rankingi i status KSeF dla aktywnej firmy.
           </p>
         </div>
@@ -275,7 +273,7 @@ function ReportsPageContent() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            className={cn('no-print', reportButtonClass)}
           >
             Drukuj PDF
           </button>
@@ -283,9 +281,9 @@ function ReportsPageContent() {
       </div>
 
       {/* ── Date range picker — global for all cards ─────────────────── */}
-      <div className="no-print mb-6 flex flex-wrap items-end gap-3">
+      <div className="no-print flex flex-wrap items-end gap-3">
         <div>
-          <label htmlFor="report-date-from" className="mb-1 block text-xs text-muted-foreground">Od</label>
+          <label htmlFor="report-date-from" className={reportLabelClass}>Od</label>
           <input
             id="report-date-from"
             type="date"
@@ -295,7 +293,7 @@ function ReportsPageContent() {
           />
         </div>
         <div>
-          <label htmlFor="report-date-to" className="mb-1 block text-xs text-muted-foreground">Do</label>
+          <label htmlFor="report-date-to" className={reportLabelClass}>Do</label>
           <input
             id="report-date-to"
             type="date"
@@ -306,15 +304,15 @@ function ReportsPageContent() {
         </div>
       </div>
 
-      <div className="space-y-6">
+      <div className="flex flex-col gap-3">
 
         {/* ── Ryczałt profitability card ─────────────────────────────────── */}
         {isRyczalt && (
-          <Card className="border-primary/20 bg-primary/3">
+          <Card className={cn(reportCardClass, 'border-primary/30 bg-primary/5')}>
             <CardHeader>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <CardTitle className="text-lg">Rentowność ryczałtowa</CardTitle>
+                  <CardTitle className={reportSectionTitleClass}>Rentowność ryczałtowa</CardTitle>
                   <p className="mt-0.5 text-sm text-muted-foreground">
                     Wybrany okres: {dateFrom} — {dateTo}
                     {ryczaltRateLabel && (
@@ -326,7 +324,7 @@ function ReportsPageContent() {
                 </div>
                 <Link
                   to="/reports/profit-loss"
-                  className="shrink-0 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+                  className={cn('shrink-0', reportButtonClass)}
                 >
                   Zysk i Koszty →
                 </Link>
@@ -410,11 +408,11 @@ function ReportsPageContent() {
 
         {/* ── Prognoza roczna podatku — ryczałt only ────────────────────── */}
         {isRyczalt && ryczaltRate !== null && (
-          <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-900/10">
+          <Card className={cn(reportCardClass, statusGoldClass)}>
             <CardHeader>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <CardTitle className="text-lg">Prognoza roczna podatku</CardTitle>
+                  <CardTitle className={reportSectionTitleClass}>Prognoza roczna podatku</CardTitle>
                   <p className="mt-0.5 text-sm text-muted-foreground">
                     Na podstawie przychodów od stycznia {now.getFullYear()} do dziś ({monthsElapsed}&nbsp;mies.)
                   </p>
@@ -467,9 +465,9 @@ function ReportsPageContent() {
 
         {/* ── Próg rentowności ──────────────────────────────────────────── */}
         {monthlyFixedTotal > 0 && (
-          <Card className="border-purple-200 bg-purple-50/40 dark:border-purple-900/40 dark:bg-purple-900/10">
+          <Card className={cn(reportCardClass, statusPurpleClass)}>
             <CardHeader>
-              <CardTitle className="text-lg">Próg rentowności</CardTitle>
+              <CardTitle className={reportSectionTitleClass}>Próg rentowności</CardTitle>
               <p className="text-sm text-muted-foreground">
                 Ile musisz sprzedać, żeby pokryć koszty stałe
               </p>
@@ -519,9 +517,9 @@ function ReportsPageContent() {
 
         {/* ── Struktura kosztów stałych ─────────────────────────────────── */}
         {activeFixedCosts.length > 0 && (
-          <Card>
+          <Card className={reportCardClass}>
             <CardHeader>
-              <CardTitle className="text-lg">Struktura kosztów stałych</CardTitle>
+              <CardTitle className={reportSectionTitleClass}>Struktura kosztów stałych</CardTitle>
               <p className="text-sm text-muted-foreground">
                 Miesięczny rozkład — {pln.format(monthlyFixedTotal)} łącznie
               </p>
@@ -563,9 +561,9 @@ function ReportsPageContent() {
           </Card>
         )}
 
-        <Card>
+        <Card className={reportCardClass}>
           <CardHeader>
-            <CardTitle className="text-lg">Podsumowanie sprzedaży</CardTitle>
+            <CardTitle className={reportSectionTitleClass}>Podsumowanie sprzedaży</CardTitle>
             <p className="print-only mt-1 text-xs text-muted-foreground">
               Okres: {dateFrom} — {dateTo}
             </p>
@@ -583,13 +581,13 @@ function ReportsPageContent() {
                   <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Zamówienia
                   </dt>
-                  <dd className="mt-1 text-[1.5rem] font-semibold tracking-tight tabular-nums">{sales.data.totalOrders}</dd>
+                  <dd className="mt-1 text-xl font-semibold tabular-nums">{sales.data.totalOrders}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Suma brutto
                   </dt>
-                  <dd className="mt-1 text-[1.5rem] font-semibold tracking-tight tabular-nums">
+                  <dd className="mt-1 text-xl font-semibold tabular-nums">
                     {formatMoney(sales.data.totalGross)}
                   </dd>
                 </div>
@@ -597,7 +595,7 @@ function ReportsPageContent() {
                   <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Śr. wartość zamówienia
                   </dt>
-                  <dd className="mt-1 text-[1.5rem] font-semibold tracking-tight tabular-nums">
+                  <dd className="mt-1 text-xl font-semibold tabular-nums">
                     {formatMoney(sales.data.avgOrderValue)}
                   </dd>
                 </div>
@@ -607,9 +605,9 @@ function ReportsPageContent() {
         </Card>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card>
+          <Card className={reportCardClass}>
             <CardHeader>
-              <CardTitle className="text-lg">Top {TOP_LIMIT} produktów (przychód)</CardTitle>
+              <CardTitle className={reportSectionTitleClass}>Top {TOP_LIMIT} produktów (przychód)</CardTitle>
               <p className="text-xs text-muted-foreground">
                 Wybrany okres: {dateFrom} — {dateTo}
               </p>
@@ -651,9 +649,9 @@ function ReportsPageContent() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className={reportCardClass}>
             <CardHeader>
-              <CardTitle className="text-lg">Top {TOP_LIMIT} klientów (przychód)</CardTitle>
+              <CardTitle className={reportSectionTitleClass}>Top {TOP_LIMIT} klientów (przychód)</CardTitle>
               <p className="text-xs text-muted-foreground">
                 Wybrany okres: {dateFrom} — {dateTo}
               </p>
@@ -696,9 +694,9 @@ function ReportsPageContent() {
           </Card>
         </div>
 
-        <Card>
+        <Card className={reportCardClass}>
           <CardHeader>
-            <CardTitle className="text-lg">Status KSeF</CardTitle>
+            <CardTitle className={reportSectionTitleClass}>Status KSeF</CardTitle>
             <p className="text-sm text-muted-foreground">Rozkład faktur według statusu w KSeF</p>
           </CardHeader>
           <CardContent>
@@ -759,11 +757,11 @@ function ReportsPageContent() {
 
         {/* ── JPK_EWP export card — ryczałt only ────────────────────────── */}
         {isRyczalt && (
-          <Card>
+          <Card className={reportCardClass}>
             <CardHeader>
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <CardTitle className="text-lg">Ewidencja Przychodów — JPK_EWP</CardTitle>
+                  <CardTitle className={reportSectionTitleClass}>Ewidencja Przychodów — JPK_EWP</CardTitle>
                   <p className="mt-0.5 text-sm text-muted-foreground">
                     Miesięczny plik XML do przekazania biuru rachunkowemu lub wysłania do Krajowej
                     Administracji Skarbowej.
@@ -777,14 +775,14 @@ function ReportsPageContent() {
             <CardContent>
               <div className="flex flex-wrap items-end gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  <label className={reportLabelClass}>
                     Rok
                   </label>
                   <select
                     aria-label="Rok JPK_EWP"
                     value={ewpYear}
                     onChange={(e) => setEwpYear(Number(e.target.value))}
-                    className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    className="select-pill"
                   >
                     {[now.getFullYear() - 1, now.getFullYear()].map((y) => (
                       <option key={y} value={y}>{y}</option>
@@ -792,14 +790,14 @@ function ReportsPageContent() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  <label className={reportLabelClass}>
                     Miesiąc
                   </label>
                   <select
                     aria-label="Miesiąc JPK_EWP"
                     value={ewpMonth}
                     onChange={(e) => setEwpMonth(Number(e.target.value))}
-                    className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    className="select-pill"
                   >
                     {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                       <option key={m} value={m}>
@@ -812,7 +810,7 @@ function ReportsPageContent() {
                   type="button"
                   disabled={ewpLoading}
                   onClick={() => void handleDownloadEwp()}
-                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                  className="rounded-2xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   {ewpLoading ? 'Generowanie…' : '⬇ Pobierz JPK_EWP'}
                 </button>
@@ -831,6 +829,6 @@ function ReportsPageContent() {
         )}
 
       </div>
-    </div>
+    </ReportShell>
   );
 }

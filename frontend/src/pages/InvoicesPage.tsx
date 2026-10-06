@@ -14,6 +14,7 @@ import {
 } from '@/query/use-invoices';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { ReportExpandIcon, reportLinkClass, reportStatusClass, reportTableClass, reportTdClass, reportTdMoneyClass, reportTdMutedClass, statusBorder, statusFill } from '@/lib/reportSurface';
 import type { Invoice, InvoiceKsefStatus, InvoiceStatus } from '@/types';
 
 const PAGE_SIZE = 20;
@@ -235,13 +236,13 @@ function SortableHeader({
   const activeShort = isAsc ? (ascShort ?? asc) : isDesc ? (descShort ?? desc) : null;
 
   return (
-    <th scope="col" className="whitespace-nowrap px-4 py-3">
+    <th scope="col" className="whitespace-nowrap px-3 py-3">
       <div ref={colRef} className="relative">
         <button
           type="button"
           onClick={() => onOpen(isOpen ? null : field as OpenColumn)}
           className={cn(
-            'flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide transition-colors select-none',
+            'flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors select-none',
             align === 'right' && 'ml-auto',
             isActive || isOpen ? 'text-[#5856D6]' : 'text-gray-500 hover:text-gray-700',
           )}
@@ -254,7 +255,7 @@ function SortableHeader({
         </button>
         {isOpen && (
           <div className={cn(
-            'absolute top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-lg',
+            'absolute top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-apple-md',
             align === 'right' ? 'right-0' : 'left-0',
           )}>
             <button
@@ -468,17 +469,17 @@ function InvoicesPageContent() {
   return (
     <div
       className="min-h-full pb-16"
-      style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif", background: '#F5F5F7' }}
+      style={{ background: '#F2F2F7' }}
     >
-      <div className="mx-auto max-w-6xl px-4 pt-8 sm:px-6">
+      <div className="mx-auto max-w-7xl px-4 pt-8 sm:px-6">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-[28px] font-bold tracking-tight text-gray-900">Faktury</h1>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">Faktury</h1>
           {canInvoices && (
             <Link
               to="/invoices/new"
-              className="flex items-center gap-1.5 rounded-full bg-[#5856D6] px-4 py-2 text-[14px] font-semibold text-white shadow-sm hover:bg-[#4744C4] active:scale-95 transition-all"
+              className="flex items-center gap-1.5 rounded-2xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 active:scale-95 transition-all"
             >
               <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
@@ -499,7 +500,8 @@ function InvoicesPageContent() {
               labelColor: '#B45309',
               accent: '#C45500',
               ring: '#FF9500',
-              bg: '#FFFBEB',
+              bg: statusFill.gold,
+              border: statusBorder.gold,
             },
             {
               label: 'Przeterminowane',
@@ -509,7 +511,8 @@ function InvoicesPageContent() {
               labelColor: '#B91C1C',
               accent: '#C0392B',
               ring: '#FF3B30',
-              bg: '#FEF2F2',
+              bg: statusFill.red,
+              border: statusBorder.red,
             },
             {
               label: 'Opłacone — ten miesiąc',
@@ -519,7 +522,8 @@ function InvoicesPageContent() {
               labelColor: '#166534',
               accent: '#1D7A3A',
               ring: '#34C759',
-              bg: '#F0FDF4',
+              bg: statusFill.green,
+              border: statusBorder.green,
             },
           ] as const).map(tile => {
             const active = activeTab === tile.tabKey;
@@ -528,16 +532,14 @@ function InvoicesPageContent() {
                 key={tile.label}
                 type="button"
                 onClick={() => { setActiveTab(active ? '' : tile.tabKey); resetPage(); }}
-                className={cn(
-                  'flex flex-col rounded-xl p-3.5 text-left shadow-sm border transition-all hover:shadow-md active:scale-[0.98]',
-                  active ? 'border-transparent' : 'border-gray-100',
-                )}
+                className="flex flex-col rounded-2xl border p-3.5 text-left transition-all active:scale-[0.98]"
                 style={{
                   backgroundColor: tile.bg,
+                  borderColor: active ? tile.ring : tile.border,
                   ...(active ? { boxShadow: `0 0 0 2px ${tile.ring}` } : {}),
                 }}
               >
-                <span className="mb-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: tile.labelColor }}>
+                <span className="mb-2 text-sm font-medium" style={{ color: tile.labelColor }}>
                   {tile.label}
                 </span>
                 {summaryLoading ? (
@@ -583,36 +585,36 @@ function InvoicesPageContent() {
 
 
         {/* ── Filter container ─────────────────────────────────────────────── */}
-        <div className="mb-4 overflow-hidden rounded-2xl bg-white shadow-sm px-5 py-4">
+        <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white px-5 py-4 md:rounded-3xl">
           {/* Dates row */}
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <div className="flex items-center gap-2">
-              <label className="text-[13px] font-medium text-gray-600">Od</label>
+              <label className="text-sm font-medium text-slate-800">Od</label>
               <input
                 id="invoice-issue-from"
                 type="date"
                 value={dateFrom}
                 onChange={e => { setDateFrom(e.target.value); resetPage(); }}
                 aria-label="Data wystawienia od"
-                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+                className="date-pill"
               />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-[13px] font-medium text-gray-600">Do</label>
+              <label className="text-sm font-medium text-slate-800">Do</label>
               <input
                 id="invoice-issue-to"
                 type="date"
                 value={dateTo}
                 onChange={e => { setDateTo(e.target.value); resetPage(); }}
                 aria-label="Data wystawienia do"
-                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-[13px] text-gray-900 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+                className="date-pill"
               />
             </div>
             {(dateFrom || dateTo) && (
               <button
                 type="button"
                 onClick={() => { setDateFrom(''); setDateTo(''); resetPage(); }}
-                className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50"
+                className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Wyczyść daty
               </button>
@@ -644,7 +646,7 @@ function InvoicesPageContent() {
                   key={label}
                   type="button"
                   onClick={fn}
-                  className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-50 transition-colors"
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   {label}
                 </button>
@@ -677,7 +679,7 @@ function InvoicesPageContent() {
                   aria-label="Szukaj klienta"
                   aria-expanded={showCustomerDropdown && customerOptions.length > 0}
                   aria-haspopup="listbox"
-                  className="h-10 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-[14px] text-gray-900 placeholder:text-gray-400 focus:border-[#5856D6] focus:outline-none focus:ring-2 focus:ring-[#5856D6]/20"
+                  className="field-ios w-full pl-9"
                 />
                 {customersLoading && (
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">…</span>
@@ -688,7 +690,7 @@ function InvoicesPageContent() {
               <ul
                 role="listbox"
                 aria-label="Wyniki wyszukiwania klientów"
-                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-xl border border-gray-100 bg-white shadow-lg"
+                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-xl border border-gray-100 bg-white shadow-apple-md"
               >
                 {customerOptions.map(c => (
                   <li key={c.id} role="option" aria-selected={c.id === customerId}>
@@ -715,7 +717,7 @@ function InvoicesPageContent() {
 
         {/* ── List header ─────────────────────────────────────────────────── */}
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[12px] font-medium text-gray-400 uppercase tracking-wide">
+          <span className="text-sm font-medium text-slate-500">
             {isFetching ? 'Ładowanie…' : `Znaleziono: ${count}`}
           </span>
           {!selectionMode && selectableItems.length > 0 && (
@@ -731,7 +733,7 @@ function InvoicesPageContent() {
 
         {/* ── Bulk selection bar ──────────────────────────────────────────── */}
         {selectionMode && (
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
             <span className="text-[14px] font-medium text-gray-700">
               {someSelected
                 ? `${selectedIds.size} ${selectedIds.size === 1 ? 'faktura zaznaczona' : 'faktury zaznaczone'}`
@@ -743,7 +745,7 @@ function InvoicesPageContent() {
                 disabled={isMarkingPaid || !someSelected}
                 onClick={() => void handleMarkSelectedPaid()}
                 aria-label={someSelected ? `Oznacz ${selectedIds.size} faktur jako opłacone` : 'Oznacz zaznaczone faktury jako opłacone'}
-                className="rounded-lg bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white shadow-sm disabled:opacity-40 active:scale-95 transition-transform hover:bg-emerald-700"
+                className="rounded-lg bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white disabled:opacity-40 active:scale-95 transition-transform hover:bg-emerald-700"
               >
                 {isMarkingPaid ? 'Oznaczam…' : 'Oznacz jako opłacone'}
               </button>
@@ -771,7 +773,7 @@ function InvoicesPageContent() {
         {/* ── Mobile cards ────────────────────────────────────────────────── */}
         <div className="space-y-2 md:hidden">
           {items.map((row: Invoice) => (
-            <div key={row.id} className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
+            <div key={row.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
               <div className="flex items-start gap-3 px-4 py-3.5">
                 {selectionMode && row.status !== 'paid' && row.status !== 'cancelled' && (
                   <input
@@ -807,6 +809,7 @@ function InvoicesPageContent() {
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <div className="flex items-center gap-3">
+                      <span className="text-[12px] text-gray-400">Wystawiono: {formatDate(row.issue_date)}</span>
                       <span className="text-[12px] text-gray-400">Termin: {formatDate(row.due_date)}</span>
                       <KsefDot status={row.ksef_status} />
                     </div>
@@ -816,7 +819,7 @@ function InvoicesPageContent() {
                         onClick={() => void handleSingleMarkPaid(row.id)}
                         disabled={pendingPaidIds.has(row.id)}
                         aria-label={`Oznacz fakturę ${row.invoice_number ?? row.id.slice(0, 8)} jako opłaconą`}
-                        className="rounded-md bg-emerald-600 px-3 py-1 text-[12px] font-semibold text-white shadow-sm disabled:opacity-50 active:scale-95 transition-transform hover:bg-emerald-700"
+                        className="rounded-md bg-emerald-600 px-3 py-1 text-[12px] font-semibold text-white disabled:opacity-50 active:scale-95 transition-transform hover:bg-emerald-700"
                       >
                         {pendingPaidIds.has(row.id) ? '…' : 'Opłać'}
                       </button>
@@ -829,12 +832,12 @@ function InvoicesPageContent() {
         </div>
 
         {/* ── Desktop table ───────────────────────────────────────────────── */}
-        <div className="hidden overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm md:block">
-          <table className="min-w-full text-sm" aria-label="Lista faktur">
+        <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white md:block md:rounded-3xl">
+          <table className={cn(reportTableClass, 'min-w-full')} aria-label="Lista faktur">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50/60">
+              <tr className="border-b border-slate-200 bg-white">
                 {selectionMode && (
-                  <th scope="col" className="w-10 px-4 py-3">
+                  <th scope="col" className="w-10 px-3 py-3">
                     <input
                       ref={selectAllRef}
                       type="checkbox"
@@ -846,13 +849,14 @@ function InvoicesPageContent() {
                     />
                   </th>
                 )}
-                <th scope="col" className="whitespace-nowrap px-4 py-3">
+                <th scope="col" className="w-8 px-2 py-3" />
+                <th scope="col" className="whitespace-nowrap px-3 py-3">
                   <div ref={invoiceTypeRef} className="relative">
                     <button
                       type="button"
                       onClick={() => setOpenColumnFilter(prev => prev === 'invoice_type' ? null : 'invoice_type')}
                       className={cn(
-                        'flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+                        'flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors',
                         correctionFilter !== undefined || openColumnFilter === 'invoice_type' ? 'text-[#5856D6]' : 'text-gray-500 hover:text-gray-700',
                       )}
                     >
@@ -861,7 +865,7 @@ function InvoicesPageContent() {
                       <IconChevronDown />
                     </button>
                     {openColumnFilter === 'invoice_type' && (
-                      <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+                      <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-apple-md">
                         {([
                           { label: 'Wszystkie', value: undefined },
                           { label: 'Korekty FV-KOR', value: true },
@@ -880,16 +884,17 @@ function InvoicesPageContent() {
                     )}
                   </div>
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500">Klient</th>
+                <th scope="col" className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Klient</th>
+                <SortableHeader label="Data wystawienia" field="issue_date" ordering={ordering} openColumn={openColumnFilter} colRef={issueDateRef} onSort={f => { setOrdering(f); resetPage(); }} onOpen={setOpenColumnFilter} ascLabel="Najwcześniejsza" descLabel="Najpóźniejsza" ascShort="Najwcześniej" descShort="Najpóźniej" />
                 <SortableHeader label="Termin płatności" field="due_date" ordering={ordering} openColumn={openColumnFilter} colRef={dueDateRef} onSort={f => { setOrdering(f); resetPage(); }} onOpen={setOpenColumnFilter} ascLabel="Najwcześniejszy" descLabel="Najpóźniejszy" ascShort="Najwcześniej" descShort="Najpóźniej" />
                 <SortableHeader label="Wartość brutto" field="total_gross" ordering={ordering} openColumn={openColumnFilter} colRef={totalGrossRef} onSort={f => { setOrdering(f); resetPage(); }} onOpen={setOpenColumnFilter} align="right" />
-                <th scope="col" className="whitespace-nowrap px-4 py-3">
+                <th scope="col" className="whitespace-nowrap px-3 py-3">
                   <div ref={paymentColumnRef} className="relative">
                     <button
                       type="button"
                       onClick={() => setOpenColumnFilter(prev => prev === 'payment' ? null : 'payment')}
                       className={cn(
-                        'flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+                        'flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors',
                         openColumnFilter === 'payment' ? 'text-[#5856D6]' : 'text-gray-500 hover:text-gray-700',
                       )}
                     >
@@ -897,7 +902,7 @@ function InvoicesPageContent() {
                       <IconChevronDown />
                     </button>
                     {openColumnFilter === 'payment' && (
-                      <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+                      <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-apple-md">
                         {([
                           { label: 'Wszystkie', key: '' },
                           { label: 'Nieopłacone', key: 'unpaid' },
@@ -920,13 +925,13 @@ function InvoicesPageContent() {
                     )}
                   </div>
                 </th>
-                <th scope="col" className="whitespace-nowrap px-4 py-3 min-w-[90px]">
+                <th scope="col" className="whitespace-nowrap px-3 py-3 min-w-[90px]">
                   <div ref={ksefColumnRef} className="relative">
                     <button
                       type="button"
                       onClick={() => setOpenColumnFilter(prev => prev === 'ksef' ? null : 'ksef')}
                       className={cn(
-                        'flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+                        'flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors',
                         ksefStatus || openColumnFilter === 'ksef' ? 'text-[#5856D6]' : 'text-gray-500 hover:text-gray-700',
                       )}
                     >
@@ -935,7 +940,7 @@ function InvoicesPageContent() {
                       <IconChevronDown />
                     </button>
                     {openColumnFilter === 'ksef' && (
-                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-xl border border-gray-100 bg-white py-1 shadow-apple-md">
                         <button
                           type="button"
                           onClick={() => { setKsefStatus(''); setOpenColumnFilter(null); resetPage(); }}
@@ -963,7 +968,7 @@ function InvoicesPageContent() {
               {items.map((row: Invoice) => (<React.Fragment key={row.id}>
                 <tr key={row.id} className={cn('group border-b border-gray-50 transition-colors', expandedRows.has(row.id) ? 'bg-gray-50/70' : 'hover:bg-gray-50/70')}>
                   {selectionMode && (
-                    <td className="w-10 px-4 py-3.5">
+                    <td className="w-10 px-3 py-3.5">
                       {row.status !== 'paid' && row.status !== 'cancelled' ? (
                         <input
                           type="checkbox"
@@ -977,10 +982,22 @@ function InvoicesPageContent() {
                       )}
                     </td>
                   )}
-                  <td className="whitespace-nowrap px-4 py-3.5">
+                  <td className="w-8 px-2 py-3.5">
+                    {row.items?.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(row.id)}
+                        aria-label={expandedRows.has(row.id) ? 'Zwiń produkty' : 'Pokaż produkty'}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                      >
+                        <ReportExpandIcon open={expandedRows.has(row.id)} />
+                      </button>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3.5">
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-1.5">
-                        <Link to={`/invoices/${row.id}`} className="text-[14px] font-semibold text-[#5856D6] hover:underline">
+                        <Link to={`/invoices/${row.id}`} className={reportLinkClass}>
                           {row.invoice_number ?? <span className="text-xs text-amber-600 font-medium">SZKIC</span>}
                         </Link>
                         {row.is_correction && (
@@ -1011,22 +1028,17 @@ function InvoicesPageContent() {
                       )}
                     </div>
                   </td>
-                  <td className="max-w-[180px] truncate px-4 py-3.5 text-[14px] text-gray-600" title={row.customer_name || row.order?.customer_name}>
+                  <td className={cn(reportTdClass, 'max-w-[180px] truncate')} title={row.customer_name || row.order?.customer_name}>
                     {row.customer_name || row.order?.customer_name || '—'}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3.5 text-[14px] text-gray-500">{formatDate(row.due_date)}</td>
-                  <td className="whitespace-nowrap px-4 py-3.5 text-right text-[14px] font-semibold tabular-nums text-gray-900">
+                  <td className={reportTdMutedClass}>{formatDate(row.issue_date)}</td>
+                  <td className={reportTdMutedClass}>{formatDate(row.due_date)}</td>
+                  <td className={reportTdMoneyClass}>
                     {formatGross(row.total_gross)}
                   </td>
-                  <td className="px-4 py-3.5">
+                  <td className="px-3 py-3.5">
                     <div className="flex items-center gap-2">
-                      <span className={cn(
-                        'text-[13px] font-medium',
-                        row.status === 'paid' ? 'text-emerald-700'
-                          : row.status === 'overdue' ? 'text-red-600'
-                          : row.status === 'cancelled' ? 'text-gray-400'
-                          : 'text-amber-700',
-                      )}>
+                      <span className={reportStatusClass(row.status)}>
                         {paymentLabel(row.status)}
                       </span>
                       {!selectionMode && row.status !== 'paid' && row.status !== 'cancelled' && (
@@ -1036,7 +1048,7 @@ function InvoicesPageContent() {
                           disabled={pendingPaidIds.has(row.id)}
                           aria-label={`Oznacz fakturę ${row.invoice_number ?? row.id.slice(0, 8)} jako opłaconą`}
                           className={cn(
-                            'rounded-md bg-emerald-600 px-2.5 py-0.5 text-[12px] font-semibold text-white shadow-sm transition-all disabled:opacity-50 hover:bg-emerald-700',
+                            'rounded-md bg-emerald-600 px-2.5 py-0.5 text-[12px] font-semibold text-white transition-all disabled:opacity-50 hover:bg-emerald-700',
                             pendingPaidIds.has(row.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                           )}
                         >
@@ -1045,30 +1057,13 @@ function InvoicesPageContent() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <KsefDot status={row.ksef_status} />
-                      {row.items?.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => toggleExpand(row.id)}
-                          aria-label={expandedRows.has(row.id) ? 'Zwiń produkty' : 'Pokaż produkty'}
-                          className="text-gray-300 transition-colors hover:text-gray-500"
-                        >
-                          <svg
-                            className={cn('h-4 w-4 transition-transform', expandedRows.has(row.id) && 'rotate-180')}
-                            viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"
-                          >
-                            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
+                  <td className="px-3 py-3.5">
+                    <KsefDot status={row.ksef_status} />
                   </td>
                 </tr>
                 {expandedRows.has(row.id) && row.items?.length > 0 && (
                   <tr className="bg-gray-50/50">
-                    <td colSpan={selectionMode ? 7 : 6} className="px-6 pb-3 pt-0">
+                    <td colSpan={selectionMode ? 9 : 8} className="px-6 pb-3 pt-0">
                       <table className="w-full text-[13px]">
                         <thead>
                           <tr className="border-b border-gray-100">
@@ -1106,7 +1101,7 @@ function InvoicesPageContent() {
               {!isFetching && items.length === 0 && !isError && (
                 <tr>
                   <td
-                    colSpan={selectionMode ? 8 : 7}
+                    colSpan={selectionMode ? 9 : 8}
                     className="h-64 py-16 text-center text-[15px] text-gray-400"
                   >
                     Brak faktur spełniających kryteria.
@@ -1128,7 +1123,7 @@ function InvoicesPageContent() {
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage(p => p - 1)}
-                className="rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-[13px] font-medium text-gray-700 shadow-sm disabled:opacity-30 active:scale-95 transition-transform hover:bg-gray-50"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 disabled:opacity-30 active:scale-95 transition-transform hover:bg-slate-50"
               >
                 Poprzednia
               </button>
@@ -1136,7 +1131,7 @@ function InvoicesPageContent() {
                 type="button"
                 disabled={page >= totalPages}
                 onClick={() => setPage(p => p + 1)}
-                className="rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-[13px] font-medium text-gray-700 shadow-sm disabled:opacity-30 active:scale-95 transition-transform hover:bg-gray-50"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 disabled:opacity-30 active:scale-95 transition-transform hover:bg-slate-50"
               >
                 Następna
               </button>

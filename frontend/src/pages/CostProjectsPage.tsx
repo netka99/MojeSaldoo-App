@@ -35,7 +35,7 @@ function ProjectRow({ project, onEdit }: { project: CostProject; onEdit: (p: Cos
         <ColorDot color={project.color} />
         <span className="font-medium text-sm text-foreground truncate">{project.name}</span>
         {project.code && (
-          <span className="shrink-0 rounded px-1.5 py-0.5 text-xs font-mono bg-muted text-muted-foreground">
+          <span className="shrink-0 rounded px-1.5 py-0.5 text-xs bg-muted text-muted-foreground">
             {project.code}
           </span>
         )}
@@ -108,7 +108,6 @@ function ProjectForm({ initial, onCancel, onSaved }: ProjectFormProps) {
         value={code}
         onChange={(e) => setCode(e.target.value)}
         placeholder="np. BUDO-26"
-        className="font-mono"
       />
       <div>
         <p className="mb-1.5 text-sm font-medium text-foreground">Kolor</p>

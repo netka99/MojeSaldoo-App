@@ -861,7 +861,7 @@ function InvoiceFromOrdersPageContent() {
           {/* Next number preview */}
           <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-sm">
             <span className="text-muted-foreground">Numer faktury zostanie nadany: </span>
-            <span className="font-mono font-semibold">{nextNumData?.next_number ?? '—'}</span>
+            <span className="font-semibold">{nextNumData?.next_number ?? '—'}</span>
           </div>
 
           {/* Dates */}

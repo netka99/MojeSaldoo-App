@@ -790,7 +790,7 @@ function InvoiceNumberingSection({ companyId, company, canEdit, onSaved }: Invoi
           {/* Preview */}
           <div className="rounded-lg border border-border bg-muted/40 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Podgląd</p>
-            <p className="mt-1 text-base font-mono font-semibold text-foreground">{preview}</p>
+            <p className="mt-1 text-base font-semibold text-foreground">{preview}</p>
           </div>
 
           {saveError && (
@@ -890,7 +890,7 @@ function BankAccountSection({ companyId, company, canEdit, onSaved }: BankAccoun
               disabled={!canEdit}
               maxLength={34}
               onChange={(e) => { setIban(e.target.value); setSaved(false); }}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
               placeholder="PL00 0000 0000 0000 0000 0000 0000"
             />
           </div>
@@ -907,7 +907,7 @@ function BankAccountSection({ companyId, company, canEdit, onSaved }: BankAccoun
                 disabled={!canEdit}
                 maxLength={11}
                 onChange={(e) => { setSwift(e.target.value.toUpperCase()); setSaved(false); }}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="XXXXXXXX"
               />
             </div>

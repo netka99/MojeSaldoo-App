@@ -163,7 +163,7 @@ export function AddStockDialog({ warehouseId, warehouseName, existingProductIds,
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-foreground">{p.name}</p>
                             {p.sku && (
-                              <p className="text-xs text-muted-foreground font-mono">{p.sku}</p>
+                              <p className="text-xs text-muted-foreground ">{p.sku}</p>
                             )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
@@ -191,7 +191,7 @@ export function AddStockDialog({ warehouseId, warehouseName, existingProductIds,
                 <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
                   <p className="text-sm font-medium text-foreground">{selected.name}</p>
                   {selected.sku && (
-                    <p className="text-xs text-muted-foreground font-mono">{selected.sku}</p>
+                    <p className="text-xs text-muted-foreground ">{selected.sku}</p>
                   )}
                 </div>
 

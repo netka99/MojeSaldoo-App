@@ -6,6 +6,7 @@ import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useDashboardSummaryQuery } from '@/query/use-reports';
 import { SetupNudgeBar } from '@/components/SetupNudgeBar';
 import { cn } from '@/lib/utils';
+import { statusGoldClass, statusRedClass } from '@/lib/reportSurface';
 import type { ModuleName, UserPermissions } from '@/types';
 
 const MotionLink = motion.create(Link);
@@ -233,9 +234,9 @@ function StatCard({
 }) {
   const accentClass =
     accent === 'red'
-      ? 'border-red-200 bg-red-50'
+      ? statusRedClass
       : accent === 'amber'
-        ? 'border-amber-200 bg-amber-50'
+        ? statusGoldClass
         : accent === 'blue'
           ? 'border-blue-100 bg-blue-50'
           : 'border-transparent bg-surface-card';
@@ -458,7 +459,7 @@ export const Home: React.FC = () => {
             {d!.low_stock_alerts.map((row) => (
               <li
                 key={`${row.product_id}-${row.warehouse__id}`}
-                className="flex items-center justify-between rounded-2xl bg-red-50 px-4 py-3"
+                className={cn('flex items-center justify-between rounded-2xl border px-4 py-3', statusRedClass)}
               >
                 <div className="min-w-0">
                   <p className="truncate font-medium text-on-surface">{row.product__name}</p>

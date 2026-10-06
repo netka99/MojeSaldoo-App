@@ -10,6 +10,7 @@ import type { PaymentAgingRow } from '@/types/reporting.types';
 import { useQueryClient } from '@tanstack/react-query';
 import { reportKeys } from '@/query/keys';
 import { useAuth } from '@/context/AuthContext';
+import { ReportExpandIcon, ReportShell, formatReportDate, reportButtonClass, reportCardClass, reportLinkClass, reportRowClass, reportSectionTitleClass, reportStatusClass, reportTableClass, reportTdClass, reportTdMoneyClass, reportTdMutedClass, reportThClass, reportTitleClass, statusBorder } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const qty4 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 4 });
@@ -35,19 +36,19 @@ const BUCKET_LABELS: Record<string, string> = {
 };
 
 const BUCKET_COLOR: Record<string, string> = {
-  current: 'text-green-700 bg-green-50 border-green-200',
-  '1_30': 'text-yellow-700 bg-yellow-50 border-yellow-200',
-  '31_60': 'text-orange-700 bg-orange-50 border-orange-200',
-  '61_90': 'text-red-700 bg-red-50 border-red-200',
-  over_90: 'text-red-900 bg-red-100 border-red-300 font-semibold',
+  current: 'text-green-700 bg-green-50',
+  '1_30': 'text-yellow-700 bg-yellow-50',
+  '31_60': 'text-orange-700 bg-orange-50',
+  '61_90': 'text-red-700 bg-red-50',
+  over_90: 'text-red-900 bg-red-100 font-semibold',
 };
 
-const BUCKET_ROW_BG: Record<string, string> = {
-  current: '',
-  '1_30': 'bg-yellow-50/40',
-  '31_60': 'bg-orange-50/40',
-  '61_90': 'bg-red-50/40',
-  over_90: 'bg-red-100/50',
+const BUCKET_BORDER: Record<string, string> = {
+  current: statusBorder.green,
+  '1_30': statusBorder.gold,
+  '31_60': statusBorder.orange,
+  '61_90': statusBorder.red,
+  over_90: statusBorder.redStrong,
 };
 
 const STATUS_PL: Record<string, string> = {
@@ -94,7 +95,7 @@ function InvoiceDrillDown({
   return (
     <div className="mx-8 max-w-full pb-4 pt-3">
       <div className="mb-2 flex items-center justify-between gap-4">
-        <p className="text-xs font-semibold text-blue-700">
+        <p className="text-sm font-semibold text-slate-900">
           Pozycje faktury ({invoice.items.length})
         </p>
         <button
@@ -113,7 +114,7 @@ function InvoiceDrillDown({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full table-fixed border-collapse text-xs">
+        <table className="w-full table-fixed border-collapse text-sm font-normal">
           <colgroup>
             <col className="w-[32%]" />
             <col />
@@ -128,7 +129,7 @@ function InvoiceDrillDown({
                 <th
                   key={h}
                   className={cn(
-                    'border-b bg-blue-50 px-4 py-2 text-left font-medium text-blue-700',
+                    'border-b border-slate-200 bg-white px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500',
                     h === 'Produkt' ? 'whitespace-normal' : 'whitespace-nowrap',
                   )}
                 >
@@ -141,7 +142,7 @@ function InvoiceDrillDown({
             {invoice.items.map((item) => (
               <tr key={item.id} className="hover:bg-blue-50/40">
                 <td
-                  className="min-w-0 border-b px-4 py-2 text-left font-medium whitespace-normal break-words"
+                  className="min-w-0 border-b px-3 py-3 text-left font-normal text-slate-600 whitespace-normal break-words"
                   title={item.product_name}
                 >
                   {item.product_name}
@@ -152,7 +153,7 @@ function InvoiceDrillDown({
                 <td className="border-b px-4 py-2 text-left tabular-nums text-muted-foreground whitespace-nowrap">
                   {Number.parseFloat(String(item.vat_rate)).toFixed(0)}%
                 </td>
-                <td className="border-b px-4 py-2 text-left tabular-nums font-medium text-blue-700 whitespace-nowrap">
+                <td className="border-b px-3 py-3 text-right text-sm font-semibold tabular-nums text-slate-900 whitespace-nowrap">
                   {formatMoney(item.line_gross)}
                 </td>
               </tr>
@@ -192,14 +193,14 @@ export function PaymentAgingPage() {
   }
 
   return (
-    <div className="space-y-4 p-4">
+    <ReportShell>
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Niezapłacone faktury</h1>
+        <h1 className={reportTitleClass}>Niezapłacone faktury</h1>
         {data && data.rows.length > 0 && (
           <button
             type="button"
             onClick={() => exportCsv(data.rows)}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            className={reportButtonClass}
           >
             Eksport CSV
           </button>
@@ -213,7 +214,7 @@ export function PaymentAgingPage() {
             const amount = Number.parseFloat(String(data.buckets[b])) || 0;
             const count = data.rows.filter((r) => r.bucket === b).length;
             return (
-              <div key={b} className={cn('rounded-lg border px-3 py-2.5', BUCKET_COLOR[b])}>
+              <div key={b} className={cn('rounded-2xl border px-3 py-2.5', BUCKET_COLOR[b])} style={{ borderColor: BUCKET_BORDER[b] }}>
                 <p className="text-xs font-medium">{BUCKET_LABELS[b]}</p>
                 <p className="mt-1 text-base font-semibold tabular-nums">{formatMoney(amount)}</p>
                 <p className="text-xs opacity-70">{count} faktur</p>
@@ -225,16 +226,16 @@ export function PaymentAgingPage() {
 
       {/* Total outstanding */}
       {!isLoading && !isError && data && total > 0 && (
-        <div className="rounded-md border border-border bg-muted/30 px-4 py-2.5 text-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800">
           Łączne należności: <span className="font-semibold">{formatMoney(total)}</span>
           <span className="ml-2 text-muted-foreground">na dzień {data.as_of}</span>
         </div>
       )}
 
       {/* Table */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardHeader>
-          <CardTitle className="text-sm">
+          <CardTitle className={reportSectionTitleClass}>
             Niezapłacone faktury
             {data && <span className="ml-2 text-xs font-normal text-muted-foreground">({data.rows.length})</span>}
             <span className="ml-2 text-xs font-normal text-muted-foreground">— kliknij wiersz, aby zobaczyć pozycje i oznaczyć jako zapłaconą</span>
@@ -250,17 +251,17 @@ export function PaymentAgingPage() {
                   Brak niezapłaconych faktur. Wszystkie należności uregulowane.
                 </p>
               ) : (
-                <table className="w-full border-collapse text-sm">
+                <table className={reportTableClass}>
                   <thead>
                     <tr>
-                      <th className="w-6 border-b bg-muted/50 px-3 py-2" />
+                      <th className="w-6 border-b border-slate-200 bg-white px-3 py-3" />
                       {(['Faktura', 'Klient', 'Data wystawienia', 'Termin płatności', 'Dni po terminie'] as const).map((h) => (
-                        <th key={h} className="border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">
+                        <th key={h} className={reportThClass}>
                           {h}
                         </th>
                       ))}
-                      <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">Kwota brutto</th>
-                      <th className="border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground">Status</th>
+                      <th className={cn(reportThClass, 'text-right')}>Kwota brutto</th>
+                      <th className={reportThClass}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -269,50 +270,45 @@ export function PaymentAgingPage() {
                       return (
                         <React.Fragment key={row.invoice_id}>
                           <tr
-                            className={cn('cursor-pointer hover:bg-muted/30', BUCKET_ROW_BG[row.bucket], isExpanded && 'bg-muted/20')}
+                            className={cn(reportRowClass, 'cursor-pointer', isExpanded && 'bg-slate-50')}
                             onClick={() => toggleInvoice(row.invoice_id)}
                           >
-                            <td className="border-b px-3 py-2 text-muted-foreground">
-                              <svg
-                                className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
-                                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
-                              >
-                                <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
+                            <td className="w-8 px-2 py-3">
+                              <ReportExpandIcon open={isExpanded} />
                             </td>
-                            <td className="border-b px-3 py-2">
+                            <td className={reportTdClass}>
                               <Link
                                 to={`/invoices/${row.invoice_id}`}
-                                className="font-medium text-blue-700 hover:underline"
+                                className={reportLinkClass}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {row.invoice_number || row.invoice_id.slice(0, 8)}
                               </Link>
                             </td>
-                            <td className="border-b px-3 py-2">{row.customer_name || '—'}</td>
-                            <td className="border-b px-3 py-2 tabular-nums text-muted-foreground">{row.issue_date ?? '—'}</td>
-                            <td className="border-b px-3 py-2 tabular-nums text-muted-foreground">{row.due_date ?? '—'}</td>
-                            <td className="border-b px-3 py-2 tabular-nums">
+                            <td className={reportTdClass}>{row.customer_name || '—'}</td>
+                            <td className={reportTdMutedClass}>{formatReportDate(row.issue_date)}</td>
+                            <td className={reportTdMutedClass}>{formatReportDate(row.due_date)}</td>
+                            <td className={reportTdClass}>
                               <span className={cn(
-                                'rounded px-1.5 py-0.5 text-xs font-medium',
-                                row.days_overdue <= 0 ? 'bg-green-100 text-green-700' :
-                                row.days_overdue <= 30 ? 'bg-yellow-100 text-yellow-700' :
-                                row.days_overdue <= 60 ? 'bg-orange-100 text-orange-700' :
-                                'bg-red-100 text-red-700'
+                                'text-sm font-normal',
+                                row.days_overdue <= 0 ? 'text-emerald-700' :
+                                row.days_overdue <= 30 ? 'text-amber-700' :
+                                row.days_overdue <= 60 ? 'text-orange-700' :
+                                'text-red-600',
                               )}>
                                 {row.days_overdue <= 0 ? `za ${Math.abs(row.days_overdue)} dni` : `${row.days_overdue} dni`}
                               </span>
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums font-medium">
+                            <td className={reportTdMoneyClass}>
                               {formatMoney(row.total_gross)}
                             </td>
-                            <td className="border-b px-3 py-2 text-muted-foreground">
+                            <td className={cn(reportTdClass, reportStatusClass(row.status))}>
                               {STATUS_PL[row.status] ?? row.status}
                             </td>
                           </tr>
                           {isExpanded && (
                             <tr>
-                              <td colSpan={8} className="border-b bg-blue-50/30 p-0">
+                              <td colSpan={8} className="border-b border-slate-100 bg-slate-50 p-0">
                                 <InvoiceDrillDown
                                   invoiceId={row.invoice_id}
                                   onMarkPaid={() => handleMarkPaid(row.invoice_id)}
@@ -331,6 +327,6 @@ export function PaymentAgingPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </ReportShell>
   );
 }

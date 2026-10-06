@@ -7,6 +7,7 @@ import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
+import { ReportExpandIcon, ReportShell, reportButtonClass, reportCardClass, reportLabelClass, reportLinkClass, reportPresetClass, reportRowClass, reportSectionTitleClass, reportTdClass, reportTdMoneyClass, reportThClass, reportTitleClass, statusGoldClass } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const qty4 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 4 });
@@ -43,10 +44,7 @@ function marginClass(pct: number | null | undefined): string {
   return 'text-green-600';
 }
 
-const inputClass = cn(
-  'flex h-9 rounded-md border border-input bg-background px-3 py-2 text-sm',
-  'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
+const inputClass = 'date-pill';
 
 type Preset = { label: string; from: string; to: string };
 
@@ -106,7 +104,7 @@ function ProductDrillDown({ productId, dateFrom, dateTo }: { productId: string; 
       <div className="grid gap-4 sm:grid-cols-2">
         {/* Invoice lines */}
         <div>
-          <p className="mb-1.5 text-xs font-semibold text-blue-700">
+          <p className="mb-1.5 text-sm font-semibold text-slate-900">
             Sprzedaż — pozycje faktur ({data.invoice_lines.length})
           </p>
           {data.invoice_lines.length === 0 && (
@@ -117,13 +115,13 @@ function ProductDrillDown({ productId, dateFrom, dateTo }: { productId: string; 
               <div key={`${line.invoice_id}-${i}`} className="rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <div className="min-w-0">
-                    <Link to={`/invoices/${line.invoice_id}`} className="font-medium text-blue-700 hover:underline">
+                    <Link to={`/invoices/${line.invoice_id}`} className={reportLinkClass}>
                       {line.invoice_number || line.invoice_id.slice(0, 8)}
                     </Link>
                     <span className="ml-1.5 text-muted-foreground">{line.customer_name}</span>
                     <span className="ml-1.5 text-muted-foreground">{line.issue_date}</span>
                   </div>
-                  <span className="ml-2 shrink-0 font-medium text-blue-700">{formatMoney(line.line_gross)}</span>
+                  <span className="ml-2 shrink-0 text-sm font-semibold tabular-nums text-slate-900">{formatMoney(line.line_gross)}</span>
                 </div>
                 <div className="mt-0.5 text-muted-foreground">
                   {formatQty(line.quantity)} szt. × {formatCost(line.unit_price_net)}/jm
@@ -136,7 +134,7 @@ function ProductDrillDown({ productId, dateFrom, dateTo }: { productId: string; 
 
         {/* PZ lines in period */}
         <div>
-          <p className="mb-1.5 text-xs font-semibold text-red-700">
+          <p className="mb-1.5 text-sm font-semibold text-red-700">
             Zakupy w okresie — pozycje PZ ({data.pz_lines.length})
           </p>
           {data.pz_lines.length === 0 && (
@@ -156,7 +154,7 @@ function ProductDrillDown({ productId, dateFrom, dateTo }: { productId: string; 
       {/* Cost history */}
       <div>
         <div className="mb-1.5 flex items-baseline gap-2">
-          <p className="text-xs font-semibold text-orange-700">
+          <p className="text-sm font-semibold text-orange-700">
             Śr. koszt zakupu — skąd pochodzi
           </p>
           <span className="text-xs text-muted-foreground">
@@ -236,14 +234,14 @@ export function ProductMarginPage() {
   }
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Marże na produktach</h1>
+    <ReportShell>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className={reportTitleClass}>Marże na produktach</h1>
         {rows.length > 0 && (
           <button
             type="button"
             onClick={() => void downloadCsv('/reports/product-margin/', { date_from: dateFrom, date_to: dateTo }, 'marze-produktow.csv')}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            className={reportButtonClass}
           >
             Pobierz CSV
           </button>
@@ -253,7 +251,7 @@ export function ProductMarginPage() {
       <RyczaltManagerialNotice />
 
       {/* Filters */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardContent className="pt-4">
           <div className="mb-3 flex flex-wrap gap-2">
             {presets.map((p) => (
@@ -262,10 +260,10 @@ export function ProductMarginPage() {
                 type="button"
                 onClick={() => applyPreset(p)}
                 className={cn(
-                  'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  reportPresetClass,
                   dateFrom === p.from && dateTo === p.to
                     ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background text-foreground hover:bg-muted',
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
                 )}
               >
                 {p.label}
@@ -274,11 +272,11 @@ export function ProductMarginPage() {
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">Od</label>
+              <label className={reportLabelClass}>Od</label>
               <input type="date" className={inputClass} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">Do</label>
+              <label className={reportLabelClass}>Do</label>
               <input type="date" className={inputClass} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
@@ -287,7 +285,7 @@ export function ProductMarginPage() {
 
       {/* No cost data notice */}
       {!isLoading && !isError && rows.length > 0 && !hasCostData && (
-        <div className="rounded-md border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+        <div className={cn('rounded-2xl border px-4 py-3 text-sm text-yellow-800', statusGoldClass)}>
           Koszt zakupu (avg_cost) nie jest jeszcze obliczony dla żadnego produktu. Utwórz dokumenty PZ, dodaj receptury lub wpisz koszt ręcznie na produkcie.
         </div>
       )}
@@ -298,9 +296,9 @@ export function ProductMarginPage() {
       )}
 
       {/* Table */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardHeader>
-          <CardTitle className="text-sm">
+          <CardTitle className={reportSectionTitleClass}>
             Produkty wg przychodu (top 50)
             <span className="ml-2 text-xs font-normal text-muted-foreground">— kliknij wiersz, żeby zobaczyć faktury i PZ</span>
           </CardTitle>
@@ -313,15 +311,15 @@ export function ProductMarginPage() {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr>
-                    <th className="w-6 border-b bg-muted/50 px-3 py-2" />
-                    <th className="border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground">Produkt</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">Sprzedana ilość</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">Przychód</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">Śr. koszt</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">COGS</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">~COGS (est.)</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">Zysk brutto</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">Marża %</th>
+                    <th className="w-6 border-b border-slate-200 bg-white px-3 py-3" />
+                    <th className={reportThClass}>Produkt</th>
+                    <th className={cn(reportThClass, 'text-right')}>Sprzedana ilość</th>
+                    <th className={cn(reportThClass, 'text-right')}>Przychód</th>
+                    <th className={cn(reportThClass, 'text-right')}>Śr. koszt</th>
+                    <th className={cn(reportThClass, 'text-right')}>COGS</th>
+                    <th className={cn(reportThClass, 'text-right')}>~COGS (est.)</th>
+                    <th className={cn(reportThClass, 'text-right')}>Zysk brutto</th>
+                    <th className={cn(reportThClass, 'text-right')}>Marża %</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -341,33 +339,26 @@ export function ProductMarginPage() {
                           <tr
                             key={pid}
                             className={cn(
-                              canExpand ? 'cursor-pointer hover:bg-muted/30' : '',
-                              isExpanded && 'bg-muted/20',
+                              canExpand && cn(reportRowClass, 'cursor-pointer'),
+                              isExpanded && 'bg-slate-50',
                             )}
                             onClick={() => canExpand && toggleProduct(pid)}
                           >
-                            <td className="border-b px-3 py-2 text-muted-foreground">
-                              {canExpand && (
-                                <svg
-                                  className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
-                                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
-                                >
-                                  <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              )}
+                            <td className="w-8 px-2 py-3">
+                              {canExpand && <ReportExpandIcon open={isExpanded} />}
                             </td>
-                            <td className="border-b px-3 py-2 font-medium">{row.productName || '—'}</td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums">
+                            <td className={reportTdClass}>{row.productName || '—'}</td>
+                            <td className={cn(reportTdClass, 'text-right tabular-nums')}>
                               {typeof row.totalQty === 'number' ? row.totalQty.toFixed(2) : Number(row.totalQty).toFixed(2)}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-blue-600">
+                            <td className={reportTdMoneyClass}>
                               {formatMoney(row.totalRevenue)}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-muted-foreground">
+                            <td className={cn(reportTdClass, 'text-right tabular-nums')}>
                               <span>{formatCost(row.avgCost)}</span>
                               {row.costSource && (
                                 <span className={cn(
-                                  'ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium',
+                                  'ml-1.5 rounded px-1 py-0.5 text-xs font-medium',
                                   row.costSource === 'production' ? 'bg-purple-100 text-purple-700' :
                                   row.costSource === 'pz' ? 'bg-green-100 text-green-700' :
                                   row.costSource === 'manual' ? 'bg-gray-100 text-gray-600' : ''
@@ -376,15 +367,15 @@ export function ProductMarginPage() {
                                 </span>
                               )}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-red-500">
+                            <td className={reportTdMoneyClass}>
                               {formatMoney(row.cogs)}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-blue-500">
+                            <td className={cn(reportTdClass, 'text-right tabular-nums')}>
                               {row.estimatedCogs != null ? (
                                 <span title="Szacunek z receptury">~ {formatMoney(row.estimatedCogs)}</span>
                               ) : '—'}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums">
+                            <td className={cn(reportTdMoneyClass, 'font-normal')}>
                               <span className={
                                 (row.grossProfit ?? row.estimatedGrossProfit) !== null &&
                                 Number(row.grossProfit ?? row.estimatedGrossProfit) >= 0
@@ -392,20 +383,20 @@ export function ProductMarginPage() {
                               }>
                                 {formatMoney(row.grossProfit ?? row.estimatedGrossProfit)}
                                 {row.grossProfit === null && row.estimatedGrossProfit !== null && (
-                                  <span className="ml-1 text-[10px] text-blue-500">~</span>
+                                  <span className="ml-1 text-xs text-slate-500">~</span>
                                 )}
                               </span>
                             </td>
-                            <td className={cn('border-b px-3 py-2 text-right tabular-nums', marginClass(row.marginPercent ?? row.estimatedMarginPercent))}>
+                            <td className={cn(reportTdMoneyClass, marginClass(row.marginPercent ?? row.estimatedMarginPercent))}>
                               {formatPercent(row.marginPercent ?? row.estimatedMarginPercent)}
                               {row.marginPercent === null && row.estimatedMarginPercent !== null && (
-                                <span className="ml-1 text-[10px] text-blue-500">~</span>
+                                <span className="ml-1 text-xs text-slate-500">~</span>
                               )}
                             </td>
                           </tr>
                           {isExpanded && row.productId && (
                             <tr key={`${pid}-detail`}>
-                              <td colSpan={9} className="border-b bg-muted/10 p-0">
+                              <td colSpan={9} className="border-b border-slate-100 bg-slate-50 p-0">
                                 <ProductDrillDown
                                   productId={row.productId}
                                   dateFrom={dateFrom}
@@ -424,6 +415,6 @@ export function ProductMarginPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </ReportShell>
   );
 }

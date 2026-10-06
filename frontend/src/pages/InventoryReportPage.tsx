@@ -5,6 +5,7 @@ import { useInventoryReportQuery, useExpiryAlertsQuery } from '@/query/use-repor
 import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { ReportShell, reportButtonClass, reportCardClass, reportSectionTitleClass, reportSubtitleClass, reportThClass, reportTitleClass, statusOrangeClass, statusRedClass } from '@/lib/reportSurface';
 import type { ExpiryAlertRow, InventoryReportRow } from '@/types/reporting.types';
 
 const qty2 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 });
@@ -23,8 +24,8 @@ function formatMoney(value: string | number | null | undefined): string {
 }
 
 const tableClass = 'w-full border-collapse text-sm';
-const thClass = 'border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground';
-const tdClass = 'border-b px-3 py-2';
+const thClass = reportThClass;
+const tdClass = 'border-b border-slate-100 px-3 py-3 text-sm text-slate-700';
 
 function daysOfStockClass(days: number | null): string {
   if (days === null) return 'text-muted-foreground';
@@ -90,7 +91,7 @@ function StockTable({ rows }: { rows: InventoryReportRow[] }) {
                     )}
                     {row.productName}
                   </td>
-                  <td className={cn(tdClass, 'font-mono text-xs')}>{row.warehouseCode}</td>
+                  <td className={tdClass}>{row.warehouseCode}</td>
                   <td className={cn(tdClass, 'text-right tabular-nums')}>{formatQty(row.quantityAvailable)}</td>
                   <td className={cn(tdClass, 'text-right tabular-nums text-muted-foreground')}>
                     {minimum > 0 ? formatQty(minimum) : '—'}
@@ -164,7 +165,7 @@ function ExpiryTable({ rows }: { rows: ExpiryAlertRow[] }) {
               {filtered.map((row) => (
                 <tr key={row.batchId}>
                   <td className={tdClass}>{row.productName}</td>
-                  <td className={cn(tdClass, 'font-mono text-xs')}>{row.warehouseCode || '—'}</td>
+                  <td className={tdClass}>{row.warehouseCode || '—'}</td>
                   <td className={cn(tdClass, 'text-xs text-muted-foreground')}>{row.batchNumber || '—'}</td>
                   <td className={cn(tdClass, 'text-right tabular-nums')}>{row.expiryDate}</td>
                   <td className={cn(tdClass, 'text-right tabular-nums', expiryClass(row))}>
@@ -201,11 +202,11 @@ function InventoryReportPageContent() {
   const expiringSoonCount = expiry.data?.filter((r) => !r.expired && r.daysUntilExpiry <= 30).length ?? 0;
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <ReportShell>
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Magazyn</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className={reportTitleClass}>Magazyn</h1>
+          <p className={reportSubtitleClass}>
             Stan zapasów, rotacja towaru i partie bliskie terminu ważności.
           </p>
         </div>
@@ -214,7 +215,7 @@ function InventoryReportPageContent() {
             <button
               type="button"
               onClick={() => void downloadCsv('/reports/inventory/', {}, 'raport-magazyn.csv')}
-              className="no-print rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+              className={cn('no-print', reportButtonClass)}
             >
               Pobierz CSV
             </button>
@@ -222,7 +223,7 @@ function InventoryReportPageContent() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="no-print rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            className={cn('no-print', reportButtonClass)}
           >
             Drukuj PDF
           </button>
@@ -233,17 +234,17 @@ function InventoryReportPageContent() {
       {(lowStockCount > 0 || expiredCount > 0 || expiringSoonCount > 0) && (
         <div className="flex flex-wrap gap-3">
           {lowStockCount > 0 && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className={cn('rounded-2xl border px-3 py-2 text-sm text-red-700', statusRedClass)}>
               <span className="font-semibold">{lowStockCount}</span> pozycji poniżej minimum
             </div>
           )}
           {expiredCount > 0 && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className={cn('rounded-2xl border px-3 py-2 text-sm text-red-700', statusRedClass)}>
               <span className="font-semibold">{expiredCount}</span> wygasłych partii
             </div>
           )}
           {expiringSoonCount > 0 && (
-            <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-700">
+            <div className={cn('rounded-2xl border px-3 py-2 text-sm text-orange-700', statusOrangeClass)}>
               <span className="font-semibold">{expiringSoonCount}</span> partii wygasa w ciągu 30 dni
             </div>
           )}
@@ -251,9 +252,9 @@ function InventoryReportPageContent() {
       )}
 
       {/* Stock levels */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardHeader>
-          <CardTitle className="text-lg">Stan magazynowy</CardTitle>
+          <CardTitle className={reportSectionTitleClass}>Stan magazynowy</CardTitle>
           <p className="text-xs text-muted-foreground">
             Dni zapasów = suma dostępnych ÷ średnia dzienna sprzedaż z ostatnich 90 dni
           </p>
@@ -272,9 +273,9 @@ function InventoryReportPageContent() {
       </Card>
 
       {/* Expiry alerts */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardHeader>
-          <CardTitle className="text-lg">Partie bliskie terminu ważności</CardTitle>
+          <CardTitle className={reportSectionTitleClass}>Partie bliskie terminu ważności</CardTitle>
           <p className="text-xs text-muted-foreground">
             Partie z ustawionym terminem ważności i pozostałą ilością &gt; 0
           </p>
@@ -294,6 +295,6 @@ function InventoryReportPageContent() {
           {expiry.data && expiry.data.length > 0 && <ExpiryTable rows={expiry.data} />}
         </CardContent>
       </Card>
-    </div>
+    </ReportShell>
   );
 }

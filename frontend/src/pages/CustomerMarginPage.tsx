@@ -6,6 +6,7 @@ import { useCustomerMarginQuery } from '@/query/use-reports';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
+import { ReportShell, reportCardClass, reportLabelClass, reportPresetClass, reportSectionTitleClass, reportSubtitleClass, reportThClass, reportTitleClass, statusGoldClass } from '@/lib/reportSurface';
 import type { CustomerMarginMissingProduct } from '@/types/reporting.types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
@@ -29,10 +30,7 @@ function marginClass(pct: number | null | undefined): string {
   return 'text-green-600';
 }
 
-const inputClass = cn(
-  'flex h-9 rounded-md border border-input bg-background px-3 py-2 text-sm',
-  'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
+const inputClass = 'date-pill';
 
 type Preset = { label: string; from: string; to: string };
 
@@ -49,8 +47,8 @@ function getPresets(): Preset[] {
 }
 
 const tableClass = 'w-full border-collapse text-sm';
-const thClass = 'border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground';
-const tdClass = 'border-b px-3 py-2';
+const thClass = reportThClass;
+const tdClass = 'border-b border-slate-100 px-3 py-3 text-sm text-slate-700';
 
 export function CustomerMarginPage() {
   const location = useLocation();
@@ -79,19 +77,19 @@ function CustomerMarginPageContent() {
   const incompleteCount = rows.filter((r) => !r.cogsComplete).length;
 
   return (
-    <div className="p-6 space-y-6">
+    <ReportShell>
       <div>
-        <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Marże na klientach</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className={reportTitleClass}>Marże na klientach</h1>
+        <p className={reportSubtitleClass}>
           Przychód vs. koszt własny sprzedaży (avg_cost × ilość) per klient.
         </p>
       </div>
 
       <RyczaltManagerialNotice />
 
-      <Card>
+      <Card className={reportCardClass}>
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <CardTitle className="text-lg">Zestawienie klientów</CardTitle>
+          <CardTitle className={reportSectionTitleClass}>Zestawienie klientów</CardTitle>
           <div className="flex flex-wrap items-end gap-3">
             {/* Presets */}
             <div className="flex flex-wrap gap-1.5">
@@ -101,10 +99,10 @@ function CustomerMarginPageContent() {
                   type="button"
                   onClick={() => applyPreset(p)}
                   className={cn(
-                    'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                    reportPresetClass,
                     activePreset === p.label
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
                   )}
                 >
                   {p.label}
@@ -114,7 +112,7 @@ function CustomerMarginPageContent() {
             {/* Custom date range */}
             <div className="flex items-end gap-2">
               <div>
-                <label htmlFor="cm-date-from" className="mb-1 block text-xs text-muted-foreground">Od</label>
+                <label htmlFor="cm-date-from" className={reportLabelClass}>Od</label>
                 <input
                   id="cm-date-from"
                   type="date"
@@ -124,7 +122,7 @@ function CustomerMarginPageContent() {
                 />
               </div>
               <div>
-                <label htmlFor="cm-date-to" className="mb-1 block text-xs text-muted-foreground">Do</label>
+                <label htmlFor="cm-date-to" className={reportLabelClass}>Do</label>
                 <input
                   id="cm-date-to"
                   type="date"
@@ -145,7 +143,7 @@ function CustomerMarginPageContent() {
           {isFetching && !data && <p className="text-sm text-muted-foreground">Ładowanie…</p>}
 
           {missingProducts.length > 0 && (
-            <div className="mb-4 rounded-md border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+            <div className={cn('mb-4 rounded-2xl border px-4 py-3 text-sm text-yellow-800', statusGoldClass)}>
               <p className="font-medium mb-2">
                 {incompleteCount} {incompleteCount === 1 ? 'klient ma' : 'klientów ma'} produkty bez kosztu zakupu
                 (avg_cost) — marża dla tych klientów jest niedostępna.
@@ -199,7 +197,7 @@ function CustomerMarginPageContent() {
                         <td className={cn(tdClass, 'text-right tabular-nums text-muted-foreground')}>
                           {row.cogsComplete ? formatMoney(row.cogs) : <span className="text-xs italic">—</span>}
                         </td>
-                        <td className={cn(tdClass, 'text-right tabular-nums text-blue-500')}>
+                        <td className={cn(tdClass, 'text-right font-semibold tabular-nums text-slate-900')}>
                           {row.estimatedCogs != null ? (
                             <span title="Szacunek z receptury">~ {formatMoney(row.estimatedCogs)}</span>
                           ) : '—'}
@@ -207,12 +205,12 @@ function CustomerMarginPageContent() {
                         <td className={cn(tdClass, 'text-right tabular-nums')}>
                           <span className={Number(displayProfit) >= 0 ? 'text-green-600' : 'text-red-600'}>
                             {formatMoney(displayProfit)}
-                            {isEstimated && <span className="ml-1 text-[10px] text-blue-500">~</span>}
+                            {isEstimated && <span className="ml-1 text-xs text-slate-500">~</span>
                           </span>
                         </td>
                         <td className={cn(tdClass, 'text-right tabular-nums', marginClass(displayMargin))}>
                           {formatPercent(displayMargin)}
-                          {isEstimated && <span className="ml-1 text-[10px] text-blue-500">~</span>}
+                          {isEstimated && <span className="ml-1 text-xs text-slate-500">~</span>}
                         </td>
                       </tr>
                     );
@@ -223,6 +221,6 @@ function CustomerMarginPageContent() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </ReportShell>
   );
 }

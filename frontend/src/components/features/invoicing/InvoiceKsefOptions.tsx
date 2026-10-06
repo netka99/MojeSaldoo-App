@@ -88,7 +88,7 @@ function BankDataAccordion({
         </span>
         <span className="flex min-w-0 items-center gap-2">
           {!open && hasIban && (
-            <span className="truncate font-mono text-xs text-slate-400">{maskIban(value.bank_account_iban ?? '')}</span>
+            <span className="truncate text-xs text-slate-400">{maskIban(value.bank_account_iban ?? '')}</span>
           )}
           {!open && !hasIban && hasFilled && (
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">ustawione</span>

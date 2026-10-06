@@ -1,6 +1,8 @@
 import { PieChart, Pie, Tooltip, ResponsiveContainer } from 'recharts';
 import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 import type { CashFlowToday, CashFlowMonth } from '@/types/cashflow.types';
+import { cn } from '@/lib/utils';
+import { statusRedClass } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 0 });
 const plnDec = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 2 });
@@ -58,7 +60,7 @@ export function BalanceDonut({ today, month }: BalanceDonutProps) {
           {isLoss ? (
             /* ── Deficit state — replaces donut ── */
             <div className="space-y-3">
-              <div className="flex items-center gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3">
+              <div className={cn('flex items-center gap-3 rounded-2xl border px-4 py-3', statusRedClass)}>
                 <span className="text-xl shrink-0">⚠️</span>
                 <div>
                   <p className="text-sm font-semibold text-red-700">

@@ -8,6 +8,7 @@ import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
 import { RyczaltManagerialNotice } from '@/components/reports/RyczaltManagerialNotice';
+import { ReportExpandIcon, ReportShell, reportButtonClass, reportCardClass, reportLabelClass, reportLinkClass, reportPresetClass, reportRowClass, reportSectionTitleClass, reportTdClass, reportTdMoneyClass, reportThClass, reportTitleClass } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
@@ -42,10 +43,7 @@ function formatPercent(value: number | null | undefined): string {
   return `${value.toFixed(1)} %`;
 }
 
-const inputClass = cn(
-  'flex h-9 rounded-md border border-input bg-background px-3 py-2 text-sm',
-  'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
+const inputClass = 'date-pill';
 
 type Preset = { label: string; from: string; to: string };
 
@@ -86,7 +84,7 @@ function BarChart({ rows }: { rows: { month: string; revenue: number; purchaseCo
                 <div title={`Koszty: ${pln.format(r.purchaseCosts)}`} className="w-3 rounded-t bg-red-400/80" style={{ height: costH }} />
                 <div title={`Zysk: ${pln.format(r.grossProfit)}`} className="w-3 rounded-t bg-green-500/80" style={{ height: profitH }} />
               </div>
-              <span className="text-[10px] text-muted-foreground">{r.month.slice(5)}</span>
+              <span className="text-xs text-slate-500">{r.month.slice(5)}</span>
             </div>
           );
         })}
@@ -117,7 +115,7 @@ function MonthDrillDown({ month }: { month: string }) {
     <div className="grid gap-4 px-4 pb-4 pt-2 sm:grid-cols-2">
       {/* Invoices */}
       <div>
-        <p className="mb-1.5 text-xs font-semibold text-blue-700">
+        <p className="mb-1.5 text-sm font-semibold text-slate-900">
           Faktury sprzedażowe ({data.invoices.length})
         </p>
         {!hasInvoices && <p className="text-xs text-muted-foreground">Brak faktur w tym miesiącu.</p>}
@@ -125,13 +123,13 @@ function MonthDrillDown({ month }: { month: string }) {
           {data.invoices.map((inv) => (
             <div key={inv.id} className="flex items-center justify-between rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs">
               <div className="min-w-0">
-                <Link to={`/invoices/${inv.id}`} className="font-medium text-blue-700 hover:underline">
+                <Link to={`/invoices/${inv.id}`} className={reportLinkClass}>
                   {inv.invoice_number || inv.id.slice(0, 8)}
                 </Link>
                 <span className="ml-1.5 text-muted-foreground">{inv.customer_name}</span>
               </div>
               <div className="ml-2 shrink-0 text-right">
-                <span className="font-medium text-blue-700">{formatMoney(inv.total_gross)}</span>
+                <span className="text-sm font-semibold tabular-nums text-slate-900">{formatMoney(inv.total_gross)}</span>
                 <span className="ml-1.5 text-muted-foreground">{STATUS_PL[inv.status] ?? inv.status}</span>
               </div>
             </div>
@@ -141,7 +139,7 @@ function MonthDrillDown({ month }: { month: string }) {
 
       {/* PZ documents */}
       <div>
-        <p className="mb-1.5 text-xs font-semibold text-red-700">
+        <p className="mb-1.5 text-sm font-semibold text-red-700">
           Dokumenty zakupu PZ ({data.pz_documents.length})
         </p>
         {!hasPZ && <p className="text-xs text-muted-foreground">Brak zaksięgowanych PZ w tym miesiącu.</p>}
@@ -163,7 +161,7 @@ function MonthDrillDown({ month }: { month: string }) {
       {/* OPEX individual invoices */}
       {(data.opex_invoices ?? []).length > 0 && (
         <div className="sm:col-span-2">
-          <p className="mb-1.5 text-xs font-semibold text-orange-700">
+          <p className="mb-1.5 text-sm font-semibold text-orange-700">
             Koszty operacyjne OPEX ({data.opex_invoices.length})
           </p>
           <div className="space-y-1">
@@ -175,7 +173,7 @@ function MonthDrillDown({ month }: { month: string }) {
                   </span>
                   <span className="text-muted-foreground">{inv.issue_date}</span>
                   {inv.invoice_number && (
-                    <span className="font-mono text-orange-700">{inv.invoice_number}</span>
+                    <span className="text-sm font-normal text-slate-700">{inv.invoice_number}</span>
                   )}
                   <span className="text-muted-foreground truncate">{inv.seller_name}</span>
                 </div>
@@ -221,14 +219,14 @@ export function ProfitLossPage() {
   }
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Zysk i Koszty (P&amp;L)</h1>
+    <ReportShell>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className={reportTitleClass}>Zysk i Koszty (P&amp;L)</h1>
         {data && data.rows.length > 0 && (
           <button
             type="button"
             onClick={() => void downloadCsv('/reports/profit-loss/', { date_from: dateFrom, date_to: dateTo }, 'wynik-finansowy.csv')}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            className={reportButtonClass}
           >
             Pobierz CSV
           </button>
@@ -238,7 +236,7 @@ export function ProfitLossPage() {
       <RyczaltManagerialNotice />
 
       {/* Filters */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardContent className="pt-4">
           {/* Quick presets */}
           <div className="mb-3 flex flex-wrap gap-2">
@@ -248,10 +246,10 @@ export function ProfitLossPage() {
                 type="button"
                 onClick={() => applyPreset(p)}
                 className={cn(
-                  'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  reportPresetClass,
                   dateFrom === p.from && dateTo === p.to
                     ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background text-foreground hover:bg-muted',
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
                 )}
               >
                 {p.label}
@@ -261,11 +259,11 @@ export function ProfitLossPage() {
           {/* Manual date range */}
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">Od</label>
+              <label className={reportLabelClass}>Od</label>
               <input type="date" className={inputClass} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">Do</label>
+              <label className={reportLabelClass}>Do</label>
               <input type="date" className={inputClass} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
@@ -302,7 +300,7 @@ export function ProfitLossPage() {
                 color: 'text-foreground',
               },
             ].map(({ label, tip, value, color }) => (
-              <Card key={label}>
+              <Card key={label} className={reportCardClass}>
                 <CardContent className="pt-4">
                   <p className="text-xs text-muted-foreground flex items-center">
                     {label}
@@ -335,7 +333,7 @@ export function ProfitLossPage() {
                   color: 'text-foreground',
                 },
               ].map(({ label, tip, value, color }) => (
-                <Card key={label}>
+                <Card key={label} className={reportCardClass}>
                   <CardContent className="pt-4">
                     <p className="text-xs text-muted-foreground flex items-center">
                       {label}
@@ -369,7 +367,7 @@ export function ProfitLossPage() {
                   color: 'text-foreground',
                 },
               ].map(({ label, tip, value, color }) => (
-                <Card key={label}>
+                <Card key={label} className={reportCardClass}>
                   <CardContent className="pt-4">
                     <p className="text-xs text-muted-foreground flex items-center">
                       {label}
@@ -386,16 +384,16 @@ export function ProfitLossPage() {
 
       {/* Chart */}
       {!isLoading && !isError && chartRows.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-sm">Miesięczny wykres</CardTitle></CardHeader>
+        <Card className={reportCardClass}>
+          <CardHeader><CardTitle className={reportSectionTitleClass}>Miesięczny wykres</CardTitle></CardHeader>
           <CardContent><BarChart rows={chartRows} /></CardContent>
         </Card>
       )}
 
       {/* Table with drill-down */}
-      <Card>
+      <Card className={reportCardClass}>
         <CardHeader>
-          <CardTitle className="text-sm">
+          <CardTitle className={reportSectionTitleClass}>
             Dane miesięczne
             <span className="ml-2 text-xs font-normal text-muted-foreground">— kliknij wiersz, żeby zobaczyć źródło danych</span>
           </CardTitle>
@@ -408,8 +406,8 @@ export function ProfitLossPage() {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr>
-                    <th className="w-6 border-b bg-muted/50 px-3 py-2" />
-                    <th className="border-b bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground">Miesiąc</th>
+                    <th className="w-6 border-b border-slate-200 bg-white px-3 py-3" />
+                    <th className={reportThClass}>Miesiąc</th>
                     {([
                       { label: 'Przychody', tip: 'Suma brutto faktur sprzedażowych wystawionych w danym miesiącu.' },
                       { label: 'COGS', tip: 'Cost of Goods Sold — wartość przyjętych towarów z dokumentów PZ w danym miesiącu.' },
@@ -420,12 +418,12 @@ export function ProfitLossPage() {
                       { label: 'Zysk netto', tip: 'Zysk operacyjny − Koszty stałe. Realny zarobek firmy po wszystkich kosztach.' },
                       { label: 'Marża %', tip: 'Marża brutto = Zysk brutto ÷ Przychody × 100%. Nie uwzględnia OPEX.' },
                     ] as const).map(({ label, tip }) => (
-                      <th key={label} title={tip} className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap cursor-help">
+                      <th key={label} title={tip} className={cn(reportThClass, 'cursor-help text-right')}>
                         {label}
                       </th>
                     ))}
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">Faktury</th>
-                    <th className="border-b bg-muted/50 px-3 py-2 text-right font-medium text-muted-foreground">PZ</th>
+                    <th className={cn(reportThClass, 'text-right')}>Faktury</th>
+                    <th className={cn(reportThClass, 'text-right')}>PZ</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -447,42 +445,37 @@ export function ProfitLossPage() {
                         <>
                           <tr
                             key={row.month}
-                            className={cn('cursor-pointer hover:bg-muted/30', isExpanded && 'bg-muted/20')}
+                            className={cn(reportRowClass, 'cursor-pointer', isExpanded && 'bg-slate-50')}
                             onClick={() => toggleMonth(row.month)}
                           >
-                            <td className="border-b px-3 py-2 text-muted-foreground">
-                              <svg
-                                className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
-                                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
-                              >
-                                <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
+                            <td className="w-8 px-2 py-3">
+                              <ReportExpandIcon open={isExpanded} />
                             </td>
-                            <td className="border-b px-3 py-2 font-mono font-medium">{row.month}</td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-blue-600">{formatMoney(row.revenue)}</td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-red-500">{formatMoney(row.purchaseCosts)}</td>
-                            <td className={cn('border-b px-3 py-2 text-right tabular-nums font-medium', profit >= 0 ? 'text-green-600' : 'text-red-600')}>
+                            <td className={reportTdClass}>{row.month}</td>
+                            <td className={reportTdMoneyClass}>{formatMoney(row.revenue)}</td>
+                            <td className={reportTdMoneyClass}>{formatMoney(row.purchaseCosts)}</td>
+                            <td className={cn(reportTdMoneyClass, profit >= 0 ? 'text-emerald-700' : 'text-red-600')}>
                               {formatMoney(row.grossProfit)}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-orange-600">
+                            <td className={reportTdMoneyClass}>
                               {opex > 0 ? formatMoney(row.opex) : <span className="text-muted-foreground">—</span>}
                             </td>
-                            <td className={cn('border-b px-3 py-2 text-right tabular-nums font-medium', opProfit >= 0 ? 'text-green-700' : 'text-red-600')}>
+                            <td className={cn(reportTdMoneyClass, opProfit >= 0 ? 'text-emerald-700' : 'text-red-600')}>
                               {opex > 0 ? formatMoney(row.operatingProfit) : <span className="text-muted-foreground">—</span>}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-purple-600">
+                            <td className={reportTdMoneyClass}>
                               {fixedCosts > 0 ? formatMoney(row.fixedCosts) : <span className="text-muted-foreground">—</span>}
                             </td>
-                            <td className={cn('border-b px-3 py-2 text-right tabular-nums font-semibold', netProfit >= 0 ? 'text-emerald-700' : 'text-red-600')}>
+                            <td className={cn(reportTdMoneyClass, netProfit >= 0 ? 'text-emerald-700' : 'text-red-600')}>
                               {fixedCosts > 0 ? formatMoney(row.netProfit) : <span className="text-muted-foreground">—</span>}
                             </td>
-                            <td className="border-b px-3 py-2 text-right tabular-nums text-muted-foreground">{formatPercent(row.marginPercent)}</td>
-                            <td className="border-b px-3 py-2 text-right text-muted-foreground">
+                            <td className={reportTdMoneyClass}>{formatPercent(row.marginPercent)}</td>
+                            <td className={cn(reportTdClass, 'text-right')}>
                               {row.invoiceCount > 0 ? (
                                 <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{row.invoiceCount}</span>
                               ) : '—'}
                             </td>
-                            <td className="border-b px-3 py-2 text-right text-muted-foreground">
+                            <td className={cn(reportTdClass, 'text-right')}>
                               {row.pzCount > 0 ? (
                                 <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">{row.pzCount}</span>
                               ) : '—'}
@@ -490,7 +483,7 @@ export function ProfitLossPage() {
                           </tr>
                           {isExpanded && (
                             <tr key={`${row.month}-detail`}>
-                              <td colSpan={12} className="border-b bg-muted/10 p-0">
+                              <td colSpan={12} className="border-b border-slate-100 bg-slate-50 p-0">
                                 <MonthDrillDown month={row.month} />
                               </td>
                             </tr>
@@ -505,6 +498,6 @@ export function ProfitLossPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </ReportShell>
   );
 }

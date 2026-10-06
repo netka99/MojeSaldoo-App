@@ -4,7 +4,7 @@ Aktualny wygląd pól, selectów, przycisków i kart jest w **`design.md`** w ka
 
 ## Filozofia UI: iOS Settings style
 
-Jasne tło strony, białe karty z cieniem, etykieta nad polem. Użytkownik często ma 50+ lat i pracuje na telefonie. Tekst pól to `text-sm`, jak reszta interfejsu. 44 px to wysokość wiersza listy, nie wysokość pola.
+Jasne tło strony, płaskie białe karty z ramką, etykieta nad polem. Cień tylko na tym, co otwiera się nad stroną. Użytkownik często ma 50+ lat i pracuje na telefonie. Tekst pól to `text-sm`, jak reszta interfejsu. 44 px to wysokość wiersza listy, nie wysokość pola.
 
 ---
 
@@ -22,14 +22,15 @@ Nie zmieniaj tła na `bg-white` ani `bg-slate-50` na poziomie strony.
 ## Karty (kontenery sekcji)
 
 ```tsx
-<section className="rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+<section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
 ```
 
 - **Tło:** `bg-white`
 - **Border:** `border-slate-200` — widoczna linia oddzielająca od tła strony
-- **Cień:** `shadow-apple-sm` (zdefiniowany w `src/index.css`)
+- **Cień:** brak na karcie. `shadow-apple-md` tylko na menu, oknie, dolnym panelu i liście rozwijanej
 - **Zaokrąglenie:** `rounded-2xl` mobile, `rounded-3xl` desktop
 - **Gap między kartami:** `gap-3` (nie `gap-5` — zbyt luźne)
+- **Listy i raporty:** klasy w `src/lib/reportSurface.tsx`. Nagłówek tabeli biały, podpisy kolumn wersalikami `text-xs`. Karta statusu zostaje pastelowa i dostaje ramkę w swoim kolorze.
 
 ### Cienie kart (src/index.css)
 ```css
@@ -89,7 +90,7 @@ Nie używaj na polach `rounded-full`, cienia inset, `min-h-11`, tekstu 17 px, `b
 ## Accordeony wewnątrz kart
 
 ```tsx
-<div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-apple-sm">
+<div className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
   <button className="flex w-full items-center justify-between px-4 py-3.5 text-left hover:bg-slate-50/60">
     <div className="flex items-center gap-2">
       <span className="text-sm font-medium text-slate-700">Tytuł</span>

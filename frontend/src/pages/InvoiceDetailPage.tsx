@@ -123,7 +123,7 @@ function DraftInvoiceNumberRow({ invoice }: { invoice: Invoice }) {
             Anuluj
           </button>
           {!input && (
-            <span className="text-xs text-muted-foreground">Pusty = automatyczny: <span className="font-mono">{autoNumber}</span></span>
+            <span className="text-xs text-muted-foreground">Pusty = automatyczny: <span className="">{autoNumber}</span></span>
           )}
           {error && <p className="text-xs text-destructive w-full">{error}</p>}
         </>
@@ -565,7 +565,7 @@ export function InvoiceDetailPage() {
             {invoice?.ksef_reference_number && !invoice.ksef_number ? (
               <p className="mt-1 text-xs text-muted-foreground">
                 Ref KSeF:{' '}
-                <span className="font-mono text-foreground">{invoice.ksef_reference_number}</span>
+                <span className=" text-foreground">{invoice.ksef_reference_number}</span>
               </p>
             ) : null}
           </div>

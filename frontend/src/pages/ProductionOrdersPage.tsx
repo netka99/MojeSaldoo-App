@@ -143,7 +143,7 @@ function OrderForm({
       {lockedFromPlanning && prefillSourceOrders && prefillSourceOrders.length > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
           <span className="text-muted-foreground shrink-0">Na podstawie zamówień:</span>
-          <span className="font-mono font-medium">{prefillSourceOrders.join(', ')}</span>
+          <span className="font-medium">{prefillSourceOrders.join(', ')}</span>
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -378,7 +378,7 @@ function PlanningRow({
             {item.orders.map((o, i) => (
               <span key={o.order_id}>
                 {i > 0 && <span className="mx-1">·</span>}
-                <span className="font-mono text-foreground">{o.order_number}</span>
+                <span className="text-foreground">{o.order_number}</span>
                 <span className="ml-1">{o.customer_name}</span>
                 {o.delivery_date && <span className="ml-1 text-muted-foreground">({o.delivery_date})</span>}
               </span>
@@ -599,7 +599,7 @@ export function ProductionOrdersPage() {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm font-medium">{order.order_number}</span>
+                    <span className="text-sm font-medium">{order.order_number}</span>
                     <span className={cn(
                       'rounded-full px-2 py-0.5 text-xs font-medium',
                       isCompleted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',

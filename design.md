@@ -13,7 +13,8 @@ Użytkownik ma często 50+ lat i pracuje na telefonie. Tekst ma być czytelny ja
 | Rola | Wartość |
 |---|---|
 | Tło strony | `#F2F2F7` (`--background`) |
-| Karta | biała, `border-slate-200`, `shadow-apple-sm` |
+| Karta na stronie | biała, `border-slate-200`, bez cienia |
+| Warstwa nad stroną | biała, `shadow-apple-md` |
 | Primary | `#5856D6` |
 | Wypełnienie pola | `#F2F2F7` |
 | Ramka pola | `#AEAEB2` |
@@ -26,13 +27,95 @@ Nie używaj na polach `bg-slate-50`, `border-slate-200`, szarego insetu ani pó�
 
 ---
 
-## Karta sekcji
+## Powierzchnie
+
+Karta, która leży na stronie, jest płaska. Od tła oddziela ją biała powierzchnia i cienka ramka. Cień dostaje tylko to, co otwiera się nad stroną.
+
+| Co | Wygląd |
+|---|---|
+| Karta, filtr, tabela, podsumowanie | `rounded-2xl border border-slate-200 bg-white md:rounded-3xl` |
+| Przycisk na stronie | bez cienia, `rounded-2xl` |
+| Menu, okno, dolny panel, lista rozwijana | biała powierzchnia i `shadow-apple-md` |
+
+`shadow-apple-sm` nie kładź na kartach. Token zostaje w konfiguracji, nowe karty go nie używają.
 
 ```tsx
-<section className="rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+<section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
 ```
 
 Karty jedna pod drugą, `gap-3`. Nie układaj płatności i podsumowania obok siebie.
+
+## Tabela
+
+Karta tabeli jest biała, jak inne karty. Nagłówek kolumn też jest biały. Od wierszy oddziela go `border-b border-slate-200`.
+
+Podpisy kolumn: `text-xs font-semibold uppercase tracking-wide text-slate-500`. To jedyne miejsce z wersalikami. Tytuły, etykiety i podpisy zostają zwykłą wielkością.
+
+Krój ekranu jest jeden: SF Pro Text, ustawiony na `body` w `frontend/src/index.css`. SF Pro Display przy 14 px wygląda jak pogrubienie, więc tekst interfejsu go nie używa. W UI nie używaj `font-mono` — numer, kod i NIP zostają w SF Pro Text, z `tabular-nums`. Wydruki (faktura, WZ, etykieta) mają własny krój papieru.
+
+Typografia wiersza jest jedna. Rozmiar `text-sm` (14 px), krój SF Pro Text.
+
+| Co w wierszu | Grubość | Kolor |
+|---|---|---|
+| Numer dokumentu | `font-semibold` | `text-primary` |
+| Klient, opis | `font-normal` | `text-slate-600` |
+| Data, liczba dni | `font-normal` | `text-slate-500` albo kolor stanu, bez `font-medium` |
+| Kwota | `font-semibold` | `text-slate-900` |
+| Status słowem | `font-medium` | kolor stanu |
+
+Pogrubione są tylko numer i kwota. Reszta wiersza zostaje zwykłą grubością.
+
+Wiersz tabeli ma jeden rytm na liście i w raportach:
+
+- Strzałka rozwijania jest zawsze w pierwszej kolumnie, z lewej. Wskazuje w prawo i obraca się o 90°, gdy wiersz jest otwarty. Kliknięcie strzałki albo wiersza otwiera szczegóły.
+- Numer dokumentu to link `text-sm font-semibold text-primary`.
+- Daty: `text-sm text-slate-500`, format polski, np. „24 lip 2026”.
+- Kwota: do prawej, `text-sm font-semibold tabular-nums text-slate-900`.
+- Status słowem: `text-sm font-medium` w kolorze stanu (zielony, bursztynowy, czerwony). Nie drugi styl obok, raz pigułka, raz szary tekst.
+- Odstęp komórki: `px-3 py-3`. Linia wiersza: `border-slate-100`.
+
+Klasy: `reportRowClass`, `reportTdClass`, `reportTdMutedClass`, `reportTdMoneyClass`, `reportLinkClass`, `ReportExpandIcon` w `frontend/src/lib/reportSurface.tsx`.
+
+## Listy i raporty
+
+Wzorzec wizualny to lista faktur (`frontend/src/pages/InvoicesPage.tsx`). Strony `/reports` biorą te same klasy z `frontend/src/lib/reportSurface.tsx`.
+
+```tsx
+<ReportShell>
+  <h1 className="text-xl font-bold tracking-tight text-slate-900">Niezapłacone faktury</h1>
+  <p className="text-xs text-slate-500">Jedna linia pod tytułem, gdy jest potrzebna</p>
+</ReportShell>
+```
+
+| Element | Ustalenie |
+|---|---|
+| Tło | `#F2F2F7` na całą szerokość strony, treść `max-w-7xl`, odstęp kart `gap-3` |
+| Tytuł strony | `text-xl font-bold tracking-tight text-slate-900` |
+| Podtytuł | `text-xs text-slate-500` |
+| Karta | biała, `rounded-2xl md:rounded-3xl`, `border-slate-200`, bez cienia. Komponent `Card` ma własny cień — na raporcie nadpisz `shadow-none` i dodaj ramkę |
+| Tytuł karty | `text-sm font-semibold text-slate-900` |
+| Nagłówek tabeli | biały, linia `border-b border-slate-200`, podpisy `text-xs font-semibold uppercase tracking-wide text-slate-500` |
+| Przycisk na stronie | `rounded-2xl`, bez cienia. Drugorzędny: biały, `border-slate-200`, `text-sm font-medium text-slate-700` |
+| Preset okresu | `rounded-2xl`, nie kapsułka. Zaznaczony: `bg-primary text-primary-foreground` |
+| Data i select | `date-pill`, `select-pill`. Etykieta nad polem: `text-sm font-medium text-slate-800` |
+| Karta statusu | pastel i ramka ze sekcji „Karta statusu”. `rounded-2xl`, bez cienia |
+| Lista nad stroną | `shadow-apple-md` |
+
+## Karta statusu
+
+Kolorowa karta z liczbą albo ostrzeżeniem: kafelki na liście faktur, przedziały niezapłaconych, alert magazynu, podsumowanie salda, kafelki na pulpicie. To nie jest plakietka, podświetlenie wiersza tabeli ani czerwony pasek błędu.
+
+Kształt: `rounded-2xl`, bez cienia. Tło zostaje pastelowe. Ramka jest w tym samym kolorze, w środkowym nasyceniu: mocniejsza niż `border-*-200`, łagodniejsza niż ciemna obwódka.
+
+| Kolor | Tło | Ramka | Klasa |
+|---|---|---|---|
+| Złoto | `#FFFBEB` | `#F3D072` | `statusGoldClass` |
+| Zieleń | `#F0FDF4` | `#A5E1BD` | `statusGreenClass` |
+| Czerwień | `#FEF2F2` | `#F2B6B6` | `statusRedClass` |
+| Pomarańcz | `#FFF7ED` | `#FDBA74` | `statusOrangeClass` |
+| Fiolet | `#FAF5FF` | `#D8B4FE` | `statusPurpleClass` |
+
+Klasy są w `frontend/src/lib/reportSurface.tsx`. Przedział „ponad 90 dni” zostaje o stopień mocniejszy (`#E7A3A3` i ciemniejsze tło), żeby odróżniał się od zwykłej czerwieni. Zaznaczona karta dostaje mocniejszy obrys w kolorze akcentu. Na spoczynku ramka zostaje w kolorze z tabeli.
 
 ---
 
@@ -50,7 +133,7 @@ Każdy poziom ma jeden wygląd. Tytuł sekcji nie może wyglądać jak etykieta 
 | Podpowiedź pod polem | `mt-1.5 text-xs text-slate-500` | „Nadany automatycznie”, „Zastąpi datę terminu w KSeF” |
 | Ważna wartość | `text-base font-semibold text-primary` na `rounded-lg bg-primary/10 px-2.5 py-1` | Numer faktury. To nie jest pole |
 
-Nie używaj `text-[10px]`, `text-[11px]`, `uppercase` ani `tracking-wider` w tytułach i podpisach. Nie rób tytułu sekcji stylem etykiety (`font-medium text-slate-800` bez ikony).
+Nie używaj `text-[10px]`, `text-[11px]`, `uppercase` ani `tracking-wider` w tytułach i podpisach. Wersaliki są tylko w nagłówku kolumn tabeli. Nie rób tytułu sekcji stylem etykiety (`font-medium text-slate-800` bez ikony).
 
 ### Tytuł sekcji
 
@@ -232,13 +315,14 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 - koloru primary innego niż `#5856D6`
 - tytułu sekcji bez ikony w kwadracie albo w stylu etykiety pola
 - podpisów w `text-[10px]` i `text-[11px]`
+- cienia na karcie leżącej na stronie (`shadow-apple-sm`, `shadow-sm`)
 - numeru dokumentu schowanego w polu tekstowym, skoro da się go pokazać jako wartość i edytować ołówkiem
 
 ---
 
 ## Jak poprawić kolejną stronę
 
-1. Tło strony zostaw `#F2F2F7`. Sekcje zamień na białe karty `rounded-2xl` / `md:rounded-3xl`, `shadow-apple-sm`, `gap-3`.
+1. Tło strony zostaw `#F2F2F7`. Sekcje zamień na płaskie białe karty `rounded-2xl` / `md:rounded-3xl`, `border-slate-200`, `gap-3`. Cień `shadow-apple-md` tylko na menu, oknie i liście rozwijanej. Nagłówek tabeli biały, podpisy kolumn wersalikami `text-xs`. Lista i raport: klasy z `frontend/src/lib/reportSurface.tsx`.
 2. Tytuł sekcji: ikona w kwadracie `h-7 w-7 bg-primary/10` i `text-sm font-semibold text-slate-900`. Etykieta pola zostaje `text-sm font-medium text-slate-800`, bez ikony.
 3. Input, select i datę przełącz na `field-ios`, `select-pill`, `date-pill`. Etykieta nad polem, podpowiedź pod polem w `text-xs text-slate-500`.
 4. Przyciski główne i drugorzędne ustaw jak w tabeli wyżej.

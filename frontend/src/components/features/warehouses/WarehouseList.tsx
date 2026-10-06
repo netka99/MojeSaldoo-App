@@ -98,7 +98,7 @@ export function WarehouseList({ onRowClick }: WarehouseListProps) {
                       : undefined
                   }
                 >
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs font-medium">{w.code}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-xs font-medium">{w.code}</td>
                   <td className="max-w-[220px] truncate px-4 py-3 text-foreground">{w.name}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
                     {WAREHOUSE_TYPE_LABELS_PL[w.warehouse_type]}
