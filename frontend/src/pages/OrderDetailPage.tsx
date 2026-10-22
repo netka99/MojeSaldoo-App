@@ -841,7 +841,7 @@ export function OrderDetailPage() {
           initial={{ y: 80, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           className={cn(
-            'fixed left-0 right-0 z-40',
+            'fixed left-0 right-0 z-40 md:left-64',
             'bottom-[calc(96px+env(safe-area-inset-bottom))] md:bottom-4 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
           )}
         >

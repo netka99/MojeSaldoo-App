@@ -50,6 +50,12 @@ export function InvoiceKsefOptions({ value, onChange, paymentMethod }: InvoiceKs
         <BankDataAccordion value={value} set={set} />
       )}
 
+      {/* Dodatkowe informacje (DodatkowyOpis FA-3) */}
+      <AdditionalInfoAccordion
+        rows={value.additional_info ?? []}
+        onChange={(v) => set('additional_info', v)}
+      />
+
       {/* Numery WZ */}
       <WzRow values={value.wz_numbers ?? []} onChange={(v) => set('wz_numbers', v)} />
 
@@ -200,6 +206,101 @@ function WzRow({ values, onChange }: { values: string[]; onChange: (v: string[])
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Dodatkowe informacje (DodatkowyOpis FA-3) ──────────────────── */
+
+type InfoRow = { label: string; value: string };
+
+function AdditionalInfoAccordion({
+  rows,
+  onChange,
+}: {
+  rows: InfoRow[];
+  onChange: (v: InfoRow[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const update = (i: number, field: keyof InfoRow, val: string) => {
+    const next = rows.map((r, idx) => (idx === i ? { ...r, [field]: val } : r));
+    onChange(next);
+  };
+
+  const add = () => onChange([...rows, { label: '', value: '' }]);
+
+  const remove = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 bg-white px-4 py-3.5 text-left hover:bg-slate-50 md:px-6"
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <IconChip>
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+              <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 5h6M9 12h6M9 16h4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </IconChip>
+          <span className="text-sm font-semibold text-slate-900">Dodatkowe informacje</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {!open && rows.length > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+              {rows.length}
+            </span>
+          )}
+          <ChevronIcon open={open} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-200 px-4 py-4 md:px-6">
+          <p className="mb-3 text-xs text-slate-400">
+            Pary klucz–wartość wysyłane do KSeF jako DodatkowyOpis (np. "Okres dostawy" / "2026-09-01 - 2026-09-30").
+          </p>
+          <div className="flex flex-col gap-2">
+            {rows.map((row, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    className={fieldClass}
+                    placeholder="Rodzaj informacji (np. Okres dostawy)"
+                    value={row.label}
+                    onChange={(e) => update(i, 'label', e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    className={fieldClass}
+                    placeholder="Treść informacji"
+                    value={row.value}
+                    onChange={(e) => update(i, 'value', e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => remove(i)}
+                  className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-destructive"
+                  aria-label="Usuń wiersz"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={add}
+            className="mt-3 text-sm font-medium text-primary hover:underline"
+          >
+            + Dodaj wiersz
+          </button>
         </div>
       )}
     </div>

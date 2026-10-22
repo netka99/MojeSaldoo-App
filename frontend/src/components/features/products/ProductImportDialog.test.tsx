@@ -132,6 +132,18 @@ describe('ProductImportDialog', () => {
     });
   });
 
+  it('shows column info accordion and expands on click', async () => {
+    const { user } = setup();
+    const toggle = screen.getByRole('button', { name: /jakie kolumny są obsługiwane/i });
+    expect(toggle).toBeInTheDocument();
+    // table not visible yet
+    expect(screen.queryByText('Cena brutto')).not.toBeInTheDocument();
+    await user.click(toggle);
+    expect(screen.getByText('Cena brutto')).toBeInTheDocument();
+    expect(screen.getByText('Dozwolone: 0, 5, 8, 23')).toBeInTheDocument();
+    expect(screen.getByText('* pole wymagane')).toBeInTheDocument();
+  });
+
   it('disables import button when valid_count is 0', async () => {
     vi.mocked(productService.importProducts).mockResolvedValueOnce({
       dry_run: true,

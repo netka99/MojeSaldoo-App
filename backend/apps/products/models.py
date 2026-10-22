@@ -83,6 +83,12 @@ class Product(models.Model):
         help_text="Target gross margin %. price_net is auto-suggested as avg_cost × (1 + markup/100).",
     )
     is_active = models.BooleanField(default=True)
+    image = models.ImageField(
+        upload_to="product_thumbs/",
+        blank=True,
+        null=True,
+        help_text="Square JPEG thumbnail. The original upload is not stored.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -97,6 +103,11 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+    def delete(self, *args, **kwargs):
+        if self.image:
+            self.image.delete(save=False)
+        return super().delete(*args, **kwargs)
 
 
 class Warehouse(models.Model):

@@ -19,6 +19,7 @@ class UserSerializer(UUIDModelSerializer):
     modules = serializers.SerializerMethodField()
     is_vat_payer = serializers.SerializerMethodField()
     ksef_usage = serializers.SerializerMethodField()
+    ksef_environment = serializers.SerializerMethodField()
     price_input_mode = serializers.SerializerMethodField()
 
     class Meta:
@@ -31,6 +32,7 @@ class UserSerializer(UUIDModelSerializer):
             "last_name",
             "phone_number",
             "is_active",
+            "is_staff",
             "current_company",
             "current_company_role",
             "is_company_admin",
@@ -41,6 +43,7 @@ class UserSerializer(UUIDModelSerializer):
             "ryczalt_category",
             "is_vat_payer",
             "ksef_usage",
+            "ksef_environment",
             "price_input_mode",
             "modules",
         ]
@@ -106,6 +109,11 @@ class UserSerializer(UUIDModelSerializer):
             return None
         return obj.current_company.ksef_usage
 
+    def get_ksef_environment(self, obj) -> str | None:
+        if not obj.current_company_id:
+            return None
+        return obj.current_company.ksef_environment
+
     def get_price_input_mode(self, obj) -> str | None:
         if not obj.current_company_id:
             return None
@@ -120,6 +128,16 @@ class UserSerializer(UUIDModelSerializer):
 
 class CompanySerializer(UUIDModelSerializer):
     """Aligns with onboarding `CompanyWrite` (snake_case) and the `Company` model."""
+
+    logo_url = serializers.SerializerMethodField()
+
+    def get_logo_url(self, obj):
+        if not obj.logo:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.logo.url)
+        return obj.logo.url
 
     class Meta:
         model = Company
@@ -144,17 +162,20 @@ class CompanySerializer(UUIDModelSerializer):
             "bdo",
             "is_vat_payer",
             "ksef_usage",
+            "ksef_environment",
             "invoice_returns_mode",
+            "wz_quick_returns",
             "price_input_mode",
             # Invoice numbering
             "invoice_number_prefix",
             "invoice_number_period",
             "invoice_number_padding",
             "invoice_number_start",
+            "logo_url",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["is_active", "created_at", "updated_at"]
+        read_only_fields = ["is_active", "logo_url", "created_at", "updated_at"]
 
     def validate_nip(self, value):
         if value in (None, ""):
@@ -226,7 +247,7 @@ class SwitchCompanySerializer(serializers.Serializer):
 class CompanyWorkflowSettingsSerializer(UUIDModelSerializer):
     class Meta:
         model = CompanyWorkflowSettings
-        fields = ["orders_required", "wz_required_before_invoice"]
+        fields = ["orders_required", "wz_required_before_invoice", "auto_wz_on_order", "auto_deliver_wz"]
 
 
 class CompanyRoleSerializer(serializers.ModelSerializer):

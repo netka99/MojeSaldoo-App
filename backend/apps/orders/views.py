@@ -76,7 +76,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         qs = (
             Order.objects.all()
             .select_related("customer", "company", "user")
-            .prefetch_related("items", "items__product")
+            .prefetch_related("items", "items__product", "production_orders")
             .annotate(
                 has_active_invoice=Exists(has_legacy) | Exists(has_multi)
             )

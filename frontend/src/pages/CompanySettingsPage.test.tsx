@@ -97,7 +97,7 @@ vi.mock('@/query/use-companies', () => ({
     isPending: false,
   }),
   useWorkflowSettingsQuery: () => ({
-    data: { orders_required: false, wz_required_before_invoice: true },
+    data: { orders_required: false, wz_required_before_invoice: true, auto_wz_on_order: false },
     isPending: false,
     isError: false,
   }),
@@ -111,6 +111,10 @@ vi.mock('@/query/use-companies', () => ({
   }),
   useLeaveCompanyMutation: () => ({
     mutateAsync: leaveCompanyMutateAsync,
+    isPending: false,
+  }),
+  useUpdateCompanyMutation: () => ({
+    mutateAsync: vi.fn().mockResolvedValue({}),
     isPending: false,
   }),
 }));
@@ -255,5 +259,10 @@ describe('CompanySettingsPage', () => {
       });
     });
     expect(refreshUser).toHaveBeenCalled();
+  });
+
+  it('shows Automatyczne WZ przy zamówieniu toggle in workflow settings', async () => {
+    renderPage();
+    expect(await screen.findByText('Automatyczne WZ przy zamówieniu')).toBeInTheDocument();
   });
 });

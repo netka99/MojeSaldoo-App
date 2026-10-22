@@ -132,6 +132,8 @@ class ProductionOrderSerializer(UUIDModelSerializer):
     pw_document_number = serializers.CharField(
         source="pw_document.document_number", read_only=True, default=None
     )
+    source_orders_info = serializers.SerializerMethodField()
+    recipe_items = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductionOrder
@@ -152,17 +154,46 @@ class ProductionOrderSerializer(UUIDModelSerializer):
             "rw_document_number",
             "pw_document",
             "pw_document_number",
+            "source_orders",
+            "source_orders_info",
             "notes",
             "inputs",
+            "recipe_items",
             "completed_at",
             "created_at",
         ]
-        read_only_fields = ["order_number", "total_input_cost", "real_unit_cost", "rw_document", "pw_document", "status", "completed_at", "created_at"]
+        read_only_fields = ["order_number", "total_input_cost", "real_unit_cost", "rw_document", "pw_document", "status", "completed_at", "created_at", "source_orders_info"]
 
     def get_recipe_name(self, obj):
         if not obj.recipe_id:
             return None
         return obj.recipe.name or (obj.recipe.product.name if obj.recipe.product_id else None)
+
+    def get_recipe_items(self, obj):
+        from decimal import Decimal
+        if not obj.recipe_id:
+            return []
+        yield_qty = obj.recipe.yield_quantity or Decimal("1")
+        qty_produced = obj.quantity_produced or Decimal("0")
+        multiplier = Decimal(str(qty_produced)) / Decimal(str(yield_qty))
+        return [
+            {
+                "ingredient_name": item.ingredient.name,
+                "unit": item.unit or item.ingredient.unit,
+                "quantity_needed": round(item.quantity * multiplier, 4),
+            }
+            for item in obj.recipe.items.select_related("ingredient").all()
+        ]
+
+    def get_source_orders_info(self, obj):
+        return [
+            {
+                "id": str(o.uuid),
+                "order_number": o.order_number,
+                "customer_name": o.customer.name if o.customer_id else None,
+            }
+            for o in obj.source_orders.select_related("customer").all()
+        ]
 
 
 class ProductionOrderCreateSerializer(UUIDModelSerializer):
@@ -172,7 +203,7 @@ class ProductionOrderCreateSerializer(UUIDModelSerializer):
 
     class Meta:
         model = ProductionOrder
-        fields = ["id", "recipe", "date", "mode", "quantity_produced", "notes", "inputs"]
+        fields = ["id", "recipe", "date", "mode", "quantity_produced", "source_orders", "notes", "inputs"]
         read_only_fields = []
 
     def validate(self, data):
@@ -186,7 +217,10 @@ class ProductionOrderCreateSerializer(UUIDModelSerializer):
 
     def create(self, validated_data):
         inputs_data = validated_data.pop("inputs", [])
+        source_orders = validated_data.pop("source_orders", [])
         order = ProductionOrder.objects.create(**validated_data)
+        if source_orders:
+            order.source_orders.set(source_orders)
         for inp in inputs_data:
             ingredient = inp["ingredient"]
             ProductionOrderInput.objects.create(

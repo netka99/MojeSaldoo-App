@@ -82,6 +82,47 @@ class CompanyDetailView(generics.RetrieveUpdateAPIView):
         )
 
 
+class CompanyLogoUploadView(APIView):
+    """
+    POST /api/companies/<company_id>/logo/
+    Multipart upload — replaces current logo; returns updated company data.
+    DELETE /api/companies/<company_id>/logo/
+    Removes the logo.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_company(self, company_id):
+        return get_object_or_404(
+            Company,
+            uuid=company_id,
+            memberships__user=self.request.user,
+            memberships__is_active=True,
+            deleted_at__isnull=True,
+        )
+
+    def post(self, request, company_id):
+        company = self._get_company(company_id)
+        logo_file = request.FILES.get("logo")
+        if not logo_file:
+            return Response({"detail": "Brak pliku logo."}, status=status.HTTP_400_BAD_REQUEST)
+        if company.logo:
+            company.logo.delete(save=False)
+        company.logo = logo_file
+        company.save(update_fields=["logo"])
+        serializer = CompanySerializer(company, context={"request": request})
+        return Response(serializer.data)
+
+    def delete(self, request, company_id):
+        company = self._get_company(company_id)
+        if company.logo:
+            company.logo.delete(save=False)
+            company.logo = None
+            company.save(update_fields=["logo"])
+        serializer = CompanySerializer(company, context={"request": request})
+        return Response(serializer.data)
+
+
 class CompanyCreateView(mixins.CreateModelMixin, generics.GenericAPIView):
     """POST /api/companies/ — create org; creator becomes admin member."""
 
@@ -236,9 +277,43 @@ class CompanyWorkflowSettingsView(APIView):
         if err:
             return err
         settings = get_workflow_settings(company)
+        was_auto_deliver = settings.auto_deliver_wz
         ser = CompanyWorkflowSettingsSerializer(settings, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
+
+        # When auto_deliver_wz is turned on, close all open WZ documents
+        if not was_auto_deliver and ser.instance.auto_deliver_wz:
+            from django.utils import timezone as _tz
+            from apps.delivery.models import DeliveryDocument
+            from apps.orders.models import Order
+            from decimal import Decimal as _Dec
+            open_wz = DeliveryDocument.objects.filter(
+                company=company,
+                document_type=DeliveryDocument.DOC_TYPE_WZ,
+                status__in=[DeliveryDocument.STATUS_SAVED, DeliveryDocument.STATUS_IN_TRANSIT],
+            ).prefetch_related('items', 'order__items')
+            now = _tz.now()
+            for doc in open_wz:
+                doc.status = DeliveryDocument.STATUS_DELIVERED
+                doc.delivered_at = now
+                doc.save(update_fields=['status', 'delivered_at', 'updated_at'])
+                if doc.order_id:
+                    try:
+                        order = Order.objects.get(pk=doc.order_id)
+                        lines = list(order.items.all())
+                        if lines and order.status not in (
+                            Order.STATUS_DELIVERED, Order.STATUS_INVOICED, Order.STATUS_CANCELLED
+                        ):
+                            total_qty = sum(oi.quantity for oi in lines)
+                            delivered_qty = sum(oi.quantity_delivered or _Dec('0') for oi in lines)
+                            if delivered_qty >= total_qty:
+                                order.update_status(Order.STATUS_DELIVERED)
+                            elif delivered_qty > 0:
+                                order.update_status(Order.STATUS_PARTIALLY_DELIVERED)
+                    except Order.DoesNotExist:
+                        pass
+
         return Response(ser.data)
 
 

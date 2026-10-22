@@ -112,6 +112,9 @@ const InvoicePeriodPage = lazy(() =>
 const InvoiceManualPage = lazy(() =>
   import('./pages/InvoiceManualPage').then((m) => ({ default: m.InvoiceManualPage })),
 );
+const InvoiceEditPage = lazy(() =>
+  import('./pages/InvoiceEditPage').then((m) => ({ default: m.InvoiceEditPage })),
+);
 const InvoiceDetailPage = lazy(() =>
   import('./pages/InvoiceDetailPage').then((m) => ({ default: m.InvoiceDetailPage })),
 );
@@ -518,6 +521,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="invoicing">
                       <InvoiceManualPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/invoices/:id/edit"
+                  element={
+                    <ModuleRouteGate module="invoicing">
+                      <InvoiceEditPage />
                     </ModuleRouteGate>
                   }
                 />

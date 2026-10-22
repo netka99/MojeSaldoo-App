@@ -10,6 +10,8 @@ import { useCreateManualInvoiceMutation, useAvailableZalQuery } from '@/query/us
 import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import { usePriceInputMode } from '@/hooks/usePriceInputMode';
 import { InvoiceKsefOptions } from '@/components/features/invoicing/InvoiceKsefOptions';
+import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
+import { PriceModeToggle } from '@/components/features/invoicing/PriceModeToggle';
 import { cn } from '@/lib/utils';
 import type {
   AvailableZalInvoice,
@@ -1329,6 +1331,7 @@ function InvoiceManualPageContent() {
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
+            <PriceModeToggle />
             {/* Invoice type dropdown — desktop */}
             <div className="hidden md:block">
               <InvoiceTypeDropdown value={invoiceType} onChange={setInvoiceType} />
@@ -1343,8 +1346,10 @@ function InvoiceManualPageContent() {
 
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-4 py-4">
 
+        <KsefTestEnvBanner />
+
         {/* ── Numer faktury + data wystawienia ── */}
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+        <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
           <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-2 md:px-6">
 
             <div>
@@ -1403,7 +1408,7 @@ function InvoiceManualPageContent() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-apple-sm transition hover:shadow-apple-md md:rounded-3xl md:p-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl md:p-6">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <SectionMark name="user" />
@@ -1488,7 +1493,7 @@ function InvoiceManualPageContent() {
           )}
         </section>
 
-        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-apple-sm md:rounded-3xl md:p-6">
+        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl md:p-6">
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
@@ -1528,7 +1533,7 @@ function InvoiceManualPageContent() {
         </section>
 
         {/* ── Podsumowanie kwot ── */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
           <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5 md:px-6">
             <SectionMark name="receipt" />
             <h2 className="text-sm font-semibold text-slate-900">Podsumowanie kwot</h2>
@@ -1564,7 +1569,7 @@ function InvoiceManualPageContent() {
         </section>
 
         {/* ── Płatność i dostawa ── */}
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+        <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
           <div className="divide-y divide-slate-100">
 
             {/* Nagłówek sekcji */}
@@ -1693,7 +1698,7 @@ function InvoiceManualPageContent() {
         </section>
 
         {/* ── Dodatkowe opcje — pola fakultatywne ── */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
           <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5">
             <SectionMark name="sliders" />
             <div>

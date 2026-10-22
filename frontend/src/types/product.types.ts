@@ -28,14 +28,25 @@ export interface Product {
   avg_cost_updated_at: string | null;
   last_cost: string | number | null;
   is_active: boolean;
+  /** Absolute URL of the 128px thumbnail, or null when the product has no photo. */
+  image_url?: string | null;
   /** Sum of `quantity_available` across all company warehouses; from list/detail API. */
   stock_total?: string | number;
+  /** Per-warehouse stock breakdown — only present on detail (retrieve) responses. */
+  stocks_by_warehouse?: {
+    warehouse_id: string;
+    warehouse_name: string;
+    warehouse_code: string;
+    quantity_available: string;
+    quantity_reserved: string;
+    quantity_total: string;
+  }[];
   created_at: string;
   updated_at: string;
 }
 
 /** Fields clients may send on create/update (read-only server fields omitted). */
-export type ProductWrite = Omit<Product, 'id' | 'created_at' | 'updated_at' | 'user'> &
+export type ProductWrite = Omit<Product, 'id' | 'created_at' | 'updated_at' | 'user' | 'image_url'> &
   Partial<Pick<Product, 'id'>>;
 
 // Stock snapshot for a single warehouse (used by van reconciliation)

@@ -20,6 +20,8 @@ class ProductSerializer(UUIDModelSerializer):
         max_digits=10, decimal_places=4, required=False, allow_null=True,
     )
     stock_total = serializers.SerializerMethodField()
+    stocks_by_warehouse = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -47,11 +49,22 @@ class ProductSerializer(UUIDModelSerializer):
             "last_cost",
             "avg_cost_updated_at",
             "is_active",
+            "image_url",
             "stock_total",
+            "stocks_by_warehouse",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["user", "company", "last_cost", "avg_cost_updated_at", "stock_total", "created_at", "updated_at"]
+        read_only_fields = ["user", "company", "last_cost", "avg_cost_updated_at", "image_url", "stock_total", "stocks_by_warehouse", "created_at", "updated_at"]
+
+    def get_image_url(self, obj: Product):
+        if not obj.image:
+            return None
+        request = self.context.get("request")
+        url = obj.image.url
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
 
     def validate_avg_cost(self, value):
         if value is not None and value < Decimal("0"):
@@ -93,6 +106,20 @@ class ProductSerializer(UUIDModelSerializer):
             return annotated
         t = obj.stocks.aggregate(total=Sum("quantity_available"))["total"]
         return t if t is not None else Decimal("0")
+
+    def get_stocks_by_warehouse(self, obj: Product) -> list:
+        """Per-warehouse stock breakdown — only included in detail (retrieve) view."""
+        return [
+            {
+                "warehouse_id": str(s.warehouse.uuid),
+                "warehouse_name": s.warehouse.name,
+                "warehouse_code": s.warehouse.code,
+                "quantity_available": str(s.quantity_available),
+                "quantity_reserved": str(s.quantity_reserved),
+                "quantity_total": str(s.quantity_total),
+            }
+            for s in obj.stocks.select_related("warehouse").order_by("warehouse__code")
+        ]
 
     def validate_price_net(self, value: Decimal) -> Decimal:
         if value < 0:

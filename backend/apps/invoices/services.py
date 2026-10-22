@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db import transaction
 from django.db.models import Sum
@@ -203,6 +203,9 @@ def generate_invoice_from_order(
         ]
     )
 
+    # Link order via M2M junction (mirrors generate_invoice_from_orders behaviour)
+    InvoiceOrder.objects.get_or_create(invoice=invoice, order=order)
+
     # Mark the source order as invoiced
     if order.status != Order.STATUS_INVOICED:
         order.status = Order.STATUS_INVOICED
@@ -270,6 +273,13 @@ def apply_submitted_invoice_fields(invoice, data, *, company, customer):
     if isinstance(data.get("purchase_orders"), list):
         invoice.purchase_orders = data["purchase_orders"]
         update.append("purchase_orders")
+    if isinstance(data.get("additional_info"), list):
+        invoice.additional_info = [
+            {"label": str(r.get("label", "")).strip(), "value": str(r.get("value", "")).strip()}
+            for r in data["additional_info"]
+            if r.get("label") or r.get("value")
+        ]
+        update.append("additional_info")
     if "prices_include_vat" in data:
         invoice.prices_include_vat = bool(data.get("prices_include_vat"))
         update.append("prices_include_vat")
@@ -358,6 +368,7 @@ def generate_invoice_from_orders(
     show_wz_numbers: bool = True,
     form_data: dict | None = None,
     item_quantities: dict | None = None,
+    item_prices: dict | None = None,
 ) -> Invoice:
     """
     Create a draft invoice from one or more orders belonging to the same customer.
@@ -428,7 +439,17 @@ def generate_invoice_from_orders(
         if not isinstance(item_quantities, dict):
             raise ValidationError({"item_quantities": "Must be an object of order item UUID to quantity."})
         qty_overrides = {str(key): value for key, value in item_quantities.items()}
-    all_lines: list[tuple[OrderItem, Decimal]] = []
+    price_overrides: dict[str, Decimal] = {}
+    if item_prices is not None:
+        if not isinstance(item_prices, dict):
+            raise ValidationError({"item_prices": "Must be an object of order item UUID to unit price."})
+        for key, value in item_prices.items():
+            raw = str(value).replace(",", ".").strip()
+            try:
+                price_overrides[str(key)] = Decimal(raw)
+            except InvalidOperation:
+                raise ValidationError({"item_prices": "Nieprawidłowa cena."})
+    all_lines: list[tuple[OrderItem, Decimal, Decimal | None]] = []
     for order in orders:
         for oi in order.items.all().select_related("product"):
             if item_ids_set is not None and str(oi.uuid) not in item_ids_set:
@@ -442,8 +463,9 @@ def generate_invoice_from_orders(
                     raise ValidationError({"item_quantities": "Nieprawidłowa ilość."})
                 if qty < 0:
                     raise ValidationError({"item_quantities": "Ilość nie może być ujemna."})
+            price_override = price_overrides.get(str(oi.uuid))
             if qty > 0:
-                all_lines.append((oi, qty))
+                all_lines.append((oi, qty, price_override))
 
     if not all_lines:
         raise ValidationError(
@@ -452,11 +474,11 @@ def generate_invoice_from_orders(
 
     # Dates
     resolved_issue = issue_date or timezone.localdate()
+    delivery_dates = [o.delivery_date for o in orders if o.delivery_date]
     # sale_date = latest delivery date across orders (or issue_date)
     if sale_date is not None:
         resolved_sale = sale_date
     else:
-        delivery_dates = [o.delivery_date for o in orders if o.delivery_date]
         resolved_sale = max(delivery_dates) if delivery_dates else resolved_issue
     if due_date is not None:
         resolved_due = due_date
@@ -485,6 +507,19 @@ def generate_invoice_from_orders(
         bank_name=company.bank_name or "",
         show_wz_numbers=show_wz_numbers,
     )
+
+    # Auto-populate DodatkowyOpis with delivery period when sale_date_type='period'.
+    # Uses min–max of order delivery_dates. User can edit/remove in the edit form.
+    if sale_date_type == "period" and delivery_dates:
+        min_date = min(delivery_dates)
+        max_date = max(delivery_dates)
+        period_str = (
+            f"{min_date.strftime('%Y-%m-%d')} - {max_date.strftime('%Y-%m-%d')}"
+            if min_date != max_date
+            else min_date.strftime("%Y-%m-%d")
+        )
+        invoice.additional_info = [{"label": "Okres dostawy", "value": period_str}]
+
     invoice.save()
 
     # Link orders via M2M junction and mark them as invoiced
@@ -495,7 +530,7 @@ def generate_invoice_from_orders(
             order.save(update_fields=["status"])
 
     # Create line items
-    for oi, qty in all_lines:
+    for oi, qty, price_override in all_lines:
         product_name = (oi.product_name or "").strip()
         product_unit = (oi.product_unit or "").strip()
         if oi.product_id:
@@ -511,7 +546,7 @@ def generate_invoice_from_orders(
             product_unit=product_unit,
             pkwiu=(oi.product.pkwiu or "").strip() if oi.product_id else "",
             quantity=qty,
-            unit_price_net=oi.unit_price_net,
+            unit_price_net=price_override if price_override is not None else oi.unit_price_net,
             vat_rate=oi.vat_rate,
         )
 
@@ -1037,7 +1072,7 @@ def _serialize_invoice_full(invoice: Invoice) -> dict:
     }
 
 
-def build_invoice_preview_data(invoice: Invoice) -> dict:
+def build_invoice_preview_data(invoice: Invoice, request=None) -> dict:
     """Structured payload for an HTML invoice preview (A4-style layout)."""
     company = invoice.company
     customer = invoice.customer
@@ -1076,11 +1111,13 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
     items = list(invoice.items.order_by("created_at"))
     line_rows = []
     for idx, it in enumerate(items, start=1):
-        unit_price_gross = (it.unit_price_net * (1 + it.vat_rate / 100)).quantize(
-            Decimal("0.01")
-        )
+        vat_mult = Decimal("1") + it.vat_rate / Decimal("100")
+        unit_price_gross = (it.unit_price_net * vat_mult).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         line_rows.append(
             {
+                "item_id": str(it.uuid),
                 "position": idx,
                 "product_name": it.product_name,
                 "product_unit": it.product_unit,
@@ -1149,6 +1186,31 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
             ).values_list("document_number", flat=True).order_by("issue_date")
             wz_nums = [n for n in wz_qs if n]
 
+    # Build KSeF QR verification URL (KSeF 2.0 format):
+    # {base}/invoice/{NIP}/{DD-MM-YYYY}/{sha256_base64url}
+    # invoice_hash is stored as standard base64 — convert to base64url (no padding, + → -, / → _)
+    ksef_qr_url = ""
+    if invoice.ksef_number:
+        import base64 as _b64
+        from apps.ksef.crypto import KSEF_API_HOST
+        # invoice_hash may be empty on Invoice — fall back to KSeFSentInvoice
+        raw_hash_b64 = invoice.invoice_hash or ""
+        if not raw_hash_b64 and invoice.ksef_reference_number:
+            from apps.ksef.models import KSeFSentInvoice
+            sent = KSeFSentInvoice.objects.filter(
+                reference_number=invoice.ksef_reference_number
+            ).values("invoice_hash").first()
+            if sent:
+                raw_hash_b64 = sent["invoice_hash"] or ""
+        if raw_hash_b64:
+            is_test = "test" in KSEF_API_HOST
+            qr_base = "https://qr-test.ksef.mf.gov.pl" if is_test else "https://qr.ksef.mf.gov.pl"
+            raw_hash = _b64.b64decode(raw_hash_b64 + "==")  # re-pad before decoding
+            hash_b64url = _b64.urlsafe_b64encode(raw_hash).rstrip(b"=").decode()
+            issue_ddmmyyyy = invoice.issue_date.strftime("%d-%m-%Y")
+            nip = company.nip or ""
+            ksef_qr_url = f"{qr_base}/invoice/{nip}/{issue_ddmmyyyy}/{hash_b64url}"
+
     invoice_block = {
         **_serialize_invoice_full(invoice),
         "order_number": invoice.order.order_number if invoice.order_id else "",
@@ -1164,6 +1226,19 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
         ),
         "wz_numbers": wz_nums,
         "show_wz_numbers": invoice.show_wz_numbers,
+        "ksef_qr_url": ksef_qr_url,
+        "additional_info": invoice.additional_info or [],
+        # KSeF FA-3 fields — needed for send preview modal
+        "ksef_invoice_type": invoice.ksef_invoice_type or "VAT",
+        "annotation_mpp": invoice.annotation_mpp,
+        "annotation_kasowa": invoice.annotation_kasowa,
+        "annotation_odwrotne": invoice.annotation_odwrotne,
+        "annotation_trojstronna": invoice.annotation_trojstronna,
+        "annotation_zwolnienie": invoice.annotation_zwolnienie,
+        "annotation_marza": invoice.annotation_marza,
+        "annotation_tp": invoice.annotation_tp,
+        "annotation_fp": invoice.annotation_fp,
+        "annotation_oss": invoice.annotation_oss,
     }
 
     return {
@@ -1191,6 +1266,19 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
             "postal_code": company.postal_code or "",
             "phone": company.phone or "",
             "email": company.email or "",
+            "logo_url": (
+                request.build_absolute_uri(company.logo.url)
+                if company.logo and request
+                else (company.logo.url if company.logo else None)
+            ),
+            # Bank
+            "bank_account_iban": company.bank_account_iban or "",
+            "bank_swift": company.bank_swift or "",
+            "bank_name": company.bank_name or "",
+            # Rejestry
+            "regon": company.regon or "",
+            "krs": company.krs or "",
+            "bdo": company.bdo or "",
         },
         "customer": {
             "name": buyer_name,
@@ -1198,6 +1286,10 @@ def build_invoice_preview_data(invoice: Invoice) -> dict:
             "address": (customer.street or "") or "",
             "city": customer.city or "",
             "postal_code": customer.postal_code or "",
+            "phone": customer.phone or "",
+            "email": customer.email or "",
+            "is_jst": bool(customer.is_jst),
+            "is_gv_member": bool(customer.is_gv_member),
         },
         "invoice": invoice_block,
         "totals": {

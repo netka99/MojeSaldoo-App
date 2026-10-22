@@ -710,6 +710,50 @@ class ProductViewSetAPITests(TestCase):
         self.assertEqual(response.data["items"][0]["product_id"], str(p.uuid))
         self.assertEqual(response.data["items"][0]["quantity_available"], "5.250")
 
+    def test_image_upload_stores_square_jpeg_thumbnail(self):
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        buf = io.BytesIO()
+        Image.new("RGB", (400, 180), (12, 80, 160)).save(buf, format="PNG")
+        upload = SimpleUploadedFile("wide.png", buf.getvalue(), content_type="image/png")
+        product = Product.objects.get(name="My catalog item")
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse("product-image", kwargs={"uuid": product.uuid}),
+            {"image": upload},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["image_url"])
+        product.refresh_from_db()
+        self.assertTrue(product.image.name.endswith(".jpg"))
+        self.assertLess(product.image.size, 20_000)
+        with Image.open(product.image.path) as saved:
+            self.assertEqual(saved.size, (128, 128))
+            self.assertEqual(saved.format, "JPEG")
+
+        response = self.client.delete(reverse("product-image", kwargs={"uuid": product.uuid}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data["image_url"])
+        product.refresh_from_db()
+        self.assertFalse(product.image)
+
+    def test_image_upload_rejects_non_image(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        product = Product.objects.get(name="My catalog item")
+        self.client.force_authenticate(user=self.user)
+        upload = SimpleUploadedFile("notes.txt", b"not a photo", content_type="text/plain")
+        response = self.client.post(
+            reverse("product-image", kwargs={"uuid": product.uuid}),
+            {"image": upload},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        product.refresh_from_db()
+        self.assertFalse(product.image)
+
 
 class WarehouseViewSetAPITests(TestCase):
     def setUp(self):
@@ -1416,6 +1460,108 @@ class ProductImportTests(TestCase):
         # Price must have been updated
         p = Product.objects.get(company=self.company, name="Chleb")
         self.assertEqual(p.price_gross, Decimal("5.00"))
+
+    # ── New optional fields ───────────────────────────────────────────────
+
+    def test_commit_sets_is_service_from_typ_column(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Typ (produkt/usługa)\r\nDoradztwo;godz;100,00;23;usługa\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Doradztwo")
+        self.assertTrue(p.is_service)
+
+    def test_commit_product_typ_not_service(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Typ (produkt/usługa)\r\nChleb;szt;2,50;5;produkt\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertFalse(p.is_service)
+
+    def test_commit_sets_pkwiu(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);PKWiU\r\nChleb;szt;2,50;5;10.71.11\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertEqual(p.pkwiu, "10.71.11")
+
+    def test_commit_sets_shelf_life_days(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Termin przydatności (dni)\r\nChleb;szt;2,50;5;3\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertEqual(p.shelf_life_days, 3)
+
+    def test_commit_sets_avg_cost_with_source_manual(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Koszt własny\r\nChleb;szt;2,50;5;1,20\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertEqual(p.avg_cost, Decimal("1.20"))
+        self.assertEqual(p.avg_cost_source, "manual")
+
+    def test_commit_sets_markup_percent(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Narzut %\r\nChleb;szt;2,50;5;30\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertEqual(p.markup_percent, Decimal("30"))
+
+    def test_commit_sets_is_resalable_false(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Do sprzedaży (tak/nie)\r\nMąka;kg;3,00;8;nie\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Mąka")
+        self.assertFalse(p.is_resalable)
+
+    def test_commit_sets_track_batches_false(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Śledzenie partii (tak/nie)\r\nChleb;szt;2,50;5;nie\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertFalse(p.track_batches)
+
+    def test_invalid_shelf_life_returns_error(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Termin przydatności (dni)\r\nChleb;szt;2,50;5;abc\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.data["error_count"], 1)
+        self.assertEqual(resp.data["errors"][0]["field"], "Termin przydatności (dni)")
+
+    def test_invalid_avg_cost_returns_error(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Koszt własny\r\nChleb;szt;2,50;5;xyz\r\n"
+        f = self._csv_file(csv_content)
+        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
+        self.assertEqual(resp.data["error_count"], 1)
+        self.assertEqual(resp.data["errors"][0]["field"], "Koszt własny")
+
+    def test_commit_uses_price_net_when_provided(self):
+        csv_content = "Nazwa;Jednostka;Cena netto;Cena brutto;VAT (%)\r\nChleb;szt;2,00;2,46;23\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertEqual(p.price_net, Decimal("2.00"))
+        self.assertEqual(p.price_gross, Decimal("2.46"))
+
+    def test_commit_derives_price_net_when_not_provided(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,46;23\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertAlmostEqual(float(p.price_net), 2.46 / 1.23, places=2)
+
+    def test_commit_sets_is_active_false(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Aktywny (tak/nie)\r\nChleb;szt;2,50;5;nie\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertFalse(p.is_active)
+
+    def test_commit_is_active_defaults_to_true(self):
+        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,50;5\r\n"
+        f = self._csv_file(csv_content)
+        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
+        p = Product.objects.get(company=self.company, name="Chleb")
+        self.assertTrue(p.is_active)
 
 
 class ProductSafeDeleteTests(TestCase):

@@ -685,6 +685,7 @@ function CustomerShopRow({
 }: CustomerShopRowProps) {
   const [expanded, setExpanded] = useState(false);
   const deliveryEnabled = useModuleGuard('delivery');
+  const productionEnabled = useModuleGuard('production');
   const canManageDelivery = usePermission('can_manage_delivery');
   const hasOrder = orders.length > 0;
   const multipleOrders = orders.length > 1;
@@ -807,6 +808,29 @@ function CustomerShopRow({
               )}
             </div>
           )}
+
+          {/* Production status badge — only when production module is enabled */}
+          {hasOrder && productionEnabled && (() => {
+            const prodStatus = orders.some((o) => o.production_status === 'completed')
+              ? 'completed'
+              : orders.some((o) => o.production_status === 'in_progress')
+              ? 'in_progress'
+              : null;
+            if (!prodStatus) return null;
+            return (
+              <div className="mt-1">
+                {prodStatus === 'completed' ? (
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">
+                    Wyprodukowano
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                    W produkcji
+                  </span>
+                )}
+              </div>
+            );
+          })()}
 
           {customer.city?.trim() && (
             <p className="mt-0.5 truncate text-[13px] text-muted-foreground">{customer.city}</p>
@@ -963,6 +987,7 @@ interface AllOrdersViewProps {
 }
 
 function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, onNewOrder }: AllOrdersViewProps) {
+  const productionEnabled = useModuleGuard('production');
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
@@ -1072,6 +1097,12 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                         <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', orderStatusBadgeClassName(order.status))}>
                           {ORDER_STATUS_LABELS_PL[order.status]}
                         </span>
+                        {productionEnabled && order.production_status === 'completed' && (
+                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Wyprodukowano</span>
+                        )}
+                        {productionEnabled && order.production_status === 'in_progress' && (
+                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">W produkcji</span>
+                        )}
                       </div>
                       {order.order_number && (
                         <p className="mt-0.5 text-[12px] text-muted-foreground">{order.order_number}</p>

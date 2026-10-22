@@ -3,7 +3,9 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ProductForm } from '@/components/features/ProductForm';
 import { useCreateProductMutation } from '@/query/use-products';
 import { authStorage } from '@/services/api';
+import { productService } from '@/services/product.service';
 import type { ProductWrite } from '@/types';
+import type { ProductImageChange } from '@/components/features/ProductForm';
 
 function ChevronLeftIcon({ className }: { className?: string }) {
   return (
@@ -24,6 +26,7 @@ export function ProductCreatePage() {
   const location = useLocation();
   const create = useCreateProductMutation();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -54,17 +57,23 @@ export function ProductCreatePage() {
         </p>
       )}
       <ProductForm
-        onSubmit={async (data: ProductWrite) => {
+        onSubmit={async (data: ProductWrite, image?: ProductImageChange) => {
           setSubmitError(null);
+          setSaving(true);
           try {
-            await create.mutateAsync(data);
+            const created = await create.mutateAsync(data);
+            if (image?.file) {
+              await productService.uploadImage(created.id, image.file);
+            }
             navigate('/products');
           } catch (e) {
             setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć produktu');
+          } finally {
+            setSaving(false);
           }
         }}
         onCancel={() => navigate(-1)}
-        isLoading={create.isPending}
+        isLoading={saving}
       />
     </div>
   );

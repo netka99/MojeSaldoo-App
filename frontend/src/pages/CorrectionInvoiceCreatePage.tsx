@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
 import { useInvoiceQuery } from '@/query/use-invoices';
 import { useCreateCorrectionMutation } from '@/query/use-invoices';
 import type { CorrectionItemEntry, InvoicePaymentMethod } from '@/types';
@@ -94,6 +95,8 @@ export function CorrectionInvoiceCreatePage() {
       </div>
     );
   }
+
+  const isZal = invoice.ksef_invoice_type === 'ZAL';
 
   const getOverride = (itemId: string): ItemOverride | undefined => overrides[itemId];
 
@@ -233,13 +236,21 @@ export function CorrectionInvoiceCreatePage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
+      <KsefTestEnvBanner />
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={() => navigate(`/invoices/${id}`)}>
           ← Wróć
         </Button>
-        <h1 className="text-xl font-semibold">
-          Korekta do faktury {invoice.invoice_number ?? id.slice(0, 8)}
-        </h1>
+        <div>
+          <h1 className="text-xl font-semibold">
+            Korekta do {isZal ? 'faktury zaliczkowej' : 'faktury'} {invoice.invoice_number ?? id.slice(0, 8)}
+          </h1>
+          {isZal && (
+            <p className="mt-0.5 text-sm text-amber-700">
+              Korygowanie faktury zaliczkowej (ZAL) — korekta trafi do KSeF jako KOR.
+            </p>
+          )}
+        </div>
       </div>
 
       <Card>
@@ -507,7 +518,7 @@ export function CorrectionInvoiceCreatePage() {
           disabled={createM.isPending || !correctionReason.trim()}
           loading={createM.isPending}
         >
-          {createM.isPending ? 'Zapisywanie…' : 'Utwórz korektę FV (draft)'}
+          {createM.isPending ? 'Zapisywanie…' : isZal ? 'Utwórz korektę ZAL (draft)' : 'Utwórz korektę FV (draft)'}
         </Button>
         <Button variant="outline" onClick={() => navigate(`/invoices/${id}`)}>
           Anuluj

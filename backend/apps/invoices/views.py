@@ -219,6 +219,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         item_quantities = request.data.get("item_quantities", None)
         if item_quantities is not None and not isinstance(item_quantities, dict):
             raise ValidationError({"item_quantities": "Must be an object of order item UUID to quantity."})
+        item_prices = request.data.get("item_prices", None)
+        if item_prices is not None and not isinstance(item_prices, dict):
+            raise ValidationError({"item_prices": "Must be an object of order item UUID to unit price."})
         try:
             invoice = generate_invoice_from_orders(
                 order_ids=order_ids,
@@ -234,6 +237,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 show_wz_numbers=show_wz_numbers,
                 form_data=request.data,
                 item_quantities=item_quantities,
+                item_prices=item_prices,
             )
         except ValidationError as exc:
             log_error(
@@ -597,7 +601,135 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, uuid=None):
         invoice = self.get_object()
-        return Response(build_invoice_preview_data(invoice))
+        return Response(build_invoice_preview_data(invoice, request=request))
+
+    @action(detail=True, methods=["patch"], url_path="edit")
+    def edit(self, request, uuid=None):
+        """
+        Full edit of an invoice (all types) that hasn't received a KSeF number.
+        Replaces all line items and updates header fields.
+        """
+        from apps.common.vat import net_from_gross
+        from apps.customers.models import Customer as CustomerModel
+        from .models import InvoiceItem
+        from .services import recalculate_invoice_totals
+
+        invoice = self.get_object()
+
+        if invoice.ksef_number:
+            return Response(
+                {"detail": "Nie można edytować faktury z numerem KSeF."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        company = request.user.current_company
+        data = request.data
+
+        # Track whether anything changed (for manually_edited flag)
+        had_orders = invoice.invoice_orders.exists() or invoice.order_id is not None
+
+        # --- Header fields ---
+        if "customer_id" in data and data["customer_id"]:
+            customer = get_object_or_404(CustomerModel, uuid=data["customer_id"], company=company)
+            invoice.customer = customer
+
+        if "invoice_number" in data:
+            custom = str(data["invoice_number"] or "").strip() or None
+            if custom and custom != (invoice.invoice_number or ""):
+                if Invoice.objects.filter(company=company, invoice_number=custom).exclude(pk=invoice.pk).exists():
+                    raise ValidationError({"invoice_number": f"Numer faktury '{custom}' jest już zajęty."})
+                invoice.invoice_number = custom
+            elif not custom:
+                invoice.invoice_number = None
+
+        date_fields = ["issue_date", "sale_date", "sale_date_to", "due_date"]
+        for field in date_fields:
+            if field in data:
+                val = _optional_iso_date(data, field)
+                setattr(invoice, field, val)
+
+        simple_fields = [
+            "sale_date_type", "payment_method", "place_of_issue",
+            "ksef_invoice_type", "other_payment_description",
+            "footer_text", "bank_account_iban", "bank_swift", "bank_name",
+            "discount_conditions", "payment_link", "ksef_payment_id",
+            "due_date_description",
+        ]
+        for field in simple_fields:
+            if field in data:
+                val = data[field]
+                if val is None:
+                    val = ""
+                setattr(invoice, field, str(val).strip() if isinstance(val, str) else val)
+
+        if "payment_received_at" in data:
+            raw = data.get("payment_received_at")
+            if raw in (None, ""):
+                invoice.payment_received_at = None
+            else:
+                invoice.payment_received_at = _optional_iso_date(data, "payment_received_at")
+
+        if "prices_include_vat" in data:
+            invoice.prices_include_vat = bool(data["prices_include_vat"])
+
+        # Annotation flags
+        annotation_fields = [
+            "annotation_mpp", "annotation_kasowa", "annotation_odwrotne",
+            "annotation_trojstronna", "annotation_zwolnienie", "annotation_marza",
+            "annotation_tp", "annotation_fp", "annotation_oss",
+        ]
+        for field in annotation_fields:
+            if field in data:
+                setattr(invoice, field, bool(data[field]))
+
+        # JSON fields
+        if "contracts" in data and isinstance(data["contracts"], list):
+            invoice.contracts = data["contracts"]
+        if "purchase_orders" in data and isinstance(data["purchase_orders"], list):
+            invoice.purchase_orders = data["purchase_orders"]
+
+        # --- Items ---
+        if "items" in data:
+            raw_items = data["items"]
+            if not isinstance(raw_items, list):
+                raise ValidationError({"items": "Must be a list."})
+            if not raw_items:
+                raise ValidationError({"items": "Faktura musi zawierać co najmniej jedną pozycję."})
+
+            # Delete existing items
+            invoice.items.all().delete()
+
+            # Create new items
+            for item_data in raw_items:
+                qty = Decimal(str(item_data.get("quantity", "1")))
+                vat = Decimal(str(item_data.get("vat_rate", "23")))
+                pkwiu = str(item_data.get("pkwiu", "")).strip()
+
+                if "unit_price_gross" in item_data and item_data["unit_price_gross"]:
+                    price_net = net_from_gross(Decimal(str(item_data["unit_price_gross"])), vat)
+                elif "unit_price_net" in item_data and item_data["unit_price_net"]:
+                    price_net = Decimal(str(item_data["unit_price_net"]))
+                else:
+                    price_net = Decimal("0")
+
+                InvoiceItem(
+                    invoice=invoice,
+                    product_name=str(item_data.get("product_name", "")).strip(),
+                    product_unit=str(item_data.get("product_unit", "")).strip(),
+                    pkwiu=pkwiu,
+                    quantity=qty,
+                    unit_price_net=price_net,
+                    vat_rate=vat,
+                ).save()
+
+        # Mark as manually edited if the invoice came from orders
+        if had_orders:
+            invoice.manually_edited = True
+
+        recalculate_invoice_totals(invoice)
+        invoice.save()
+
+        return Response(InvoiceSerializer(invoice, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["get"], url_path="xml")
     def xml(self, request, uuid=None):
@@ -618,7 +750,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
         filename = f"faktura-{invoice.invoice_number or invoice.pk}.xml".replace("/", "-")
         return HttpResponse(
-            xml_str,
+            xml_str.encode("utf-8"),
             content_type="application/xml; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
@@ -632,7 +764,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         """
         invoice = self.get_object()
 
-        if invoice.status != Invoice.STATUS_ISSUED:
+        if invoice.status not in (Invoice.STATUS_ISSUED, Invoice.STATUS_SENT):
             log_activity(
                 user=request.user, action="ksef.send",
                 status=ActivityLog.STATUS_ERROR, error_code="INVOICE_NOT_ISSUED",
@@ -860,9 +992,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 status=ActivityLog.STATUS_SUCCESS,
                 object_type="invoice", object_id=invoice.invoice_number or str(invoice.pk),
             )
-        elif http_code == 200 and status_code and status_code >= 400:
+        elif (http_code == 400) or (http_code == 200 and status_code and status_code >= 400):
+            # http_code 400 = InvalidInvoiceStatusError from ssapi_client (KSeF rejected)
+            # http_code 200 with status_code >= 400 = KSeF error status in response body
+            error_desc = status_block.get("description", "") if status_block else data.get("detail", "")
             invoice.ksef_status = "rejected"
-            invoice.ksef_error_message = status_block.get("description", "KSeF rejected the invoice.")
+            invoice.ksef_error_message = error_desc or "KSeF odrzucił fakturę."
             invoice.save(update_fields=["ksef_status", "ksef_error_message", "updated_at"])
             send_ksef_status_push(request.user, invoice_number=invoice.invoice_number or str(invoice.pk), new_status="rejected")
             log_activity(

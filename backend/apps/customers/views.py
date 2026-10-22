@@ -215,32 +215,48 @@ class CustomerViewSet(viewsets.ModelViewSet):
             cell.fill = podmiot3_fill if col_idx >= 10 else header_fill
             cell.alignment = Alignment(wrap_text=True)
 
-        # --- Row 2: hint row (not real data, explains values) ---
-        ws.append([
-            "Wpisz nazwę wyświetlaną", "Opcjonalnie pełna nazwa firmy",
+        # --- Row 2: hint row — explains format, marked so import skips it ---
+        hint_values = [
+            "→ PODPOWIEDŹ (usuń przed importem)", "Opcjonalnie pełna nazwa firmy",
             "10 cyfr bez myślników", "Telefon", "Email",
             "Ulica i numer", "Miejscowość", "XX-XXX", "Liczba dni np. 14",
             "Odbiorca / Faktor / Dokonujący płatności / Pracownik lub (puste)", "Nazwa sklepu/oddziału",
             "NIP (10 cyfr) lub NIP-numer np. 1234567890-001",
             "Ulica oddziału", "Miejscowość oddziału", "XX-XXX",
-        ])
+        ]
+        ws.append(hint_values)
         hint_font = Font(italic=True, color="808080")
+        hint_fill = PatternFill("solid", fgColor="FFF2CC")
         for col_idx in range(1, len(self._IMPORT_HEADERS) + 1):
             ws.cell(row=2, column=col_idx).font = hint_font
+            ws.cell(row=2, column=col_idx).fill = hint_fill
 
-        # --- Row 3: example without Podmiot3 ---
-        ws.append([
-            "Jan Kowalski", "Piekarnia Kowalski", "1234567890", "600123456",
-            "jan@piekarnia.pl", "ul. Słoneczna 1", "Warszawa", "00-001", 14,
-            "", "", "", "", "", "",
-        ])
+        # --- Row 3 & 4: example rows — grey + italic, comment on A3 ---
+        from openpyxl.comments import Comment
+        example_rows = [
+            [
+                "Firma Testowa", "Firma Testowa Sp. z o.o.", "1234563218", "600000000",
+                "kontakt@firma-testowa.pl", "ul. Przykładowa 1", "Warszawa", "00-001", 14,
+                "", "", "", "", "", "",
+            ],
+            [
+                "Sklep Przykładowy", "Sklep Przykładowy Sp. j.", "5550000458", "",
+                "", "ul. Kwiatowa 12", "Kraków", "30-001", 14,
+                "Odbiorca", "Oddział nr 1", "5550000458-001", "ul. Różana 5", "Kraków", "30-002",
+            ],
+        ]
+        example_fill = PatternFill("solid", fgColor="D9D9D9")
+        example_font = Font(italic=True, color="555555")
+        for row_data in example_rows:
+            ws.append(row_data)
+            for col_idx in range(1, len(self._IMPORT_HEADERS) + 1):
+                ws.cell(row=ws.max_row, column=col_idx).fill = example_fill
+                ws.cell(row=ws.max_row, column=col_idx).font = example_font
 
-        # --- Row 4: example with Podmiot3 ---
-        ws.append([
-            "AS Bylak i Wspólnicy", "AS Bylak i Wspólnicy Sp. j.", "8441866342", "",
-            "", "ul. Leśna 68", "Suwałki", "16-400", 14,
-            "Odbiorca", "Sklep nr 27", "8441866342-27001", "ul. Szpitalna 71", "Suwałki", "16-400",
-        ])
+        comment = Comment("To jest wiersz przykładowy — usuń go przed importem.", "MojeSaldoo")
+        comment.width = 260
+        comment.height = 50
+        ws["A3"].comment = comment
 
         col_widths = [30, 30, 14, 16, 30, 30, 20, 12, 22, 18, 25, 30, 30, 20, 12]
         for col_idx, width in enumerate(col_widths, start=1):
@@ -356,6 +372,9 @@ class CustomerViewSet(viewsets.ModelViewSet):
             for row in rows_iter:
                 if all(v is None or str(v).strip() == "" for v in row):
                     continue
+                first = str(row[0]).strip() if row[0] is not None else ""
+                if first.startswith("→"):
+                    continue  # skip hint row
                 result.append({headers[j]: (str(row[j]).strip() if row[j] is not None else "") for j in range(len(headers))})
             return result
         else:

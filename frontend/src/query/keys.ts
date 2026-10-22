@@ -55,8 +55,8 @@ export const companyKeys = {
   me: () => [...companyKeys.all, 'me'] as const,
   modules: (companyId: string) => [...companyKeys.all, 'modules', companyId] as const,
   workflowSettings: (companyId: string) => [...companyKeys.all, 'workflow-settings', companyId] as const,
-  ksefCertificateStatus: (companyId: string) =>
-    [...companyKeys.all, 'ksef-certificate', 'status', companyId] as const,
+  ksefCertificateStatus: (companyId: string, environment: string) =>
+    [...companyKeys.all, 'ksef-certificate', 'status', companyId, environment] as const,
   roles: (companyId: string) => [...companyKeys.all, 'roles', companyId] as const,
   members: (companyId: string) => [...companyKeys.all, 'members', companyId] as const,
 };

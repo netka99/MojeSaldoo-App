@@ -209,6 +209,29 @@ Wygląd (już w CSS):
 - bez cienia w środku pola
 - tekst `text-sm`, taki jak etykiety. Nie podnoś go do 17 px
 
+Na formularzu, gdzie użytkownik uzupełnia dane (ustawienia, dane firmy, podobne karty), puste i wypełnione pole muszą wyglądać inaczej. Ciemny placeholder czyta się jak wpisana wartość.
+
+| Stan | Wygląd |
+|---|---|
+| Puste | tło `#F2F2F7`, ramka przerywana `border-dashed border-slate-300`, placeholder `placeholder:text-slate-400` |
+| Wypełnione | białe tło `bg-white`, ramka ciągła `border-solid border-slate-300`, tekst `text-slate-900` |
+| Focus | jak dotychczas: białe tło, ramka primary, `ring-2 ring-primary/30` |
+
+Klasy dokładaj na `field-ios` / `field-ios-tall`. Nie zmieniaj bazowego CSS pola.
+
+```tsx
+function fieldStateCls(value: string | undefined) {
+  const filled = Boolean(value?.trim());
+  return filled
+    ? 'border-solid border-slate-300 bg-white'
+    : 'border-dashed border-slate-300 bg-[#F2F2F7] placeholder:text-slate-400';
+}
+
+<input className={cn('field-ios w-full', fieldStateCls(value))} />
+```
+
+Nie stosuj tego na wyszukiwarce listy, filtrze daty raportu ani cenie w wierszu pozycji. Tam pole zostaje zwykłe `field-ios`, `date-pill` albo `field-ios-sm`.
+
 Etykieta stoi **nad** polem, z `mb-1.5`. Nie rozciągaj krótkiego pola na całą szerokość karty i nie dawaj etykiety po lewej, a pola po prawej, jeśli między nimi zostaje pusta dziura.
 
 ```tsx
@@ -292,6 +315,45 @@ Nie wkładaj accordionów w szare pudło `#E9EAED` ani karty w kartę.
 
 ---
 
+## Strzałki
+
+Są trzy rodzaje. Nie mieszaj ich.
+
+| Rodzaj | Gdzie | Wygląd |
+|---|---|---|
+| Wstecz | Obok tytułu strony, z lewej | Szare koło bez cienia. Wskazuje w lewo |
+| Rozwijanie wiersza | Pierwsza kolumna tabeli | Mała, szara, wskazuje w prawo. Otwarty wiersz obraca ją o 90° |
+| Akordeon | Po prawej w nagłówku karty | Mała, szara, wskazuje w dół. Otwarta sekcja obraca ją o 180° |
+
+### Wstecz
+
+Koło jest płaskie: `bg-slate-100`, hover `bg-slate-200`. Bez `shadow-soft` i bez cienia karty. Wzór jest na fakturze ręcznej i na danych firmy. Lista klientów ma jeszcze stary cień — nie kopiuj go.
+
+```tsx
+<button
+  type="button"
+  onClick={() => navigate(-1)}
+  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200 md:h-10 md:w-10"
+  aria-label="Wróć"
+>
+  <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2.5}>
+    <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+</button>
+```
+
+Tytuł stoi obok, w `flex items-center gap-3`. Strzałka wraca do poprzedniej strony.
+
+### Rozwijanie wiersza
+
+Użyj `ReportExpandIcon` z `frontend/src/lib/reportSurface.tsx`. Ikona `h-4 w-4 text-slate-500`, ścieżka w prawo, `rotate-90` gdy wiersz jest otwarty. Kliknięcie strzałki albo wiersza otwiera szczegóły. Na liście faktur checkbox zaznaczenia, gdy tryb wyboru jest włączony, stoi przed strzałką.
+
+### Akordeon
+
+Chevron `h-4 w-4 text-slate-400`, ścieżka w dół, `rotate-180` gdy sekcja jest otwarta. Bez koła.
+
+---
+
 ## Nagłówek strony formularza
 
 Tytuł strony (np. „Ręcznie — Nowa Faktura”) **przewija się razem z formularzem**. Nie przyklejaj go do góry ekranu: zasłania wtedy karty.
@@ -316,6 +378,7 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 - tytułu sekcji bez ikony w kwadracie albo w stylu etykiety pola
 - podpisów w `text-[10px]` i `text-[11px]`
 - cienia na karcie leżącej na stronie (`shadow-apple-sm`, `shadow-sm`)
+- cienia na strzałce wstecz (`shadow-soft`, cień koła na liście klientów)
 - numeru dokumentu schowanego w polu tekstowym, skoro da się go pokazać jako wartość i edytować ołówkiem
 
 ---
@@ -324,7 +387,7 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 
 1. Tło strony zostaw `#F2F2F7`. Sekcje zamień na płaskie białe karty `rounded-2xl` / `md:rounded-3xl`, `border-slate-200`, `gap-3`. Cień `shadow-apple-md` tylko na menu, oknie i liście rozwijanej. Nagłówek tabeli biały, podpisy kolumn wersalikami `text-xs`. Lista i raport: klasy z `frontend/src/lib/reportSurface.tsx`.
 2. Tytuł sekcji: ikona w kwadracie `h-7 w-7 bg-primary/10` i `text-sm font-semibold text-slate-900`. Etykieta pola zostaje `text-sm font-medium text-slate-800`, bez ikony.
-3. Input, select i datę przełącz na `field-ios`, `select-pill`, `date-pill`. Etykieta nad polem, podpowiedź pod polem w `text-xs text-slate-500`.
+3. Input, select i datę przełącz na `field-ios`, `select-pill`, `date-pill`. Etykieta nad polem, podpowiedź pod polem w `text-xs text-slate-500`. Na formularzu danych puste pole ma przerywaną ramkę i jasny placeholder, wypełnione jest białe z ciągłą ramką.
 4. Przyciski główne i drugorzędne ustaw jak w tabeli wyżej.
 5. Opcje, bez których zapis się uda, zwiń w jedną kartę.
 6. Nie zmieniaj przy tym logiki zapisu, walidacji ani nazw pól.

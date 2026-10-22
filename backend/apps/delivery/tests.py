@@ -4256,3 +4256,154 @@ class PZExtraFieldsTests(TestCase):
         ).first()
         self.assertIsNotNone(batch)
         self.assertIn("/", batch.batch_number)
+
+
+class AutoDeliverWzTests(TestCase):
+    """
+    Tests for the auto_deliver_wz workflow setting:
+    - Saving a WZ when auto_deliver_wz=True immediately sets status=delivered
+    - The linked order status is updated accordingly
+    - When auto_deliver_wz=False the normal saved status is returned
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="auto-deliver-user",
+            email="auto-deliver@test.com",
+            password="test12345",
+        )
+        self.co = Company.objects.create(name="AutoDeliver Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.co, role="admin", is_active=True
+        )
+        self.user.current_company = self.co
+        self.user.save(update_fields=["current_company"])
+        CompanyModule.objects.create(company=self.co, module="delivery", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="orders", is_enabled=True)
+        CompanyModule.objects.create(company=self.co, module="warehouses", is_enabled=True)
+
+        self.customer = Customer.objects.create(name="AD Buyer", company=self.co)
+        self.wh = Warehouse.objects.create(
+            user=self.user,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        self.product = Product.objects.create(
+            name="Bread",
+            company=self.co,
+            price_net=Decimal("2.00"),
+            price_gross=Decimal("2.46"),
+        )
+        # Give some stock so saves don't fail on stock checks
+        ProductStock.objects.create(
+            company=self.co,
+            product=self.product,
+            warehouse=self.wh,
+            quantity_available=Decimal("100.00"),
+            quantity_total=Decimal("100.00"),
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _make_draft_wz(self, order=None):
+        return DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.user,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            from_warehouse=self.wh,
+            to_customer=self.customer,
+            order=order,
+            issue_date=date(2026, 10, 1),
+            status=DeliveryDocument.STATUS_DRAFT,
+        )
+
+    def _url_save(self, doc_uuid):
+        return reverse("delivery-document-save", kwargs={"uuid": str(doc_uuid)})
+
+    def test_save_wz_without_auto_deliver_returns_saved_status(self):
+        """Normal flow: save returns status=saved."""
+        doc = self._make_draft_wz()
+        r = self.client.post(self._url_save(doc.uuid))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_SAVED)
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, DeliveryDocument.STATUS_SAVED)
+
+    def test_save_wz_with_auto_deliver_returns_delivered_status(self):
+        """When auto_deliver_wz=True, saving a WZ immediately sets delivered."""
+        from apps.users.models import CompanyWorkflowSettings
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"auto_deliver_wz": True}
+        )
+        doc = self._make_draft_wz()
+        r = self.client.post(self._url_save(doc.uuid))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DELIVERED)
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, DeliveryDocument.STATUS_DELIVERED)
+        self.assertIsNotNone(doc.delivered_at)
+
+    def test_save_wz_with_auto_deliver_updates_order_to_delivered(self):
+        """When WZ is auto-delivered and fully covers the order, order becomes delivered."""
+        from apps.users.models import CompanyWorkflowSettings
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"auto_deliver_wz": True}
+        )
+        order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 10, 1),
+            delivery_date=date(2026, 10, 5),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.product,
+            quantity=Decimal("5.00"),
+            quantity_delivered=Decimal("5.00"),
+            unit_price_net=Decimal("2.00"),
+            unit_price_gross=Decimal("2.46"),
+            vat_rate=Decimal("23.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        doc = self._make_draft_wz(order=order)
+        r = self.client.post(self._url_save(doc.uuid))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DELIVERED)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.STATUS_DELIVERED)
+
+    def test_save_wz_with_auto_deliver_partially_delivered_order(self):
+        """Partial delivery updates order to partially_delivered."""
+        from apps.users.models import CompanyWorkflowSettings
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"auto_deliver_wz": True}
+        )
+        order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.co,
+            order_date=date(2026, 10, 1),
+            delivery_date=date(2026, 10, 5),
+            status=Order.STATUS_CONFIRMED,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.product,
+            quantity=Decimal("10.00"),
+            quantity_delivered=Decimal("3.00"),
+            unit_price_net=Decimal("2.00"),
+            unit_price_gross=Decimal("2.46"),
+            vat_rate=Decimal("23.00"),
+            discount_percent=Decimal("0.00"),
+        )
+        doc = self._make_draft_wz(order=order)
+        r = self.client.post(self._url_save(doc.uuid))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], DeliveryDocument.STATUS_DELIVERED)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.STATUS_PARTIALLY_DELIVERED)

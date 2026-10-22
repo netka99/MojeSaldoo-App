@@ -425,6 +425,29 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             doc.user = request.user
             doc.save(update_fields=["status", "user", "updated_at"])
 
+            # auto_deliver_wz: skip "in_transit" step, mark delivered immediately
+            from apps.users.models import get_workflow_settings
+            wf = get_workflow_settings(doc.company)
+            if wf.auto_deliver_wz:
+                doc.status = DeliveryDocument.STATUS_DELIVERED
+                doc.delivered_at = timezone.now()
+                doc.save(update_fields=["status", "delivered_at", "updated_at"])
+                if doc.order_id:
+                    order = Order.objects.select_for_update().get(pk=doc.order_id)
+                    lines = list(order.items.all())
+                    if lines and order.status not in (
+                        Order.STATUS_DELIVERED,
+                        Order.STATUS_INVOICED,
+                        Order.STATUS_CANCELLED,
+                    ):
+                        from decimal import Decimal as _Dec
+                        total_qty = sum(oi.quantity for oi in lines)
+                        delivered_qty = sum(oi.quantity_delivered or _Dec("0") for oi in lines)
+                        if delivered_qty >= total_qty:
+                            order.update_status(Order.STATUS_DELIVERED)
+                        elif delivered_qty > 0:
+                            order.update_status(Order.STATUS_PARTIALLY_DELIVERED)
+
         doc.refresh_from_db()
         return Response(self.get_serializer(doc).data)
 
@@ -1003,28 +1026,16 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 )
                 stocks = {}
                 for pid in all_product_ids:
-                    try:
-                        st = ProductStock.objects.select_for_update().get(
-                            company_id=doc.company_id,
-                            product_id=pid,
-                            warehouse_id=doc.from_warehouse_id,
-                        )
-                    except ProductStock.DoesNotExist:
-                        line = next(i for i, _, _ in line_ops if i.product_id == pid)
-                        raise ValidationError(
-                            {
-                                "stock": [
-                                    {
-                                        "product_id": str(pid),
-                                        "product_name": line.product.name,
-                                        "detail": (
-                                            "No ProductStock for this product at "
-                                            "from_warehouse."
-                                        ),
-                                    }
-                                ]
-                            }
-                        )
+                    st, _ = ProductStock.objects.select_for_update().get_or_create(
+                        company_id=doc.company_id,
+                        product_id=pid,
+                        warehouse_id=doc.from_warehouse_id,
+                        defaults={
+                            "quantity_available": Decimal("0"),
+                            "quantity_reserved": Decimal("0"),
+                            "quantity_total": Decimal("0"),
+                        },
+                    )
                     stocks[pid] = st
 
                 # Mobile warehouses (vans) have no reservation — stock was moved
@@ -1032,30 +1043,54 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 # Standalone WZ (no linked order) from a main warehouse also uses
                 # quantity_available — production PW and manual stock adjustments land
                 # there; reservation only exists when an order was confirmed first.
+                # For main warehouses with an order: prefer quantity_reserved, but fall
+                # back to quantity_available if reserved is insufficient (e.g. stock was
+                # added after order confirmation via PZ or manual adjustment).
                 from_wh = doc.from_warehouse
                 is_mobile = (
                     from_wh is not None
                     and from_wh.warehouse_type == Warehouse.WarehouseType.MOBILE
                 )
                 is_standalone = doc.order_id is None
-                use_available = is_mobile or is_standalone
+                # For non-mobile warehouses with an order: prefer quantity_reserved,
+                # but fall back to quantity_available per-product if reserved is
+                # insufficient (e.g. stock was added after order confirmation via PZ
+                # or manual adjustment).
+                if not is_mobile and not is_standalone:
+                    use_available = False  # per-product decision made below
+                else:
+                    use_available = True
+
+                allow_negative = from_wh is not None and from_wh.allow_negative_stock
+                # Per-product decision: use reserved if sufficient, else fall back to available.
+                use_available_by_product: dict = {}
+                for pid in sale_by_product:
+                    if use_available:
+                        use_available_by_product[pid] = True
+                    else:
+                        st = stocks[pid]
+                        # Fall back to quantity_available when reserved is insufficient
+                        # (stock added after order confirmation).
+                        use_available_by_product[pid] = st.quantity_reserved < sale_by_product[pid]
 
                 shortfalls = []
-                for pid, need in sorted(sale_by_product.items(), key=lambda x: str(x[0])):
-                    st = stocks[pid]
-                    available = st.quantity_available if use_available else st.quantity_reserved
-                    field_label = "quantity_available" if use_available else "quantity_reserved"
-                    if available < need:
-                        line = next(i for i, _, _ in line_ops if i.product_id == pid)
-                        shortfalls.append(
-                            {
-                                "product_id": str(pid),
-                                "product_name": line.product.name,
-                                field_label: str(available),
-                                "quantity_to_consume": str(need),
-                                "short_by": str(need - available),
-                            }
-                        )
+                if not allow_negative:
+                    for pid, need in sorted(sale_by_product.items(), key=lambda x: str(x[0])):
+                        st = stocks[pid]
+                        use_avail = use_available_by_product[pid]
+                        available = st.quantity_available if use_avail else st.quantity_reserved
+                        field_label = "quantity_available" if use_avail else "quantity_reserved"
+                        if available < need:
+                            line = next(i for i, _, _ in line_ops if i.product_id == pid)
+                            shortfalls.append(
+                                {
+                                    "product_id": str(pid),
+                                    "product_name": line.product.name,
+                                    field_label: str(available),
+                                    "quantity_to_consume": str(need),
+                                    "short_by": str(need - available),
+                                }
+                            )
                 if shortfalls:
                     log_error(
                         user=request.user, action="delivery.complete", error_code="STOCK_SHORTFALL",
@@ -1072,7 +1107,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         continue
                     stock = stocks[item.product_id]
                     qty_before_avail = stock.quantity_available
-                    if use_available:
+                    if use_available_by_product.get(item.product_id, use_available):
                         stock.quantity_available -= actual
                         stock.save(update_fields=["quantity_available"])
                     else:
@@ -1257,6 +1292,12 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         if not return_items:
             return Response({"error": "return_items must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
 
+        issue_date = None
+        issue_date_raw = request.data.get("issue_date")
+        if issue_date_raw:
+            from django.utils.dateparse import parse_date
+            issue_date = parse_date(str(issue_date_raw))
+
         with transaction.atomic():
             create_zw_from_pending_returns(
                 wz_doc=doc,
@@ -1269,6 +1310,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                     for row in return_items
                 ],
                 user=request.user,
+                issue_date=issue_date,
             )
 
         doc.refresh_from_db()

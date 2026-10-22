@@ -111,8 +111,11 @@ export type ProductionOrder = {
   rw_document_number: string | null;
   pw_document: string | null;
   pw_document_number: string | null;
+  source_orders: string[];
+  source_orders_info: { id: string; order_number: string | null; customer_name: string | null }[];
   notes: string;
   inputs: ProductionOrderInput[];
+  recipe_items: { ingredient_name: string; unit: string; quantity_needed: number | string }[];
   completed_at: string | null;
   created_at: string;
 };
@@ -122,6 +125,7 @@ export type ProductionOrderCreate = {
   date: string;
   mode: ProductionOrderMode;
   quantity_produced: number | string;
+  source_orders?: string[];
   notes?: string;
   inputs?: {
     ingredient: string;

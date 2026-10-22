@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { certificateService } from '@/services/certificate.service';
 import { companyKeys } from './keys';
 
-export function useKsefCertificateStatusQuery(companyId: string | undefined, enabled = true) {
+export function useKsefCertificateStatusQuery(companyId: string | undefined, environment: string, enabled = true) {
   return useQuery({
-    queryKey: companyId ? companyKeys.ksefCertificateStatus(companyId) : ['companies', 'ksef-certificate', 'pending'],
-    queryFn: () => certificateService.getStatus(companyId!),
+    queryKey: companyId ? companyKeys.ksefCertificateStatus(companyId, environment) : ['companies', 'ksef-certificate', 'pending'],
+    queryFn: () => certificateService.getStatus(companyId!, environment),
     enabled: Boolean(companyId) && enabled,
   });
 }
@@ -13,10 +13,10 @@ export function useKsefCertificateStatusQuery(companyId: string | undefined, ena
 export function useKsefCertificateUploadMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ companyId, formData }: { companyId: string; formData: FormData }) =>
+    mutationFn: ({ companyId, formData, environment }: { companyId: string; formData: FormData; environment: string }) =>
       certificateService.upload(companyId, formData),
-    onSuccess: (_, { companyId }) => {
-      void queryClient.invalidateQueries({ queryKey: companyKeys.ksefCertificateStatus(companyId) });
+    onSuccess: (_, { companyId, environment }) => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.ksefCertificateStatus(companyId, environment) });
     },
   });
 }
@@ -24,9 +24,10 @@ export function useKsefCertificateUploadMutation() {
 export function useKsefCertificateDeleteMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (companyId: string) => certificateService.delete(companyId),
-    onSuccess: (_, companyId) => {
-      void queryClient.invalidateQueries({ queryKey: companyKeys.ksefCertificateStatus(companyId) });
+    mutationFn: ({ companyId, environment }: { companyId: string; environment: string }) =>
+      certificateService.delete(companyId, environment),
+    onSuccess: (_, { companyId, environment }) => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.ksefCertificateStatus(companyId, environment) });
     },
   });
 }

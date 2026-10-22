@@ -28,6 +28,7 @@
     "date-fns": "^2.30.0",
     "dexie": "^4.4.4",
     "framer-motion": "^12.38.0",
+    "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.48.2",

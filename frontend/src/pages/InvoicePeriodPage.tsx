@@ -13,6 +13,8 @@ import {
 import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import { usePriceInputMode } from '@/hooks/usePriceInputMode';
 import { InvoiceKsefOptions } from '@/components/features/invoicing/InvoiceKsefOptions';
+import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
+import { PriceModeToggle } from '@/components/features/invoicing/PriceModeToggle';
 import {
   AnnotationsSection,
   InvoiceDetailsAccordion,
@@ -39,7 +41,7 @@ import type {
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
 const inputCls = 'field-ios';
-const cardCls = 'rounded-2xl border border-slate-200 bg-white shadow-apple-sm md:rounded-3xl';
+const cardCls = 'rounded-2xl border border-slate-200 bg-white md:rounded-3xl';
 
 const PAYMENT_OPTIONS: { value: InvoicePaymentMethod; label: string }[] = [
   { value: 'transfer', label: 'Przelew bankowy' },
@@ -396,23 +398,64 @@ function EditItemRow({
 /* ─── Step 2 line (quantity editable, price from the source document) ─ */
 
 function PeriodQtyRow({
-  name, unit, qty, unitPrice, vatRate, priceIsGross, onQty,
+  name, unit, qty, unitPrice, originalPrice, vatRate, priceIsGross, onQty, onPrice,
 }: {
   name: string;
   unit: string;
   qty: string;
   unitPrice: string;
+  /** Original price from order — when set and differs from unitPrice, shows a warning badge */
+  originalPrice?: string;
   vatRate: string;
   priceIsGross: boolean;
   onQty: (qty: string) => void;
+  onPrice?: (price: string) => void;
 }) {
+  const [editingField, setEditingField] = useState<'net' | 'gross' | null>(null);
+  const [priceInput, setPriceInput] = useState('');
+  const [displayGross, setDisplayGross] = useState<string | null>(null); // user-entered gross, avoids rounding artefacts
+  const priceInputRef = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
+
   const initial = (name || '?').charAt(0).toUpperCase();
   const unitLabel = unit === 'szt' ? 'szt.' : (unit || 'szt.');
   const qtyN = parseNum(qty);
-  const price = parseNum(unitPrice);
+  const price = parseNum(unitPrice); // always net (stored as net in DB)
   const vat = parseNum(vatRate);
-  const lineGross = priceIsGross ? qtyN * price : qtyN * price * (1 + vat / 100);
-  const lineNet = lineGross / (1 + vat / 100);
+  const vatMult = 1 + vat / 100;
+  // Mirror backend _recompute_line_amounts: gross is source of truth
+  const unitGross = Math.round(price * vatMult * 10000) / 10000;         // round to 4dp
+  const lineGross = Math.round(unitGross * qtyN * 100) / 100;            // round to 2dp
+  const lineNet   = Math.round(lineGross / vatMult * 100) / 100;         // round to 2dp
+  const priceNet  = price;                                                // unit_price_net as stored
+  const priceGross = unitGross;                                           // unit_price_gross
+  const priceChanged = originalPrice !== undefined && Math.abs(parseNum(originalPrice) - price) > 0.001;
+
+  function startEdit(field: 'net' | 'gross') {
+    if (!onPrice) return;
+    setPriceInput(field === 'net' ? priceNet.toFixed(2) : (displayGross ?? priceGross.toFixed(2)));
+    if (field === 'net') setDisplayGross(null);
+    setEditingField(field);
+    requestAnimationFrame(() => { priceInputRef.current?.focus(); priceInputRef.current?.select(); });
+  }
+
+  function commitPrice() {
+    if (committingRef.current || !editingField) return;
+    committingRef.current = true;
+    const v = parseFloat(priceInput.replace(',', '.').trim());
+    if (!isNaN(v) && v >= 0) {
+      if (editingField === 'gross') {
+        const netPrice = v / (1 + vat / 100);
+        setDisplayGross(v.toFixed(2)); // remember exact gross user entered
+        onPrice?.(netPrice.toFixed(6));
+      } else {
+        setDisplayGross(null); // net edited — recalculate gross normally
+        onPrice?.(v.toFixed(6));
+      }
+    }
+    setEditingField(null);
+    setTimeout(() => { committingRef.current = false; }, 100);
+  }
 
   function adjustQty(delta: number) {
     const next = Math.max(0.01, qtyN + delta);
@@ -420,53 +463,85 @@ function PeriodQtyRow({
   }
 
   return (
-    <div className="rounded-xl border border-[#AEAEB2] bg-[#F2F2F7] p-3 md:flex md:items-center md:gap-4 md:p-4">
-      <div className="flex min-w-0 items-center gap-3 md:w-72 md:shrink-0">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-100 bg-indigo-50 text-sm font-bold text-primary md:h-11 md:w-11 md:rounded-2xl md:text-lg" aria-hidden>
-          {initial}
-        </div>
-        <p className="min-w-0 break-words text-sm font-semibold text-slate-900">{name}</p>
+    <div className="flex items-center gap-2 rounded-xl border border-[#AEAEB2] bg-[#F2F2F7] px-3 py-2.5">
+      {/* Avatar */}
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-indigo-100 bg-indigo-50 text-xs font-bold text-primary" aria-hidden>
+        {initial}
       </div>
-      <div className="mt-2.5 flex flex-1 flex-wrap items-center gap-2 border-t border-slate-200/50 pt-2.5 md:mt-0 md:border-0 md:pt-0">
-        <div className="flex items-center rounded-lg border border-[#AEAEB2] bg-white p-0.5">
-          <button
-            type="button"
-            onClick={() => adjustQty(-1)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-100 md:h-8 md:w-8 md:rounded-xl"
-            aria-label="Zmniejsz ilość"
-          >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M5 12h14" strokeLinecap="round" /></svg>
-          </button>
-          <input
-            type="text"
-            inputMode="decimal"
-            value={qty}
-            onChange={(e) => onQty(toDecimalInput(e.target.value))}
-            onFocus={(e) => e.target.select()}
-            aria-label={`Ilość ${name}`}
-            className="w-10 bg-transparent text-center text-sm font-semibold tabular-nums text-slate-900 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => adjustQty(1)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-white transition hover:bg-primary/90 md:h-8 md:w-8 md:rounded-xl"
-            aria-label="Zwiększ ilość"
-          >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
-          </button>
-        </div>
-        <span className="text-sm font-medium text-slate-700">{unitLabel}</span>
-        <span className="inline-flex w-24 items-center justify-end rounded-lg border border-[#AEAEB2] bg-white px-2.5 py-1.5 text-sm font-semibold tabular-nums text-slate-900 md:w-28">
-          {price.toFixed(2)}
-          <span className="ml-1 font-medium text-slate-600">zł</span>
-        </span>
-        <span className="rounded-lg border border-[#AEAEB2] bg-white px-2.5 py-1.5 text-sm font-medium text-slate-800">
-          {vatRate === 'zw' ? 'ZW' : `VAT ${vatRate}%`}
-        </span>
-        <div className="ml-auto text-right">
-          <p className="text-sm font-semibold tabular-nums text-slate-900">{pln.format(lineGross)}</p>
-          <p className="text-xs tabular-nums text-slate-600">netto: {pln.format(lineNet)}</p>
-        </div>
+
+      {/* Nazwa */}
+      <p className="min-w-0 w-36 shrink-0 truncate text-sm font-semibold text-slate-900 md:w-48">{name}</p>
+
+      {/* Qty stepper */}
+      <div className="flex h-8 shrink-0 items-center rounded-lg border border-[#AEAEB2] bg-white px-0.5">
+        <button type="button" onClick={() => adjustQty(-1)}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100"
+          aria-label="Zmniejsz ilość">
+          <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M5 12h14" strokeLinecap="round" /></svg>
+        </button>
+        <input type="text" inputMode="decimal" value={qty}
+          onChange={(e) => onQty(toDecimalInput(e.target.value))}
+          onFocus={(e) => e.target.select()}
+          aria-label={`Ilość ${name}`}
+          className="w-8 bg-transparent text-center text-sm font-semibold tabular-nums text-slate-900 focus:outline-none" />
+        <button type="button" onClick={() => adjustQty(1)}
+          className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-white transition hover:bg-primary/90"
+          aria-label="Zwiększ ilość">
+          <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
+        </button>
+      </div>
+      <span className="shrink-0 text-xs text-slate-500">{unitLabel}</span>
+
+      {/* Cena netto */}
+      {editingField === 'net' ? (
+        <input ref={priceInputRef} type="text" inputMode="decimal" value={priceInput}
+          onChange={(e) => setPriceInput(toDecimalInput(e.target.value))}
+          onBlur={() => setTimeout(commitPrice, 150)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitPrice(); } if (e.key === 'Escape') setEditingField(null); }}
+          className="h-8 w-28 shrink-0 rounded-lg border border-primary bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/30" />
+      ) : (
+        <button type="button" onClick={() => startEdit('net')}
+          title={onPrice ? 'Edytuj cenę netto' : undefined}
+          className={cn(
+            'flex h-8 w-28 shrink-0 items-center justify-end gap-1 rounded-lg border px-2.5 text-sm font-semibold tabular-nums text-slate-900',
+            onPrice ? 'border-[#AEAEB2] bg-white hover:border-primary hover:bg-primary/5' : 'cursor-default border-[#AEAEB2] bg-white',
+          )}>
+          <span className="text-[10px] font-normal text-slate-400">netto</span>{priceNet.toFixed(2)}
+        </button>
+      )}
+
+      {/* Cena brutto */}
+      {editingField === 'gross' ? (
+        <input ref={priceInputRef} type="text" inputMode="decimal" value={priceInput}
+          onChange={(e) => setPriceInput(toDecimalInput(e.target.value))}
+          onBlur={() => setTimeout(commitPrice, 150)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitPrice(); } if (e.key === 'Escape') setEditingField(null); }}
+          className="h-8 w-28 shrink-0 rounded-lg border border-amber-400 bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-300/40" />
+      ) : (
+        <button type="button" onClick={() => startEdit('gross')}
+          title={onPrice ? 'Edytuj cenę brutto' : undefined}
+          className={cn(
+            'flex h-8 w-28 shrink-0 items-center justify-end gap-1 rounded-lg border px-2.5 text-sm tabular-nums text-slate-700',
+            onPrice ? 'border-[#AEAEB2] bg-white hover:border-amber-400 hover:bg-amber-50/50' : 'cursor-default border-[#AEAEB2] bg-white',
+          )}>
+          <span className="text-[10px] font-normal text-slate-400">brutto</span>{displayGross ?? priceGross.toFixed(2)}
+        </button>
+      )}
+
+      {/* VAT */}
+      <span className="flex h-8 shrink-0 items-center rounded-lg border border-[#AEAEB2] bg-white px-2.5 text-sm font-medium text-slate-700">
+        {vatRate === 'zw' ? 'ZW' : `${vatRate}%`}
+      </span>
+
+      {/* Wartość łączna */}
+      <div className="ml-auto shrink-0 text-right">
+        <p className="text-sm font-semibold tabular-nums text-slate-900">{pln.format(lineGross)}</p>
+        <p className="text-[11px] tabular-nums text-slate-500">netto {pln.format(lineNet)}</p>
+        {priceChanged && (
+          <p className="text-[10px] font-medium text-amber-600" title={`Cena na zamówieniu: ${parseNum(originalPrice!).toFixed(2)} zł netto`}>
+            ⚠ zam. {parseNum(originalPrice!).toFixed(2)} zł
+          </p>
+        )}
       </div>
     </div>
   );
@@ -491,6 +566,9 @@ function InvoicePeriodPageContent() {
   /* Customer */
   const [customerId, setCustomerId] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [customerNip, setCustomerNip] = useState('');
+  const [customerCity, setCustomerCity] = useState('');
+  const [customerStreet, setCustomerStreet] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const skipCustomerAutoOpen = useRef(true);
@@ -508,6 +586,7 @@ function InvoicePeriodPageContent() {
   /* Orders mode — item-level selection */
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [itemQtyOverrides, setItemQtyOverrides] = useState<Record<string, string>>({});
+  const [itemPriceOverrides, setItemPriceOverrides] = useState<Record<string, string>>({});
 
   /* WZ mode — aggregated editable items */
   const [wzLoaded, setWzLoaded] = useState(false);
@@ -588,7 +667,8 @@ function InvoicePeriodPageContent() {
     ordering: '-delivery_date',
     page_size: 200,
   });
-  const ordersAll: Order[] = useMemo(() => (source === 'orders' && customerId ? ordersData?.results ?? [] : []), [ordersData, source, customerId]);
+  const ordersFetched: Order[] = useMemo(() => (source === 'orders' && customerId ? ordersData?.results ?? [] : []), [ordersData, source, customerId]);
+  const ordersAll: Order[] = useMemo(() => ordersFetched.filter((o) => !o.has_active_invoice), [ordersFetched]);
   const orders: Order[] = useMemo(() => {
     const q = orderSearch.trim().toLowerCase();
     if (!q) return ordersAll;
@@ -666,6 +746,10 @@ function InvoicePeriodPageContent() {
     return itemQtyOverrides[item.id] ?? defaultOrderItemQty(item);
   }
 
+  function orderItemPrice(item: OrderItem): string {
+    return itemPriceOverrides[item.id] ?? String(item.unit_price_net ?? '0');
+  }
+
   function toggleItem(itemId: string) {
     setSelectedItemIds((prev) => {
       const next = new Set(prev);
@@ -694,21 +778,25 @@ function InvoicePeriodPageContent() {
       for (const item of getOrderItems(order)) {
         if (!selectedItemIds.has(item.id)) continue;
         const qty = parseNum(orderItemQty(item));
-        total += qty * parseNum(item.unit_price_net) * (1 + parseNum(item.vat_rate) / 100);
+        const priceNet = parseNum(orderItemPrice(item));
+        const vatMult = 1 + parseNum(item.vat_rate) / 100;
+        const unitGross = Math.round(priceNet * vatMult * 10000) / 10000;
+        total += Math.round(unitGross * qty * 100) / 100;
       }
     }
     return total;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItemIds, orders, itemQtyOverrides]);
+  }, [selectedItemIds, orders, itemQtyOverrides, itemPriceOverrides]);
 
   const wzTotalGross = useMemo(
     () => editItems.reduce((sum, i) => {
       const qty = parseNum(i.qty);
-      const price = parseNum(i.unit_price_net);
-      const vat = parseNum(i.vat_rate);
-      return sum + (isGross ? qty * price : qty * price * (1 + vat / 100));
+      const priceNet = parseNum(i.unit_price_net);
+      const vatMult = 1 + parseNum(i.vat_rate) / 100;
+      const unitGross = Math.round(priceNet * vatMult * 10000) / 10000;
+      return sum + Math.round(unitGross * qty * 100) / 100;
     }, 0),
-    [isGross, editItems],
+    [editItems],
   );
 
   const totalGross = source === 'orders' ? ordersTotalGross : wzTotalGross;
@@ -716,21 +804,24 @@ function InvoicePeriodPageContent() {
     const rows = source === 'orders'
       ? orders.flatMap((order) => getOrderItems(order).filter((item) => selectedItemIds.has(item.id)).map((item) => ({
           qty: parseNum(orderItemQty(item)),
-          price: parseNum(item.unit_price_net),
+          price: parseNum(orderItemPrice(item)),
           vat: parseNum(item.vat_rate),
         })))
       : editItems.map((i) => ({ qty: parseNum(i.qty), price: parseNum(i.unit_price_net), vat: parseNum(i.vat_rate) }));
     return rows.reduce((sum, row) => {
-      const gross = isGross ? row.qty * row.price : row.qty * row.price * (1 + row.vat / 100);
-      return sum + gross / (1 + row.vat / 100);
+      const vatMult = 1 + row.vat / 100;
+      const unitGross = Math.round(row.price * vatMult * 10000) / 10000;
+      const lineGross = Math.round(unitGross * row.qty * 100) / 100;
+      const lineNet = Math.round(lineGross / vatMult * 100) / 100;
+      return sum + lineNet;
     }, 0);
-  }, [source, orders, selectedItemIds, editItems, isGross, itemQtyOverrides]);
+  }, [source, orders, selectedItemIds, editItems, itemQtyOverrides, itemPriceOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
   const vatGroups = useMemo(() => {
     const map = new Map<string, number>();
     const rows = source === 'orders'
       ? orders.flatMap((order) => getOrderItems(order).filter((item) => selectedItemIds.has(item.id)).map((item) => ({
           qty: parseNum(orderItemQty(item)),
-          price: parseNum(item.unit_price_net),
+          price: parseNum(orderItemPrice(item)),
           vat: parseNum(item.vat_rate),
           rate: String(item.vat_rate),
         })))
@@ -741,13 +832,15 @@ function InvoicePeriodPageContent() {
           rate: i.vat_rate,
         }));
     for (const row of rows) {
-      const gross = isGross ? row.qty * row.price : row.qty * row.price * (1 + row.vat / 100);
-      const net = gross / (1 + row.vat / 100);
+      const vatMult = 1 + row.vat / 100;
+      const unitGross = Math.round(row.price * vatMult * 10000) / 10000;
+      const lineGross = Math.round(unitGross * row.qty * 100) / 100;
+      const lineNet = Math.round(lineGross / vatMult * 100) / 100;
       const key = row.rate === 'zw' ? 'ZW' : `${row.rate}%`;
-      map.set(key, (map.get(key) ?? 0) + (gross - net));
+      map.set(key, (map.get(key) ?? 0) + (lineGross - lineNet));
     }
     return [...map.entries()];
-  }, [source, orders, selectedItemIds, editItems, isGross, itemQtyOverrides]);
+  }, [source, orders, selectedItemIds, editItems, itemQtyOverrides, itemPriceOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
   const amountInWords = plnToWords(totalGross);
   const amountInWordsLabel = amountInWords ? amountInWords.charAt(0).toUpperCase() + amountInWords.slice(1) : '';
 
@@ -756,8 +849,11 @@ function InvoicePeriodPageContent() {
     if (source === 'orders') {
       if (selectedItemIds.size === 0) return;
       const selOrders = orders.filter((o) => getOrderItemIds(o).some((id) => selectedItemIds.has(id)));
-      const dates = selOrders.map((o) => o.delivery_date).filter(Boolean).sort();
-      if (dates.length > 0) setSaleDate(dates[dates.length - 1] as string);
+      const dates = selOrders.map((o) => o.delivery_date).filter(Boolean).sort() as string[];
+      if (dates.length > 0) {
+        setSaleDate(dates[0]);
+        setSaleDateTo(dates[dates.length - 1]);
+      }
     } else {
       setSaleDate(dateTo);
     }
@@ -766,14 +862,26 @@ function InvoicePeriodPageContent() {
 
   /* ── Helpers ── */
 
-  function selectCustomer(c: { id: string; name: string; payment_terms?: number | null }) {
+  function selectCustomer(c: { id: string; name: string; nip?: string | null; city?: string | null; street?: string | null; payment_terms?: number | null }) {
     setCustomerId(c.id);
     setCustomerName(c.name);
+    setCustomerNip(c.nip ?? '');
+    setCustomerCity(c.city ?? '');
+    setCustomerStreet(c.street ?? '');
     setCustomerSearch(c.name);
     setShowCustomerDropdown(false);
     const t = typeof c.payment_terms === 'number' && Number.isFinite(c.payment_terms) ? c.payment_terms : 14;
     customerPaymentTerms.current = t;
     setPaymentTermDays(TERM_OPTIONS.reduce((prev, curr) => Math.abs(curr - t) < Math.abs(prev - t) ? curr : prev));
+  }
+
+  function clearCustomer() {
+    setCustomerId('');
+    setCustomerName('');
+    setCustomerNip('');
+    setCustomerCity('');
+    setCustomerStreet('');
+    setCustomerSearch('');
   }
 
   function handleWzLoad() {
@@ -799,11 +907,13 @@ function InvoicePeriodPageContent() {
         const qty = parseNum(i.qty);
         const price = parseNum(i.unit_price_net);
         const vat = parseNum(i.vat_rate);
+        const vatMult = 1 + vat / 100;
+        const unitGross = Math.round(price * vatMult * 10000) / 10000;
         return {
           name: i.product_name || 'Brak nazwy',
           unit: i.product_unit,
           qty,
-          gross: isGross ? qty * price : qty * price * (1 + vat / 100),
+          gross: Math.round(unitGross * qty * 100) / 100,
         };
       });
     }
@@ -812,7 +922,9 @@ function InvoicePeriodPageContent() {
       for (const item of (order.items ?? []) as OrderItem[]) {
         if (!selectedItemIds.has(item.id)) continue;
         const qty = parseNum(orderItemQty(item));
-        const gross = qty * parseNum(item.unit_price_net) * (1 + parseNum(item.vat_rate) / 100);
+        const vatMult = 1 + parseNum(item.vat_rate) / 100;
+        const unitGross = Math.round(parseNum(orderItemPrice(item)) * vatMult * 10000) / 10000;
+        const gross = Math.round(unitGross * qty * 100) / 100;
         const existing = map.get(item.product_name);
         if (existing) {
           existing.qty += qty;
@@ -823,7 +935,7 @@ function InvoicePeriodPageContent() {
       }
     }
     return [...map.values()];
-  }, [source, selectedItemIds, orders, editItems, itemQtyOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [source, selectedItemIds, orders, editItems, itemQtyOverrides, itemPriceOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Can proceed to step 2 */
   const canGoStep2 = customerId !== '' && (source === 'orders'
@@ -858,17 +970,20 @@ function InvoicePeriodPageContent() {
       if (source === 'orders') {
         if (activeOrderIds.length === 0) { setSubmitError('Zaznacz co najmniej jedną pozycję.'); return; }
         const itemQuantities: Record<string, string> = {};
+        const itemPrices: Record<string, string> = {};
         for (const order of orders) {
           for (const item of getOrderItems(order)) {
             if (!selectedItemIds.has(item.id)) continue;
             const qty = orderItemQty(item);
             if (qty !== defaultOrderItemQty(item)) itemQuantities[item.id] = qty;
+            if (itemPriceOverrides[item.id] !== undefined) itemPrices[item.id] = itemPriceOverrides[item.id];
           }
         }
         const inv = await generateFromOrders.mutateAsync({
           order_ids: activeOrderIds,
           order_item_ids: [...selectedItemIds],
           ...(Object.keys(itemQuantities).length > 0 ? { item_quantities: itemQuantities } : {}),
+          ...(Object.keys(itemPrices).length > 0 ? { item_prices: itemPrices } : {}),
           issue_date: issueDate,
           sale_date: saleDate,
           sale_date_to: saleDateType === 'period' ? saleDateTo : undefined,
@@ -935,6 +1050,7 @@ function InvoicePeriodPageContent() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">
+            <PriceModeToggle />
             {step === 2 && <InvoiceTypeDropdown value={invoiceType} onChange={setInvoiceType} />}
             <StepDots step={step} />
           </div>
@@ -948,47 +1064,89 @@ function InvoicePeriodPageContent() {
             : 'pb-[calc(83px+80px+env(safe-area-inset-bottom))] md:pb-[calc(80px+env(safe-area-inset-bottom))]',
         )}>
 
+        <KsefTestEnvBanner />
+
         {/* ── Step 1: Customer + Source + Dates + List ── */}
         {step === 1 && (
           <>
             {/* Customer */}
             <div className={cn(cardCls, 'p-4 md:p-6')}>
-              <div className="mb-3 flex items-center gap-2.5">
-                <SectionMark name="user" />
-                <h2 className="text-sm font-semibold text-slate-900">Klient</h2>
-              </div>
-              <div ref={customerWrapRef} className="relative">
-                <input
-                  type="text"
-                  value={customerSearch}
-                  onChange={(e) => { setCustomerSearch(e.target.value); setCustomerId(''); setCustomerName(''); setShowCustomerDropdown(true); }}
-                  onClick={() => setShowCustomerDropdown(true)}
-                  onFocus={() => {
-                    if (skipCustomerAutoOpen.current) {
-                      skipCustomerAutoOpen.current = false;
-                      return;
-                    }
-                    setShowCustomerDropdown(true);
-                  }}
-                  placeholder="Wyszukaj klienta…"
-                  className={inputCls}
-                  autoFocus
-                />
-                {showCustomerDropdown && customers.length > 0 && (
-                  <ul className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-y-auto rounded-xl border border-border bg-background shadow-lg">
-                    {customers.map((c) => (
-                      <li key={c.id}>
-                        <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-muted" onMouseDown={() => selectCustomer(c)}>
-                          <span className="font-medium">{c.name}</span>
-                          {c.nip && <span className="ml-2 text-xs text-muted-foreground">NIP: {c.nip}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <SectionMark name="user" />
+                  <h2 className="text-sm font-semibold text-slate-900">Klient</h2>
+                </div>
+                {customerId && (
+                  <button type="button" onClick={clearCustomer} className="flex items-center gap-0.5 text-xs font-semibold text-primary hover:text-primary/80">
+                    <span className="md:hidden">Zmień</span>
+                    <span className="hidden md:inline">Zmień klienta</span>
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden><path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
                 )}
               </div>
-              {customerId && (
-                <p className="mt-1.5 text-xs text-muted-foreground">Wybrany: <span className="font-medium text-foreground">{customerName}</span></p>
+              {!customerId ? (
+                <div ref={customerWrapRef} className="relative">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" strokeLinecap="round" /></svg>
+                    </span>
+                    <input
+                      type="text"
+                      value={customerSearch}
+                      onChange={(e) => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); }}
+                      onClick={() => setShowCustomerDropdown(true)}
+                      onFocus={() => {
+                        if (skipCustomerAutoOpen.current) {
+                          skipCustomerAutoOpen.current = false;
+                          return;
+                        }
+                        setShowCustomerDropdown(true);
+                      }}
+                      placeholder="Wyszukaj klienta po nazwie lub NIP…"
+                      className="field-ios w-full pl-9"
+                      autoFocus
+                    />
+                  </div>
+                  {showCustomerDropdown && customers.length > 0 && (
+                    <ul className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-apple-md">
+                      {customers.map((c) => (
+                        <li key={c.id}>
+                          <button type="button" className="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50" onMouseDown={() => selectCustomer(c)}>
+                            <span className="font-medium">{c.name}</span>
+                            {c.nip && <span className="ml-2 text-xs text-slate-400">NIP: {c.nip}</span>}
+                            {c.city && <span className="ml-2 text-xs text-slate-400">{c.city}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3 md:gap-4 md:p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-primary md:h-12 md:w-12 md:rounded-2xl" aria-hidden>
+                    <svg className="h-5 w-5 md:h-6 md:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                      <path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <h3 className="truncate text-sm font-bold text-slate-900 md:text-base">{customerName}</h3>
+                      <span className="inline-flex items-center rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        <span className="md:hidden">Stały odbiorca</span>
+                        <span className="hidden md:inline">Aktywny stały odbiorca</span>
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">
+                      {customerNip && <span>NIP: {customerNip}</span>}
+                      {customerNip && (customerCity || customerStreet) && <span> • </span>}
+                      {(customerCity || customerStreet) && (
+                        <span>{[customerCity, customerStreet].filter(Boolean).join(', ')}</span>
+                      )}
+                      <span className="hidden md:inline"> • Płatność: Przelew {paymentTermDays} dni</span>
+                      <span className="md:hidden"> • Przelew {paymentTermDays} dni</span>
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -998,15 +1156,16 @@ function InvoicePeriodPageContent() {
                 <SectionMark name="list" />
                 <h2 className="text-sm font-semibold text-slate-900">Źródło danych</h2>
               </div>
-              <div className="flex gap-2 rounded-xl bg-muted p-1">
+              <div className="flex gap-1 rounded-2xl bg-[#F2F2F7] p-1">
                 {(['orders', 'wz'] as const).map((s) => (
                   <button
                     key={s}
                     type="button"
+                    aria-pressed={source === s}
                     onClick={() => setSource(s)}
                     className={cn(
-                      'flex-1 rounded-lg py-2 text-sm font-medium transition-colors',
-                      source === s ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                      'flex-1 rounded-xl py-2 text-sm font-semibold transition-colors',
+                      source === s ? 'bg-primary text-primary-foreground' : 'text-slate-600 hover:text-slate-900',
                     )}
                   >
                     {s === 'orders' ? 'Z zamówień' : 'Z WZ dokumentów'}
@@ -1102,9 +1261,15 @@ function InvoicePeriodPageContent() {
                   </div>
                 )}
 
-                {!ordersLoading && ordersAll.length === 0 && (
+                {!ordersLoading && ordersFetched.length === 0 && (
                   <div className={cn(cardCls, 'px-4 py-8 text-center')}>
                     <p className="text-sm text-slate-600">Brak zamówień w wybranym zakresie dat.</p>
+                  </div>
+                )}
+
+                {!ordersLoading && ordersFetched.length > 0 && ordersAll.length === 0 && (
+                  <div className={cn(cardCls, 'px-4 py-8 text-center')}>
+                    <p className="text-sm text-slate-600">Wszystkie zamówienia w tym zakresie są już zafakturowane.</p>
                   </div>
                 )}
 
@@ -1286,10 +1451,12 @@ function InvoicePeriodPageContent() {
                       name={item.product_name}
                       unit={item.product_unit}
                       qty={orderItemQty(item)}
-                      unitPrice={String(item.unit_price_net ?? '')}
+                      unitPrice={orderItemPrice(item)}
+                      originalPrice={itemPriceOverrides[item.id] !== undefined ? String(item.unit_price_net ?? '') : undefined}
                       vatRate={String(item.vat_rate ?? '0')}
                       priceIsGross={false}
                       onQty={(qty) => setItemQtyOverrides((prev) => ({ ...prev, [item.id]: qty }))}
+                      onPrice={(price) => setItemPriceOverrides((prev) => ({ ...prev, [item.id]: price }))}
                     />
                   )))
                   : editItems.map((item) => (

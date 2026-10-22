@@ -9,16 +9,19 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.comments import Comment
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.activity.log import log_activity, log_error
 from apps.activity.models import ActivityLog
 from .filters import ProductFilter
+from .images import ProductImageError, build_product_thumbnail
 from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
 from .serializers import (
     CustomerProductPriceSerializer,
@@ -88,6 +91,36 @@ class ProductViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             user=self.request.user,
         )
+
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="image",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
+    def image(self, request, uuid=None):
+        """Store only a 128px JPEG thumbnail. The original upload is discarded."""
+        product = self.get_object()
+        if request.method == "DELETE":
+            if product.image:
+                product.image.delete(save=False)
+                product.image = None
+                product.save(update_fields=["image"])
+            return Response(ProductSerializer(product, context={"request": request}).data)
+
+        uploaded = request.FILES.get("image")
+        if not uploaded:
+            return Response({"detail": "Brak pliku zdjęcia."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            thumb = build_product_thumbnail(uploaded)
+        except ProductImageError as exc:
+            return Response({"detail": exc.message}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_name = product.image.name if product.image else None
+        product.image.save(thumb.name, thumb, save=True)
+        if old_name and old_name != product.image.name:
+            product.image.storage.delete(old_name)
+        return Response(ProductSerializer(product, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="update-stock")
     def update_stock(self, request, uuid=None):
@@ -204,7 +237,11 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     # ── Import ────────────────────────────────────────────────────────────────
 
-    _IMPORT_HEADERS = ["Nazwa", "Jednostka", "Cena brutto", "VAT (%)", "SKU", "Kod kreskowy", "Opis", "Alert minimalny"]
+    _IMPORT_HEADERS = [
+        "Nazwa", "Jednostka", "Cena netto", "Cena brutto", "VAT (%)", "SKU", "Kod kreskowy", "Opis", "Alert minimalny",
+        "Typ (produkt/usługa)", "PKWiU", "Termin przydatności (dni)", "Koszt własny",
+        "Narzut %", "Do sprzedaży (tak/nie)", "Śledzenie partii (tak/nie)", "Aktywny (tak/nie)",
+    ]
     _VALID_VAT_RATES = {Decimal("0"), Decimal("5"), Decimal("8"), Decimal("23")}
 
     @action(detail=False, methods=["get"], url_path="import-template")
@@ -214,10 +251,28 @@ class ProductViewSet(viewsets.ModelViewSet):
         ws = wb.active
         ws.title = "Produkty"
         ws.append(self._IMPORT_HEADERS)
-        ws.append(["Chleb pszenny", "szt", 2.50, 5, "SKU-001", "", "Chleb na co dzień", ""])
+
+        # Example rows — grey background + italic to signal "delete before import"
+        _EXAMPLE_ROWS = [
+            ["Chleb pszenny", "szt", "", 2.50, 5, "SKU-001", "", "Chleb na co dzień", "", "produkt", "10.71.11", 3, "", "", "tak", "tak", "tak"],
+            ["Doradztwo", "godz", 162.60, 200.00, 23, "USL-001", "", "", "", "usługa", "", "", "", 30, "tak", "nie", "tak"],
+        ]
+        example_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+        example_font = Font(italic=True, color="555555")
+        for row_data in _EXAMPLE_ROWS:
+            ws.append(row_data)
+            for cell in ws[ws.max_row]:
+                cell.fill = example_fill
+                cell.font = example_font
+
+        # Comment on A2 to make the intent obvious
+        comment = Comment("To jest wiersz przykładowy — usuń go przed importem.", "MojeSaldoo")
+        comment.width = 260
+        comment.height = 50
+        ws["A2"].comment = comment
 
         # Column widths
-        for col, width in zip("ABCDEFGH", [30, 12, 14, 10, 15, 16, 30, 16]):
+        for col, width in zip("ABCDEFGHIJKLMNOPQ", [30, 12, 12, 14, 10, 15, 16, 30, 16, 20, 14, 26, 14, 10, 20, 24, 18]):
             ws.column_dimensions[col].width = width
 
         buf = io.BytesIO()
@@ -320,7 +375,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         }
 
         created = updated = 0
-        _UPDATE_FIELDS = ["name", "unit", "price_gross", "price_net", "vat_rate", "sku", "barcode", "description", "min_stock_alert"]
+        _UPDATE_FIELDS = [
+            "name", "unit", "price_gross", "price_net", "vat_rate",
+            "sku", "barcode", "description", "min_stock_alert",
+            "is_service", "pkwiu", "is_resalable", "track_batches", "is_active",
+        ]
+        _OPTIONAL_UPDATE_FIELDS = ["shelf_life_days", "avg_cost", "avg_cost_source", "markup_percent"]
 
         with transaction.atomic():
             for data in valid_products:
@@ -334,9 +394,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                     existing = name_index[name]
 
                 if existing:
+                    fields_to_save = list(_UPDATE_FIELDS)
                     for field in _UPDATE_FIELDS:
                         setattr(existing, field, data[field])
-                    existing.save(update_fields=_UPDATE_FIELDS)
+                    for field in _OPTIONAL_UPDATE_FIELDS:
+                        if field in data:
+                            setattr(existing, field, data[field])
+                            fields_to_save.append(field)
+                    existing.save(update_fields=fields_to_save)
                     updated += 1
                 else:
                     Product.objects.create(company=company, user=request.user, **data)
@@ -424,10 +489,21 @@ class ProductViewSet(viewsets.ModelViewSet):
             except (InvalidOperation, ValueError):
                 errors.append({"row": row_num, "field": "VAT (%)", "message": f"Dozwolone wartości: 0, 5, 8, 23. Podano: '{vat_raw}'."})
 
+        # Cena netto — optional; if provided, use directly; otherwise derive from brutto
+        price_net_raw = get("cena netto")
+        price_net_override = None
+        if price_net_raw:
+            try:
+                price_net_override = Decimal(price_net_raw.replace(",", "."))
+                if price_net_override < 0:
+                    raise ValueError
+            except (InvalidOperation, ValueError):
+                errors.append({"row": row_num, "field": "Cena netto", "message": f"Nieprawidłowa wartość: '{price_net_raw}'."})
+
         if errors:
             return errors, None
 
-        price_net = (price_gross / (1 + vat_rate / 100)).quantize(Decimal("0.01"))
+        price_net = price_net_override if price_net_override is not None else (price_gross / (1 + vat_rate / 100)).quantize(Decimal("0.01"))
 
         min_stock_raw = get("alert minimalny")
         min_stock = None
@@ -440,7 +516,59 @@ class ProductViewSet(viewsets.ModelViewSet):
                 errors.append({"row": row_num, "field": "Alert minimalny", "message": f"Nieprawidłowa wartość: '{min_stock_raw}'."})
                 return errors, None
 
-        return [], {
+        typ_raw = get("typ (produkt/usługa)", "typ").lower()
+        is_service = typ_raw in ("usługa", "usluga", "usługi", "uslugi", "service", "tak", "true", "1")
+
+        shelf_life = None
+        shelf_life_raw = get("termin przydatności (dni)", "termin przydatnosci (dni)", "termin przydatności", "termin przydatnosci")
+        if shelf_life_raw:
+            try:
+                shelf_life = int(shelf_life_raw.replace(",", ".").split(".")[0])
+                if shelf_life < 0:
+                    raise ValueError
+            except (ValueError, TypeError):
+                errors.append({"row": row_num, "field": "Termin przydatności (dni)", "message": f"Musi być liczbą całkowitą. Podano: '{shelf_life_raw}'."})
+                return errors, None
+
+        avg_cost = None
+        avg_cost_raw = get("koszt własny", "koszt wlasny")
+        if avg_cost_raw:
+            try:
+                avg_cost = Decimal(avg_cost_raw.replace(",", "."))
+                if avg_cost < 0:
+                    raise ValueError
+            except (InvalidOperation, ValueError):
+                errors.append({"row": row_num, "field": "Koszt własny", "message": f"Nieprawidłowa wartość: '{avg_cost_raw}'."})
+                return errors, None
+
+        markup_raw = get("narzut %", "narzut")
+        markup_percent = None
+        if markup_raw:
+            try:
+                markup_percent = Decimal(markup_raw.replace(",", ".").replace("%", ""))
+                if markup_percent < 0:
+                    raise ValueError
+            except (InvalidOperation, ValueError):
+                errors.append({"row": row_num, "field": "Narzut %", "message": f"Nieprawidłowa wartość: '{markup_raw}'."})
+                return errors, None
+
+        def parse_bool(raw: str, default: bool) -> bool:
+            if raw.lower() in ("tak", "yes", "true", "1"):
+                return True
+            if raw.lower() in ("nie", "no", "false", "0"):
+                return False
+            return default
+
+        is_resalable_raw = get("do sprzedaży (tak/nie)", "do sprzedazy (tak/nie)", "do sprzedaży", "do sprzedazy")
+        is_resalable = parse_bool(is_resalable_raw, True) if is_resalable_raw else True
+
+        track_batches_raw = get("śledzenie partii (tak/nie)", "sledzenie partii (tak/nie)", "śledzenie partii", "sledzenie partii")
+        track_batches = parse_bool(track_batches_raw, True) if track_batches_raw else True
+
+        is_active_raw = get("aktywny (tak/nie)", "aktywny")
+        is_active = parse_bool(is_active_raw, True) if is_active_raw else True
+
+        product_data: dict = {
             "name": name,
             "unit": unit,
             "price_gross": price_gross,
@@ -450,7 +578,20 @@ class ProductViewSet(viewsets.ModelViewSet):
             "barcode": get("kod kreskowy") or "",
             "description": get("opis") or "",
             "min_stock_alert": min_stock if min_stock is not None else Decimal("0"),
+            "is_service": is_service,
+            "pkwiu": get("pkwiu") or "",
+            "is_resalable": is_resalable,
+            "track_batches": track_batches,
+            "is_active": is_active,
         }
+        if shelf_life is not None:
+            product_data["shelf_life_days"] = shelf_life
+        if avg_cost is not None:
+            product_data["avg_cost"] = avg_cost
+            product_data["avg_cost_source"] = "manual"
+        if markup_percent is not None:
+            product_data["markup_percent"] = markup_percent
+        return [], product_data
 
     def destroy(self, request, *args, **kwargs):
         """DELETE /api/products/{uuid}/ — only allowed when product has no history."""

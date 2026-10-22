@@ -57,6 +57,8 @@ export type InvoiceKsefStatus =
 export interface InvoiceItem {
   id: string;
   order_item: string | null;
+  /** Original unit_price_net from the source order item — non-null only when it differs from the invoice line price. */
+  order_item_price_net: string | null;
   product: string | null;
   product_name: string;
   product_unit: string;
@@ -156,6 +158,9 @@ export interface Invoice {
   prices_include_vat: boolean;
   place_of_issue: string;
   show_wz_numbers: boolean;
+  manually_edited?: boolean;
+  sale_date_to?: string | null;
+  sale_date_type?: SaleDateType;
 
   created_at: string;
   updated_at: string;
@@ -207,6 +212,7 @@ export interface InvoiceKsefOptions {
   prices_include_vat?: boolean;
   contracts?: { date?: string; number?: string }[];
   purchase_orders?: { date?: string; number?: string }[];
+  additional_info?: { label: string; value: string }[];
 }
 
 /** `POST /api/invoices/` — writable fields (`status` is server / action controlled). */
@@ -278,6 +284,8 @@ export interface GenerateInvoiceFromOrdersBody extends InvoiceKsefOptions {
   advance_invoice_ids?: string[];
   /** Order item UUID → quantity. Only lines the user changed; others use the delivered quantity. */
   item_quantities?: Record<string, string>;
+  /** Order item UUID → unit_price_net override. Only lines the user changed. */
+  item_prices?: Record<string, string>;
 }
 
 /** One item returned by the period-preview endpoints. */
@@ -322,6 +330,7 @@ export interface CreateManualInvoiceBody extends InvoiceKsefOptions {
 
 /** `GET /api/invoices/:id/preview/` — payload for HTML / print layout. */
 export interface InvoicePreviewLine {
+  item_id?: string;
   position: number;
   product_name: string;
   product_unit: string;
@@ -346,6 +355,13 @@ export interface InvoicePreviewCompanyBlock {
   postal_code?: string;
   phone?: string;
   email?: string;
+  logo_url?: string | null;
+  bank_account_iban?: string;
+  bank_swift?: string;
+  bank_name?: string;
+  regon?: string;
+  krs?: string;
+  bdo?: string;
 }
 
 /** Structured buyer block (print); falls back to `buyer` if omitted. */
@@ -355,6 +371,10 @@ export interface InvoicePreviewCustomerBlock {
   address: string;
   city?: string;
   postal_code?: string;
+  phone?: string;
+  email?: string;
+  is_jst?: boolean;
+  is_gv_member?: boolean;
 }
 
 /** Line row aligned with API `items` array on preview. */
@@ -403,15 +423,33 @@ export interface InvoicePreviewPayload {
     invoice_number: string;
     issue_date: string;
     sale_date: string;
+    sale_date_to?: string | null;
+    sale_date_type?: string;
     due_date: string;
+    due_date_description?: string;
     payment_method: string;
     payment_method_label: string;
+    place_of_issue?: string;
+    ksef_number?: string;
+    ksef_reference_number?: string;
     status: string;
     notes: string;
     order_number: string;
     delivery_document_number: string;
     wz_numbers?: string[];
     show_wz_numbers?: boolean;
+    ksef_qr_url?: string;
+    additional_info?: { label: string; value: string }[];
+    ksef_invoice_type?: string;
+    annotation_mpp?: boolean;
+    annotation_kasowa?: boolean;
+    annotation_odwrotne?: boolean;
+    annotation_trojstronna?: boolean;
+    annotation_zwolnienie?: boolean;
+    annotation_marza?: boolean;
+    annotation_tp?: boolean;
+    annotation_fp?: boolean;
+    annotation_oss?: boolean;
   };
   totals: {
     subtotal_net: string;

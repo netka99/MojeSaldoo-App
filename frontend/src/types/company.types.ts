@@ -125,11 +125,15 @@ export interface Company {
   bdo?: string
   // Invoice returns mode
   invoice_returns_mode?: 'fv_kor' | 'net_qty' | 'lines'
+  // Quick return button on WZ list
+  wz_quick_returns?: boolean
   // Invoice numbering
   invoice_number_prefix?: string
   invoice_number_period?: 'yearly' | 'monthly'
   invoice_number_padding?: number
   invoice_number_start?: number
+  // Logo
+  logo_url?: string | null
 }
 
 export interface CompanyMembership {
@@ -149,6 +153,8 @@ export interface CompanyModule {
 export interface CompanyWorkflowSettings {
   orders_required: boolean;
   wz_required_before_invoice: boolean;
+  auto_wz_on_order: boolean;
+  auto_deliver_wz: boolean;
 }
 
 export interface CompanyWrite {
@@ -170,7 +176,9 @@ export interface CompanyWrite {
   bdo?: string
   is_vat_payer?: boolean
   ksef_usage?: 'mandatory' | 'voluntary' | 'exempt' | 'none'
+  ksef_environment?: 'test' | 'demo' | 'production'
   invoice_returns_mode?: 'fv_kor' | 'net_qty' | 'lines'
+  wz_quick_returns?: boolean
   price_input_mode?: 'net' | 'gross'
   invoice_number_prefix?: string
   invoice_number_period?: 'yearly' | 'monthly'

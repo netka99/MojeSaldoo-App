@@ -20,9 +20,11 @@ import {
   useUpdateDeliveryLinesMutation,
 } from '@/query/use-delivery';
 import { useOrderQuery } from '@/query/use-orders';
+import { useWorkflowSettingsQuery } from '@/query/use-companies';
 import { productService } from '@/services/product.service';
 import { customerService } from '@/services/customer.service';
 import { warehouseService } from '@/services/warehouse.service';
+import { deliveryService } from '@/services/delivery.service';
 import { authStorage } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { resolveCustomerIdFromSearch } from '@/lib/customer-picker-utils';
@@ -777,6 +779,8 @@ function StandaloneWzCustomerSection({
 }) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
+  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId);
+  const autoDeliver = workflowSettings?.auto_deliver_wz ?? false;
   const patchM = usePatchDeliveryMutation();
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerId, setCustomerId] = useState('');
@@ -894,7 +898,13 @@ export function DeliveryDocumentDetailPage() {
   const updateLinesM = useUpdateDeliveryLinesMutation();
   const addReturnsM = useAddReturnsMutation();
 
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId);
+  const autoDeliver = workflowSettings?.auto_deliver_wz ?? false;
+
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showDeliveryCompleteBanner, setShowDeliveryCompleteBanner] = useState(false);
   const [showCancelPzConfirm, setShowCancelPzConfirm] = useState(false);
   const [showKorForm, setShowKorForm] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -1114,14 +1124,16 @@ export function DeliveryDocumentDetailPage() {
               </h1>
               {doc && (
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                      deliveryStatusBadgeClassName(doc.status),
-                    )}
-                  >
-                    {DELIVERY_STATUS_LABELS_PL[doc.status]}
-                  </span>
+                  {!autoDeliver && (
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                        deliveryStatusBadgeClassName(doc.status),
+                      )}
+                    >
+                      {DELIVERY_STATUS_LABELS_PL[doc.status]}
+                    </span>
+                  )}
                   <span className="text-[13px] text-muted-foreground">
                     {isPZ
                       ? ((doc.supplier_name ?? doc.customer_name) || '—')
@@ -1220,6 +1232,61 @@ export function DeliveryDocumentDetailPage() {
                 >
                   Zamknij
                 </button>
+              </div>
+            )}
+
+            {/* Delivery complete banner */}
+            {showDeliveryCompleteBanner && doc.document_type === 'WZ' && doc.status === 'delivered' && (
+              <div
+                role="status"
+                className="flex flex-col gap-3 rounded-2xl border border-green-400/40 bg-green-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  <svg className="h-5 w-5 shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <p className="text-sm font-semibold text-green-800">Dostawa zakończona!</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (id) {
+                        deliveryService.fetchPreview(id).then((preview) => {
+                          openWZPrintWindow(preview);
+                        }).catch(() => {});
+                      }
+                    }}
+                    className="rounded-xl border border-green-400/60 bg-white px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-100"
+                  >
+                    Drukuj WZ
+                  </button>
+                  {doc.order_id && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/orders/${doc.order_id}`)}
+                      className="rounded-xl border border-green-400/60 bg-white px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-100"
+                    >
+                      Wróć do zamówienia
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/delivery')}
+                    className="rounded-xl border border-green-400/60 bg-white px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-100"
+                  >
+                    Lista dokumentów
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeliveryCompleteBanner(false)}
+                    className="rounded-xl border border-green-400/60 bg-white px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-green-100"
+                    aria-label="Zamknij"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1661,7 +1728,7 @@ export function DeliveryDocumentDetailPage() {
                     {saveM.isPending ? 'Zapisywanie…' : 'Zapisz WZ'}
                   </Button>
                 )}
-                {!isPZ && (doc.status === 'saved' || doc.status === 'in_transit') && (
+                {!isPZ && !autoDeliver && (doc.status === 'saved' || doc.status === 'in_transit') && (
                   <Button
                     type="button"
                     onClick={async () => {
@@ -1669,6 +1736,7 @@ export function DeliveryDocumentDetailPage() {
                       try {
                         if (doc.status === 'saved') await startM.mutateAsync(id);
                         await completeM.mutateAsync({ id, data: {} });
+                        setShowDeliveryCompleteBanner(true);
                       } catch (e) { setActionError(errMsg(e)); }
                     }}
                     disabled={workflowBusy || locked}

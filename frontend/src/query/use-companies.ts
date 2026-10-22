@@ -84,6 +84,27 @@ export function useUpdateCompanyMutation() {
   });
 }
 
+export function useUploadLogoMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ companyId, file }: { companyId: string; file: File }) =>
+      companyService.uploadLogo(companyId, file),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}
+
+export function useDeleteLogoMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (companyId: string) => companyService.deleteLogo(companyId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}
+
 export function useDeleteCompanyMutation() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -383,7 +383,8 @@ export const Home: React.FC = () => {
       {((moduleEnabled.orders && hasPermission('can_manage_orders')) ||
         (moduleEnabled.delivery && hasPermission('can_manage_delivery')) ||
         (moduleEnabled.invoicing && hasPermission('can_manage_invoices')) ||
-        (moduleEnabled.warehouses && hasPermission('can_manage_products'))) && (
+        (moduleEnabled.warehouses && hasPermission('can_manage_products')) ||
+        (moduleEnabled.production && hasPermission('can_manage_production'))) && (
         <section className="mt-6 grid grid-cols-2 gap-3 px-4">
           {moduleEnabled.orders && hasPermission('can_manage_orders') && (
             <StatCard
@@ -399,6 +400,14 @@ export const Home: React.FC = () => {
               value={d ? d.wz_in_transit : '—'}
               accent={d && d.wz_in_transit > 0 ? 'blue' : undefined}
               to="/delivery"
+            />
+          )}
+          {moduleEnabled.production && hasPermission('can_manage_production') && (
+            <StatCard
+              label="Zlecenia w produkcji"
+              value={d ? (d.production_in_progress ?? '—') : '—'}
+              accent={d && (d.production_in_progress ?? 0) > 0 ? 'amber' : undefined}
+              to="/production/orders"
             />
           )}
           {moduleEnabled.invoicing && hasPermission('can_manage_invoices') && (

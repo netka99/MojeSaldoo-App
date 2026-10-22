@@ -78,10 +78,12 @@ Szczegóły i przykłady: `design.md` w katalogu głównym. Skrót:
 
 - klasy: `field-ios`, `field-ios-tall`, `field-ios-sm`, `select-pill`, `date-pill` w `src/index.css`
 - kształt: `rounded-lg`, wysokość ok. 36 px (`py-2 text-sm leading-5`)
-- tło `#F2F2F7`, ramka `#AEAEB2`, tekst `text-slate-900`, placeholder `text-slate-500`
+- tło `#F2F2F7`, ramka `#AEAEB2`, tekst `text-slate-900`
+- formularz danych: puste pole `border-dashed border-slate-300` i `placeholder:text-slate-400`; wypełnione `bg-white border-solid border-slate-300`. Wyszukiwarka, filtr daty i cena w wierszu zostają bez tego rozróżnienia
 - focus: białe tło, ramka `primary`, `ring-2 ring-primary/30`
 - etykieta nad polem: `mb-1.5 text-sm font-medium text-slate-800`
 - `select-pill` i `date-pill` to pola, nie kapsułki. Nie wracaj do `rounded-full`
+- strzałka wstecz: szare koło `h-9 w-9 md:h-10 md:w-10 rounded-full bg-slate-100`, bez cienia, chevron w lewo obok tytułu. Rozwijanie wiersza: `ReportExpandIcon`, w prawo, `rotate-90`. Akordeon: chevron w dół, `rotate-180`, bez koła
 
 Nie używaj na polach `rounded-full`, cienia inset, `min-h-11`, tekstu 17 px, `bg-slate-50` ani `border-slate-200`.
 

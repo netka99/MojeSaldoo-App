@@ -7,7 +7,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient, APIRequestFactory
 
-from apps.users.models import Company, CompanyMembership, CompanyModule, CompanyRole
+from apps.users.models import Company, CompanyMembership, CompanyModule, CompanyRole, CompanyWorkflowSettings
 from apps.users.permissions import IsCompanyAdmin, IsCompanyMember
 
 
@@ -1059,3 +1059,337 @@ class CompanyLeaveAPITests(TestCase):
         self.member.refresh_from_db()
         self.assertFalse(self.member.is_active)
         self.assertIn("deleted_", self.member.username)
+
+
+class WorkflowSettingsAPITests(TestCase):
+    """GET + PATCH /api/companies/{id}/workflow-settings/ — auto_wz_on_order field."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username="wf-admin", email="wf-admin@test.com", password="test12345",
+        )
+        self.member = User.objects.create_user(
+            username="wf-member", email="wf-member@test.com", password="test12345",
+        )
+        self.co = Company.objects.create(name="WF Test Co")
+        CompanyMembership.objects.create(user=self.admin, company=self.co, role="admin", is_active=True)
+        CompanyMembership.objects.create(user=self.member, company=self.co, role="member", is_active=True)
+        self.admin.current_company = self.co
+        self.admin.save(update_fields=["current_company"])
+        self.member.current_company = self.co
+        self.member.save(update_fields=["current_company"])
+        self.url = reverse("company-workflow-settings", kwargs={"company_id": str(self.co.uuid)})
+
+    def test_get_returns_auto_wz_on_order_field(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("auto_wz_on_order", r.data)
+        self.assertFalse(r.data["auto_wz_on_order"])  # default is False
+
+    def test_patch_auto_wz_on_order_true(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(self.url, {"auto_wz_on_order": True}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["auto_wz_on_order"])
+        self.assertTrue(CompanyWorkflowSettings.objects.get(company=self.co).auto_wz_on_order)
+
+    def test_patch_auto_wz_on_order_false(self):
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"auto_wz_on_order": True},
+        )
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(self.url, {"auto_wz_on_order": False}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertFalse(r.data["auto_wz_on_order"])
+
+    def test_non_admin_cannot_patch(self):
+        self.client.force_authenticate(user=self.member)
+        r = self.client.patch(self.url, {"auto_wz_on_order": True}, format="json")
+        self.assertIn(r.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
+
+    # ------------------------------------------------------------------
+    # auto_deliver_wz tests
+    # ------------------------------------------------------------------
+
+    def test_get_returns_auto_deliver_wz_field(self):
+        """Response includes auto_deliver_wz defaulting to False."""
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("auto_deliver_wz", r.data)
+        self.assertFalse(r.data["auto_deliver_wz"])
+
+    def test_patch_auto_deliver_wz_true(self):
+        """PATCH auto_deliver_wz=True persists the value."""
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(self.url, {"auto_deliver_wz": True}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["auto_deliver_wz"])
+        self.assertTrue(CompanyWorkflowSettings.objects.get(company=self.co).auto_deliver_wz)
+
+    def test_enabling_auto_deliver_wz_closes_open_wz_documents(self):
+        """When auto_deliver_wz is switched on all saved/in_transit WZ become delivered."""
+        from datetime import date as _date
+        from apps.customers.models import Customer
+        from apps.delivery.models import DeliveryDocument
+        from apps.products.models import Warehouse
+
+        customer = Customer.objects.create(name="Test Customer", company=self.co)
+        wh = Warehouse.objects.create(
+            user=self.admin,
+            company=self.co,
+            code="MG",
+            name="Main",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        wz_saved = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.admin,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            from_warehouse=wh,
+            to_customer=customer,
+            issue_date=_date(2026, 10, 1),
+            status=DeliveryDocument.STATUS_SAVED,
+        )
+        wz_transit = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.admin,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            from_warehouse=wh,
+            to_customer=customer,
+            issue_date=_date(2026, 10, 1),
+            status=DeliveryDocument.STATUS_IN_TRANSIT,
+        )
+        wz_draft = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.admin,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            from_warehouse=wh,
+            to_customer=customer,
+            issue_date=_date(2026, 10, 1),
+            status=DeliveryDocument.STATUS_DRAFT,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(self.url, {"auto_deliver_wz": True}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+        wz_saved.refresh_from_db()
+        wz_transit.refresh_from_db()
+        wz_draft.refresh_from_db()
+
+        self.assertEqual(wz_saved.status, DeliveryDocument.STATUS_DELIVERED)
+        self.assertEqual(wz_transit.status, DeliveryDocument.STATUS_DELIVERED)
+        # Draft WZ should NOT be auto-closed
+        self.assertEqual(wz_draft.status, DeliveryDocument.STATUS_DRAFT)
+
+    def test_enabling_auto_deliver_wz_does_not_close_already_delivered(self):
+        """Already delivered WZ are untouched when toggling auto_deliver_wz."""
+        from datetime import date as _date
+        from apps.customers.models import Customer
+        from apps.delivery.models import DeliveryDocument
+        from apps.products.models import Warehouse
+        from django.utils import timezone
+
+        customer = Customer.objects.create(name="Test Customer2", company=self.co)
+        wh = Warehouse.objects.create(
+            user=self.admin,
+            company=self.co,
+            code="MGX",
+            name="MainX",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        original_dt = timezone.now()
+        wz_delivered = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.admin,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            from_warehouse=wh,
+            to_customer=customer,
+            issue_date=_date(2026, 10, 1),
+            status=DeliveryDocument.STATUS_DELIVERED,
+            delivered_at=original_dt,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch(self.url, {"auto_deliver_wz": True}, format="json")
+
+        wz_delivered.refresh_from_db()
+        self.assertEqual(wz_delivered.status, DeliveryDocument.STATUS_DELIVERED)
+        # delivered_at should not have changed
+        self.assertEqual(wz_delivered.delivered_at, original_dt)
+
+    def test_disabling_auto_deliver_wz_does_not_reopen_documents(self):
+        """Turning auto_deliver_wz off after it was on should not change any WZ status."""
+        from datetime import date as _date
+        from apps.customers.models import Customer
+        from apps.delivery.models import DeliveryDocument
+        from apps.products.models import Warehouse
+
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"auto_deliver_wz": True}
+        )
+        customer = Customer.objects.create(name="Test Customer3", company=self.co)
+        wh = Warehouse.objects.create(
+            user=self.admin,
+            company=self.co,
+            code="MGY",
+            name="MainY",
+            warehouse_type=Warehouse.WarehouseType.MAIN,
+        )
+        wz_saved = DeliveryDocument.objects.create(
+            company=self.co,
+            user=self.admin,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            from_warehouse=wh,
+            to_customer=customer,
+            issue_date=_date(2026, 10, 1),
+            status=DeliveryDocument.STATUS_SAVED,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch(self.url, {"auto_deliver_wz": False}, format="json")
+
+        wz_saved.refresh_from_db()
+        # Turning OFF must not alter any document status
+        self.assertEqual(wz_saved.status, DeliveryDocument.STATUS_SAVED)
+
+
+# ---------------------------------------------------------------------------
+# KSeF environment tests
+# ---------------------------------------------------------------------------
+
+class KsefEnvironmentTests(TestCase):
+    """Tests for ksef_environment field on Company model and API."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, _ = _make_company_with_admin(
+            "ksef-env-admin", "ksef-env@test.com"
+        )
+
+    def test_default_environment_is_demo(self):
+        self.assertEqual(self.company.ksef_environment, "demo")
+
+    def test_current_user_returns_ksef_environment(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(reverse("current_user"))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["user"]["ksef_environment"], "demo")
+
+    def test_current_user_returns_is_staff(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(reverse("current_user"))
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("is_staff", r.data["user"])
+
+    def test_patch_environment_to_production(self):
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("company-detail", kwargs={"pk": str(self.company.uuid)})
+        r = self.client.patch(url, {"ksef_environment": "production"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.ksef_environment, "production")
+
+    def test_patch_environment_to_test(self):
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("company-detail", kwargs={"pk": str(self.company.uuid)})
+        r = self.client.patch(url, {"ksef_environment": "test"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.ksef_environment, "test")
+
+
+class KsefGetHostTests(TestCase):
+    """Tests for ssapi_client._get_ksef_host resolves correct API host."""
+
+    def setUp(self):
+        _, self.company, _ = _make_company_with_admin(
+            "ksef-host-admin", "ksef-host@test.com"
+        )
+
+    def test_demo_host(self):
+        from apps.ksef.ssapi_client import _get_ksef_host
+        from apps.ksef.crypto import KSEF_ENV_HOSTS
+        self.company.ksef_environment = "demo"
+        self.company.save(update_fields=["ksef_environment"])
+        self.assertEqual(_get_ksef_host(self.company.pk), KSEF_ENV_HOSTS["demo"])
+
+    def test_production_host(self):
+        from apps.ksef.ssapi_client import _get_ksef_host
+        from apps.ksef.crypto import KSEF_ENV_HOSTS
+        self.company.ksef_environment = "production"
+        self.company.save(update_fields=["ksef_environment"])
+        self.assertEqual(_get_ksef_host(self.company.pk), KSEF_ENV_HOSTS["production"])
+
+    def test_test_host(self):
+        from apps.ksef.ssapi_client import _get_ksef_host
+        from apps.ksef.crypto import KSEF_ENV_HOSTS
+        self.company.ksef_environment = "test"
+        self.company.save(update_fields=["ksef_environment"])
+        self.assertEqual(_get_ksef_host(self.company.pk), KSEF_ENV_HOSTS["test"])
+
+    def test_unknown_company_returns_default(self):
+        from apps.ksef.ssapi_client import _get_ksef_host
+        from apps.ksef.crypto import KSEF_DEFAULT_HOST
+        self.assertEqual(_get_ksef_host(999999), KSEF_DEFAULT_HOST)
+
+
+class KSeFCertificateFilenameTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin, self.company, _ = _make_company_with_admin(
+            "cert-name-admin", "cert-name@test.com", "Cert Co", "9990000099"
+        )
+
+    def test_status_returns_stored_filenames(self):
+        from apps.users.models import KSeFCertificate
+
+        KSeFCertificate.objects.create(
+            company=self.company,
+            uploaded_by=self.admin,
+            certificate_pem="FAKEPEM",
+            encrypted_key="FAKEKEY",
+            certificate_filename="firma.pem",
+            key_filename="klucz.key",
+            environment="demo",
+        )
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("company-ksef-certificate-status", kwargs={"company_id": self.company.uuid})
+        response = self.client.get(url, {"environment": "demo"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["certificate_filename"], "firma.pem")
+        self.assertEqual(response.data["key_filename"], "klucz.key")
+
+    def test_upload_stores_basename_only(self):
+        from datetime import date
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        parsed = SimpleNamespace(
+            certificate_pem="PEM",
+            private_key_pem="KEY",
+            subject_name="CN=Test",
+            valid_from=date(2026, 2, 16),
+            valid_until=date(2028, 2, 16),
+        )
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("company-ksef-certificate", kwargs={"company_id": self.company.uuid})
+        cert = SimpleUploadedFile("folder/firma.pem", b"cert-bytes")
+        key = SimpleUploadedFile("..\\klucz.key", b"key-bytes")
+        with patch("apps.users.certificate_views.parse_certificate_and_key", return_value=parsed), patch(
+            "apps.users.certificate_views.encrypt_private_key_pem", return_value="ENC"
+        ):
+            response = self.client.post(
+                url,
+                {"certificate_file": cert, "key_file": key, "environment": "demo"},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["certificate_filename"], "firma.pem")
+        self.assertEqual(response.data["key_filename"], "klucz.key")

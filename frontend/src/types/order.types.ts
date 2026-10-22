@@ -65,6 +65,7 @@ export interface Order {
   delivered_at: string | null;
   items: OrderItem[];
   has_active_invoice?: boolean;
+  production_status?: 'in_progress' | 'completed' | null;
 }
 
 /**

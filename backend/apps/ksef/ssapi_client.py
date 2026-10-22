@@ -28,6 +28,16 @@ def _get_ksef_session(company_id: str):
         raise RuntimeError("Brak sesji KSeF. Najpierw przeprowadź uwierzytelnienie.")
 
 
+def _get_ksef_host(company_id: str) -> str:
+    """Return the KSeF API host for the company based on its ksef_environment setting."""
+    from apps.users.models import Company
+    try:
+        env = Company.objects.values_list("ksef_environment", flat=True).get(pk=company_id)
+    except Company.DoesNotExist:
+        return crypto.KSEF_DEFAULT_HOST
+    return crypto.KSEF_ENV_HOSTS.get(env, crypto.KSEF_DEFAULT_HOST)
+
+
 def _build_access_token(ksef_sess) -> crypto.Token:
     """Build a crypto.Token from the stored KSeFSession fields."""
     if not ksef_sess.access_token_body:
@@ -84,13 +94,18 @@ def authenticate(nip: str, passphrase: str, company_id: str) -> tuple[list, dict
     the authentication token (caller should retry).
     """
     from .models import KSeFSession
-    from apps.users.models import KSeFCertificate
+    from apps.users.models import KSeFCertificate, Company as _Company
     from apps.users.ksef_crypto import decrypt_private_key_pem
 
-    cert_row = KSeFCertificate.objects.filter(company_id=company_id, is_active=True).first()
+    try:
+        env = _Company.objects.values_list("ksef_environment", flat=True).get(pk=company_id)
+    except _Company.DoesNotExist:
+        env = "demo"
+    cert_row = KSeFCertificate.objects.filter(company_id=company_id, environment=env, is_active=True).first()
     if not cert_row:
-        raise ValueError("Brak aktywnego certyfikatu KSeF.")
+        raise ValueError(f"Brak aktywnego certyfikatu KSeF dla środowiska '{env}'.")
 
+    host = _get_ksef_host(company_id)
     key_pem_bytes = decrypt_private_key_pem(cert_row.encrypted_key).encode()
     # Key may be passphrase-protected (originally uploaded encrypted) or plain PKCS8
     try:
@@ -103,13 +118,13 @@ def authenticate(nip: str, passphrase: str, company_id: str) -> tuple[list, dict
 
     certificate = crypto.load_certificate_from_pem(cert_row.certificate_pem.encode())
 
-    challenge = crypto.get_auth_challenge()
+    challenge = crypto.get_auth_challenge(host=host)
     request_doc = crypto.create_auth_token_request_document(challenge, nip)
     signed_doc = crypto.sign_auth_token_request(request_doc, private_key, certificate)
-    reference = crypto.authenticate(signed_doc)
+    reference = crypto.authenticate(signed_doc, host=host)
 
     try:
-        access_token, refresh_token = crypto.get_tokens(reference.authentication_token)
+        access_token, refresh_token = crypto.get_tokens(reference.authentication_token, host=host)
     except crypto.TokenNotFoundInResponseError:
         raise ValueError("ksef_auth_in_progress")
 
@@ -147,14 +162,15 @@ def send_invoice(
 
     ksef_sess = _get_ksef_session(company_id)
     access_token = _build_access_token(ksef_sess)
+    host = _get_ksef_host(company_id)
 
     xml_data = _b64.b64decode(invoice_base64).decode()
     symmetric_key, iv = crypto.create_temporary_symmetric_key()
-    _, invoice_cert = crypto.get_public_certificates()
+    _, invoice_cert = crypto.get_public_certificates(host=host)
     encrypted_key = crypto.encrypt_key(symmetric_key, invoice_cert)
-    session = crypto.open_session(encrypted_key, access_token, iv)
+    session = crypto.open_session(encrypted_key, access_token, iv, host=host)
     invoice_data = crypto.encrypt_invoice(xml_data, symmetric_key, iv)
-    outcome = crypto.send_encrypted_invoice_data(invoice_data, access_token, session)
+    outcome = crypto.send_encrypted_invoice_data(invoice_data, access_token, session, host=host)
 
     # Extract P_1 (issue date) from XML for QR verification URL
     tree = etree.fromstring(xml_data.encode())
@@ -195,7 +211,8 @@ def query_received_invoices(
     """Query invoices received as buyer for a date range from KSeF."""
     ksef_sess = _get_ksef_session(company_id)
     access_token = _build_access_token(ksef_sess)
-    result = crypto.query_received_invoices(access_token, date_from, date_to, page_offset, page_size)
+    host = _get_ksef_host(company_id)
+    result = crypto.query_received_invoices(access_token, date_from, date_to, page_offset, page_size, host=host)
     logger.debug("query_received_invoices keys: %s", list(result.keys()))
     return result
 
@@ -204,7 +221,8 @@ def download_received_invoice(nip: str, ksef_reference_number: str, company_id: 
     """Download a received invoice XML by KSeF reference number."""
     ksef_sess = _get_ksef_session(company_id)
     access_token = _build_access_token(ksef_sess)
-    return crypto.download_received_invoice_xml(ksef_reference_number, access_token)
+    host = _get_ksef_host(company_id)
+    return crypto.download_received_invoice_xml(ksef_reference_number, access_token, host=host)
 
 
 def get_invoice_status(reference_number: str, company_id: str) -> tuple[int, dict]:
@@ -221,6 +239,7 @@ def get_invoice_status(reference_number: str, company_id: str) -> tuple[int, dic
 
     ksef_sess = _get_ksef_session(company_id)
     access_token = _build_access_token(ksef_sess)
+    host = _get_ksef_host(company_id)
 
     sent_inv = KSeFSentInvoice.objects.filter(
         company_id=company_id, reference_number=reference_number
@@ -248,6 +267,7 @@ def get_invoice_status(reference_number: str, company_id: str) -> tuple[int, dic
             reference_number,
             access_token,
             allowed_codes=(100, 150, 200),
+            host=host,
         )
     except crypto.InvalidInvoiceStatusError as err:
         return 400, {
@@ -276,12 +296,12 @@ def get_invoice_status(reference_number: str, company_id: str) -> tuple[int, dic
 
     # Success — close session, retrieve UPO
     try:
-        crypto.close_session(sent_inv.session_reference_number, access_token)
+        crypto.close_session(sent_inv.session_reference_number, access_token, host=host)
     except Exception:
         logger.debug("Session %s already closed", sent_inv.session_reference_number)
 
     upo_xml, upo_hash = crypto.get_invoice_upo(
-        sent_inv.session_reference_number, reference_number, access_token
+        sent_inv.session_reference_number, reference_number, access_token, host=host
     )
 
     sent_inv.ksef_number = inv_status.ksef_number or ""

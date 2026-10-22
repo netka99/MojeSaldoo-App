@@ -113,6 +113,7 @@ class OrderSerializer(UUIDModelSerializer):
         read_only=True,
     )
     has_active_invoice = serializers.BooleanField(read_only=True, default=False)
+    production_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -141,8 +142,17 @@ class OrderSerializer(UUIDModelSerializer):
             "delivered_at",
             "items",
             "has_active_invoice",
+            "production_status",
         ]
-        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice"]
+        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice", "production_status"]
+
+    def get_production_status(self, obj):
+        orders = obj.production_orders.all()
+        if not orders:
+            return None
+        if any(o.status == "completed" for o in orders):
+            return "completed"
+        return "in_progress"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -465,9 +465,16 @@ class DashboardSummaryView(ReportingModuleMixin, APIView):
             row['product_id'] = str(row['product_id'])
             row['warehouse__id'] = str(row['warehouse__id'])
 
+        from apps.production.models import ProductionOrder
+        production_in_progress = ProductionOrder.objects.filter(
+            company=company,
+            status=ProductionOrder.STATUS_DRAFT,
+        ).count()
+
         return Response({
             'orders_pending_confirmation': orders_pending,
             'wz_in_transit': wz_in_transit,
+            'production_in_progress': production_in_progress,
             'invoices_overdue': {
                 'count': inv_agg['count'] or 0,
                 'total_gross': str(inv_agg['total'] or 0),

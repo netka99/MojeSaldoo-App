@@ -7,6 +7,7 @@ import { useAllActiveCustomersQuery } from '@/query/use-customers';
 import { useGenerateFromOrdersMutation, useInvoiceNextNumberQuery } from '@/query/use-invoices';
 import { useResolvedCompanyId } from '@/hooks/useResolvedCompanyId';
 import { InvoiceKsefOptions } from '@/components/features/invoicing/InvoiceKsefOptions';
+import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
 import { cn } from '@/lib/utils';
 import type { Order, InvoiceKsefOptions as KsefOptionsType, InvoicePaymentMethod, Company } from '@/types';
 
@@ -551,6 +552,10 @@ function InvoiceFromOrdersPageContent() {
           </h1>
         </div>
         <StepIndicator step={step} />
+      </div>
+
+      <div className="px-4 pt-3">
+        <KsefTestEnvBanner />
       </div>
 
       {/* ── Step 1: Customer + Items ── */}

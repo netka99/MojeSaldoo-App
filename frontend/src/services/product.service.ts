@@ -83,6 +83,14 @@ export const productService = {
 
   deleteItem: (id: string) => api.delete<Record<string, never>>(`/products/${id}/`),
 
+  uploadImage: (id: string, file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+    return api.postForm<Product>(`/products/${id}/image/`, form);
+  },
+
+  deleteImage: (id: string) => api.delete<Product>(`/products/${id}/image/`),
+
   partialUpdateItem: (id: string, body: Partial<ProductWrite>) =>
     api.patch<Product>(`/products/${id}/`, body),
 

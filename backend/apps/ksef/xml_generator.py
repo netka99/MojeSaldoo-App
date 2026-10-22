@@ -82,11 +82,17 @@ def _country_code(value: str) -> str:
 
 
 def _build_address_lines(street: str, postal_code: str, city: str) -> tuple[str, str]:
-    """Return (AdresL1, AdresL2) for KSeF XML."""
+    """Return (AdresL1, AdresL2) for KSeF XML.
+    AdresL1 is required — fall back to city when street is empty.
+    """
     l1 = (street or "").strip()
     postal = (postal_code or "").strip()
     cty = (city or "").strip()
     l2 = f"{postal} {cty}".strip()
+    if not l1:
+        # AdresL1 is required; put city there and leave l2 empty
+        l1 = cty or "—"
+        l2 = ""
     return l1, l2
 
 
@@ -134,10 +140,10 @@ def generate_fa3_xml(invoice) -> str:
     seller_contact_xml = ""
     if seller_phone or seller_email:
         contact_inner = ""
-        if seller_phone:
-            contact_inner += f"\n      <Telefon>{_escape(seller_phone)}</Telefon>"
         if seller_email:
             contact_inner += f"\n      <Email>{_escape(seller_email)}</Email>"
+        if seller_phone:
+            contact_inner += f"\n      <Telefon>{_escape(seller_phone)}</Telefon>"
         seller_contact_xml = f"\n    <DaneKontaktowe>{contact_inner}\n    </DaneKontaktowe>"
 
     # --- Buyer address ---
@@ -154,10 +160,10 @@ def generate_fa3_xml(invoice) -> str:
     buyer_contact_xml = ""
     if buyer_phone or buyer_email:
         contact_inner = ""
-        if buyer_phone:
-            contact_inner += f"\n      <Telefon>{_escape(buyer_phone)}</Telefon>"
         if buyer_email:
             contact_inner += f"\n      <Email>{_escape(buyer_email)}</Email>"
+        if buyer_phone:
+            contact_inner += f"\n      <Telefon>{_escape(buyer_phone)}</Telefon>"
         buyer_contact_xml = f"\n    <DaneKontaktowe>{contact_inner}\n    </DaneKontaktowe>"
 
     is_kor = bool(getattr(invoice, "is_correction", False))
@@ -298,14 +304,21 @@ def generate_fa3_xml(invoice) -> str:
 
     vat_fields_xml = ""
     for rate_key, amounts in vat_groups.items():
-        # For KOR include lines even if negative; for regular only if positive
-        if is_kor or amounts["net"] > Decimal("0"):
-            tags = _vat_position_map.get(rate_key)
-            if tags:
-                vat_fields_xml += (
-                    f"\n    <{tags[0]}>{_fmt_amount(amounts['net'])}</{tags[0]}>"
-                    f"\n    <{tags[1]}>{_fmt_amount(amounts['vat'])}</{tags[1]}>"
-                )
+        tags = _vat_position_map.get(rate_key)
+        if not tags:
+            continue
+        net_val = amounts["net"]
+        vat_val = amounts["vat"]
+        # Skip zero-value VAT fields — KSeF rejects P_13/P_14 with value 0
+        if net_val == Decimal("0") and vat_val == Decimal("0"):
+            continue
+        # For regular invoices, also skip negative/zero (shouldn't happen)
+        if not is_kor and net_val <= Decimal("0"):
+            continue
+        vat_fields_xml += (
+            f"\n    <{tags[0]}>{_fmt_amount(net_val)}</{tags[0]}>"
+            f"\n    <{tags[1]}>{_fmt_amount(vat_val)}</{tags[1]}>"
+        )
 
     # --- Line items (FaWiersz) ---
     def _item_gross_price(item) -> Decimal:
@@ -389,6 +402,19 @@ def generate_fa3_xml(invoice) -> str:
     if footer:
         stopka_xml = f"\n    <StopkaFaktury>{_escape(footer)}</StopkaFaktury>"
 
+    # --- DodatkowyOpis (Pole602) — lista par {label, value} ---
+    # FA-3 schema: each entry is a separate <DodatkowyOpis> element with <NrWiersza>, <Klucz>, <Wartosc>
+    dodatkowy_opis_xml = ""
+    additional_info = getattr(invoice, "additional_info", None) or []
+    if additional_info:
+        nr = 1
+        for item in additional_info:
+            label = str(item.get("label", "")).strip()
+            value = str(item.get("value", "")).strip()
+            if label and value:
+                dodatkowy_opis_xml += f"\n    <DodatkowyOpis><NrWiersza>{nr}</NrWiersza><Klucz>{_escape(label)}</Klucz><Wartosc>{_escape(value)}</Wartosc></DodatkowyOpis>"
+                nr += 1
+
     # --- WZ: numery dokumentów magazynowych (FA-3 pole fakultatywne, max 1000, po P_2) ---
     wz_xml = ""
     if getattr(invoice, "show_wz_numbers", False):
@@ -412,9 +438,13 @@ def generate_fa3_xml(invoice) -> str:
     if bank_iban and invoice.payment_method == "transfer":
         bank_swift_val = (getattr(invoice, "bank_swift", "") or "").strip()
         bank_name_val = (getattr(invoice, "bank_name", "") or "").strip()
+        # FA-3 NrRB requires the account number without country prefix (26 digits only)
+        bank_iban_nrb = bank_iban.replace(" ", "")
+        if bank_iban_nrb.upper().startswith("PL"):
+            bank_iban_nrb = bank_iban_nrb[2:]
         bank_xml = f"""
       <RachunekBankowy>
-        <NrRB>{_escape(bank_iban)}</NrRB>"""
+        <NrRB>{_escape(bank_iban_nrb)}</NrRB>"""
         if bank_swift_val:
             bank_xml += f"\n        <SWIFT>{_escape(bank_swift_val)}</SWIFT>"
         if bank_name_val:
@@ -452,26 +482,24 @@ def generate_fa3_xml(invoice) -> str:
             f"\n      <DataZaplaty>{_fmt_date(payment_received)}</DataZaplaty>"
         )
 
-    # --- Rejestry (seller registry identifiers) ---
-    # NOTE: element names (KRS/REGON/BDO) and their ordering inside DaneIdentyfikacyjne
-    # must be verified against the official FA-3 XSD at
-    # http://crd.gov.pl/wzor/2025/06/25/13775/ before production use.
-    # TODO: verify Rejestry sub-element ordering from XSD.
+    # --- Stopka with Rejestry (REGON/KRS/BDO) — placed after </Fa>, before </Faktura> ---
+    # Matches KSeF-accepted pattern (verified from real KSeF invoices).
     regon_val = (getattr(company, "regon", "") or "").strip()
     krs_val = (getattr(company, "krs", "") or "").strip()
     bdo_val = (getattr(company, "bdo", "") or "").strip()
     rejestry_xml = ""
-    if krs_val or regon_val or bdo_val:
-        rejestry_inner = ""
-        if krs_val:
-            rejestry_inner += f"\n      <KRS>{_escape(krs_val)}</KRS>"
+    if regon_val or krs_val or bdo_val:
+        rejestry_inner = f"\n    <PelnaNazwa>{_escape(company.name)}</PelnaNazwa>"
         if regon_val:
-            rejestry_inner += f"\n      <REGON>{_escape(regon_val)}</REGON>"
+            rejestry_inner += f"\n    <REGON>{_escape(regon_val)}</REGON>"
+        if krs_val:
+            rejestry_inner += f"\n    <KRS>{_escape(krs_val)}</KRS>"
         if bdo_val:
-            rejestry_inner += f"\n      <BDO>{_escape(bdo_val)}</BDO>"
-        rejestry_xml = f"\n    <Rejestry>{rejestry_inner}\n    </Rejestry>"
+            rejestry_inner += f"\n    <BDO>{_escape(bdo_val)}</BDO>"
+        rejestry_xml = f"\n  <Stopka>\n  <Rejestry>{rejestry_inner}\n  </Rejestry>\n  </Stopka>"
 
-    # --- KOR: DaneFaKorygowanej block ---
+    # --- KOR: PrzyczynaKorekty + DaneFaKorygowanej block ---
+    # FA-3 schema order (Schemat 34): PrzyczynaKorekty → TypKorekty → DaneFaKorygowanej
     dane_kor_xml = ""
     if is_kor and invoice.corrects_invoice_id:
         orig_inv = invoice.corrects_invoice
@@ -481,10 +509,10 @@ def generate_fa3_xml(invoice) -> str:
             ksef_nr_tag = f"\n    <NrKSeF>1</NrKSeF>\n    <NrKSeFFaKorygowanej>{_escape(orig_ksef)}</NrKSeFFaKorygowanej>"
         correction_reason = (getattr(invoice, "correction_reason", "") or "").strip()
         przyczyna_xml = f"\n    <PrzyczynaKorekty>{_escape(correction_reason)}</PrzyczynaKorekty>" if correction_reason else ""
-        dane_kor_xml = f"""
+        dane_kor_xml = f"""{przyczyna_xml}
   <DaneFaKorygowanej>
     <DataWystFaKorygowanej>{_fmt_date(orig_inv.issue_date)}</DataWystFaKorygowanej>
-    <NrFaKorygowanej>{_escape(orig_inv.invoice_number)}</NrFaKorygowanej>{ksef_nr_tag}{przyczyna_xml}
+    <NrFaKorygowanej>{_escape(orig_inv.invoice_number)}</NrFaKorygowanej>{ksef_nr_tag}
   </DaneFaKorygowanej>"""
 
     # --- ROZ: Rozliczenie block ---
@@ -554,7 +582,11 @@ def generate_fa3_xml(invoice) -> str:
     # --- Creation timestamp (UTC, ISO 8601) ---
     now_utc = datetime.now(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    # AdresL2 is optional — omit when empty
+    seller_adres_l2_xml = f"\n      <AdresL2>{_escape(seller_l2)}</AdresL2>" if seller_l2 else ""
+    buyer_adres_l2_xml = f"\n      <AdresL2>{_escape(buyer_l2)}</AdresL2>" if buyer_l2 else ""
+
+    xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
   <Naglowek>
     <KodFormularza kodSystemowy="FA (3)" wersjaSchemy="1-0E">FA</KodFormularza>
@@ -565,12 +597,11 @@ def generate_fa3_xml(invoice) -> str:
   <Podmiot1>
     <DaneIdentyfikacyjne>
       <NIP>{_escape(company.nip)}</NIP>
-      <Nazwa>{_escape(company.name)}</Nazwa>{rejestry_xml}
+      <Nazwa>{_escape(company.name)}</Nazwa>
     </DaneIdentyfikacyjne>
     <Adres>
       <KodKraju>PL</KodKraju>
-      <AdresL1>{_escape(seller_l1)}</AdresL1>
-      <AdresL2>{_escape(seller_l2)}</AdresL2>
+      <AdresL1>{_escape(seller_l1)}</AdresL1>{seller_adres_l2_xml}
     </Adres>{seller_contact_xml}
   </Podmiot1>
   <Podmiot2>
@@ -580,8 +611,7 @@ def generate_fa3_xml(invoice) -> str:
     </DaneIdentyfikacyjne>
     <Adres>
       <KodKraju>{_country_code(customer.country)}</KodKraju>
-      <AdresL1>{_escape(buyer_l1)}</AdresL1>
-      <AdresL2>{_escape(buyer_l2)}</AdresL2>
+      <AdresL1>{_escape(buyer_l1)}</AdresL1>{buyer_adres_l2_xml}
     </Adres>{buyer_contact_xml}
     <JST>{jst_val}</JST>
     <GV>{gv_val}</GV>
@@ -594,14 +624,14 @@ def generate_fa3_xml(invoice) -> str:
     {_build_p6_xml(invoice)}{vat_fields_xml}
     <P_15>{_fmt_amount(total_gross)}</P_15>{adnotacje_xml}{p106e_xml}
     <RodzajFaktury>{rodzaj_faktury}</RodzajFaktury>{dane_kor_xml}{rozliczenie_xml}
-    {lines_xml}{stopka_xml}
+    {dodatkowy_opis_xml}{lines_xml}{stopka_xml}
     <Platnosc>
       <TerminPlatnosci>
         {f"<OpisTerminuPlatnosci>{_escape(invoice.due_date_description.strip())}</OpisTerminuPlatnosci>" if getattr(invoice, "due_date_description", "").strip() else f"<Termin>{_fmt_date(invoice.due_date)}</Termin>"}
       </TerminPlatnosci>
       <FormaPlatnosci>{_payment_code(invoice.payment_method)}</FormaPlatnosci>{other_pm_xml}{bank_xml}{skonto_xml}{link_xml}{ksef_pid_xml}{p_iz_xml}
     </Platnosc>
-  </Fa>{warunki_xml}
+  </Fa>{warunki_xml}{rejestry_xml}
 </Faktura>"""
 
     return xml

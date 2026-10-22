@@ -36,8 +36,16 @@ function toCreateCompanyBody(data: CompanyWrite): Record<string, unknown> {
   if (data.ryczalt_category !== undefined) body.ryczalt_category = data.ryczalt_category;
   if (data.is_vat_payer !== undefined) body.is_vat_payer = data.is_vat_payer;
   if (data.ksef_usage !== undefined) body.ksef_usage = data.ksef_usage;
+  if (data.ksef_environment !== undefined) body.ksef_environment = data.ksef_environment;
   if (data.invoice_returns_mode !== undefined) body.invoice_returns_mode = data.invoice_returns_mode;
+  if (data.wz_quick_returns !== undefined) body.wz_quick_returns = data.wz_quick_returns;
   if (data.price_input_mode !== undefined) body.price_input_mode = data.price_input_mode;
+  if (data.bank_account_iban !== undefined) body.bank_account_iban = data.bank_account_iban;
+  if (data.bank_swift !== undefined) body.bank_swift = data.bank_swift;
+  if (data.bank_name !== undefined) body.bank_name = data.bank_name;
+  if (data.regon !== undefined) body.regon = data.regon;
+  if (data.krs !== undefined) body.krs = data.krs;
+  if (data.bdo !== undefined) body.bdo = data.bdo;
   return body;
 }
 
@@ -75,6 +83,15 @@ export const companyService = {
 
   updateWorkflowSettings: (companyId: string, data: Partial<CompanyWorkflowSettings>) =>
     api.patch<CompanyWorkflowSettings>(`/companies/${companyId}/workflow-settings/`, data),
+
+  uploadLogo: (companyId: string, file: File) => {
+    const form = new FormData();
+    form.append('logo', file);
+    return api.postForm<Company>(`/companies/${companyId}/logo/`, form);
+  },
+
+  deleteLogo: (companyId: string) =>
+    api.delete<Company>(`/companies/${companyId}/logo/`),
 
   deleteCompany: (companyId: string, confirmName: string) =>
     api.delete<{ detail: string }>(`/companies/${companyId}/delete/`, { data: { confirm_name: confirmName } }),

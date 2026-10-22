@@ -76,7 +76,7 @@ export const MODULE_CARD_COPY: Record<
   },
   production: {
     title: 'Produkcja',
-    description: 'Receptury, zlecenia produkcji, rozchody RW i przychody PW.',
+    description: 'Receptury, zlecenia produkcji. RW = rozchód surowców, PW = przyjęcie wyrobu gotowego na magazyn.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },

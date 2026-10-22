@@ -227,10 +227,10 @@ def apply_pz_receipt(pz_document: "DeliveryDocument", user) -> None:
 
 
 def default_from_warehouse_for_delivery(company_id):
-    """Prefer active van/mobile warehouse so WZ completion deducts from the van after loading; else main MG."""
-    return active_mobile_warehouse_for_company(
-        company_id
-    ) or active_main_warehouse_for_company(company_id)
+    """Use the main MG warehouse as the default source for WZ documents.
+    Van routing (MM → van → WZ) is handled separately; WZ created directly
+    from an order always deducts from the main warehouse."""
+    return active_main_warehouse_for_company(company_id)
 
 
 def generate_delivery_from_order(order: Order, user=None) -> DeliveryDocument:
@@ -1396,6 +1396,7 @@ def create_zw_from_pending_returns(
     wz_doc: DeliveryDocument,
     return_items: list[dict],
     user,
+    issue_date=None,
 ) -> DeliveryDocument:
     """
     Create a ZW (Zwrot Zewnętrzny) document from pending return lines collected during
@@ -1465,10 +1466,10 @@ def create_zw_from_pending_returns(
 
         zw_doc = DeliveryDocument.objects.create(
             company_id=company_id,
-            order=None,
+            order=wz_doc.order,
             user=user,
             document_type=DeliveryDocument.DOC_TYPE_ZW,
-            issue_date=timezone.localdate(),
+            issue_date=issue_date or timezone.localdate(),
             from_warehouse=None,      # coming from external customer
             to_warehouse=van_warehouse,
             to_customer=wz_doc.to_customer,

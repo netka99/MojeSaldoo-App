@@ -158,4 +158,8 @@ export const invoiceService = {
     api.get<AvailableZalInvoice[]>(`${basePath}available-zal/`, {
       params: { customer_id: customerId },
     }),
+
+  /** Full edit of an invoice (no KSeF number). Returns updated invoice. */
+  editInvoice: (id: string, data: Record<string, unknown>) =>
+    api.patch<Invoice>(`${basePath}${id}/edit/`, data),
 };

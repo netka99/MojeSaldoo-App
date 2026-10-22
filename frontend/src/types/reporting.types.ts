@@ -87,6 +87,7 @@ export type DashboardLowStockAlert = {
 export type DashboardSummary = {
   orders_pending_confirmation: number;
   wz_in_transit: number;
+  production_in_progress: number;
   invoices_overdue: {
     count: number;
     total_gross: string;

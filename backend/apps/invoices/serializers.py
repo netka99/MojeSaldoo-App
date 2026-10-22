@@ -14,11 +14,23 @@ from .models import Invoice, InvoiceItem
 
 
 class InvoiceItemSerializer(UUIDModelSerializer):
+    # Non-null only when the invoice line price was manually overridden vs. the source order item.
+    order_item_price_net = serializers.SerializerMethodField()
+
+    def get_order_item_price_net(self, obj):
+        if not obj.order_item_id:
+            return None
+        oi = obj.order_item
+        if oi and abs(float(oi.unit_price_net or 0) - float(obj.unit_price_net or 0)) > 0.0001:
+            return str(oi.unit_price_net)
+        return None
+
     class Meta:
         model = InvoiceItem
         fields = [
             "id",
             "order_item",
+            "order_item_price_net",
             "product",
             "product_name",
             "product_unit",
@@ -95,6 +107,8 @@ class InvoiceSerializer(UUIDModelSerializer):
     orders_summary = serializers.SerializerMethodField(read_only=True)
     # Resolved customer name — from direct FK or via order
     customer_name = serializers.SerializerMethodField(read_only=True)
+    customer_city = serializers.SerializerMethodField(read_only=True)
+    customer_street = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Invoice
@@ -106,6 +120,16 @@ class InvoiceSerializer(UUIDModelSerializer):
             return instance.customer.name
         if instance.order_id and instance.order.customer_id:
             return instance.order.customer.name
+        return ""
+
+    def get_customer_city(self, instance):
+        if instance.customer_id:
+            return instance.customer.city or ""
+        return ""
+
+    def get_customer_street(self, instance):
+        if instance.customer_id:
+            return instance.customer.street or ""
         return ""
 
     def get_order_ids(self, instance):

@@ -94,6 +94,21 @@ export function ProductAdjustStockPage() {
             <p className="text-sm text-muted-foreground">
               Produkt: <span className="font-medium text-foreground">{product.name}</span>
             </p>
+            {product.stocks_by_warehouse && product.stocks_by_warehouse.length > 0 && (
+              <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 divide-y divide-slate-100">
+                {product.stocks_by_warehouse.map((s) => (
+                  <div key={s.warehouse_id} className="flex items-center justify-between px-3 py-2">
+                    <span className="text-sm font-medium text-slate-700">{s.warehouse_code} — {s.warehouse_name}</span>
+                    <div className="text-right text-sm tabular-nums">
+                      <span className="font-semibold text-slate-900">{parseFloat(s.quantity_available).toLocaleString('pl-PL')} {product.unit}</span>
+                      {parseFloat(s.quantity_reserved) > 0 && (
+                        <span className="ml-2 text-xs text-amber-600">({parseFloat(s.quantity_reserved).toLocaleString('pl-PL')} zarezerwowane)</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               Dla przesunięć między magazynami użyj przycisku „Przesuń" na stronie magazynu.
             </p>

@@ -115,10 +115,14 @@ export interface AuthUser {
   ryczalt_category?: string | null;
   /** Dict of module_key → is_enabled for the current company. */
   modules?: Record<string, boolean>;
+  /** True for Django staff/admin users — unlocks hidden settings like KSeF test environment. */
+  is_staff?: boolean;
   /** True when the company is a VAT payer — shows VAT breakdown in sales reports. */
   is_vat_payer?: boolean;
   /** KSeF usage mode for the company: mandatory | voluntary | exempt | none. */
   ksef_usage?: 'mandatory' | 'voluntary' | 'exempt' | 'none' | null;
+  /** KSeF environment: test (admin only) | demo | production. */
+  ksef_environment?: 'test' | 'demo' | 'production' | null;
   /** Whether the company enters prices as net (B2B) or gross (retail). */
   price_input_mode?: 'net' | 'gross' | null;
 }

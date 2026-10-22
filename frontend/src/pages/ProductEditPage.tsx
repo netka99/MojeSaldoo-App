@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ProductForm } from '@/components/features/ProductForm';
+import { ProductForm, type ProductImageChange } from '@/components/features/ProductForm';
 import { Button } from '@/components/ui/Button';
 import { productKeys } from '@/query/keys';
 import { useProductQuery, useUpdateProductMutation, useDeleteProductMutation } from '@/query/use-products';
 import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
 import { authStorage } from '@/services/api';
+import { productService } from '@/services/product.service';
 import { cn } from '@/lib/utils';
 import type { ProductWrite } from '@/types';
 
@@ -47,6 +48,7 @@ export function ProductEditPage() {
   const update = useUpdateProductMutation();
   const deleteMutation = useDeleteProductMutation();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -117,18 +119,26 @@ export function ProductEditPage() {
           )}
           <ProductForm
             product={product}
-            onSubmit={async (data: ProductWrite) => {
+            onSubmit={async (data: ProductWrite, image?: ProductImageChange) => {
               setSubmitError(null);
+              setSaving(true);
               try {
                 await update.mutateAsync({ id, body: productBodyForPut(data) });
+                if (image?.file) {
+                  await productService.uploadImage(id, image.file);
+                } else if (image?.remove) {
+                  await productService.deleteImage(id);
+                }
                 await queryClient.invalidateQueries({ queryKey: productKeys.all });
                 navigate('/products');
               } catch (e) {
                 setSubmitError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');
+              } finally {
+                setSaving(false);
               }
             }}
             onCancel={() => navigate(-1)}
-            isLoading={update.isPending}
+            isLoading={saving}
           />
 
           {/* ── Delete zone ──────────────────────────────────────── */}
@@ -192,21 +202,46 @@ export function ProductEditPage() {
           </div>
 
           <div className="shadow-soft rounded-2xl bg-surface-card p-4">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Stan magazynowy
-            </p>
-            <p className="mt-1 text-[13px] text-on-surface-variant">
-              Korektę ilości w magazynie zapisujesz osobno — nie wpływa na dane katalogowe (cena, VAT, SKU).
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Stan magazynowy
+              </p>
               <Link
                 to={`/products/${id}/adjust-stock`}
-                className={cn(
-                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
-                )}
+                className="text-xs font-semibold text-primary hover:underline"
               >
-                Korekta stanów magazynowych
+                Korekta
               </Link>
+            </div>
+
+            {product.stocks_by_warehouse && product.stocks_by_warehouse.length > 0 ? (
+              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                {product.stocks_by_warehouse.map((s) => (
+                  <div key={s.warehouse_id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">{s.warehouse_name}</p>
+                      <p className="text-xs text-slate-400">{s.warehouse_code}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold tabular-nums text-slate-900">
+                        {parseFloat(s.quantity_available).toLocaleString('pl-PL')} {product.unit}
+                      </p>
+                      {parseFloat(s.quantity_reserved) > 0 && (
+                        <p className="text-xs tabular-nums text-amber-600">
+                          {parseFloat(s.quantity_reserved).toLocaleString('pl-PL')} zarezerwowane
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[13px] text-on-surface-variant">
+                Brak danych o stanie — dodaj stan przez korektę.
+              </p>
+            )}
+
+            <div className="mt-3 flex flex-wrap gap-2">
               <Link
                 to={`/products/${id}/movements`}
                 className={cn(

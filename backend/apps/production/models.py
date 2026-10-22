@@ -138,6 +138,12 @@ class ProductionOrder(models.Model):
         on_delete=models.SET_NULL,
         related_name="production_order_pw",
     )
+    source_orders = models.ManyToManyField(
+        "orders.Order",
+        blank=True,
+        related_name="production_orders",
+        help_text="Optional: customer orders this production run fulfils (MTO).",
+    )
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

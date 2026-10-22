@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ProductList } from '@/components/features/products/ProductList';
 import { ProductImportDialog } from '@/components/features/products/ProductImportDialog';
-import { Button } from '@/components/ui/Button';
 import { authStorage } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
+import { ReportShell, reportButtonClass, reportTitleClass } from '@/lib/reportSurface';
 
 export function ProductsPage() {
   const location = useLocation();
@@ -17,21 +17,26 @@ export function ProductsPage() {
   }
 
   return (
-    <div className="space-y-4 p-6">
-      <div className="mx-auto flex max-w-6xl justify-end gap-2">
+    <ReportShell>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className={reportTitleClass}>Produkty</h1>
         {canManageProducts && (
-          <>
-            <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={reportButtonClass} onClick={() => setImportOpen(true)}>
               Importuj
-            </Button>
-            <Button type="button" onClick={() => navigate('/products/new')}>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/products/new')}
+              className="rounded-2xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+            >
               Dodaj produkt
-            </Button>
-          </>
+            </button>
+          </div>
         )}
       </div>
       <ProductList onRowClick={canManageProducts ? (p) => navigate(`/products/${p.id}/edit`) : undefined} />
       {importOpen && <ProductImportDialog onClose={() => setImportOpen(false)} />}
-    </div>
+    </ReportShell>
   );
 }

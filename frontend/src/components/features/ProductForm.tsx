@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -239,9 +239,17 @@ function FormSection({
   );
 }
 
+const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+export interface ProductImageChange {
+  file: File | null;
+  remove: boolean;
+}
+
 export interface ProductFormProps {
   product?: Product | null;
-  onSubmit: (data: ProductWrite) => void | Promise<void>;
+  onSubmit: (data: ProductWrite, image?: ProductImageChange) => void | Promise<void>;
   onCancel?: () => void;
   isLoading?: boolean;
   submitLabel?: string;
@@ -299,7 +307,19 @@ export function ProductForm({
     }
   }, [isGross, priceGross, vatRate, setValue]);
 
+  const productName = useWatch({ control, name: 'name' });
   const avgCostManual = useWatch({ control, name: 'avg_cost_manual' });
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [removeImage, setRemoveImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
 
   // Resolved avg_cost for price suggestion: manual input takes precedence over stored value
   const resolvedAvgCost = (() => {
@@ -319,11 +339,56 @@ export function ProductForm({
 
   useEffect(() => {
     reset(product ? productToFormDefaults(product) : EMPTY_PRODUCT_DEFAULTS);
+    setImageFile(null);
+    setRemoveImage(false);
+    setImageError(null);
+    setImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.id, product?.updated_at, reset]);
 
+  function handleImagePick(file: File | undefined) {
+    setImageError(null);
+    if (!file) return;
+    if (!PRODUCT_IMAGE_TYPES.includes(file.type)) {
+      setImageError('Dozwolone formaty: JPEG, PNG, WebP.');
+      return;
+    }
+    if (file.size > PRODUCT_IMAGE_MAX_BYTES) {
+      setImageError('Zdjęcie jest za duże. Maksymalnie 5 MB.');
+      return;
+    }
+    setImageFile(file);
+    setRemoveImage(false);
+    setImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  }
+
+  function clearImage() {
+    setImageFile(null);
+    setRemoveImage(true);
+    setImageError(null);
+    setImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  }
+
+  const shownImage = imagePreview || (!removeImage ? product?.image_url : null);
+  const imageLetter = (productName || product?.name || '?').trim().charAt(0).toUpperCase() || '?';
+
   const submit = handleSubmit(async (values) => {
-    await onSubmit(formValuesToProductWrite(values, product?.id));
+    const payload = formValuesToProductWrite(values, product?.id);
+    if (imageFile || removeImage) {
+      await onSubmit(payload, { file: imageFile, remove: removeImage && !imageFile });
+      return;
+    }
+    await onSubmit(payload);
   });
 
   const inField = (name: keyof ProductFormValues) =>
@@ -374,6 +439,37 @@ export function ProductForm({
 
       <div className="space-y-4">
         <FormSection title={isService ? 'Dane usługi' : 'Dane podstawowe'} Icon={IconPackage}>
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-slate-800">Zdjęcie</span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-[#F2F2F7] text-base font-semibold text-primary"
+                aria-label="Wybierz zdjęcie produktu"
+              >
+                {shownImage ? (
+                  <img src={shownImage} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  imageLetter
+                )}
+              </button>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                onChange={(e) => handleImagePick(e.target.files?.[0])}
+              />
+              {shownImage && (
+                <button type="button" className="text-sm font-medium text-slate-700 hover:underline" onClick={clearImage}>
+                  Usuń zdjęcie
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">JPEG, PNG lub WebP, maks. 5 MB. Zapisujemy tylko małą miniaturę.</p>
+            {imageError && <p className="mt-1.5 text-xs text-destructive">{imageError}</p>}
+          </div>
           <Input
             label="Nazwa"
             placeholder={isService ? 'np. Naprawa zmywarki' : 'np. Kartacze'}

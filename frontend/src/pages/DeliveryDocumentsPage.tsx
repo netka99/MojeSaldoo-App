@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/context/AuthContext';
+import { useMyCompaniesQuery } from '@/query/use-companies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -14,6 +15,7 @@ import { DELIVERY_STATUS_LABELS_PL, deliveryStatusFilterOptions } from '@/consta
 import { openMultiWZPrintWindow } from '@/lib/openMultiWZPrintWindow';
 import { cn } from '@/lib/utils';
 import type { DeliveryDocument, DeliveryDocumentStatus, DeliveryDocumentType, DeliveryItem, UserPermissions } from '@/types';
+import { createPortal } from 'react-dom';
 
 const PAGE_SIZE = 20;
 
@@ -204,6 +206,30 @@ function sumByUnit(docs: DeliveryDocument[]): Map<string, number> {
   return map;
 }
 
+function DocumentItemGrid({
+  items,
+  quantityOf,
+  quantityClassName,
+}: {
+  items: DeliveryItem[];
+  quantityOf: (item: DeliveryItem) => string | number;
+  quantityClassName?: string;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-x-6 gap-y-1">
+      {items.map((item) => (
+        <span key={item.id} className="inline-flex max-w-full items-baseline gap-2 text-sm">
+          <span className="truncate">{productLabel(item)}</span>
+          <span className={cn('shrink-0 font-semibold tabular-nums', quantityClassName)}>
+            {fmtQty(quantityOf(item))} szt.
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ShopDeliveryCard({
   customerName,
   wzDocs,
@@ -294,7 +320,7 @@ function ShopDeliveryCard({
       <div style={{ display: 'grid', gridTemplateRows: expanded ? '1fr' : '0fr', transition: 'grid-template-rows 0.25s ease' }}>
         <div className="min-h-0 overflow-hidden">
           <div className="border-t border-border">
-            <div className="divide-y divide-border/60 px-4 py-5">
+            <div className="divide-y divide-border/60 px-4 py-2">
               {wzDocs.map((doc) => {
                 const qty = (item: DeliveryItem) =>
                   item.quantity_actual !== null && item.quantity_actual !== undefined && item.quantity_actual !== ''
@@ -304,10 +330,10 @@ function ShopDeliveryCard({
                 if (showDates) meta.push(formatIssueDate(doc.issue_date));
                 if (doc.driver_name?.trim()) meta.push(`Kurier: ${doc.driver_name}`);
                 return (
-                  <div key={doc.id} className="relative bg-blue-50/50 py-3 pl-4">
+                  <div key={doc.id} className="relative bg-blue-50/50 py-2 pl-4">
                     <div className="absolute bottom-2 left-0 top-2 w-1 rounded-full bg-primary" />
-                    <div className="mx-auto max-w-[650px]">
-                      <div className="mb-3 flex flex-wrap items-center gap-2 px-3">
+                    <div className="pr-1">
+                      <div className="mb-1.5 flex flex-wrap items-center gap-2">
                         {printMode && (
                           <input
                             type="checkbox"
@@ -317,61 +343,45 @@ function ShopDeliveryCard({
                             aria-label={`Zaznacz ${doc.document_number || doc.id.slice(0, 8)}`}
                           />
                         )}
-                        <Link to={`/delivery/${doc.id}`} className="text-sm font-bold text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+                        <Link to={`/delivery/${doc.id}`} className="text-sm font-semibold text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
                           {doc.document_number?.trim() || `WZ ${doc.id.slice(0, 8)}`}
                         </Link>
                         <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase', deliveryStatusBadgeClassName(doc.status))}>
                           {DELIVERY_STATUS_LABELS_PL[doc.status]}
                         </span>
-                        {meta.length > 0 && <span className="ml-auto text-xs text-muted-foreground">{meta.join(' • ')}</span>}
+                        {meta.length > 0 && <span className="text-xs text-muted-foreground">{meta.join(' • ')}</span>}
                       </div>
-                      {doc.items.length > 0 && (
-                        <div className="divide-y-2 divide-border/60 border-t-2 border-border/60">
-                          {doc.items.map((item, i) => (
-                            <div key={item.id} className={cn('flex items-center px-3 py-[0.4rem] text-sm', i % 2 === 1 && 'bg-blue-100/40')}>
-                              <span>{productLabel(item)}</span>
-                              <span className="mx-3 mb-1 min-w-0 flex-1 border-b border-dotted border-border" />
-                              <span className="shrink-0 font-bold tabular-nums">{fmtQty(qty(item))} szt.</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <DocumentItemGrid items={doc.items} quantityOf={qty} />
                     </div>
                   </div>
                 );
               })}
 
               {zwDocs.length > 0 && (
-                <div className="space-y-4 -mx-4 px-4 mt-4 pt-3 pb-1 border-y-2 border-border bg-muted/50">
+                <div className="mt-2 space-y-2 border-y-2 border-border bg-muted/50 px-4 py-2 -mx-4">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Zwroty (ZW)</p>
                   {zwDocs.map((doc) => {
                     const meta: string[] = [];
                     if (showDates) meta.push(formatIssueDate(doc.issue_date));
                     if (doc.returns_notes?.trim()) meta.push(`Przyczyna: ${doc.returns_notes}`);
                     return (
-                      <div key={doc.id} className="relative bg-amber-50/50 py-3 pl-4">
+                      <div key={doc.id} className="relative bg-amber-50/50 py-2 pl-4">
                         <div className="absolute bottom-2 left-0 top-2 w-1 rounded-full bg-amber-500" />
-                        <div className="mx-auto max-w-[650px]">
-                          <div className="mb-3 flex flex-wrap items-center gap-2 px-3">
-                            <Link to={`/delivery/${doc.id}`} className="text-sm font-bold text-amber-800 hover:underline" onClick={(e) => e.stopPropagation()}>
+                        <div className="pr-1">
+                          <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                            <Link to={`/delivery/${doc.id}`} className="text-sm font-semibold text-amber-800 hover:underline" onClick={(e) => e.stopPropagation()}>
                               {doc.document_number?.trim() || `ZW ${doc.id.slice(0, 8)}`}
                             </Link>
                             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
                               {DELIVERY_STATUS_LABELS_PL[doc.status]}
                             </span>
-                            {meta.length > 0 && <span className="ml-auto text-xs text-muted-foreground">{meta.join(' • ')}</span>}
+                            {meta.length > 0 && <span className="text-xs text-muted-foreground">{meta.join(' • ')}</span>}
                           </div>
-                          {doc.items.length > 0 && (
-                            <div className="divide-y-2 divide-amber-300/60 border-t-2 border-amber-300/60">
-                              {doc.items.map((item, i) => (
-                                <div key={item.id} className={cn('flex items-center px-3 py-[0.4rem] text-sm', i % 2 === 1 && 'bg-amber-100/40')}>
-                                  <span>{productLabel(item)}</span>
-                                  <span className="mx-3 mb-1 min-w-0 flex-1 border-b border-dotted border-amber-300/60" />
-                                  <span className="shrink-0 font-bold tabular-nums text-destructive">{fmtQty(item.quantity_planned)} szt.</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                          <DocumentItemGrid
+                            items={doc.items}
+                            quantityOf={(item) => item.quantity_planned}
+                            quantityClassName="text-destructive"
+                          />
                         </div>
                       </div>
                     );
@@ -385,42 +395,40 @@ function ShopDeliveryCard({
             <div className="border-t-2 border-border bg-muted/50 px-4 py-3">
               <button
                 type="button"
-                className="flex w-full items-center gap-3 text-left"
+                className="flex items-center gap-2 text-left"
                 onClick={(e) => { e.stopPropagation(); setSummaryOpen((v) => !v); }}
               >
                 <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Podsumowanie</span>
                 <span className="text-xs text-muted-foreground">Saldo: {summary.length} pozycji</span>
-                <svg className={cn('ml-auto h-4 w-4 text-muted-foreground transition-transform', summaryOpen && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <svg className={cn('h-4 w-4 text-muted-foreground transition-transform', summaryOpen && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
               <div style={{ display: 'grid', gridTemplateRows: summaryOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
                 <div className="min-h-0 overflow-hidden">
-                  <div className="mx-auto max-w-[650px]">
-                    <table className="mt-3 w-full text-left text-sm">
-                      <thead>
-                        <tr className="border-b-2 border-border text-xs text-muted-foreground">
-                          <th className="py-2 pr-4">Produkt</th>
-                          <th className="px-2 py-2 text-right">WZ (Dostawa)</th>
-                          <th className="px-2 py-2 text-right">ZW (Zwrot)</th>
-                          <th className="py-2 text-right text-primary">Saldo końcowe</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {summary.map((row) => {
-                          const net = row.delivered - row.returned;
-                          return (
-                            <tr key={row.name} className="border-t-2 border-border/60">
-                              <td className="py-2 pr-4">{row.name}</td>
-                              <td className="px-2 py-2 text-right tabular-nums">{fmtQty(row.delivered)}</td>
-                              <td className={cn('px-2 py-2 text-right tabular-nums', row.returned > 0 && 'text-destructive')}>
-                                {row.returned > 0 ? `−${fmtQty(row.returned)}` : '0'}
-                              </td>
-                              <td className="py-2 text-right font-bold tabular-nums text-primary">{fmtQty(net)} szt.</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <table className="mt-3 w-auto text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted-foreground">
+                        <th className="py-1.5 pr-6 font-medium">Produkt</th>
+                        <th className="px-3 py-1.5 text-right font-medium">WZ (Dostawa)</th>
+                        <th className="px-3 py-1.5 text-right font-medium">ZW (Zwrot)</th>
+                        <th className="py-1.5 pl-3 text-right font-medium text-primary">Saldo końcowe</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.map((row) => {
+                        const net = row.delivered - row.returned;
+                        return (
+                          <tr key={row.name} className="border-t border-border/60">
+                            <td className="py-1.5 pr-6">{row.name}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums">{fmtQty(row.delivered)}</td>
+                            <td className={cn('px-3 py-1.5 text-right tabular-nums', row.returned > 0 && 'text-destructive')}>
+                              {row.returned > 0 ? `−${fmtQty(row.returned)}` : '0'}
+                            </td>
+                            <td className="py-1.5 pl-3 text-right font-bold tabular-nums text-primary">{fmtQty(net)} szt.</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -503,6 +511,171 @@ function ByShopView({
   );
 }
 
+/* ── Quick Return Modal ──────────────────────────────────────────────── */
+
+type QuickReturnState = {
+  wzId: string;
+  wzNumber: string;
+  wzDate: string;
+  items: DeliveryItem[];
+};
+
+function QuickReturnModal({ wz, onClose, onSaved }: { wz: QuickReturnState; onClose: () => void; onSaved: () => void }) {
+  const [qtys, setQtys] = useState<Record<string, string>>(() =>
+    Object.fromEntries(wz.items.map((i) => [i.product_id ?? i.id, ''])),
+  );
+  const [returnDate, setReturnDate] = useState(() => todayIso());
+  const wzDateDiffers = wz.wzDate && wz.wzDate !== todayIso();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const adjustQty = (pid: string, delta: number, max: number) => {
+    setQtys((prev) => {
+      const cur = parseFloat(prev[pid] ?? '0') || 0;
+      const next = Math.max(0, Math.min(max, cur + delta));
+      return { ...prev, [pid]: String(next) };
+    });
+  };
+
+  const handleSave = async () => {
+    const returnItems = wz.items
+      .map((i) => ({ product_id: i.product_id ?? i.id, quantity: qtys[i.product_id ?? i.id] ?? '', return_reason: '' }))
+      .filter((r) => parseFloat(r.quantity) > 0);
+    if (returnItems.length === 0) { onClose(); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await deliveryService.addReturns(wz.wzId, returnItems, returnDate);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nie udało się zapisać zwrotu.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      role="presentation"
+      onClick={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Zwrot z ${wz.wzNumber}`}
+        className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-apple-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3.5">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Zwrot towaru</p>
+            <p className="text-xs text-slate-500">{wz.wzNumber}</p>
+          </div>
+          <button type="button" disabled={saving} onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100" aria-label="Zamknij">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
+          </button>
+        </div>
+
+        {/* Date row */}
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5">
+          <label htmlFor="return-date" className="text-sm font-medium text-slate-700">Data zwrotu</label>
+          <div className="flex items-center gap-2">
+            {wzDateDiffers && (
+              <button
+                type="button"
+                onClick={() => setReturnDate(wz.wzDate)}
+                className={cn(
+                  'rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
+                  returnDate === wz.wzDate
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-slate-300 bg-slate-50 text-slate-500 hover:border-primary/50 hover:text-primary',
+                )}
+                aria-label={`Ustaw datę WZ: ${wz.wzDate}`}
+              >
+                Data WZ: {formatIssueDate(wz.wzDate)}
+              </button>
+            )}
+            <input
+              id="return-date"
+              type="date"
+              value={returnDate}
+              onChange={(e) => setReturnDate(e.target.value)}
+              className="date-pill"
+              aria-label="Data zwrotu"
+            />
+          </div>
+        </div>
+
+        <div className="divide-y divide-slate-100">
+          {wz.items.map((item) => {
+            const pid = item.product_id ?? item.id;
+            const deliveredQty = item.quantity_actual !== null && item.quantity_actual !== undefined && item.quantity_actual !== ''
+              ? item.quantity_actual
+              : item.quantity_planned;
+            const max = parseFloat(String(deliveredQty)) || 0;
+            const cur = parseFloat(qtys[pid] ?? '0') || 0;
+            const unit = item.product_unit?.trim() || 'szt.';
+            return (
+              <div key={pid} className="px-4 py-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-sm text-slate-800">{item.product_name}</p>
+                  <span className="text-xs text-slate-400">max {fmtQty(max)} {unit}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => adjustQty(pid, -1, max)}
+                    disabled={cur <= 0}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 disabled:opacity-30"
+                    aria-label="Zmniejsz"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M5 12h14" strokeLinecap="round" /></svg>
+                  </button>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={qtys[pid] ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9.]/g, '');
+                      setQtys((prev) => ({ ...prev, [pid]: v }));
+                    }}
+                    className="field-ios-sm flex-1 text-center"
+                    aria-label={`Zwrot: ${item.product_name}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => adjustQty(pid, 1, max)}
+                    disabled={cur >= max}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white disabled:opacity-30"
+                    aria-label="Zwiększ"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {error && <p className="px-4 py-2 text-xs text-destructive">{error}</p>}
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3">
+          <button type="button" disabled={saving} onClick={onClose} className="rounded-2xl border border-primary/50 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/5 disabled:opacity-50">
+            Anuluj
+          </button>
+          <button type="button" disabled={saving} onClick={handleSave} className="rounded-2xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+            {saving ? 'Zapisuję…' : 'Zapisz zwrot'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function DeliveryDocumentsPage() {
   const location = useLocation();
   if (!authStorage.getAccessToken()) {
@@ -513,6 +686,10 @@ export function DeliveryDocumentsPage() {
 
 function DeliveryDocumentsPageContent() {
   const { user } = useAuth();
+  const { data: myCompanies } = useMyCompaniesQuery();
+  const currentCompany = (myCompanies ?? []).find((c) => c.id === user?.current_company);
+  const wzQuickReturns = currentCompany?.wz_quick_returns ?? false;
+  const [quickReturnWz, setQuickReturnWz] = useState<QuickReturnState | null>(null);
   const canDelivery = usePermission('can_manage_delivery');
 
   const hasPermission = (key: keyof UserPermissions): boolean =>
@@ -833,6 +1010,7 @@ function DeliveryDocumentsPageContent() {
                       <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">Kierowca</th>
                       <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
                       <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">Zamówienie</th>
+                      {wzQuickReturns && <th scope="col" className="w-20 px-3 py-3" />}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border bg-card">
@@ -884,6 +1062,19 @@ function DeliveryDocumentsPageContent() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
+                        {wzQuickReturns && (
+                          <td className="px-3 py-3">
+                            {row.document_type === 'WZ' && row.status !== 'cancelled' && (row.items?.length ?? 0) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setQuickReturnWz({ wzId: row.id, wzNumber: row.document_number ?? row.id.slice(0, 8), wzDate: row.issue_date, items: row.items })}
+                                className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                              >
+                                Zwrot
+                              </button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -926,6 +1117,14 @@ function DeliveryDocumentsPageContent() {
           </Card>
         )}
       </div>
+
+      {quickReturnWz && (
+        <QuickReturnModal
+          wz={quickReturnWz}
+          onClose={() => setQuickReturnWz(null)}
+          onSaved={() => { setQuickReturnWz(null); void refetch(); }}
+        />
+      )}
     </div>
   );
 }

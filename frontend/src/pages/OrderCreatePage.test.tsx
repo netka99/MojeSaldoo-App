@@ -20,6 +20,11 @@ vi.mock('@/query/use-orders', () => ({
       return createMutationState.isPending;
     },
   }),
+  useConfirmOrderMutation: () => ({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
+  useOrdersByCustomerQuery: () => ({ data: undefined }),
 }));
 
 const customerResults = vi.hoisted(() => [
@@ -32,11 +37,27 @@ vi.mock('@/query/use-customers', () => ({
     isFetching: false,
   }),
   useCustomerQuery: () => ({ data: undefined }),
+  useCustomerPricesQuery: () => ({ data: [] }),
 }));
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
     user: { id: 1, current_company: '550e8400-e29b-41d4-a716-446655440000' as string | null },
+  }),
+}));
+
+const generateWzMutateAsync = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'wz-1' }));
+
+vi.mock('@/query/use-delivery', () => ({
+  useGenerateDeliveryForOrderMutation: () => ({
+    mutateAsync: generateWzMutateAsync,
+    isPending: false,
+  }),
+}));
+
+vi.mock('@/query/use-companies', () => ({
+  useWorkflowSettingsQuery: () => ({
+    data: { orders_required: false, wz_required_before_invoice: true, auto_wz_on_order: false },
   }),
 }));
 
@@ -112,6 +133,12 @@ vi.mock('@/services/product.service', () => ({
   productService: {
     fetchList: (params?: object) => productFetch(params as { page?: number }),
   },
+}));
+
+vi.mock('@/query/use-offline-mutations', () => ({
+  useOfflineOrderCreate: () =>
+    vi.fn().mockImplementation((_body: unknown, fn: (b: unknown) => Promise<unknown>) => fn(_body)),
+  OfflineQueuedError: class OfflineQueuedError extends Error {},
 }));
 
 function renderPage(initialEntry = '/orders/new') {
@@ -374,5 +401,23 @@ describe('OrderCreatePage', () => {
       expect(router.state.location.search).toContain('2026-04-15');
     });
     expect(screen.getByText('Orders list')).toBeInTheDocument();
+  });
+
+  it('shows "Wygeneruj WZ od razu" checkbox when viewing checkout', async () => {
+    const user = userEvent.setup();
+    renderPage('/orders/new?date=2026-07-10');
+    // Wait for products to load, then tap to open numpad and add product
+    await screen.findByRole('button', { name: /Produkt Mąka/ });
+    await user.click(screen.getByRole('button', { name: /Produkt Mąka/ }));
+    // Increase qty in numpad
+    await user.click(screen.getByRole('button', { name: 'Zwiększ ilość' }));
+    await user.click(screen.getByRole('button', { name: /Zatwierdź|OK|Gotowe/ }));
+    // Go to checkout via cart button
+    const cartBtn = await screen.findByRole('button', { name: /Do zamówienia/ });
+    await user.click(cartBtn);
+    // Checkbox should appear
+    const checkbox = await screen.findByRole('checkbox', { name: /Wygeneruj WZ od razu/ });
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked(); // default from mock: auto_wz_on_order = false
   });
 });

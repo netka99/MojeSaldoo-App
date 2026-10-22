@@ -69,15 +69,13 @@ describe('ProductList', () => {
     });
   });
 
-  it('loads products and shows heading', async () => {
+  it('loads products and shows the count', async () => {
     renderList(<ProductList />);
-
-    expect(screen.getByRole('heading', { name: /produkty/i })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mocks.fetchList).toHaveBeenCalledWith({
         page: 1,
-        sku: undefined,
+        search: undefined,
         ordering: '-created_at',
         is_service: undefined,
       });
@@ -158,7 +156,7 @@ describe('ProductList', () => {
     await waitFor(() => {
       expect(mocks.fetchList).toHaveBeenLastCalledWith({
         page: 2,
-        sku: undefined,
+        search: undefined,
         ordering: '-created_at',
         is_service: undefined,
       });
@@ -175,13 +173,13 @@ describe('ProductList', () => {
 
     await waitFor(() => expect(mocks.fetchList).toHaveBeenCalledTimes(1));
 
-    await user.type(screen.getByLabelText(/filtruj produkty po kodzie sku/i), 'abc');
+    await user.type(screen.getByLabelText(/szukaj produktów po nazwie lub sku/i), 'abc');
 
     await waitFor(
       () => {
         expect(mocks.fetchList).toHaveBeenLastCalledWith({
           page: 1,
-          sku: 'abc',
+          search: 'abc',
           ordering: '-created_at',
           is_service: undefined,
         });

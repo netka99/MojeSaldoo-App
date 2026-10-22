@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { format, addDays } from 'date-fns';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -12,10 +12,12 @@ import {
   useProductionPlanningQuery,
 } from '@/query/use-production';
 import { useAllProductsQuery } from '@/query/use-products';
+import { useOrderListQuery } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
-import type { ProductionOrderCreate, ProductionPlanningItem, Recipe } from '@/types/production.types';
+import type { ProductionOrder, ProductionOrderCreate, ProductionPlanningItem, Recipe } from '@/types/production.types';
+import type { Order } from '@/types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const n2 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 });
@@ -25,6 +27,59 @@ const inputClass = cn(
   'flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
   'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
 );
+
+// ── Source order row (expandable) ────────────────────────────────────────────
+
+function SourceOrderRow({ order: o, checked, onToggle }: {
+  order: Order;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const items = o.items ?? [];
+  return (
+    <div className={cn(checked && 'bg-primary/5')}>
+      <div className="flex items-center gap-2.5 px-3 py-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          className="h-4 w-4 accent-primary shrink-0"
+        />
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <div className="min-w-0">
+            <span className="text-sm font-medium">{o.order_number ?? o.id}</span>
+            <span className="ml-2 text-sm text-muted-foreground">{o.customer_name}</span>
+            {o.delivery_date && (
+              <span className="ml-2 text-xs text-muted-foreground">· {o.delivery_date}</span>
+            )}
+          </div>
+          {items.length > 0 && (
+            <svg viewBox="0 0 24 24" fill="none" className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
+              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
+      </div>
+      {expanded && items.length > 0 && (
+        <div className="border-t border-border/40 bg-muted/20 px-3 pb-2 pt-1.5">
+          {items.map((item, i) => (
+            <div key={i} className="flex items-baseline justify-between gap-2 py-0.5">
+              <span className="text-xs text-foreground">{item.product_name}</span>
+              <span className="text-xs tabular-nums text-muted-foreground shrink-0">
+                {parseFloat(String(item.quantity)).toLocaleString('pl-PL')} {item.product_unit}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Inline order creation form ────────────────────────────────────────────────
 
@@ -57,10 +112,27 @@ function OrderForm({
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [mode, setMode] = useState<'simple' | 'batch'>('simple');
   const [qtyProduced, setQtyProduced] = useState(prefillQty ? String(prefillQty) : '');
+  const [sourceOrderIds, setSourceOrderIds] = useState<Set<string>>(new Set());
+  const [sourceOrdersPrefilled, setSourceOrdersPrefilled] = useState(false);
   const autoNotes = prefillSourceOrders?.length
     ? `Dla zamówień: ${prefillSourceOrders.join(', ')}`
     : '';
   const [notes, setNotes] = useState(autoNotes);
+  const { data: ordersData } = useOrderListQuery(1, { status: 'confirmed', page_size: 100 });
+
+  // Auto-select orders from plan when order list loads
+  useEffect(() => {
+    if (sourceOrdersPrefilled || !prefillSourceOrders?.length || !ordersData?.results) return;
+    const matched = new Set(
+      ordersData.results
+        .filter((o) => prefillSourceOrders.includes(o.order_number ?? ''))
+        .map((o) => o.id)
+    );
+    if (matched.size > 0) {
+      setSourceOrderIds(matched);
+      setSourceOrdersPrefilled(true);
+    }
+  }, [ordersData, prefillSourceOrders, sourceOrdersPrefilled]);
   const [batchInputs, setBatchInputs] = useState<BatchInputRow[]>(() => {
     if (!prefillRecipeId) return [];
     const recipe = recipes.find((r) => r.id === prefillRecipeId);
@@ -128,6 +200,7 @@ function OrderForm({
       date,
       mode,
       quantity_produced: Number(qtyProduced),
+      source_orders: [...sourceOrderIds],
       notes,
     };
     if (mode === 'batch') {
@@ -214,6 +287,32 @@ function OrderForm({
           </p>
         </div>
       </div>
+
+      {/* Zamówienia klienta (opcjonalne — MTO) */}
+      {ordersData && ordersData.results.length > 0 && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">
+            Zamówienia klienta (opcjonalne — MTO)
+          </label>
+          <div className="rounded-md border border-input divide-y divide-border">
+            {ordersData.results.map((o) => (
+              <SourceOrderRow
+                key={o.id}
+                order={o}
+                checked={sourceOrderIds.has(o.id)}
+                onToggle={() => setSourceOrderIds((prev) => {
+                  const next = new Set(prev);
+                  next.has(o.id) ? next.delete(o.id) : next.add(o.id);
+                  return next;
+                })}
+              />
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Zaznacz zamówienia pod które produkujesz. Kliknij wiersz aby zobaczyć pozycje. Zostaw puste jeśli produkujesz na zapas (MTS).
+          </p>
+        </div>
+      )}
 
       {/* Batch mode */}
       {mode === 'batch' && selectedRecipe && (
@@ -423,6 +522,189 @@ function PlanningRow({
   );
 }
 
+// ── Order card ────────────────────────────────────────────────────────────────
+
+function OrderCard({
+  order,
+  canProduction,
+  onComplete,
+  onDelete,
+  completing,
+  deleting,
+}: {
+  order: ProductionOrder;
+  canProduction: boolean;
+  onComplete: (id: string) => Promise<ProductionOrder>;
+  onDelete: (id: string) => Promise<void>;
+  completing: boolean;
+  deleting: boolean;
+}) {
+  const isCompleted = order.status === 'completed';
+  const [completedData, setCompletedData] = useState<ProductionOrder | null>(null);
+  const [completeError, setCompleteError] = useState<string | null>(null);
+  const [ingredientsOpen, setIngredientsOpen] = useState(false);
+
+  const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+
+  return (
+    <div className={cn(
+      'rounded-xl border p-4',
+      isCompleted ? 'border-green-200 bg-green-50/40' : 'border-amber-200 bg-amber-50/40',
+    )}>
+      {/* Success banner */}
+      {completedData && (
+        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-green-400/40 bg-green-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <svg className="h-4 w-4 shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <p className="text-sm font-semibold text-green-800">Zlecenie zakończone!</p>
+            </div>
+            <p className="text-xs text-green-700">
+              RW: {completedData.rw_document_number ?? '—'} · PW: {completedData.pw_document_number ?? '—'}
+              {completedData.real_unit_cost !== null && (
+                <> · Koszt/szt.: {pln.format(Number(completedData.real_unit_cost))}</>
+              )}
+            </p>
+          </div>
+          <button type="button" onClick={() => setCompletedData(null)} className="self-start rounded-lg px-3 py-1 text-xs font-medium text-green-700 hover:bg-green-100 sm:self-auto">
+            Zamknij
+          </button>
+        </div>
+      )}
+
+      {/* Error banner */}
+      {completeError && (() => {
+        const match = completeError.match(/dla '([^']+)':/);
+        const productName = match?.[1];
+        return (
+          <div className="mb-3 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
+            {completeError}
+            {productName && (
+              <Link
+                to={`/products?search=${encodeURIComponent(productName)}`}
+                className="ml-2 inline-flex items-center gap-1 rounded-lg border border-destructive/30 bg-white/60 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-white"
+              >
+                Uzupełnij stan →
+              </Link>
+            )}
+          </div>
+        );
+      })()}
+
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{order.order_number}</span>
+            <span className={cn(
+              'rounded-full px-2 py-0.5 text-xs font-medium',
+              isCompleted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
+            )}>
+              {isCompleted ? 'Zakończone' : 'W produkcji'}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {order.mode === 'batch' ? 'wsad' : 'prosty'}
+            </span>
+          </div>
+          <p className="mt-0.5 text-sm">
+            <span className="font-medium">{order.finished_product_name}</span>
+            {' — '}
+            {order.quantity_produced} {order.finished_product_unit}
+            {' · '}
+            {order.date}
+          </p>
+          {order.notes && !order.source_orders_info?.length ? <p className="mt-0.5 text-xs text-muted-foreground">{order.notes}</p> : null}
+          {isCompleted && order.real_unit_cost !== null && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Koszt/szt.: {pln.format(Number(order.real_unit_cost))} · Łączny: {pln.format(Number(order.total_input_cost))}
+            </p>
+          )}
+          {order.source_orders_info?.length > 0 && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+              <span className="text-muted-foreground">Zamówienia:</span>
+              {order.source_orders_info.map((o) => (
+                <Link
+                  key={o.id}
+                  to={`/orders/${o.id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {o.order_number ?? o.id.slice(0, 8)}
+                  {o.customer_name ? ` (${o.customer_name})` : ''}
+                </Link>
+              ))}
+            </div>
+          )}
+          {isCompleted && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              RW: {order.rw_document_number ?? '—'} · PW: {order.pw_document_number ?? '—'}
+            </p>
+          )}
+
+          {/* Składniki */}
+          {order.recipe_items?.length > 0 && order.mode === 'simple' && (
+            <div className="mt-1.5">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setIngredientsOpen((v) => !v)}
+              >
+                <svg className={cn('h-3 w-3 transition-transform', ingredientsOpen && 'rotate-90')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                Składniki ({order.recipe_items.length})
+              </button>
+              {ingredientsOpen && (
+                <ul className="mt-1 space-y-0 text-xs text-muted-foreground">
+                  {order.recipe_items.map((item) => (
+                    <li key={item.ingredient_name}>
+                      {item.ingredient_name}: <span className="font-medium text-foreground">{Number(item.quantity_needed).toLocaleString('pl-PL', { maximumFractionDigits: 4 })} {item.unit}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {order.mode === 'batch' && order.inputs.length > 0 && (
+            <ul className="mt-1 space-y-0 text-xs text-muted-foreground">
+              {order.inputs.map((inp) => (
+                <li key={inp.id}>
+                  {inp.ingredient_name}: {inp.quantity_used} {inp.unit}
+                  {inp.fifo_cost !== null && <span className="ml-1">({pln.format(Number(inp.fifo_cost))})</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {canProduction && !isCompleted && (
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <Button
+              size="sm"
+              disabled={completing}
+              onClick={() => {
+                setCompleteError(null);
+                onComplete(order.id)
+                  .then((data) => setCompletedData(data))
+                  .catch((e: unknown) => {
+                    setCompleteError(e instanceof Error ? e.message : 'Błąd zakończenia zlecenia.');
+                  });
+              }}
+            >
+              {completing ? '…' : 'Zakończ'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive"
+              disabled={deleting}
+              onClick={() => void onDelete(order.id)}
+            >
+              Usuń
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 type FormState =
@@ -507,6 +789,21 @@ export function ProductionOrdersPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          {/* ── Info: what appears in the plan ── */}
+          <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              <span className="font-medium text-slate-700">Co tu widać?</span>{' '}
+              Tylko wyroby, które mają aktywną recepturę <span className="font-medium">i</span> otwarte, potwierdzone zamówienia klientów w wybranym okresie.
+              Produkty kupowane od dostawcy (bez receptury) tu nie trafiają — uzupełniaj je przez dokument PZ.
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              Produkt nie pojawia się? Sprawdź, czy ma recepturę w{' '}
+              <a href="/production/recipes" className="text-primary hover:underline">
+                Receptury
+              </a>
+              {' '}i czy zamówienie jest potwierdzone (status: przyjęte).
+            </p>
+          </div>
           {planningLoading && <p className="p-4 text-sm text-muted-foreground">Ładowanie…</p>}
           {!planningLoading && planningItems.length === 0 && (
             <p className="p-4 text-sm text-muted-foreground">
@@ -589,99 +886,6 @@ export function ProductionOrdersPage() {
         const draft = orders.filter((o) => o.status !== 'completed');
         const completed = orders.filter((o) => o.status === 'completed');
 
-        function OrderCard({ order }: { order: typeof orders[0] }) {
-          const isCompleted = order.status === 'completed';
-          return (
-            <div className={cn(
-              'rounded-xl border p-4',
-              isCompleted ? 'border-green-200 bg-green-50/40' : 'border-amber-200 bg-amber-50/40',
-            )}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{order.order_number}</span>
-                    <span className={cn(
-                      'rounded-full px-2 py-0.5 text-xs font-medium',
-                      isCompleted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
-                    )}>
-                      {isCompleted ? 'Zakończone' : 'W produkcji'}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {order.mode === 'batch' ? 'wsad' : 'prosty'}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-sm">
-                    <span className="font-medium">{order.finished_product_name}</span>
-                    {' — '}
-                    {order.quantity_produced} {order.finished_product_unit}
-                    {' · '}
-                    {order.date}
-                  </p>
-                  {order.notes ? (
-                    <p className="mt-0.5 text-xs text-muted-foreground">{order.notes}</p>
-                  ) : null}
-                  {isCompleted && order.real_unit_cost !== null && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Koszt/szt.: {pln.format(Number(order.real_unit_cost))}
-                      {' · '}
-                      Łączny: {pln.format(Number(order.total_input_cost))}
-                    </p>
-                  )}
-                  {isCompleted && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      RW: {order.rw_document_number ?? '—'} · PW: {order.pw_document_number ?? '—'}
-                    </p>
-                  )}
-                  {order.mode === 'batch' && order.inputs.length > 0 && (
-                    <ul className="mt-1 space-y-0 text-xs text-muted-foreground">
-                      {order.inputs.map((inp) => (
-                        <li key={inp.id}>
-                          {inp.ingredient_name}: {inp.quantity_used} {inp.unit}
-                          {inp.fifo_cost !== null && (
-                            <span className="ml-1">({pln.format(Number(inp.fifo_cost))})</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                {canProduction && (
-                  <div className="flex shrink-0 flex-col gap-1.5">
-                    {!isCompleted && (
-                      <Button
-                        size="sm"
-                        disabled={completeM.isPending}
-                        onClick={() => {
-                          if (confirm(`Zakończyć zlecenie ${order.order_number}?\n\nSystem pobierze surowce z magazynu (FIFO) i doda gotowy wyrób.`)) {
-                            void completeM.mutateAsync(order.id);
-                          }
-                        }}
-                      >
-                        {completeM.isPending ? '…' : 'Zakończ'}
-                      </Button>
-                    )}
-                    {!isCompleted && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        disabled={deleteM.isPending}
-                        onClick={() => {
-                          if (confirm('Usunąć zlecenie?')) {
-                            void deleteM.mutateAsync(order.id);
-                          }
-                        }}
-                      >
-                        Usuń
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        }
-
         return (
           <div className="space-y-6">
             {draft.length > 0 && (
@@ -690,7 +894,17 @@ export function ProductionOrdersPage() {
                   W produkcji ({draft.length})
                 </p>
                 <div className="space-y-2">
-                  {draft.map((o) => <OrderCard key={o.id} order={o} />)}
+                  {draft.map((o) => (
+                    <OrderCard
+                      key={o.id}
+                      order={o}
+                      canProduction={canProduction}
+                      onComplete={(id) => completeM.mutateAsync(id)}
+                      onDelete={(id) => deleteM.mutateAsync(id)}
+                      completing={completeM.isPending}
+                      deleting={deleteM.isPending}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -701,7 +915,17 @@ export function ProductionOrdersPage() {
                   Zakończone ({completed.length})
                 </p>
                 <div className="space-y-2">
-                  {completed.map((o) => <OrderCard key={o.id} order={o} />)}
+                  {completed.map((o) => (
+                    <OrderCard
+                      key={o.id}
+                      order={o}
+                      canProduction={canProduction}
+                      onComplete={(id) => completeM.mutateAsync(id)}
+                      onDelete={(id) => deleteM.mutateAsync(id)}
+                      completing={completeM.isPending}
+                      deleting={deleteM.isPending}
+                    />
+                  ))}
                 </div>
               </div>
             )}

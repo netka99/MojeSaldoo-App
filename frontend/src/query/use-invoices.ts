@@ -349,6 +349,20 @@ export function useKsefLineOpexMutation(ksefNumber: string) {
   });
 }
 
+/** Full edit of an invoice (no KSeF number). Returns updated invoice. */
+export function useEditInvoiceMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      invoiceService.editInvoice(id, data),
+    onSuccess: (_inv, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.preview(id) });
+      void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
+    },
+  });
+}
+
 /** Query received invoices from local DB (syncs new ones from KSeF on each call). */
 export function useKsefInboxQuery(
   dateFrom: string,

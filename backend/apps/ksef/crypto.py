@@ -28,9 +28,17 @@ from lxml import etree
 from signxml import methods
 from signxml.xades import XAdESSigner
 
-KSEF_API_HOST = "api-test.ksef.mf.gov.pl"
 KSEF_API_VERSION = "2"
 KSEF_SUCCESS_STATUS_CODE = 200
+
+# Environment → API host mapping.
+# "test" is hidden from regular users (only visible to is_staff).
+KSEF_ENV_HOSTS: dict[str, str] = {
+    "test":       "api-test.ksef.mf.gov.pl",
+    "demo":       "api-demo.ksef.mf.gov.pl",
+    "production": "api.ksef.mf.gov.pl",
+}
+KSEF_DEFAULT_HOST = KSEF_ENV_HOSTS["demo"]
 REQUEST_TIMEOUT = 60  # seconds
 
 challenge_pattern_rxp = re.compile(r"^[A-Z0-9\-]+$")
@@ -216,9 +224,9 @@ def load_certificate_from_pem(pem_bytes: bytes) -> Certificate:
 # KSeF API functions
 # ---------------------------------------------------------------------------
 
-def get_public_certificates() -> tuple[RemoteCertificate, RemoteCertificate]:
+def get_public_certificates(host: str = KSEF_DEFAULT_HOST) -> tuple[RemoteCertificate, RemoteCertificate]:
     """Fetch KSeF encryption certificates (auth cert + invoice cert)."""
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/security/public-key-certificates"
+    url = f"https://{host}/v{KSEF_API_VERSION}/security/public-key-certificates"
     response = _timed_request(requests.get, url, headers={"Content-Type": "application/json"})
     if response.status_code != 200:
         raise Exception("Failed to get public certificates")
@@ -232,9 +240,9 @@ def get_public_certificates() -> tuple[RemoteCertificate, RemoteCertificate]:
     raise Exception("Unsupported: more than two certificates returned by KSeF.")
 
 
-def get_auth_challenge() -> Challenge:
+def get_auth_challenge(host: str = KSEF_DEFAULT_HOST) -> Challenge:
     """Request an authentication challenge from KSeF."""
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/auth/challenge"
+    url = f"https://{host}/v{KSEF_API_VERSION}/auth/challenge"
     response = _timed_request(requests.post, url)
     response.raise_for_status()
     return Challenge.from_dict(response.json())
@@ -270,9 +278,9 @@ def sign_auth_token_request(
     return etree.tostring(signed_root, encoding="unicode")
 
 
-def authenticate(signed_doc: str) -> Reference:
+def authenticate(signed_doc: str, host: str = KSEF_DEFAULT_HOST) -> Reference:
     """Submit the signed auth request to KSeF and get an auth reference."""
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/auth/xades-signature"
+    url = f"https://{host}/v{KSEF_API_VERSION}/auth/xades-signature"
     response = _timed_request(
         requests.post, url, data=signed_doc, headers={"Content-Type": "application/xml"}
     )
@@ -280,9 +288,9 @@ def authenticate(signed_doc: str) -> Reference:
     return Reference.from_dict(response.json())
 
 
-def get_tokens(auth_token: AuthenticationToken) -> TokenTuple:
+def get_tokens(auth_token: AuthenticationToken, host: str = KSEF_DEFAULT_HOST) -> TokenTuple:
     """Redeem an authentication token for access + refresh tokens."""
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/auth/token/redeem"
+    url = f"https://{host}/v{KSEF_API_VERSION}/auth/token/redeem"
     response = _timed_request(
         requests.post, url, headers={"Authorization": f"Bearer {auth_token.body}"}
     )
@@ -314,9 +322,9 @@ def encrypt_key(symmetric_key: bytes, public_cert: RemoteCertificate) -> bytes:
     )
 
 
-def open_session(encrypted_key: bytes, access_token: Token, iv: bytes) -> Session:
+def open_session(encrypted_key: bytes, access_token: Token, iv: bytes, host: str = KSEF_DEFAULT_HOST) -> Session:
     """Open an online KSeF session for invoice submission."""
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/sessions/online"
+    url = f"https://{host}/v{KSEF_API_VERSION}/sessions/online"
     session_data = {
         "formCode": {"systemCode": "FA (3)", "schemaVersion": "1-0E", "value": "FA"},
         "encryption": {
@@ -356,11 +364,11 @@ def encrypt_invoice(invoice_xml: str, symmetric_key: bytes, iv: bytes) -> dict:
 
 
 def send_encrypted_invoice_data(
-    encrypted_invoice_data: dict, access_token: Token, session: Session
+    encrypted_invoice_data: dict, access_token: Token, session: Session, host: str = KSEF_DEFAULT_HOST
 ) -> dict:
     """Submit an encrypted invoice to the open KSeF session."""
     url = (
-        f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}"
+        f"https://{host}/v{KSEF_API_VERSION}"
         f"/sessions/online/{session.reference_number}/invoices"
     )
     response = _timed_request(
@@ -378,6 +386,7 @@ def get_invoice_status(
     invoice_reference_number: str,
     access_token: Token,
     allowed_codes: Iterable[int] = (200,),
+    host: str = KSEF_DEFAULT_HOST,
 ) -> InvoiceStatus:
     """Poll KSeF for the processing status of a submitted invoice.
 
@@ -385,7 +394,7 @@ def get_invoice_status(
     Status codes: 100 (accepted), 150 (processing), 200 (success), 4xx (error).
     """
     url = (
-        f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}"
+        f"https://{host}/v{KSEF_API_VERSION}"
         f"/sessions/{session_reference_number}/invoices/{invoice_reference_number}"
     )
     response = _timed_request(
@@ -400,10 +409,10 @@ def get_invoice_status(
     raise InvalidInvoiceStatusError(inv_status)
 
 
-def close_session(session_reference_number: str, access_token: Token) -> None:
+def close_session(session_reference_number: str, access_token: Token, host: str = KSEF_DEFAULT_HOST) -> None:
     """Close an online KSeF session. Must be called before retrieving UPO."""
     url = (
-        f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}"
+        f"https://{host}/v{KSEF_API_VERSION}"
         f"/sessions/online/{session_reference_number}/close"
     )
     response = _timed_request(
@@ -418,13 +427,14 @@ def get_invoice_upo(
     session_reference_number: str,
     invoice_reference_number: str,
     access_token: Token,
+    host: str = KSEF_DEFAULT_HOST,
 ) -> tuple[str, str]:
     """Retrieve the UPO (official receipt XML) for an accepted invoice.
 
     Returns (upo_xml_content, sha256_hash).
     """
     url = (
-        f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}"
+        f"https://{host}/v{KSEF_API_VERSION}"
         f"/sessions/{session_reference_number}/invoices/{invoice_reference_number}/upo"
     )
     response = _timed_request(
@@ -442,13 +452,14 @@ def query_received_invoices(
     date_to: str,
     page_offset: int = 0,
     page_size: int = 50,
+    host: str = KSEF_DEFAULT_HOST,
 ) -> dict:
     """Query invoices received as a buyer (subjectType=Subject2) from KSeF.
 
     date_from / date_to: ISO 8601 datetime strings e.g. "2026-01-01T00:00:00.000Z".
     Returns KSeF response with invoiceHeaderList, pageOffset, numberOfElements.
     """
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/invoices/query/metadata"
+    url = f"https://{host}/v{KSEF_API_VERSION}/invoices/query/metadata"
     payload = {
         "subjectType": "Subject2",
         "dateRange": {"dateType": "Issue", "from": date_from, "to": date_to},
@@ -464,9 +475,9 @@ def query_received_invoices(
     return response.json()
 
 
-def download_received_invoice_xml(ksef_reference_number: str, access_token: Token) -> bytes:
+def download_received_invoice_xml(ksef_reference_number: str, access_token: Token, host: str = KSEF_DEFAULT_HOST) -> bytes:
     """Download a received invoice XML by its KSeF reference number."""
-    url = f"https://{KSEF_API_HOST}/v{KSEF_API_VERSION}/invoices/ksef/{ksef_reference_number}"
+    url = f"https://{host}/v{KSEF_API_VERSION}/invoices/ksef/{ksef_reference_number}"
     response = _timed_request(
         requests.get,
         url,

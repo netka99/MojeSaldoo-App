@@ -3,6 +3,8 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-route
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { KsefPassphraseModal } from '@/components/features/invoicing/KsefPassphraseModal';
+import { KsefSendPreviewModal } from '@/components/features/invoicing/KsefSendPreviewModal';
+import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
 import { INVOICE_KSEF_STATUS_LABELS_PL } from '@/constants/invoiceKsefStatusPl';
 import { INVOICE_STATUS_LABELS_PL } from '@/constants/invoiceStatusPl';
 import {
@@ -28,7 +30,7 @@ import { cn } from '@/lib/utils';
 import { openInvoicePrintWindow } from '@/lib/openInvoicePrintWindow';
 import { invoiceService } from '@/services/invoice.service';
 import { invoiceKsefStatusBadgeClassName, invoiceStatusBadgeClassName } from './InvoicesPage';
-import type { Invoice, InvoicePreviewLine } from '@/types';
+import type { Invoice } from '@/types';
 
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
 
@@ -288,11 +290,17 @@ export function InvoiceDetailPage() {
   const createCorrectionM = useCreateCorrectionMutation();
 
   // Lazy session check — only fetch when invoice is issued and ksef not yet sent
-  const needsKsefCheck = invoice?.status === 'issued' && invoice.ksef_status === 'not_sent';
+  const needsKsefCheck = invoice != null && (
+    (invoice.status === 'issued' && invoice.ksef_status === 'not_sent') ||
+    invoice.ksef_status === 'pending'
+  );
   const { data: ksefSession } = useKsefSessionQuery(needsKsefCheck);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
+  const [printShowAdditionalInfo, setPrintShowAdditionalInfo] = useState(true);
+  const [showKsefPreview, setShowKsefPreview] = useState(false);
   const [xmlDownloading, setXmlDownloading] = useState(false);
   const [upoDownloading, setUpoDownloading] = useState(false);
 
@@ -303,6 +311,10 @@ export function InvoiceDetailPage() {
 
   // Polling for pending invoices
   const [isPolling, setIsPolling] = useState(false);
+
+  // Edycja możliwa tylko gdy faktura nie została zaakceptowana przez KSeF (brak ksef_number)
+  // Faktura odrzucona (rejected) lub oczekująca (pending) bez numeru KSeF może być edytowana
+  const canEdit = canInvoices && invoice != null && !invoice.ksef_number && invoice.ksef_status !== 'pending';
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -383,14 +395,25 @@ export function InvoiceDetailPage() {
     }
   };
 
+  const hasAdditionalInfo = (preview?.invoice?.additional_info?.length ?? 0) > 0;
+
   const onPrintInvoice = () => {
     if (!preview) return;
     setPrintError(null);
-    const opened = openInvoicePrintWindow(preview);
+    doPrint(preview, true);
+  };
+
+  const doPrint = (p: typeof preview, showAdditionalInfo: boolean) => {
+    if (!p) return;
+    const effectivePreview = showAdditionalInfo
+      ? p
+      : {
+          ...p,
+          invoice: { ...p.invoice, additional_info: [] },
+        };
+    const opened = openInvoicePrintWindow(effectivePreview);
     if (!opened) {
-      setPrintError(
-        'Nie udało się otworzyć widoku drukowania. Odśwież stronę i spróbuj ponownie.',
-      );
+      setPrintError('Nie udało się otworzyć widoku drukowania. Odśwież stronę i spróbuj ponownie.');
     }
   };
 
@@ -429,9 +452,15 @@ export function InvoiceDetailPage() {
     }
   };
 
-  /** Entry point: check session, show modal if needed, otherwise send directly. */
-  const onSendToKsef = async () => {
+  /** Entry point: show KSeF preview first, then proceed to session/send. */
+  const onSendToKsef = () => {
     setActionError(null);
+    setShowKsefPreview(true);
+  };
+
+  /** Called after user confirms the KSeF preview. */
+  const onKsefPreviewConfirm = async () => {
+    setShowKsefPreview(false);
     if (ksefSession?.active) {
       await doSendToKsef();
     } else {
@@ -455,16 +484,16 @@ export function InvoiceDetailPage() {
     }
   };
 
-  // Auto-poll once when invoice is in 'pending' ksef_status
+  // Auto-poll once when invoice is in 'pending' ksef_status — only when session is active
   useEffect(() => {
-    if (invoice?.ksef_status !== 'pending' || !id) return;
+    if (invoice?.ksef_status !== 'pending' || !id || !ksefSession?.active) return;
     const timer = setTimeout(() => {
       void onRefreshKsefStatus();
     }, 3000);
     return () => clearTimeout(timer);
-    // Only run when ksef_status changes
+    // Only run when ksef_status or session changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoice?.ksef_status]);
+  }, [invoice?.ksef_status, ksefSession?.active]);
 
   const showMarkPaid =
     invoice?.status === 'issued' ||
@@ -482,6 +511,15 @@ export function InvoiceDetailPage() {
 
   return (
     <>
+      {showKsefPreview && preview && (
+        <KsefSendPreviewModal
+          preview={preview}
+          onConfirm={() => void onKsefPreviewConfirm()}
+          onCancel={() => setShowKsefPreview(false)}
+          loading={sendToKsefM.isPending || ksefAuthM.isPending}
+        />
+      )}
+
       {showPassphraseModal && (
         <KsefPassphraseModal
           companyName={currentCompanyName}
@@ -496,6 +534,7 @@ export function InvoiceDetailPage() {
       )}
 
       <div className="mx-auto max-w-5xl space-y-6 p-6">
+        <KsefTestEnvBanner />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Button type="button" variant="outline" size="sm" onClick={() => navigate(-1)}>
             ← Lista faktur
@@ -574,6 +613,11 @@ export function InvoiceDetailPage() {
             {/* Secondary actions row — document tools and status changes */}
             {invoice?.status !== 'draft' && (
               <div className="flex flex-wrap gap-2">
+                {canEdit && (
+                  <Button type="button" size="sm" variant="outline" onClick={() => navigate(`/invoices/${id}/edit`)}>
+                    Edytuj fakturę
+                  </Button>
+                )}
                 {invoice?.status !== 'draft' && (
                   <Button
                     type="button"
@@ -647,6 +691,17 @@ export function InvoiceDetailPage() {
                   {isPolling ? 'Sprawdzanie…' : 'Odśwież status KSeF'}
                 </Button>
               )}
+              {canInvoices && showKsefRefresh && !ksefSession?.active && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void onSendToKsef()}
+                  disabled={sendToKsefM.isPending || ksefAuthM.isPending}
+                  loading={sendToKsefM.isPending || ksefAuthM.isPending}
+                >
+                  Zaloguj i sprawdź KSeF
+                </Button>
+              )}
               {canInvoices && showMarkPaid && (
                 <Button
                   type="button"
@@ -693,6 +748,12 @@ export function InvoiceDetailPage() {
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
             <span className="font-medium">Błąd KSeF: </span>
             {invoice.ksef_error_message}
+          </div>
+        )}
+
+        {invoice?.manually_edited && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <span className="font-medium">Faktura była ręcznie edytowana</span> — dane mogą różnić się od powiązanych zamówień.
           </div>
         )}
 
@@ -773,7 +834,31 @@ export function InvoiceDetailPage() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <AddressBlock title="Sprzedawca" lines={preview.seller.address_lines} />
-              <AddressBlock title="Nabywca" lines={preview.buyer.address_lines} />
+              <div>
+                <AddressBlock title="Nabywca" lines={preview.buyer.address_lines} />
+                {(() => {
+                  const lines = preview.buyer.address_lines ?? [];
+                  const hasAddress = lines.some((l, i) => i > 0 && l && l.trim() && !l.startsWith('NIP:'));
+                  if (hasAddress) return null;
+                  const customerId = (preview.invoice as Record<string, unknown>)?.customer as string | undefined;
+                  return (
+                    <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <p className="text-xs text-amber-700">
+                        Brak adresu nabywcy — wymagany przez KSeF.{' '}
+                        {customerId && (
+                          <a href={`/customers/${customerId}`} className="font-medium underline">
+                            Uzupełnij adres klienta
+                          </a>
+                        )}
+                        {customerId && ', a następnie wygeneruj fakturę ponownie.'}
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
 
             <Card className="shadow-sm">
@@ -786,66 +871,85 @@ export function InvoiceDetailPage() {
                     Faktura wystawiona w cenach brutto w walucie PLN
                   </p>
                 )}
-                <div className="overflow-x-auto rounded-2xl border border-border">
-                  <table className="min-w-full divide-y divide-border text-sm" aria-label="Pozycje faktury">
-                    <thead className="bg-muted/50">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Lp.</th>
-                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Nazwa</th>
-                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">J.m.</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Ilość</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cena netto</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT %</th>
-                        {preview.meta?.prices_include_vat && (
-                          <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cena brutto</th>
-                        )}
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Wartość netto</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Wartość brutto</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border bg-card">
-                      {preview.lines.map((line: InvoicePreviewLine) => (
-                        <tr key={line.position}>
-                          <td className="whitespace-nowrap px-3 py-2 tabular-nums">{line.position}</td>
-                          <td className="max-w-[200px] px-3 py-2">
-                            <span className="font-medium">{line.product_name}</span>
-                            {line.pkwiu ? (
-                              <span className="mt-0.5 block text-xs text-muted-foreground">
-                                PKWiU: {line.pkwiu}
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                            {line.product_unit || '—'}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                            {line.quantity_display}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                            {line.unit_price_net}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                            {line.vat_rate_display}
-                          </td>
-                          {preview.meta?.prices_include_vat && (
-                            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                              {line.unit_price_gross ?? '—'}
-                            </td>
-                          )}
-                          <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{line.line_net}</td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{line.line_vat}</td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right font-medium tabular-nums">
-                            {line.line_gross}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {preview.lines.length === 0 && (
-                  <p className="py-6 text-center text-sm text-muted-foreground">Brak pozycji na fakturze.</p>
-                )}
+                {(() => {
+                  const orderPriceMap = new Map<string, string>(
+                    (invoice?.items ?? [])
+                      .filter(it => it.order_item_price_net)
+                      .map(it => [it.id, it.order_item_price_net!])
+                  );
+                  return (
+                    <>
+                    <div className="overflow-x-auto rounded-2xl border border-border">
+                      <table className="min-w-full divide-y divide-border text-sm" aria-label="Pozycje faktury">
+                        <thead className="bg-muted/50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Lp.</th>
+                            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Nazwa</th>
+                            <th className="px-3 py-2 text-left font-medium text-muted-foreground">J.m.</th>
+                            <th className="px-3 py-2 text-right font-medium text-muted-foreground">Ilość</th>
+                            <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cena netto</th>
+                            <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT %</th>
+                            {preview.meta?.prices_include_vat && (
+                              <th className="px-3 py-2 text-right font-medium text-muted-foreground">Cena brutto</th>
+                            )}
+                            <th className="px-3 py-2 text-right font-medium text-muted-foreground">Wartość netto</th>
+                            <th className="px-3 py-2 text-right font-medium text-muted-foreground">VAT</th>
+                            <th className="px-3 py-2 text-right font-medium text-muted-foreground">Wartość brutto</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border bg-card">
+                          {preview.lines.map((line) => {
+                            const orderPrice = line.item_id ? orderPriceMap.get(line.item_id) : undefined;
+                            return (
+                            <tr key={line.position}>
+                              <td className="whitespace-nowrap px-3 py-2 tabular-nums">{line.position}</td>
+                              <td className="max-w-[200px] px-3 py-2">
+                                <span className="font-medium">{line.product_name}</span>
+                                {line.pkwiu ? (
+                                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                                    PKWiU: {line.pkwiu}
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                                {line.product_unit || '—'}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                                {line.quantity_display}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                                {line.unit_price_net}
+                                {orderPrice && (
+                                  <span className="block text-[10px] font-medium text-amber-600" title={`Cena na zamówieniu: ${orderPrice} zł netto`}>
+                                    ⚠ zam.: {orderPrice} zł
+                                  </span>
+                                )}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                                {line.vat_rate_display}
+                              </td>
+                              {preview.meta?.prices_include_vat && (
+                                <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                                  {line.unit_price_gross ?? '—'}
+                                </td>
+                              )}
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{line.line_net}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{line.line_vat}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right font-medium tabular-nums">
+                                {line.line_gross}
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {preview.lines.length === 0 && (
+                      <p className="py-6 text-center text-sm text-muted-foreground">Brak pozycji na fakturze.</p>
+                    )}
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
 

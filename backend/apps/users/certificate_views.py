@@ -1,5 +1,6 @@
 """KSeF certificate upload, status, and delete (multipart PEM + encrypted private key)."""
 
+import os
 from zoneinfo import ZoneInfo
 
 from django.db import transaction
@@ -58,6 +59,15 @@ def _cert_validity_state(row: KSeFCertificate) -> tuple[bool, bool, bool]:
     return True, False, False
 
 
+def _stored_filename(uploaded_file) -> str:
+    """Keep only the basename the user picked. Never a path."""
+    raw = getattr(uploaded_file, "name", "") or ""
+    name = os.path.basename(raw.replace("\\", "/"))
+    name = "".join(ch for ch in name if ch.isprintable() and ch not in "\r\n\t")
+    name = name.strip().strip(".")
+    return name[:255]
+
+
 def _status_payload(row: KSeFCertificate | None) -> dict:
     if row is None:
         return {
@@ -67,6 +77,8 @@ def _status_payload(row: KSeFCertificate | None) -> dict:
             "not_yet_valid": False,
             "is_active": False,
             "subject_name": None,
+            "certificate_filename": None,
+            "key_filename": None,
             "valid_from": None,
             "valid_until": None,
             "uploaded_at": None,
@@ -79,6 +91,8 @@ def _status_payload(row: KSeFCertificate | None) -> dict:
         "not_yet_valid": in_future,
         "is_active": row.is_active,
         "subject_name": row.subject_name or None,
+        "certificate_filename": row.certificate_filename or None,
+        "key_filename": row.key_filename or None,
         "valid_from": row.valid_from.isoformat() if row.valid_from else None,
         "valid_until": row.valid_until.isoformat() if row.valid_until else None,
         "uploaded_at": row.uploaded_at.isoformat() if row.uploaded_at else None,
@@ -89,6 +103,8 @@ def _public_metadata_row(row: KSeFCertificate) -> dict:
     return {
         "id": str(row.id),
         "subject_name": row.subject_name,
+        "certificate_filename": row.certificate_filename or None,
+        "key_filename": row.key_filename or None,
         "valid_from": row.valid_from.isoformat() if row.valid_from else None,
         "valid_until": row.valid_until.isoformat() if row.valid_until else None,
         "is_active": row.is_active,
@@ -96,8 +112,15 @@ def _public_metadata_row(row: KSeFCertificate) -> dict:
     }
 
 
+def _resolve_environment(company: Company, request_env: str | None) -> str:
+    """Return the environment to use: explicit param or company's current setting."""
+    if request_env in (KSeFCertificate.ENVIRONMENT_TEST, KSeFCertificate.ENVIRONMENT_DEMO, KSeFCertificate.ENVIRONMENT_PRODUCTION):
+        return request_env
+    return company.ksef_environment
+
+
 class KSeFCertificateStatusView(APIView):
-    """GET /api/companies/{id}/certificate/status/ — any member."""
+    """GET /api/companies/{id}/certificate/status/?environment=demo — any member."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -108,7 +131,8 @@ class KSeFCertificateStatusView(APIView):
                 {"detail": "You are not a member of this company."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        row = KSeFCertificate.objects.filter(company=company).first()
+        env = _resolve_environment(company, request.query_params.get("environment"))
+        row = KSeFCertificate.objects.filter(company=company, environment=env).first()
         return Response(_status_payload(row))
 
 
@@ -141,6 +165,7 @@ class KSeFCertificateUploadView(APIView):
                 {"detail": "Fields certificate_file and key_file are required (multipart)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        env = _resolve_environment(company, request.data.get("environment"))
         try:
             cert_bytes = cert_file.read()
             key_bytes = key_file.read()
@@ -156,19 +181,19 @@ class KSeFCertificateUploadView(APIView):
         with transaction.atomic():
             row, created = KSeFCertificate.objects.update_or_create(
                 company=company,
+                environment=env,
                 defaults={
                     "uploaded_by": uploader,
                     "certificate_pem": parsed.certificate_pem,
                     "encrypted_key": enc_key,
                     "subject_name": parsed.subject_name,
+                    "certificate_filename": _stored_filename(cert_file),
+                    "key_filename": _stored_filename(key_file),
                     "valid_from": parsed.valid_from,
                     "valid_until": parsed.valid_until,
                     "is_active": True,
                 },
             )
-
-        # push_certificate is a no-op after ssapi-multi consolidation;
-        # the certificate is read directly from DB at authentication time.
 
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         log_success(
@@ -189,7 +214,8 @@ class KSeFCertificateUploadView(APIView):
                 {"detail": "Only company admins and managers can remove a certificate."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        deleted, _ = KSeFCertificate.objects.filter(company=company).delete()
+        env = _resolve_environment(company, request.data.get("environment") or request.query_params.get("environment"))
+        deleted, _ = KSeFCertificate.objects.filter(company=company, environment=env).delete()
         if deleted:
             return Response({"ok": True, "deleted": True}, status=status.HTTP_200_OK)
         return Response(

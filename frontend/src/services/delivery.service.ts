@@ -92,13 +92,14 @@ export const deliveryService = {
     api.post<DeliveryDocument>(`${basePath}${wzId}/sync-from-order/`, {}),
 
   /** `POST` — create a ZW return document linked to a WZ without changing WZ status. */
-  addReturns: (id: string, returnItems: PendingReturnItem[]) =>
+  addReturns: (id: string, returnItems: PendingReturnItem[], issueDate?: string) =>
     api.post<DeliveryDocument>(`${basePath}${id}/add-returns/`, {
       return_items: returnItems.map(({ product_id, quantity, return_reason }) => ({
         product_id,
         quantity,
         return_reason,
       })),
+      ...(issueDate ? { issue_date: issueDate } : {}),
     }),
 
   /** `GET` — creates WZ from confirmed order. */

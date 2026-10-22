@@ -7,10 +7,31 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
 type Step = 'upload' | 'preview' | 'done';
 
+const COLUMNS_INFO = [
+  { name: 'Nazwa', required: true, hint: 'Nazwa produktu' },
+  { name: 'Jednostka', required: true, hint: 'np. szt, kg, godz' },
+  { name: 'Cena brutto', required: true, hint: 'Liczba, np. 2.50 lub 2,50' },
+  { name: 'VAT (%)', required: true, hint: 'Dozwolone: 0, 5, 8, 23' },
+  { name: 'SKU', required: false, hint: 'Kod wewnętrzny — używany do aktualizacji' },
+  { name: 'Kod kreskowy', required: false, hint: '' },
+  { name: 'Opis', required: false, hint: '' },
+  { name: 'Alert minimalny', required: false, hint: 'Stan poniżej którego pojawi się alert' },
+  { name: 'Cena netto', required: false, hint: 'Jeśli pusta — wyliczana z brutto i VAT' },
+  { name: 'Typ (produkt/usługa)', required: false, hint: 'Wpisz: produkt lub usługa' },
+  { name: 'PKWiU', required: false, hint: 'Kod PKWiU, np. 10.71.11' },
+  { name: 'Termin przydatności (dni)', required: false, hint: 'Liczba całkowita, np. 3' },
+  { name: 'Koszt własny', required: false, hint: 'Cena zakupu / koszt produkcji' },
+  { name: 'Narzut %', required: false, hint: 'Liczba, np. 30' },
+  { name: 'Do sprzedaży (tak/nie)', required: false, hint: 'Domyślnie: tak' },
+  { name: 'Śledzenie partii (tak/nie)', required: false, hint: 'Domyślnie: tak' },
+  { name: 'Aktywny (tak/nie)', required: false, hint: 'Domyślnie: tak' },
+] as const;
+
 export function ProductImportDialog({ onClose }: { onClose: () => void }) {
   const titleId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [showColumns, setShowColumns] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [step, setStep] = useState<Step>('upload');
   const [preview, setPreview] = useState<{ toCreate: number; toUpdate: number; toSkip: number; validCount: number } | null>(null);
@@ -150,6 +171,50 @@ export function ProductImportDialog({ onClose }: { onClose: () => void }) {
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
                   />
                 </div>
+
+                {/* ── Column format info ────────────────────────────── */}
+                {step === 'upload' && (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50/60"
+                      onClick={() => setShowColumns(v => !v)}
+                      aria-expanded={showColumns}
+                    >
+                      <span className="text-sm font-medium text-slate-700">Jakie kolumny są obsługiwane?</span>
+                      <svg
+                        className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${showColumns ? 'rotate-180' : ''}`}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {showColumns && (
+                      <div className="border-t border-slate-200">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-100 text-left text-slate-400">
+                              <th className="px-4 py-2 font-medium">Kolumna</th>
+                              <th className="px-3 py-2 font-medium">Uwagi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {COLUMNS_INFO.map((col) => (
+                              <tr key={col.name}>
+                                <td className="px-4 py-1.5 font-medium text-slate-800">
+                                  {col.name}
+                                  {col.required && <span className="ml-0.5 text-destructive" aria-label="wymagane">*</span>}
+                                </td>
+                                <td className="px-3 py-1.5 text-slate-500">{col.hint}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <p className="px-4 py-2 text-xs text-slate-400">* pole wymagane</p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* ── Step: preview ─────────────────────────────────── */}
                 {step === 'preview' && preview && (

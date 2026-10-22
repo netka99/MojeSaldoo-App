@@ -5,6 +5,7 @@ from .deletion_views import CompanyDeleteView, CompanyLeaveView
 from .views import (
     CompanyCreateView,
     CompanyDetailView,
+    CompanyLogoUploadView,
     CompanyMeListView,
     CompanyMemberDetailView,
     CompanyMembersListView,
@@ -66,6 +67,7 @@ urlpatterns = [
         CompanyMembersListView.as_view(),
         name="company-members-list",
     ),
+    path("<uuid:company_id>/logo/", CompanyLogoUploadView.as_view(), name="company-logo"),
     path("<uuid:company_id>/delete/", CompanyDeleteView.as_view(), name="company-delete"),
     path("<uuid:company_id>/leave/", CompanyLeaveView.as_view(), name="company-leave"),
     path("<uuid:pk>/", CompanyDetailView.as_view(), name="company-detail"),

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
@@ -291,14 +291,25 @@ describe('CorrectionInvoiceCreatePage', () => {
     });
   });
 
+  it('ZAL invoice — shows zaliczkowej in heading and ZAL label on submit button', () => {
+    mockUseInvoiceQuery.mockReturnValue({
+      data: makeInvoice({ ksef_invoice_type: 'ZAL', invoice_number: 'FV-ZAL/2026/0001' }),
+      isLoading: false,
+    });
+    renderPage();
+    expect(screen.getByText(/Korekta do faktury zaliczkowej FV-ZAL\/2026\/0001/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Utwórz korektę ZAL/ })).toBeInTheDocument();
+    expect(screen.getByText(/Korygowanie faktury zaliczkowej \(ZAL\)/)).toBeInTheDocument();
+  });
+
   it('header due_date override — sends due_date in payload when changed', async () => {
     const user = userEvent.setup();
     mockMutateAsync.mockResolvedValue({ id: 'kor-1', corrects_invoice_id: 'inv-1' });
     renderPage();
 
-    // The due_date field is a <input type="date"> — query by type to avoid ambiguity
+    // input[type="date"] doesn't work with user.type — use fireEvent.change
     const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
-    await user.type(dateInput, '2026-12-31');
+    fireEvent.change(dateInput, { target: { value: '2026-12-31' } });
 
     await user.type(screen.getByPlaceholderText(/Wpisz powód korekty/i), 'Korekta terminu');
     await user.click(screen.getByRole('button', { name: /Utwórz korektę FV/ }));

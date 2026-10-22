@@ -16,6 +16,7 @@ export type CompanyListRow = {
   bank_swift?: string | null;
   bank_name?: string | null;
   invoice_returns_mode?: 'fv_kor' | 'net_qty' | 'lines';
+  wz_quick_returns?: boolean;
 };
 
 type Resolved =

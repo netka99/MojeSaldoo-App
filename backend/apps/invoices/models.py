@@ -1,5 +1,5 @@
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.core.validators import MinValueValidator
@@ -330,6 +330,11 @@ class Invoice(models.Model):
         blank=True, default="",
         help_text="Dodatkowy opis do faktury (widoczny na wydruku, nie wysyłany do KSeF).",
     )
+    additional_info = models.JSONField(
+        default=list, blank=True,
+        help_text="Dodatkowe informacje (DodatkowyOpis FA-3): lista par {label, value}. "
+                  "Np. [{\"label\": \"Okres dostawy\", \"value\": \"2026-09-01 - 2026-09-30\"}].",
+    )
 
     # prices_include_vat: True = FaWiersz używa P_9B+P_11A (brutto, domyślne zachowanie).
     # False = P_9A+P_11 (netto). Default True zachowuje kompatybilność ze starymi fakturami.
@@ -344,6 +349,12 @@ class Invoice(models.Model):
     place_of_issue = models.CharField(
         max_length=100, blank=True, default="",
         help_text="Miejsce wystawienia faktury (P_1M). Jeśli puste — używane jest miasto firmy.",
+    )
+
+    # Ręczna edycja — true gdy faktura z zamówień została potem ręcznie zmieniona.
+    manually_edited = models.BooleanField(
+        default=False,
+        help_text="True when invoice was manually edited after creation from orders.",
     )
 
     # Czy drukować numery dokumentów WZ na fakturze (dla faktur zbiorczych).
@@ -486,10 +497,13 @@ class InvoiceItem(models.Model):
             self.line_vat = Decimal("0.00")
             self.line_gross = Decimal("0.00")
             return
-        net = (self.quantity * self.unit_price_net).quantize(Decimal("0.01"))
-        self.line_net = net
-        self.line_vat = (net * (self.vat_rate / Decimal("100"))).quantize(Decimal("0.01"))
-        self.line_gross = (self.line_net + self.line_vat).quantize(Decimal("0.01"))
+        # Gross is the source of truth (matches what user sees and what KSeF validates).
+        # line_gross = round(unit_price_gross × qty, 2) where unit_price_gross = unit_price_net × (1 + rate)
+        vat_mult = Decimal("1") + self.vat_rate / Decimal("100")
+        unit_gross = (self.unit_price_net * vat_mult).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        self.line_gross = (unit_gross * self.quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        self.line_net = (self.line_gross / vat_mult).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        self.line_vat = self.line_gross - self.line_net
 
     def save(self, *args, **kwargs):
         if self.product_id:

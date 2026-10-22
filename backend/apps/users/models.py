@@ -128,6 +128,21 @@ class Company(models.Model):
         help_text="Czy firma używa KSeF. Wpływa na widoczność modułów i komunikaty.",
     )
 
+    KSEF_ENV_TEST = "test"
+    KSEF_ENV_DEMO = "demo"
+    KSEF_ENV_PRODUCTION = "production"
+    KSEF_ENV_CHOICES = [
+        (KSEF_ENV_TEST,       "Testowe (fikcyjne dane)"),
+        (KSEF_ENV_DEMO,       "Demo (prawdziwe dane firmowe, fikcyjne faktury)"),
+        (KSEF_ENV_PRODUCTION, "Produkcja"),
+    ]
+    ksef_environment = models.CharField(
+        max_length=20,
+        choices=KSEF_ENV_CHOICES,
+        default=KSEF_ENV_DEMO,
+        help_text="Środowisko KSeF. 'test' widoczne tylko dla is_staff.",
+    )
+
     # --- KSeF / invoice defaults ---
     # Default bank account pre-filled onto new invoices (can be overridden per invoice).
     bank_account_iban = models.CharField(
@@ -169,6 +184,12 @@ class Company(models.Model):
         help_text="Czy firma wprowadza ceny netto czy brutto. Wpływa na obliczenia na fakturach i zamówieniach.",
     )
 
+    # Quick-return button on WZ list (van selling / bakery flow)
+    wz_quick_returns = models.BooleanField(
+        default=False,
+        help_text="Pokazuj przycisk 'Zwrot' przy każdej WZ na liście dokumentów.",
+    )
+
     # How the company handles returns on invoices.
     invoice_returns_mode = models.CharField(
         max_length=10,
@@ -186,6 +207,13 @@ class Company(models.Model):
     )
     invoice_number_padding = models.PositiveSmallIntegerField(default=4)
     invoice_number_start = models.PositiveIntegerField(default=1)
+
+    logo = models.ImageField(
+        upload_to="company_logos/",
+        blank=True,
+        null=True,
+        help_text="Logo firmy wyświetlane na fakturach.",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -334,6 +362,21 @@ class CompanyWorkflowSettings(models.Model):
             "Disable for companies that do not track when they pay suppliers."
         ),
     )
+    auto_wz_on_order = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, the order creation form defaults to also generating a WZ document. "
+            "Useful for van-selling or bakeries where order and stock release happen simultaneously."
+        ),
+    )
+    auto_deliver_wz = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, saving a WZ document automatically sets its status to 'delivered'. "
+            "Useful for small bakeries / single-person operations where the person who "
+            "prints the WZ is also the driver — no separate 'mark as delivered' step needed."
+        ),
+    )
 
     class Meta:
         verbose_name = "Company workflow settings"
@@ -426,11 +469,26 @@ class FCMDeviceToken(models.Model):
 
 
 class KSeFCertificate(models.Model):
+    ENVIRONMENT_TEST = "test"
+    ENVIRONMENT_DEMO = "demo"
+    ENVIRONMENT_PRODUCTION = "production"
+    ENVIRONMENT_CHOICES = [
+        (ENVIRONMENT_TEST, "Testowe"),
+        (ENVIRONMENT_DEMO, "Demo"),
+        (ENVIRONMENT_PRODUCTION, "Produkcja"),
+    ]
+
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    company = models.OneToOneField(
+    company = models.ForeignKey(
         Company,
         on_delete=models.CASCADE,
-        related_name="ksef_certificate",
+        related_name="ksef_certificates",
+    )
+    environment = models.CharField(
+        max_length=20,
+        choices=ENVIRONMENT_CHOICES,
+        default=ENVIRONMENT_DEMO,
+        help_text="Środowisko KSeF, dla którego certyfikat jest przeznaczony.",
     )
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     # Public certificate (.pem) — not encrypted
@@ -438,7 +496,12 @@ class KSeFCertificate(models.Model):
     # Private key encrypted with server-derived key (see ksef_crypto)
     encrypted_key = models.TextField()
     subject_name = models.CharField(max_length=255, blank=True)
+    certificate_filename = models.CharField(max_length=255, blank=True, default="")
+    key_filename = models.CharField(max_length=255, blank=True, default="")
     valid_from = models.DateField(null=True, blank=True)
     valid_until = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("company", "environment")]

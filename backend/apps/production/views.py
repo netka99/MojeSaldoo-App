@@ -66,7 +66,10 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
         qs = (
             ProductionOrder.objects.all()
             .select_related("recipe", "recipe__product", "rw_document", "pw_document")
-            .prefetch_related("inputs", "inputs__ingredient")
+            .prefetch_related(
+                "inputs", "inputs__ingredient",
+                "recipe__items", "recipe__items__ingredient",
+            )
             .order_by("-date", "-created_at")
         )
         return filter_queryset_for_current_company(qs, self.request.user)
