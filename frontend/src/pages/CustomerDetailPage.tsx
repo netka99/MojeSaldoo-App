@@ -17,11 +17,13 @@ import { useOrdersByDateQuery } from '@/query/use-orders';
 import { useDeliveryByCustomerQuery } from '@/query/use-delivery';
 import { useInvoiceListQuery } from '@/query/use-invoices';
 import { useAllProductsQuery } from '@/query/use-products';
-import { CustomerForm } from '@/components/features/CustomerForm';
+import { CustomerForm, type CustomerImageChange } from '@/components/features/CustomerForm';
 import { authStorage } from '@/services/api';
+import { customerService } from '@/services/customer.service';
 import { customerKeys } from '@/query/keys';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { orderStatusBadgeClassName } from '@/lib/order-utils';
+import { Link } from 'react-router-dom';
 import type { Order, DeliveryDocument, CustomerWrite } from '@/types';
 import type { PriceType } from '@/types/customer.types';
 
@@ -123,11 +125,24 @@ function OrderRow({
                 </span>
               )}
               {wzDocs.map((wz) => (
-                <span
-                  key={wz.id}
-                  className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
-                >
-                  {wz.document_number ?? 'WZ'}
+                <span key={wz.id} className="contents">
+                  <Link
+                    to={`/delivery/${wz.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    {wz.document_number ?? 'WZ'}
+                  </Link>
+                  {(wz.corrections ?? []).map((kor) => (
+                    <Link
+                      key={kor.id}
+                      to={`/delivery/${kor.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200"
+                    >
+                      {kor.document_number ?? 'WZ-KOR'}
+                    </Link>
+                  ))}
                 </span>
               ))}
               {zwCount > 0 && (
@@ -601,6 +616,11 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
             >
               <ChevronLeftIcon />
             </motion.button>
+            {customer?.image_url && (
+              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl">
+                <img src={customer.image_url} alt="" className="h-full w-full object-cover" />
+              </div>
+            )}
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-[17px] font-semibold text-foreground">
                 {custLoading ? 'Ładowanie…' : (customer?.name ?? 'Klient')}
@@ -734,11 +754,28 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
                     customer={customer}
                     isLoading={updateMutation.isPending}
                     submitLabel="Zapisz zmiany"
-                    onSubmit={async (data: CustomerWrite) => {
+                    onSubmit={async (data: CustomerWrite, image?: CustomerImageChange) => {
                       setEditError(null);
                       try {
-                        await updateMutation.mutateAsync({ id: customerId, body: data });
-                        await queryClient.invalidateQueries({ queryKey: customerKeys.all });
+                        let saved = await updateMutation.mutateAsync({ id: customerId, body: data });
+                        if (image?.file) {
+                          saved = await customerService.uploadImage(customerId, image.file);
+                        } else if (image?.remove) {
+                          saved = await customerService.deleteImage(customerId);
+                        }
+                        if (image?.file || image?.remove) {
+                          queryClient.setQueryData(customerKeys.detail(customerId), saved);
+                          queryClient.setQueriesData<{ results: typeof saved[] }>(
+                            { queryKey: customerKeys.all },
+                            (old) => {
+                              if (!old?.results) return old;
+                              return {
+                                ...old,
+                                results: old.results.map((c) => (c.id === customerId ? saved : c)),
+                              };
+                            },
+                          );
+                        }
                         setShowEditForm(false);
                       } catch (e) {
                         setEditError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');

@@ -123,6 +123,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                 "from_supplier",
                 "linked_wz",
                 "van_route",
+                "corrects_pz",
+                "corrects_wz",
             )
         )
 
@@ -133,6 +135,19 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             Prefetch(
                 "ksef_links",
                 queryset=DeliveryDocumentKSeFLink.objects.select_related("ksef_invoice"),
+            ),
+            Prefetch(
+                "wz_corrections",
+                queryset=DeliveryDocument.objects.only("id", "uuid", "document_number", "issue_date"),
+            ),
+            Prefetch(
+                "pz_corrections",
+                queryset=DeliveryDocument.objects.only("id", "uuid", "document_number", "issue_date"),
+            ),
+            # For WZ-KOR rows: prefetch original WZ items so corrects_wz_items works without N+1
+            Prefetch(
+                "corrects_wz__items",
+                queryset=DeliveryItem.objects.select_related("product"),
             ),
         )
 
@@ -156,7 +171,7 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
                         "id",
                         "delivery_document_id",
                         "invoice_number",
-                    ),
+                    ).prefetch_related("corrections"),
                 ),
             )
 

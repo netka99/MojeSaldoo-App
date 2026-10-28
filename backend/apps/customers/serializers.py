@@ -11,6 +11,13 @@ class CustomerSerializer(UUIDModelSerializer):
     """Full Customer API shape; monetary amounts use DecimalField (no floats)."""
 
     credit_limit = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    image_url = serializers.SerializerMethodField()
+
+    def get_image_url(self, obj):
+        request = self.context.get("request")
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        return None
 
     class Meta:
         model = Customer
@@ -44,6 +51,7 @@ class CustomerSerializer(UUIDModelSerializer):
             "podmiot3_city",
             "podmiot3_postal_code",
             "podmiot3_country",
+            "image_url",
             "created_at",
             "updated_at",
         ]

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { CustomerForm } from '@/components/features/CustomerForm';
+import { CustomerForm, type CustomerImageChange } from '@/components/features/CustomerForm';
 import { Button } from '@/components/ui/Button';
 import { customerKeys } from '@/query/keys';
 import { useCustomerQuery, useUpdateCustomerMutation } from '@/query/use-customers';
 import { authStorage } from '@/services/api';
+import { customerService } from '@/services/customer.service';
 import type { CustomerWrite } from '@/types';
 
 function ChevronLeftIcon({ className }: { className?: string }) {
@@ -95,11 +96,30 @@ export function CustomerEditPage() {
           )}
           <CustomerForm
             customer={customer}
-            onSubmit={async (data: CustomerWrite) => {
+            onSubmit={async (data: CustomerWrite, image?: CustomerImageChange) => {
               setSubmitError(null);
               try {
-                await update.mutateAsync({ id, body: customerBodyForPut(data) });
-                await queryClient.invalidateQueries({ queryKey: customerKeys.all });
+                let saved = await update.mutateAsync({ id, body: customerBodyForPut(data) });
+                if (image?.file) {
+                  saved = await customerService.uploadImage(id, image.file);
+                } else if (image?.remove) {
+                  saved = await customerService.deleteImage(id);
+                }
+                if (image?.file || image?.remove) {
+                  // Update the detail cache and patch every paginated/list cache
+                  // so OrdersPage shows the new image_url without a full refetch.
+                  queryClient.setQueryData(customerKeys.detail(id), saved);
+                  queryClient.setQueriesData<{ results: typeof saved[] }>(
+                    { queryKey: customerKeys.all },
+                    (old) => {
+                      if (!old?.results) return old;
+                      return {
+                        ...old,
+                        results: old.results.map((c) => (c.id === id ? saved : c)),
+                      };
+                    },
+                  );
+                }
                 navigate('/customers');
               } catch (e) {
                 setSubmitError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');

@@ -327,6 +327,9 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
     }
   };
 
+  const changedAtField = (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz') =>
+    `${field}_changed_at` as keyof typeof settings;
+
   const rows: { field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz'; title: string; description: string; confirmOnEnable?: string }[] = [
     {
       field: 'orders_required',
@@ -412,6 +415,16 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
                       }
                     }}
                   />
+                  {(() => {
+                    const ts = settings?.[changedAtField(row.field)] as string | null | undefined;
+                    if (!ts) return null;
+                    const d = new Date(ts);
+                    return (
+                      <p className="mt-1 text-xs text-slate-400">
+                        zm. {d.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </p>
+                    );
+                  })()}
                 </div>
               </li>
             );

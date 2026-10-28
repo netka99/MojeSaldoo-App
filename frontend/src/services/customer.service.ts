@@ -48,6 +48,14 @@ export const customerService = {
   partialUpdateItem: (id: string, body: Partial<CustomerWrite>) =>
     api.patch<Customer>(`/customers/${id}/`, body),
 
+  uploadImage: (id: string, file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+    return api.postForm<Customer>(`/customers/${id}/image/`, form);
+  },
+
+  deleteImage: (id: string) => api.delete<Customer>(`/customers/${id}/image/`),
+
   downloadImportTemplate: async (): Promise<void> => {
     const blob = await api.get<Blob>('/customers/import-template/', { responseType: 'blob' });
     const url = URL.createObjectURL(blob);

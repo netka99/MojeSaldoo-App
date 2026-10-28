@@ -378,6 +378,12 @@ class CompanyWorkflowSettings(models.Model):
         ),
     )
 
+    # Timestamps tracking when each boolean flag was last changed (None = never changed).
+    orders_required_changed_at = models.DateTimeField(null=True, blank=True)
+    wz_required_before_invoice_changed_at = models.DateTimeField(null=True, blank=True)
+    auto_wz_on_order_changed_at = models.DateTimeField(null=True, blank=True)
+    auto_deliver_wz_changed_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         verbose_name = "Company workflow settings"
         verbose_name_plural = "Company workflow settings"

@@ -1192,7 +1192,7 @@ def build_invoice_preview_data(invoice: Invoice, request=None) -> dict:
     ksef_qr_url = ""
     if invoice.ksef_number:
         import base64 as _b64
-        from apps.ksef.crypto import KSEF_API_HOST
+        from apps.ksef.crypto import KSEF_ENV_HOSTS, KSEF_DEFAULT_HOST
         # invoice_hash may be empty on Invoice — fall back to KSeFSentInvoice
         raw_hash_b64 = invoice.invoice_hash or ""
         if not raw_hash_b64 and invoice.ksef_reference_number:
@@ -1203,7 +1203,8 @@ def build_invoice_preview_data(invoice: Invoice, request=None) -> dict:
             if sent:
                 raw_hash_b64 = sent["invoice_hash"] or ""
         if raw_hash_b64:
-            is_test = "test" in KSEF_API_HOST
+            ksef_host = KSEF_ENV_HOSTS.get(getattr(company, "ksef_environment", None) or "", KSEF_DEFAULT_HOST)
+            is_test = "test" in ksef_host
             qr_base = "https://qr-test.ksef.mf.gov.pl" if is_test else "https://qr.ksef.mf.gov.pl"
             raw_hash = _b64.b64decode(raw_hash_b64 + "==")  # re-pad before decoding
             hash_b64url = _b64.urlsafe_b64encode(raw_hash).rstrip(b"=").decode()

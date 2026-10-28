@@ -8,6 +8,8 @@ export const INVOICE_STATUS_LABELS_PL: Record<InvoiceStatus, string> = {
   paid: 'Opłacona',
   overdue: 'Przeterminowana',
   cancelled: 'Anulowana',
+  corrected: 'Skorygowana',
+  refund_due: 'Do zwrotu',
 };
 
 export const invoiceStatusFilterOptions: { value: InvoiceStatus; label: string }[] = (
@@ -18,5 +20,7 @@ export const invoiceStatusFilterOptions: { value: InvoiceStatus; label: string }
     'paid',
     'overdue',
     'cancelled',
+    'corrected',
+    'refund_due',
   ] as const
 ).map((value) => ({ value, label: INVOICE_STATUS_LABELS_PL[value] }));

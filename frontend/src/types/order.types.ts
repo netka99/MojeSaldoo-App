@@ -65,6 +65,9 @@ export interface Order {
   delivered_at: string | null;
   items: OrderItem[];
   has_active_invoice?: boolean;
+  has_wz?: boolean;
+  wz_numbers?: { id: string; number: string; corrections?: { id: string; number: string }[] }[];
+  invoice_numbers?: { id: string; number: string; has_correction?: boolean }[];
   production_status?: 'in_progress' | 'completed' | null;
 }
 
@@ -123,4 +126,6 @@ export interface PaginatedOrders {
   next: string | null;
   previous: string | null;
   results: Order[];
+  /** Sum of `total_gross` across all matching orders (all pages), injected by `OrderViewSet.list`. */
+  total_gross_sum?: string;
 }

@@ -60,6 +60,8 @@ const CertificateUploadPage = lazy(() =>
   import('./pages/CertificateUploadPage').then((m) => ({ default: m.CertificateUploadPage })),
 );
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then((m) => ({ default: m.OrdersPage })));
+const OrderListPage = lazy(() => import('./pages/OrderListPage').then((m) => ({ default: m.OrderListPage })));
+const ReconciliationReportPage = lazy(() => import('./pages/ReconciliationReportPage').then((m) => ({ default: m.ReconciliationReportPage })));
 const OrderCreatePage = lazy(() =>
   import('./pages/OrderCreatePage').then((m) => ({ default: m.OrderCreatePage })),
 );
@@ -361,6 +363,22 @@ function App() {
                   element={
                     <ModuleRouteGate module="orders">
                       <OrdersPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/orders/list"
+                  element={
+                    <ModuleRouteGate module="orders">
+                      <OrderListPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/reports/reconciliation"
+                  element={
+                    <ModuleRouteGate module="reporting">
+                      <ReconciliationReportPage />
                     </ModuleRouteGate>
                   }
                 />

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  postForm: vi.fn(),
   put: vi.fn(),
   patch: vi.fn(),
   delete: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock('./api', () => ({
   api: {
     get: mocks.get,
     post: mocks.post,
+    postForm: mocks.postForm,
     put: mocks.put,
     patch: mocks.patch,
     delete: mocks.delete,
@@ -73,5 +75,21 @@ describe('customerService', () => {
     mocks.patch.mockResolvedValue({ id: 'c1' });
     await customerService.partialUpdateItem('c1', { phone: '123456789' });
     expect(mocks.patch).toHaveBeenCalledWith('/customers/c1/', { phone: '123456789' });
+  });
+
+  it('uploadImage posts form to /customers/:id/image/', async () => {
+    mocks.postForm.mockResolvedValue({ id: 'c1', image_url: 'http://example.com/thumb.jpg' });
+    const file = new File(['data'], 'photo.jpg', { type: 'image/jpeg' });
+    await customerService.uploadImage('c1', file);
+    expect(mocks.postForm).toHaveBeenCalledWith(
+      '/customers/c1/image/',
+      expect.any(FormData),
+    );
+  });
+
+  it('deleteImage sends DELETE /customers/:id/image/', async () => {
+    mocks.delete.mockResolvedValue({ id: 'c1', image_url: null });
+    await customerService.deleteImage('c1');
+    expect(mocks.delete).toHaveBeenCalledWith('/customers/c1/image/');
   });
 });

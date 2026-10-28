@@ -247,7 +247,22 @@ class SwitchCompanySerializer(serializers.Serializer):
 class CompanyWorkflowSettingsSerializer(UUIDModelSerializer):
     class Meta:
         model = CompanyWorkflowSettings
-        fields = ["orders_required", "wz_required_before_invoice", "auto_wz_on_order", "auto_deliver_wz"]
+        fields = [
+            "orders_required",
+            "orders_required_changed_at",
+            "wz_required_before_invoice",
+            "wz_required_before_invoice_changed_at",
+            "auto_wz_on_order",
+            "auto_wz_on_order_changed_at",
+            "auto_deliver_wz",
+            "auto_deliver_wz_changed_at",
+        ]
+        read_only_fields = [
+            "orders_required_changed_at",
+            "wz_required_before_invoice_changed_at",
+            "auto_wz_on_order_changed_at",
+            "auto_deliver_wz_changed_at",
+        ]
 
 
 class CompanyRoleSerializer(serializers.ModelSerializer):

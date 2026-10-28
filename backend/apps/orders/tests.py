@@ -67,6 +67,50 @@ class OrderApiTests(TestCase):
         self.assertIn("results", response.data)
         self.assertGreaterEqual(response.data["count"], 1)
 
+    def test_order_list_includes_total_gross_sum(self):
+        """List response must include total_gross_sum aggregated across all matching orders."""
+        self.client.force_authenticate(user=self.user)
+        # Create two orders with known totals
+        o1 = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 5, 1), delivery_date=date(2026, 5, 2),
+            status="confirmed", total_gross=Decimal("100.00"),
+        )
+        o2 = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 5, 1), delivery_date=date(2026, 5, 3),
+            status="confirmed", total_gross=Decimal("250.50"),
+        )
+        response = self.client.get(reverse("order-list"), {"status": "confirmed"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("total_gross_sum", response.data)
+        total = Decimal(response.data["total_gross_sum"])
+        self.assertEqual(total, Decimal("350.50"))
+        # Cleanup
+        o1.delete(); o2.delete()
+
+    def test_order_list_total_gross_sum_respects_filters(self):
+        """total_gross_sum must change when filters narrow the result set."""
+        self.client.force_authenticate(user=self.user)
+        Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 6, 1), delivery_date=date(2026, 6, 2),
+            status="confirmed", total_gross=Decimal("500.00"),
+        )
+        Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 6, 1), delivery_date=date(2026, 6, 3),
+            status="cancelled", total_gross=Decimal("999.00"),
+        )
+        r = self.client.get(reverse("order-list"), {"status": "confirmed"})
+        self.assertEqual(response.status_code if (response := r) else r.status_code, 200)
+        confirmed_sum = Decimal(r.data["total_gross_sum"])
+        r2 = self.client.get(reverse("order-list"), {"status": "cancelled"})
+        cancelled_sum = Decimal(r2.data["total_gross_sum"])
+        self.assertNotEqual(confirmed_sum, cancelled_sum)
+        self.assertGreaterEqual(confirmed_sum, Decimal("500.00"))
+        self.assertGreaterEqual(cancelled_sum, Decimal("999.00"))
+
     def test_order_list_without_invoice_returns_confirmed_or_delivered_uninvoiced(self):
         from apps.invoices.models import Invoice
 
@@ -926,6 +970,40 @@ class OrderApiTests(TestCase):
         r = self.client.get(self._url_items(foreign_o.uuid))
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_has_wz_annotation_false_when_no_delivery_document(self):
+        """has_wz is False for an order with no delivery documents."""
+        from apps.delivery.models import DeliveryDocument
+        self.client.force_authenticate(user=self.user)
+        order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 7, 1), delivery_date=date(2026, 7, 5),
+            status=Order.STATUS_DRAFT,
+        )
+        r = self.client.get(reverse("order-list"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        result = next(o for o in r.data["results"] if str(o["id"]) == str(order.uuid))
+        self.assertFalse(result["has_wz"])
+
+    def test_has_wz_annotation_true_when_delivery_document_exists(self):
+        """has_wz is True for an order that has at least one delivery document."""
+        from apps.delivery.models import DeliveryDocument
+        self.client.force_authenticate(user=self.user)
+        order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.co,
+            order_date=date(2026, 7, 2), delivery_date=date(2026, 7, 6),
+            status=Order.STATUS_CONFIRMED,
+        )
+        DeliveryDocument.objects.create(
+            company=self.co,
+            order=order,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 7, 6),
+        )
+        r = self.client.get(reverse("order-list"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        result = next(o for o in r.data["results"] if str(o["id"]) == str(order.uuid))
+        self.assertTrue(result["has_wz"])
+
 
 class OrderModelTests(TestCase):
     """Cover order_number sequencing, pricing, and status side effects."""
@@ -1242,3 +1320,511 @@ class DeliveryItemSignalTests(TestCase):
         item.delete()
         self.order_item.refresh_from_db()
         self.assertEqual(self.order_item.quantity_delivered, Decimal("0.00"))
+
+
+# ---------------------------------------------------------------------------
+# Price rounding tests — gross vs net mode
+# ---------------------------------------------------------------------------
+
+class OrderItemLineTotalRoundingTests(TestCase):
+    """
+    Backend equivalent of frontend lineTotalGross rounding tests.
+
+    Rule: line_total_gross = qty × unit_price_gross × disc_factor, rounded to 0.01.
+    unit_price_gross is stored with 2 decimal places (set by frontend or serializer).
+
+    These tests document the expected accounting behaviour for both net-input
+    and gross-input modes and guard against rounding regressions.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="rounding-user", email="rounding@test.com", password="x"
+        )
+        self.company = Company.objects.create(name="Rounding Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.customer = Customer.objects.create(name="C", company=self.company)
+        self.product = Product.objects.create(name="P", company=self.company)
+
+    def _order(self):
+        return Order.objects.create(
+            user=self.user, company=self.company, customer=self.customer,
+            order_date=date(2026, 1, 1), delivery_date=date(2026, 1, 10),
+            status=Order.STATUS_DRAFT,
+        )
+
+    def _item(self, order, net, gross, vat, qty, disc=Decimal("0.00")):
+        return OrderItem.objects.create(
+            order=order,
+            product=self.product,
+            unit_price_net=Decimal(str(net)),
+            unit_price_gross=Decimal(str(gross)),
+            vat_rate=Decimal(str(vat)),
+            quantity=Decimal(str(qty)),
+            discount_percent=Decimal(str(disc)),
+        )
+
+    # ------------------------------------------------------------------
+    # Price input mode: NET (netto) — gross derived from net × (1 + VAT%)
+    # ------------------------------------------------------------------
+
+    def test_net_mode_vat23_qty1(self):
+        """net 10, VAT 23%, qty 1 → gross 12.30"""
+        o = self._order()
+        item = self._item(o, net="10.00", gross="12.30", vat="23", qty="1")
+        self.assertEqual(item.line_total_net, Decimal("10.00"))
+        self.assertEqual(item.line_total_gross, Decimal("12.30"))
+
+    def test_net_mode_vat23_qty2(self):
+        """net 10, VAT 23%, qty 2 → gross 24.60"""
+        o = self._order()
+        item = self._item(o, net="10.00", gross="12.30", vat="23", qty="2")
+        self.assertEqual(item.line_total_gross, Decimal("24.60"))
+
+    def test_net_mode_vat5_qty5_classic_rounding_case(self):
+        """
+        net 0.65, VAT 5%, qty 5.
+        unit_price_gross = round(0.65 × 1.05, 2) = 0.68 (stored in DB).
+        line_total_gross = 0.68 × 5 = 3.40 — NOT 3.41.
+
+        This is the real bakery case that triggered this test suite.
+        3.41 would appear if gross were computed as 0.6825 × 5 = 3.4125 → 3.41
+        but the DB column holds only 2 dp, so it must be 0.68 × 5 = 3.40.
+        """
+        o = self._order()
+        item = self._item(o, net="0.65", gross="0.68", vat="5", qty="5")
+        self.assertEqual(item.line_total_gross, Decimal("3.40"))
+        self.assertEqual(item.line_total_net, Decimal("3.25"))
+
+    def test_net_mode_vat8_qty20_classic_rounding_case(self):
+        """
+        net 3.24, VAT 8%, qty 20.
+        unit_price_gross = round(3.24 × 1.08, 2) = 3.50.
+        line_total_gross = 3.50 × 20 = 70.00 — NOT 69.98.
+        """
+        o = self._order()
+        item = self._item(o, net="3.24", gross="3.50", vat="8", qty="20")
+        self.assertEqual(item.line_total_gross, Decimal("70.00"))
+        self.assertEqual(item.line_total_net, Decimal("64.80"))
+
+    def test_net_mode_vat8_qty3(self):
+        """net 3.24, VAT 8%, qty 3 → gross 10.50"""
+        o = self._order()
+        item = self._item(o, net="3.24", gross="3.50", vat="8", qty="3")
+        self.assertEqual(item.line_total_gross, Decimal("10.50"))
+
+    def test_net_mode_vat0_qty10(self):
+        """net 4.50, VAT 0%, qty 10 → gross 45.00"""
+        o = self._order()
+        item = self._item(o, net="4.50", gross="4.50", vat="0", qty="10")
+        self.assertEqual(item.line_total_gross, Decimal("45.00"))
+        self.assertEqual(item.line_total_net, Decimal("45.00"))
+
+    def test_net_mode_line_discount_vat23(self):
+        """net 100, VAT 23%, qty 1, disc 10% → gross 110.70"""
+        o = self._order()
+        item = self._item(o, net="100.00", gross="123.00", vat="23", qty="1", disc="10")
+        self.assertEqual(item.line_total_gross, Decimal("110.70"))
+        self.assertEqual(item.line_total_net, Decimal("90.00"))
+
+    def test_net_mode_line_discount_vat5(self):
+        """net 0.65, VAT 5%, qty 5, disc 5% → gross 3.23"""
+        # unit_gross = 0.68, total_no_disc = 0.68 × 5 = 3.40, × 0.95 = 3.23
+        o = self._order()
+        item = self._item(o, net="0.65", gross="0.68", vat="5", qty="5", disc="5")
+        self.assertEqual(item.line_total_gross, Decimal("3.23"))
+
+    # ------------------------------------------------------------------
+    # Price input mode: GROSS (brutto) — net derived from gross / (1 + VAT%)
+    # ------------------------------------------------------------------
+
+    def test_gross_mode_vat5_qty5(self):
+        """
+        gross 0.68 entered by user, VAT 5%.
+        net stored = round(0.68 / 1.05, 2) = 0.65.
+        line_total_gross = 0.68 × 5 = 3.40.
+        """
+        o = self._order()
+        item = self._item(o, net="0.65", gross="0.68", vat="5", qty="5")
+        self.assertEqual(item.line_total_gross, Decimal("3.40"))
+
+    def test_gross_mode_vat8_qty20(self):
+        """gross 3.50, VAT 8%, qty 20 → total gross 70.00"""
+        o = self._order()
+        item = self._item(o, net="3.24", gross="3.50", vat="8", qty="20")
+        self.assertEqual(item.line_total_gross, Decimal("70.00"))
+
+    def test_gross_mode_vat5_qty5_rogal(self):
+        """gross 2.31, VAT 5%, qty 18 → total gross 41.58"""
+        o = self._order()
+        item = self._item(o, net="2.20", gross="2.31", vat="5", qty="18")
+        self.assertEqual(item.line_total_gross, Decimal("41.58"))
+
+    def test_gross_mode_vat5_qty5_chalka(self):
+        """gross 7.14, VAT 5%, qty 5 → total gross 35.70"""
+        o = self._order()
+        item = self._item(o, net="6.80", gross="7.14", vat="5", qty="5")
+        self.assertEqual(item.line_total_gross, Decimal("35.70"))
+
+    def test_gross_mode_with_discount(self):
+        """gross 3.50, VAT 8%, qty 10, disc 5% → gross 33.25"""
+        o = self._order()
+        item = self._item(o, net="3.24", gross="3.50", vat="8", qty="10", disc="5")
+        # 3.50 × 10 × 0.95 = 33.25
+        self.assertEqual(item.line_total_gross, Decimal("33.25"))
+
+    # ------------------------------------------------------------------
+    # Order.calculate_total — subtotal and total_gross across multiple lines
+    # ------------------------------------------------------------------
+
+    def test_order_subtotal_two_lines_gross_mode(self):
+        """
+        Mixed VAT lines as in a real bakery order.
+        Bagietka: gross 3.50, VAT 8%, qty 20 → 70.00
+        Bulka:    gross 0.68, VAT 5%, qty 5  → 3.40
+        subtotal_gross = 73.40, total_gross = 73.40 (no order-level discount).
+        """
+        o = self._order()
+        self._item(o, net="3.24", gross="3.50", vat="8", qty="20")
+        self._item(o, net="0.65", gross="0.68", vat="5", qty="5")
+        o.refresh_from_db()
+        self.assertEqual(o.subtotal_gross, Decimal("73.40"))
+        self.assertEqual(o.total_gross, Decimal("73.40"))
+        self.assertEqual(o.discount_amount, Decimal("0.00"))
+
+    def test_order_subtotal_with_order_level_discount(self):
+        """Order-level discount_percent reduces total_gross proportionally."""
+        o = self._order()
+        o.discount_percent = Decimal("10.00")
+        o.save(update_fields=["discount_percent"])
+        self._item(o, net="3.24", gross="3.50", vat="8", qty="20")
+        o.refresh_from_db()
+        # subtotal = 70.00, discount = 7.00, total = 63.00
+        self.assertEqual(o.subtotal_gross, Decimal("70.00"))
+        self.assertEqual(o.discount_amount, Decimal("7.00"))
+        self.assertEqual(o.total_gross, Decimal("63.00"))
+
+    def test_order_total_gross_uses_gross_column_not_net(self):
+        """
+        Ensure total_gross sums line_total_gross (based on unit_price_gross),
+        not a re-derived value from unit_price_net.
+        Even when net×VAT would give a different cent, gross column wins.
+        """
+        o = self._order()
+        # unit_price_gross = 0.68, unit_price_net = 0.65 (slightly inconsistent due to rounding)
+        # correct total_gross = 0.68 × 5 = 3.40 (uses gross column)
+        self._item(o, net="0.65", gross="0.68", vat="5", qty="5")
+        o.refresh_from_db()
+        self.assertEqual(o.total_gross, Decimal("3.40"))
+        # net column also stored correctly
+        self.assertEqual(o.total_net, Decimal("3.25"))
+
+
+# ---------------------------------------------------------------------------
+# Order unblock action (POST /api/orders/{id}/unblock/)
+# ---------------------------------------------------------------------------
+
+
+class OrderUnblockTests(TestCase):
+    """POST /api/orders/{id}/unblock/ — revert invoiced order to delivered."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="unblock-user", email="unblock@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="Unblock Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        CompanyModule.objects.create(company=self.company, module="orders", is_enabled=True)
+        CompanyModule.objects.create(company=self.company, module="invoicing", is_enabled=True)
+        self.customer = Customer.objects.create(name="Unblock Client", company=self.company)
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_INVOICED,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _url(self):
+        return reverse("order-unblock", kwargs={"uuid": str(self.order.uuid)})
+
+    def _make_invoice(self, status, is_correction=False):
+        from apps.invoices.models import Invoice
+        return Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=status,
+            is_correction=is_correction,
+        )
+
+    def test_unblock_succeeds_when_all_invoices_corrected(self):
+        """Order with only corrected invoices can be unblocked → status becomes delivered."""
+        self._make_invoice("corrected")
+        r = self.client.post(self._url())
+        self.assertEqual(r.status_code, 200, r.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_DELIVERED)
+
+    def test_unblock_succeeds_when_all_invoices_cancelled(self):
+        """Order with only cancelled invoices can be unblocked."""
+        self._make_invoice("cancelled")
+        r = self.client.post(self._url())
+        self.assertEqual(r.status_code, 200, r.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_DELIVERED)
+
+    def test_unblock_blocked_when_active_invoice_exists(self):
+        """Order with at least one active invoice cannot be unblocked → 400."""
+        self._make_invoice("issued")
+        r = self.client.post(self._url())
+        self.assertEqual(r.status_code, 400, r.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_INVOICED)
+
+    def test_unblock_blocked_when_order_not_invoiced(self):
+        """Unblock only applies to orders in STATUS_INVOICED → 400 for other statuses."""
+        self.order.status = Order.STATUS_DELIVERED
+        self.order.save(update_fields=["status"])
+        r = self.client.post(self._url())
+        self.assertEqual(r.status_code, 400, r.data)
+
+    def test_unblock_mixed_corrected_and_active_is_blocked(self):
+        """One corrected + one active invoice → still blocked."""
+        self._make_invoice("corrected")
+        self._make_invoice("issued")
+        r = self.client.post(self._url())
+        self.assertEqual(r.status_code, 400, r.data)
+
+
+# ---------------------------------------------------------------------------
+# Order serializer: invoice_numbers with has_correction flag
+# ---------------------------------------------------------------------------
+
+
+class OrderInvoiceNumbersHasCorrectionTests(TestCase):
+    """invoice_numbers field on the order serializer includes has_correction per invoice."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="inv-num-user", email="inv-num@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="Inv Num Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        CompanyModule.objects.create(company=self.company, module="orders", is_enabled=True)
+        CompanyModule.objects.create(company=self.company, module="invoicing", is_enabled=True)
+        self.customer = Customer.objects.create(name="Num Client", company=self.company)
+        self.order = Order.objects.create(
+            user=self.user,
+            customer=self.customer,
+            company=self.company,
+            order_date=date(2026, 6, 1),
+            delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_INVOICED,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    _inv_seq = 0
+
+    def _make_invoice(self, status="issued", is_correction=False, corrects=None):
+        from apps.invoices.models import Invoice
+        OrderInvoiceNumbersHasCorrectionTests._inv_seq += 1
+        n = OrderInvoiceNumbersHasCorrectionTests._inv_seq
+        # Give every invoice a number so get_invoice_numbers() picks it up
+        prefix = "FV-KOR" if is_correction else "FV"
+        number = f"{prefix}/2026/{n:04d}"
+        return Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            order=self.order,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=status,
+            is_correction=is_correction,
+            corrects_invoice=corrects,
+            invoice_number=number,
+        )
+
+    def _get_invoice_numbers(self):
+        r = self.client.get(reverse("order-detail", kwargs={"uuid": str(self.order.uuid)}))
+        self.assertEqual(r.status_code, 200, r.data)
+        return r.data.get("invoice_numbers", [])
+
+    def test_has_correction_false_when_no_kor(self):
+        """Invoice with no corrections should have has_correction=False."""
+        self._make_invoice("issued")
+        nums = self._get_invoice_numbers()
+        self.assertEqual(len(nums), 1)
+        self.assertFalse(nums[0]["has_correction"])
+
+    def test_has_correction_true_when_active_kor_exists(self):
+        """Invoice with an issued KOR should have has_correction=True."""
+        fv = self._make_invoice("issued")
+        self._make_invoice("issued", is_correction=True, corrects=fv)
+        nums = self._get_invoice_numbers()
+        # Only the original FV appears (corrections are filtered out)
+        self.assertEqual(len(nums), 1)
+        self.assertTrue(nums[0]["has_correction"])
+
+
+class OrderApplyWzCorrectionTests(TestCase):
+    """Tests for POST /:id/apply-wz-correction/ endpoint."""
+
+    def setUp(self):
+        from apps.delivery.models import DeliveryDocument, DeliveryItem
+
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="wz-kor-apply-user", email="wz-kor-apply@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="WZ KOR Apply Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        CompanyModule.objects.create(company=self.company, module="orders", is_enabled=True)
+        CompanyModule.objects.create(company=self.company, module="warehouses", is_enabled=True)
+
+        self.warehouse = Warehouse.objects.create(
+            company=self.company, user=self.user, name="Main", code="MG", warehouse_type="main"
+        )
+        self.customer = Customer.objects.create(name="Shop", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Bread", unit="szt",
+            price_net=Decimal("4.07"), price_gross=Decimal("5.00"), vat_rate=Decimal("23"),
+        )
+
+        self.order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.company,
+            order_date=date(2026, 6, 1), delivery_date=date(2026, 6, 10),
+            status=Order.STATUS_DELIVERED,
+            subtotal_gross=Decimal("50.00"), total_gross=Decimal("50.00"),
+            subtotal_net=Decimal("40.70"), total_net=Decimal("40.70"),
+        )
+        self.order_item = OrderItem.objects.create(
+            order=self.order, product=self.product,
+            product_name="Bread", product_unit="szt",
+            quantity=Decimal("10"), quantity_delivered=Decimal("10"),
+            unit_price_net=Decimal("4.07"), unit_price_gross=Decimal("5.00"),
+            vat_rate=Decimal("23"),
+            line_total_net=Decimal("40.70"), line_total_gross=Decimal("50.00"),
+        )
+
+        # Original WZ (delivered)
+        self.wz = DeliveryDocument.objects.create(
+            company=self.company, user=self.user, order=self.order,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            issue_date=date(2026, 6, 10),
+            from_warehouse=self.warehouse, to_customer=self.customer,
+            status=DeliveryDocument.STATUS_DELIVERED,
+        )
+        self.wz_item = DeliveryItem.objects.create(
+            delivery_document=self.wz, order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("10"), quantity_actual=Decimal("10"),
+        )
+
+        # WZ-KOR returning 2 units
+        self.wz_kor = DeliveryDocument.objects.create(
+            company=self.company, user=self.user, order=self.order,
+            document_type="WZ-KOR",
+            issue_date=date(2026, 6, 11),
+            from_warehouse=self.warehouse, to_customer=self.customer,
+            status=DeliveryDocument.STATUS_DELIVERED,
+            corrects_wz=self.wz,
+        )
+        DeliveryItem.objects.create(
+            delivery_document=self.wz_kor, order_item=self.order_item,
+            product=self.product,
+            quantity_planned=Decimal("2"), quantity_actual=Decimal("2"),
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _url(self):
+        return f"/api/orders/{self.order.uuid}/apply-wz-correction/"
+
+    def test_reduces_order_item_quantity(self):
+        """quantity should drop from 10 to 8 (quantity_delivered 10 minus correction 2)."""
+        r = self.client.post(self._url(), {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.order_item.refresh_from_db()
+        self.assertEqual(self.order_item.quantity, Decimal("8"))
+
+    def test_recalculates_order_totals(self):
+        """total_gross should reflect the reduced quantity (8 × 5.00 = 40.00)."""
+        r = self.client.post(self._url(), {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.total_gross, Decimal("40.00"))
+
+    def test_total_gross_in_response(self):
+        """Response body total_gross must match newly saved value."""
+        r = self.client.post(self._url(), {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(Decimal(r.data["total_gross"]), Decimal("40.00"))
+
+    def test_creates_changelog_entry(self):
+        """An OrderChangeLog entry must be written for the changed line."""
+        from apps.orders.models import OrderChangeLog
+        r = self.client.post(self._url(), {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.assertEqual(r.status_code, 200)
+        entry = OrderChangeLog.objects.filter(order=self.order, change_type=OrderChangeLog.CHANGE_QTY).first()
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.quantity_before, Decimal("10"))
+        self.assertEqual(entry.quantity_after, Decimal("8"))
+
+    def test_marks_wz_kor_as_applied(self):
+        """order_correction_applied should be True after the call."""
+        self.client.post(self._url(), {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.wz_kor.refresh_from_db()
+        self.assertTrue(self.wz_kor.order_correction_applied)
+
+    def test_cancels_order_when_all_quantities_zero(self):
+        """If correction brings all items to 0, order status becomes cancelled."""
+        # Update WZ-KOR item to return all 10 units
+        from apps.delivery.models import DeliveryItem as DI
+        DI.objects.filter(delivery_document=self.wz_kor).update(
+            quantity_planned=Decimal("10"), quantity_actual=Decimal("10")
+        )
+        r = self.client.post(self._url(), {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_CANCELLED)
+        self.assertEqual(self.order.total_gross, Decimal("0.00"))
+
+    def test_rejects_wrong_wz_kor_id(self):
+        """WZ-KOR from a different order is rejected with 400."""
+        other_order = Order.objects.create(
+            user=self.user, customer=self.customer, company=self.company,
+            order_date=date(2026, 7, 1), delivery_date=date(2026, 7, 10),
+            status=Order.STATUS_DELIVERED,
+        )
+        url = f"/api/orders/{other_order.uuid}/apply-wz-correction/"
+        r = self.client.post(url, {"wz_kor_id": str(self.wz_kor.uuid)}, format="json")
+        self.assertEqual(r.status_code, 400)

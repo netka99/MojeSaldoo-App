@@ -7,6 +7,7 @@ export const DELIVERY_STATUS_LABELS_PL: Record<DeliveryDocumentStatus, string> =
   in_transit: 'W drodze',
   delivered: 'Dostarczono',
   cancelled: 'Anulowano',
+  corrected: 'Skorygowano',
 };
 
 export const deliveryStatusFilterOptions: { value: DeliveryDocumentStatus; label: string }[] = (

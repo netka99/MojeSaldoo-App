@@ -1222,7 +1222,10 @@ def create_wz_correction(
 
     warehouse = original_wz.from_warehouse
     if warehouse is None:
-        raise ValidationError({"detail": "WZ nie ma przypisanego magazynu źródłowego."})
+        # Fall back to company's default main warehouse (e.g. for legacy WZ without warehouse set)
+        warehouse = default_from_warehouse_for_delivery(original_wz.company_id)
+    if warehouse is None:
+        raise ValidationError({"detail": "WZ nie ma przypisanego magazynu źródłowego. Skonfiguruj magazyn główny w ustawieniach."})
 
     company_id = original_wz.company_id
     doc_label = original_wz.document_number or str(original_wz.id)
@@ -1316,6 +1319,41 @@ def create_wz_correction(
             notes=f"Korekta WZ {doc_label}" + (f" — {change['return_reason']}" if change["return_reason"] else ""),
             created_by=user,
         )
+
+    # Check if original WZ is fully corrected: sum all returned quantities across all WZ-KOR documents
+    # and compare with delivered quantities on the original WZ.
+    total_returned_by_item: dict = {}
+    for kor in original_wz.wz_corrections.prefetch_related("items"):
+        for kor_item in kor.items.all():
+            pid = kor_item.product_id
+            total_returned_by_item[pid] = total_returned_by_item.get(pid, Decimal("0")) + (
+                kor_item.quantity_actual if kor_item.quantity_actual is not None else kor_item.quantity_planned
+            )
+
+    all_fully_returned = all(
+        total_returned_by_item.get(orig_item.product_id, Decimal("0"))
+        >= (orig_item.quantity_actual if orig_item.quantity_actual is not None else orig_item.quantity_planned)
+        for orig_item in orig_items
+    )
+
+    if all_fully_returned:
+        original_wz.status = DeliveryDocument.STATUS_CORRECTED
+        original_wz.save(update_fields=["status"])
+
+    # Update OrderItem.quantity_delivered to reflect the correction
+    for change in changes:
+        orig_item = change["orig_item"]
+        if not orig_item.order_item_id:
+            continue
+        try:
+            oi = OrderItem.objects.select_for_update().get(pk=orig_item.order_item_id)
+            oi.quantity_delivered = max(
+                (oi.quantity_delivered or Decimal("0")) - change["qty_returned"],
+                Decimal("0"),
+            )
+            oi.save(update_fields=["quantity_delivered"])
+        except OrderItem.DoesNotExist:
+            pass
 
     return wz_kor
 

@@ -11,7 +11,7 @@ type NavGlyphName =
   | 'grid' | 'user' | 'clipboard' | 'file' | 'filePlus' | 'clock' | 'banknote' | 'truck'
   | 'box' | 'warehouse' | 'layers' | 'check' | 'minus' | 'building' | 'cart' | 'inbox'
   | 'files' | 'scan' | 'factory' | 'book' | 'wallet' | 'tag' | 'calendar' | 'chart'
-  | 'trend' | 'percent' | 'users' | 'receipt' | 'history' | 'gear';
+  | 'trend' | 'percent' | 'users' | 'receipt' | 'history' | 'gear' | 'list';
 
 function NavGlyph({ name }: { name: NavGlyphName }) {
   return (
@@ -203,6 +203,11 @@ function NavGlyph({ name }: { name: NavGlyphName }) {
           <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
         </>
       )}
+      {name === 'list' && (
+        <>
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </>
+      )}
     </svg>
   );
 }
@@ -234,6 +239,16 @@ function NavSectionSprzedaz() {
         {canOrders && (
           <ModuleNavItem module="orders" to="/orders" icon={<NavGlyph name="clipboard" />}>
             Zamówienia
+          </ModuleNavItem>
+        )}
+        {canOrders && (
+          <ModuleNavItem module="orders" to="/orders/list" icon={<NavGlyph name="list" />}>
+            Lista zamówień
+          </ModuleNavItem>
+        )}
+        {canOrders && (
+          <ModuleNavItem module="reporting" to="/reports/reconciliation" icon={<NavGlyph name="list" />}>
+            Raport rozliczeniowy
           </ModuleNavItem>
         )}
         {canInvoices && (

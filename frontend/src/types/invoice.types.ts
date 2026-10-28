@@ -43,7 +43,9 @@ export type InvoiceStatus =
   | 'sent'
   | 'paid'
   | 'overdue'
-  | 'cancelled';
+  | 'cancelled'
+  | 'corrected'
+  | 'refund_due';
 
 /** `Invoice.ksef_status` — populated after KSeF integration. */
 export type InvoiceKsefStatus =
@@ -116,10 +118,19 @@ export interface Invoice {
   upo_received: boolean;
   status: InvoiceStatus;
   is_correction: boolean;
+  balance_due: string | null;  // KOR only: KOR.total_gross - FV.total_gross (negative=refund, 0=cancel, positive=extra)
   corrects_invoice_id: string | null;
   corrects_invoice_number: string | null;
   correction_reason: string;
   corrections?: { id: string; invoice_number: string | null }[];
+  corrects_invoice_items?: {
+    product_name: string;
+    product_unit: string;
+    quantity: string;
+    unit_price_net: string;
+    vat_rate: string;
+    line_gross: string;
+  }[] | null;
   advance_invoices_data?: AdvanceInvoiceLink[];
   paid_at: string | null;
   notes: string;

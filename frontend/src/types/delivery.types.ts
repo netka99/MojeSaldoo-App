@@ -11,7 +11,8 @@ export type DeliveryDocumentStatus =
   | 'saved'
   | 'in_transit'
   | 'delivered'
-  | 'cancelled';
+  | 'cancelled'
+  | 'corrected';
 
 /** One line on a delivery document (read shape from API). */
 export interface DeliveryItem {
@@ -39,6 +40,7 @@ export interface DeliveryItem {
 export interface LinkedInvoiceRef {
   id: string;
   invoice_number: string;
+  has_correction?: boolean;
 }
 
 /** One item in a linked ZW document (shown on the parent WZ page). */
@@ -128,7 +130,25 @@ export interface DeliveryDocument {
   /** For WZ-KOR: document number of the original WZ (read-only). */
   corrects_wz_number?: string | null;
   /** For WZ/PZ: list of WZ-KOR / PZ-KOR correction documents (read-only). */
-  corrections?: Array<{ id: string; document_number: string | null; issue_date: string }>;
+  corrections?: Array<{
+    id: string;
+    document_number: string | null;
+    issue_date: string;
+    order_correction_applied: boolean;
+    items?: Array<{
+      product_name: string;
+      product_unit: string;
+      quantity_planned: string | null;
+      quantity_actual: string | null;
+    }>;
+  }>;
+  /** For WZ-KOR: items of the original WZ being corrected (read-only). */
+  corrects_wz_items?: Array<{
+    product_name: string;
+    product_unit: string;
+    quantity_planned: string | null;
+    quantity_actual: string | null;
+  }> | null;
   /** True when an invoice references this delivery document (editing blocked server-side). */
   locked_for_edit?: boolean;
   linked_invoices?: LinkedInvoiceRef[];

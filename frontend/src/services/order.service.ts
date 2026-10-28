@@ -22,9 +22,19 @@ export type OrderListParams = {
   exclude_routed?: boolean;
 };
 
+export type OrderProductSummaryRow = {
+  product_name: string;
+  unit: string;
+  total_quantity: string;
+  total_gross: string;
+};
+
 export const orderService = {
   fetchList: (params?: OrderListParams) =>
     api.get<PaginatedOrders>('/orders/', { params }),
+
+  fetchProductSummary: (params?: OrderListParams) =>
+    api.get<OrderProductSummaryRow[]>('/orders/product-summary/', { params }),
 
   fetchById: (id: string) => api.get<Order>(`/orders/${id}/`),
 
@@ -36,7 +46,12 @@ export const orderService = {
 
   cancelOrder: (id: string) => api.post<Order>(`/orders/${id}/cancel/`, {}),
 
+  unblockOrder: (id: string) => api.post<Order>(`/orders/${id}/unblock/`, {}),
+
   deleteOrder: (id: string) => api.delete<Record<string, never>>(`/orders/${id}/`),
 
   fetchChangelog: (id: string) => api.get<OrderChangeLogEntry[]>(`/orders/${id}/changelog/`),
+
+  applyWzCorrection: (orderId: string, wzKorId: string) =>
+    api.post<Order>(`/orders/${orderId}/apply-wz-correction/`, { wz_kor_id: wzKorId }),
 };

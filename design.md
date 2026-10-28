@@ -16,14 +16,16 @@ Użytkownik ma często 50+ lat i pracuje na telefonie. Tekst ma być czytelny ja
 | Karta na stronie | biała, `border-slate-200`, bez cienia |
 | Warstwa nad stroną | biała, `shadow-apple-md` |
 | Primary | `#5856D6` |
-| Wypełnienie pola | `#F2F2F7` |
-| Ramka pola | `#AEAEB2` |
-| Tekst w polu | `text-slate-900` |
+| Wypełnienie pola | białe |
+| Ramka pola | `#D4D2EE` |
+| Tekst w polu | `text-slate-900`, zwykła grubość |
 | Placeholder | `text-slate-500` |
 | Etykieta nad polem | `text-sm font-medium text-slate-800` |
 | Focus | tło białe, ramka `primary`, pierścień `ring-2 ring-primary/30` |
 
-Nie używaj na polach `bg-slate-50`, `border-slate-200`, szarego insetu ani półprzezroczystego szkła.
+Fiolet `#5856D6` zostaje na numerze dokumentu, zaznaczonym presecie i ramce pola po kliknięciu. Etykieta, placeholder i nagłówek kolumny zostają szare.
+
+Nie używaj na polach szarego wypełnienia `#F2F2F7`, ramki `#AEAEB2`, `bg-slate-50`, `border-slate-200`, szarego insetu ani półprzezroczystego szkła. Nie maluj etykiet, podpowiedzi ani nagłówków kolumn kolorem primary.
 
 ---
 
@@ -201,21 +203,22 @@ Wspólne klasy. Nie składaj wyglądu pola z gołych klas Tailwinda na każdej s
 | `select-pill` | Select. Nazwa została, kształt to pole, nie kapsułka |
 | `date-pill` | Data. Ten sam kształt co select |
 
-Wygląd (już w CSS):
+Wygląd:
 
 - wysokość około 36 px: `py-2`, `text-sm`, `leading-5`
 - `rounded-lg`, nie `rounded-full` i nie `rounded-xl`
+- białe tło, ramka `#D4D2EE`, tekst `text-slate-900` zwykłą grubością, placeholder `text-slate-500`
 - bez `min-h-11` — 44 px to wysokość wiersza listy, nie pola tekstowego
 - bez cienia w środku pola
-- tekst `text-sm`, taki jak etykiety. Nie podnoś go do 17 px
+- tekst `text-sm`. Nie podnoś go do 17 px i nie pogrubiaj go w polu
 
-Na formularzu, gdzie użytkownik uzupełnia dane (ustawienia, dane firmy, podobne karty), puste i wypełnione pole muszą wyglądać inaczej. Ciemny placeholder czyta się jak wpisana wartość.
+Na formularzu, gdzie użytkownik uzupełnia dane (ustawienia, dane firmy, podobne karty), puste i wypełnione pole muszą wyglądać inaczej. Placeholder zostaje `text-slate-500`, jaśniejszy znika na białym tle.
 
 | Stan | Wygląd |
 |---|---|
-| Puste | tło `#F2F2F7`, ramka przerywana `border-dashed border-slate-300`, placeholder `placeholder:text-slate-400` |
-| Wypełnione | białe tło `bg-white`, ramka ciągła `border-solid border-slate-300`, tekst `text-slate-900` |
-| Focus | jak dotychczas: białe tło, ramka primary, `ring-2 ring-primary/30` |
+| Puste | białe tło, ramka przerywana `border-dashed border-[#D4D2EE]`, placeholder `placeholder:text-slate-500` |
+| Wypełnione | białe tło, ramka ciągła `border-solid border-[#D4D2EE]`, tekst `text-slate-900` |
+| Focus | białe tło, ramka primary, `ring-2 ring-primary/30` |
 
 Klasy dokładaj na `field-ios` / `field-ios-tall`. Nie zmieniaj bazowego CSS pola.
 
@@ -223,8 +226,8 @@ Klasy dokładaj na `field-ios` / `field-ios-tall`. Nie zmieniaj bazowego CSS pol
 function fieldStateCls(value: string | undefined) {
   const filled = Boolean(value?.trim());
   return filled
-    ? 'border-solid border-slate-300 bg-white'
-    : 'border-dashed border-slate-300 bg-[#F2F2F7] placeholder:text-slate-400';
+    ? 'border-solid border-[#D4D2EE] bg-white'
+    : 'border-dashed border-[#D4D2EE] bg-white placeholder:text-slate-500';
 }
 
 <input className={cn('field-ios w-full', fieldStateCls(value))} />
@@ -367,6 +370,8 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 ## Czego nie przenosić
 
 - kapsułek `rounded-full` i szarego insetu na inputach
+- szarego wypełnienia `#F2F2F7` i ramki `#AEAEB2` na polach
+- fioletu na etykiecie, placeholderze i nagłówku kolumny
 - pól dwa razy wyższych niż tytuł sekcji
 - tekstu w polu większego niż `text-sm`
 - etykiety po lewej i krótkiego pola po prawej
@@ -387,7 +392,7 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 
 1. Tło strony zostaw `#F2F2F7`. Sekcje zamień na płaskie białe karty `rounded-2xl` / `md:rounded-3xl`, `border-slate-200`, `gap-3`. Cień `shadow-apple-md` tylko na menu, oknie i liście rozwijanej. Nagłówek tabeli biały, podpisy kolumn wersalikami `text-xs`. Lista i raport: klasy z `frontend/src/lib/reportSurface.tsx`.
 2. Tytuł sekcji: ikona w kwadracie `h-7 w-7 bg-primary/10` i `text-sm font-semibold text-slate-900`. Etykieta pola zostaje `text-sm font-medium text-slate-800`, bez ikony.
-3. Input, select i datę przełącz na `field-ios`, `select-pill`, `date-pill`. Etykieta nad polem, podpowiedź pod polem w `text-xs text-slate-500`. Na formularzu danych puste pole ma przerywaną ramkę i jasny placeholder, wypełnione jest białe z ciągłą ramką.
+3. Input, select i datę przełącz na `field-ios`, `select-pill`, `date-pill`: białe tło, ramka `#D4D2EE`, tekst `text-slate-900` zwykłą grubością, placeholder `text-slate-500`. Etykieta nad polem zostaje szara, `text-sm font-medium text-slate-800`. Podpowiedź pod polem: `text-xs text-slate-500`. Na formularzu danych puste pole ma przerywaną ramkę `#D4D2EE`, wypełnione ciągłą. Fiolet tylko na numerze dokumentu, zaznaczonym presecie i ramce po kliknięciu.
 4. Przyciski główne i drugorzędne ustaw jak w tabeli wyżej.
 5. Opcje, bez których zapis się uda, zwiń w jedną kartę.
 6. Nie zmieniaj przy tym logiki zapisu, walidacji ani nazw pól.

@@ -152,9 +152,13 @@ export interface CompanyModule {
 
 export interface CompanyWorkflowSettings {
   orders_required: boolean;
+  orders_required_changed_at: string | null;
   wz_required_before_invoice: boolean;
+  wz_required_before_invoice_changed_at: string | null;
   auto_wz_on_order: boolean;
+  auto_wz_on_order_changed_at: string | null;
   auto_deliver_wz: boolean;
+  auto_deliver_wz_changed_at: string | null;
 }
 
 export interface CompanyWrite {

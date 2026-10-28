@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { isOrderCancellableStatus } from '@/lib/order-status-history';
 import { orderStatusBadgeClassName } from '@/lib/order-utils';
 import { useDeliveryByOrderQuery, useGenerateDeliveryForOrderMutation, useSyncWzFromOrderMutation } from '@/query/use-delivery';
 import {
+  useApplyWzCorrectionMutation,
   useCancelOrderMutation,
   useConfirmOrderMutation,
   useOrderChangelogQuery,
   useOrderQuery,
+  useUnblockOrderMutation,
   useUpdateOrderMutation,
 } from '@/query/use-orders';
 import { authStorage } from '@/services/api';
@@ -354,14 +356,48 @@ function ChangeHistorySection({ orderId }: { orderId: string }) {
 function OrderDeliveryDocs({ orderId, items }: { orderId: string; items?: OrderItem[] }) {
   const navigate = useNavigate();
   const { data: docs, isLoading } = useDeliveryByOrderQuery(orderId);
+  const applyKorM = useApplyWzCorrectionMutation();
+
+  const [korModal, setKorModal] = useState<{
+    wzKorId: string;
+    wzKorNumber: string;
+    diff: Array<{ productName: string; productUnit: string; qtyBefore: number; qtyAfter: number }>;
+    allZero: boolean;
+  } | null>(null);
+  const [korError, setKorError] = useState<string | null>(null);
 
   const wzDocs = docs?.filter((d) => d.document_type === 'WZ') ?? [];
   const totalZwCount = wzDocs.reduce((sum, wz) => sum + (wz.return_documents?.length ?? 0), 0);
 
-  const totalOrdered = items?.reduce((s, i) => s + (parseFloat(String(i.quantity)) || 0), 0) ?? 0;
-  const totalDelivered = items?.reduce((s, i) => s + (parseFloat(String(i.quantity_delivered)) || 0), 0) ?? 0;
-  const showProgress = items && items.length > 0 && wzDocs.length > 0;
-  const isPartial = totalDelivered > 0 && totalDelivered < totalOrdered;
+  // Collect all WZ-KOR that haven't been applied to this order yet
+  const pendingKors = wzDocs.flatMap((wz) =>
+    (wz.corrections ?? []).filter((c) => !c.order_correction_applied && c.items && c.items.length > 0)
+      .map((c) => ({ wz, kor: c }))
+  );
+
+  function openKorModal(wz: DeliveryDocument, kor: NonNullable<DeliveryDocument['corrections']>[number]) {
+    const orderItems = items ?? [];
+    const diff = (kor.items ?? []).map((korItem) => {
+      const oi = orderItems.find((o) => o.product_name === korItem.product_name);
+      const qtyBefore = oi ? parseFloat(String(oi.quantity)) : 0;
+      const korQty = parseFloat(String(korItem.quantity_actual ?? korItem.quantity_planned ?? '0'));
+      const qtyAfter = Math.max(qtyBefore - korQty, 0);
+      return {
+        productName: korItem.product_name,
+        productUnit: korItem.product_unit,
+        qtyBefore,
+        qtyAfter,
+      };
+    });
+    const allZero = diff.every((r) => r.qtyAfter === 0);
+    setKorModal({
+      wzKorId: kor.id,
+      wzKorNumber: kor.document_number ?? kor.id.slice(0, 8),
+      diff,
+      allZero,
+    });
+    setKorError(null);
+  }
 
   if (isLoading) {
     return (
@@ -398,18 +434,90 @@ function OrderDeliveryDocs({ orderId, items }: { orderId: string; items?: OrderI
         </div>
       )}
 
-      {showProgress && (
-        <div className={cn(
-          'mt-2 rounded-xl px-4 py-2.5 text-[13px]',
-          isPartial
-            ? 'bg-orange-50 text-orange-800'
-            : 'bg-green-50 text-green-800',
-        )}>
-          Dostarczone łącznie:{' '}
-          <strong>{totalDelivered} / {totalOrdered}</strong>
-          {isPartial && (
-            <span className="ml-2">· brakuje {(totalOrdered - totalDelivered).toFixed(2).replace(/\.?0+$/, '')} szt.</span>
-          )}
+      {/* Pending WZ-KOR banners */}
+      {pendingKors.map(({ wz, kor }) => (
+        <div key={kor.id} className="mt-2 flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-amber-500" aria-hidden>⚠</span>
+            <p className="text-[13px] text-amber-800">
+              Korekta <span className="font-semibold">{kor.document_number ?? kor.id.slice(0, 8)}</span> nie została zastosowana do zamówienia.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openKorModal(wz, kor)}
+            className="shrink-0 rounded-xl bg-amber-100 px-3 py-1.5 text-[12px] font-semibold text-amber-800 hover:bg-amber-200"
+          >
+            Zastosuj korektę
+          </button>
+        </div>
+      ))}
+
+      {/* Modal */}
+      {korModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-apple-float">
+            <h2 className="mb-1 text-base font-semibold text-slate-900">
+              {korModal.allZero ? 'Anulować zamówienie?' : 'Zaktualizować zamówienie?'}
+            </h2>
+            <p className="mb-4 text-[13px] text-slate-500">
+              {korModal.allZero
+                ? `Korekta ${korModal.wzKorNumber} zeruje wszystkie pozycje. Zamówienie zostanie anulowane.`
+                : `Korekta ${korModal.wzKorNumber} zmienia ilości na zamówieniu:`}
+            </p>
+
+            <div className="mb-4 overflow-hidden rounded-lg border border-slate-200">
+              <div className="grid grid-cols-[1fr_72px_72px] bg-slate-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                <span>Produkt</span>
+                <span className="text-right">Było</span>
+                <span className="text-right text-rose-500">Będzie</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {korModal.diff.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_72px_72px] items-center px-3 py-2 text-[13px]">
+                    <span className="truncate text-slate-700">{row.productName}</span>
+                    <span className="text-right tabular-nums text-slate-400 line-through">
+                      {row.qtyBefore} {row.productUnit}
+                    </span>
+                    <span className="text-right tabular-nums font-medium text-rose-700">
+                      {row.qtyAfter} {row.productUnit}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {korError && <p className="mb-3 text-[13px] text-destructive">{korError}</p>}
+
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={applyKorM.isPending}
+                onClick={async () => {
+                  setKorError(null);
+                  try {
+                    await applyKorM.mutateAsync({ orderId, wzKorId: korModal.wzKorId });
+                    setKorModal(null);
+                  } catch (e) {
+                    setKorError(e instanceof Error ? e.message : 'Wystąpił błąd');
+                  }
+                }}
+                className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-50"
+              >
+                {applyKorM.isPending
+                  ? 'Zapisywanie…'
+                  : korModal.allZero ? 'Tak, anuluj zamówienie' : 'Tak, zaktualizuj zamówienie'}
+              </button>
+              <button
+                type="button"
+                disabled={applyKorM.isPending}
+                onClick={() => setKorModal(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Nie, zostaw bez zmian
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>
@@ -450,6 +558,21 @@ function WzDocRow({ wz, onNavigate }: { wz: DeliveryDocument; onNavigate: () => 
         <ChevronRightSmall />
       </button>
 
+      {/* WZ-KOR sub-rows */}
+      {(wz.corrections ?? []).map((kor) => (
+        <Link
+          key={kor.id}
+          to={`/delivery/${kor.id}`}
+          className="flex items-center gap-2 border-t border-border/40 bg-purple-50/60 px-4 py-2 hover:bg-purple-50 transition-colors"
+        >
+          <span className="text-[11px] font-bold text-purple-400">KOR</span>
+          <span className="flex-1 text-[12px] font-medium text-purple-700">
+            {kor.document_number ?? 'WZ-KOR'} · {shortDate(kor.issue_date)}
+          </span>
+          <ChevronRightSmall />
+        </Link>
+      ))}
+
       {/* ZW sub-rows */}
       {zwDocs.map((zw) => (
         <div
@@ -477,16 +600,22 @@ export function OrderDetailPage() {
   const { data: order, isLoading, isError, error, refetch } = useOrderQuery(id, Boolean(id));
   const confirmM = useConfirmOrderMutation();
   const cancelM = useCancelOrderMutation();
+  const unblockM = useUnblockOrderMutation();
   const generateWzM = useGenerateDeliveryForOrderMutation();
   const syncWzM = useSyncWzFromOrderMutation();
   const updateM = useUpdateOrderMutation();
   const [actionError, setActionError] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
-  const [wzDatePicker, setWzDatePicker] = useState<string | null>(null); // null = hidden, string = date value
+  const [wzDatePicker, setWzDatePicker] = useState<string | null>(null);
+  const [wzSuccessMsg, setWzSuccessMsg] = useState<string | null>(null);
 
   const isDraft = order?.status === 'draft';
   const canEdit =
     order?.status !== 'invoiced' && order?.status !== 'cancelled';
+
+  // Order is invoiced but all invoices are corrected/cancelled — can be unblocked
+  const canUnblock =
+    order?.status === 'invoiced' && !order?.has_active_invoice;
 
   /* isEditing: draft is always in edit mode; other statuses toggle via button */
   const [isEditing, setIsEditing] = useState(false);
@@ -623,7 +752,12 @@ export function OrderDetailPage() {
     try {
       const doc = await generateWzM.mutateAsync({ orderId: id!, issueDate });
       setWzDatePicker(null);
-      navigate(`/delivery/${doc.id}`);
+      const wzNumber = doc.document_number ?? 'WZ';
+      setWzSuccessMsg(`Pomyślnie wygenerowano ${wzNumber}`);
+      setTimeout(() => {
+        setWzSuccessMsg(null);
+        navigate(backUrl);
+      }, 2000);
     } catch (e) { setActionError(errMsg(e)); }
   };
 
@@ -740,6 +874,25 @@ export function OrderDetailPage() {
           </div>
         )}
 
+        {canUnblock && (
+          <div className="flex items-start justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3" role="alert">
+            <div>
+              <p className="text-sm font-semibold text-amber-900">Faktura do tego zamówienia została w całości skorygowana</p>
+              <p className="mt-0.5 text-xs text-amber-700">
+                Możesz odblokować zamówienie i wystawić nową fakturę, anulować zamówienie lub zostawić jak jest.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void unblockM.mutateAsync(id)}
+              disabled={unblockM.isPending}
+              className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50"
+            >
+              {unblockM.isPending ? '…' : 'Odblokuj zamówienie'}
+            </button>
+          </div>
+        )}
+
         {isError && !isLoading && (
           <div className="flex flex-col gap-2 rounded-2xl border border-destructive/40 bg-destructive/5 p-4" role="alert">
             <p className="text-sm text-destructive">{errMsg(error)}</p>
@@ -747,6 +900,12 @@ export function OrderDetailPage() {
               Spróbuj ponownie
             </button>
           </div>
+        )}
+
+        {wzSuccessMsg && (
+          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700" role="status">
+            ✓ {wzSuccessMsg}
+          </p>
         )}
 
         {actionError && (
@@ -900,45 +1059,30 @@ export function OrderDetailPage() {
                 </motion.button>
               )}
 
-              {/* Generuj WZ — inline date picker then confirm */}
+              {/* Generuj WZ */}
               {!isEditing && !isDraft && (
                 <div className="flex flex-col gap-2">
-                  {canGenerateWz && wzDatePicker !== null && (
-                    <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2">
-                      <label className="shrink-0 text-sm text-muted-foreground">Data WZ:</label>
+                  {canGenerateWz && (
+                    <label className="block rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+                      <span className="mb-1.5 block text-sm font-medium text-slate-800">Data WZ</span>
                       <input
                         type="date"
-                        value={wzDatePicker}
+                        value={wzDatePicker ?? (order?.delivery_date ?? new Date().toISOString().slice(0, 10))}
                         onChange={(e) => setWzDatePicker(e.target.value)}
-                        className="flex-1 rounded-lg border border-border bg-background px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="date-pill w-full border-solid border-slate-300 bg-white"
                       />
-                      <button
-                        type="button"
-                        onClick={() => void onCreateWz(wzDatePicker)}
-                        disabled={generateWzM.isPending || !wzDatePicker}
-                        className="shrink-0 rounded-lg bg-primary px-3 py-1 text-[13px] font-semibold text-primary-foreground disabled:opacity-60"
-                      >
-                        {generateWzM.isPending ? 'WZ…' : 'Potwierdź'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setWzDatePicker(null)}
-                        className="shrink-0 text-sm text-muted-foreground hover:text-foreground"
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    </label>
                   )}
                   <div className="flex gap-2">
                     {canGenerateWz && (
                       <motion.button
                         whileTap={{ scale: 0.98 }}
                         type="button"
-                        onClick={() => setWzDatePicker((prev) => prev !== null ? prev : (order?.delivery_date ?? new Date().toISOString().slice(0, 10)))}
+                        onClick={() => void onCreateWz(wzDatePicker ?? (order?.delivery_date ?? new Date().toISOString().slice(0, 10)))}
                         disabled={generateWzM.isPending}
                         className="w-1/3 shrink-0 rounded-xl bg-primary py-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-60"
                       >
-                        Generuj WZ
+                        {generateWzM.isPending ? 'WZ…' : 'Generuj WZ'}
                       </motion.button>
                     )}
                     <motion.button
@@ -960,6 +1104,20 @@ export function OrderDetailPage() {
           </div>
           </div>
         </motion.div>
+      )}
+
+      {/* FAB — nowe zamówienie dla tego samego klienta */}
+      {order?.customer_id && (
+        <button
+          type="button"
+          aria-label="Nowe zamówienie dla tego klienta"
+          onClick={() => navigate(`/orders/new?date=${encodeURIComponent(order.delivery_date)}&customer_id=${order.customer_id}`)}
+          className="fixed bottom-[calc(83px+1.25rem+env(safe-area-inset-bottom))] right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_4px_16px_rgba(88,86,214,0.4)] hover:bg-primary/90 active:scale-95 transition-transform md:bottom-8"
+        >
+          <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+          </svg>
+        </button>
       )}
     </div>
   );

@@ -11,6 +11,7 @@ import type {
   ProfitLossMonthDetail,
   ProductMarginRow,
   ProductMarginDetail,
+  ReconciliationReport,
   SalesSummaryReport,
   SupplierCostsReport,
   SupplierCostsDetail,
@@ -90,6 +91,10 @@ export const reportingService = {
   /** Per-customer margin report. */
   fetchCustomerMargin: (params?: ReportDateRangeParams & { limit?: number }) =>
     api.get<CustomerMarginReport>(`${basePath}customer-margin/`, { params }),
+
+  /** Reconciliation report: orders vs delivery docs vs invoices for a period. */
+  fetchReconciliation: (params: { date_from: string; date_to: string }) =>
+    api.get<ReconciliationReport>(`${basePath}reconciliation/`, { params }),
 
   /** Download JPK_EWP(3) XML for a ryczałt company. */
   downloadJpkEwp: async (year: number, month: number): Promise<void> => {

@@ -109,6 +109,8 @@ class InvoiceSerializer(UUIDModelSerializer):
     customer_name = serializers.SerializerMethodField(read_only=True)
     customer_city = serializers.SerializerMethodField(read_only=True)
     customer_street = serializers.SerializerMethodField(read_only=True)
+    # For corrections: line items of the original invoice for inline comparison
+    corrects_invoice_items = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Invoice
@@ -131,6 +133,21 @@ class InvoiceSerializer(UUIDModelSerializer):
         if instance.customer_id:
             return instance.customer.street or ""
         return ""
+
+    def get_corrects_invoice_items(self, instance):
+        if not instance.corrects_invoice_id:
+            return None
+        return [
+            {
+                "product_name": it.product_name,
+                "product_unit": it.product_unit,
+                "quantity": str(it.quantity),
+                "unit_price_net": str(it.unit_price_net),
+                "vat_rate": str(it.vat_rate),
+                "line_gross": str(it.line_gross),
+            }
+            for it in instance.corrects_invoice.items.all()
+        ]
 
     def get_order_ids(self, instance):
         return [
@@ -212,7 +229,7 @@ class InvoiceSerializer(UUIDModelSerializer):
         data = super().to_representation(instance)
         # Expose correction FK as UUID string
         data["corrects_invoice_id"] = (
-            str(instance.corrects_invoice_id) if instance.corrects_invoice_id else None
+            str(instance.corrects_invoice.uuid) if instance.corrects_invoice_id else None
         )
         data["corrects_invoice_number"] = (
             instance.corrects_invoice.invoice_number
@@ -221,7 +238,7 @@ class InvoiceSerializer(UUIDModelSerializer):
         )
         # List of corrections issued against this invoice (prefetched by view)
         data["corrections"] = [
-            {"id": str(c.id), "invoice_number": c.invoice_number}
+            {"id": str(c.uuid), "invoice_number": c.invoice_number}
             for c in instance.corrections.all()
         ]
         # ZAL invoices linked to this ROZ invoice

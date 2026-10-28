@@ -10,9 +10,10 @@ import {
   DeliveryDocumentsPage,
   buildDeliveryListFilters,
   deliveryStatusBadgeClassName,
+  deliveryStatusLabel,
 } from './DeliveryDocumentsPage';
 import { authStorage } from '@/services/api';
-import type { DeliveryDocument } from '@/types';
+import type { DeliveryDocument, DeliveryItem } from '@/types';
 
 const useDeliveryByRangeQueryMock = vi.hoisted(() =>
   vi.fn(((_dateFrom: string, _dateTo: string) => ({
@@ -34,6 +35,20 @@ const useDeliveryByRangeQueryMock = vi.hoisted(() =>
     refetch: ReturnType<typeof vi.fn>;
   }),
 );
+
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    user: {
+      current_company: 'co-1',
+      is_company_admin: true,
+      permissions: { can_manage_delivery: true },
+    },
+  }),
+}));
+
+vi.mock('@/query/use-companies', () => ({
+  useMyCompaniesQuery: () => ({ data: [], isLoading: false }),
+}));
 
 vi.mock('@/query/use-delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/query/use-delivery')>();
@@ -73,12 +88,31 @@ function makeDeliveryDoc(over: Partial<DeliveryDocument> = {}): DeliveryDocument
 }
 
 
+function makeItem(over: Partial<DeliveryItem> = {}): DeliveryItem {
+  return {
+    id: 'item-1',
+    order_item_id: null,
+    product_id: 'prod-1',
+    product_name: 'Bagietka',
+    product_unit: 'szt.',
+    quantity_planned: '3',
+    quantity_actual: null,
+    quantity_returned: '0',
+    return_reason: '',
+    is_damaged: false,
+    notes: '',
+    created_at: '2026-05-01T10:00:00Z',
+    ...over,
+  };
+}
+
 function renderDeliveryRoute() {
   return render(
     <TestQueryProvider>
       <MemoryRouter initialEntries={['/delivery']}>
         <Routes>
           <Route path="/delivery" element={<DeliveryDocumentsPage />} />
+          <Route path="/delivery/:id" element={<div>Delivery detail</div>} />
           <Route path="/login" element={<div>Logowanie</div>} />
           <Route path="/orders/:id" element={<div>Order</div>} />
         </Routes>
@@ -106,6 +140,18 @@ describe('buildDeliveryListFilters + deliveryStatusBadgeClassName', () => {
     expect(deliveryStatusBadgeClassName('in_transit')).toContain('amber');
     expect(deliveryStatusBadgeClassName('delivered')).toContain('green');
     expect(deliveryStatusBadgeClassName('cancelled')).toContain('red');
+    expect(deliveryStatusBadgeClassName('corrected')).toContain('purple');
+    // WZ-KOR/PZ-KOR with delivered status get purple (Skorygowano) badge
+    expect(deliveryStatusBadgeClassName('delivered', 'WZ-KOR')).toContain('purple');
+    expect(deliveryStatusBadgeClassName('delivered', 'PZ-KOR')).toContain('purple');
+  });
+
+  it('deliveryStatusLabel shows "Zrealizowano" for WZ-KOR/PZ-KOR with delivered status', () => {
+    expect(deliveryStatusLabel('delivered', 'WZ-KOR')).toBe('Skorygowano');
+    expect(deliveryStatusLabel('delivered', 'PZ-KOR')).toBe('Skorygowano');
+    expect(deliveryStatusLabel('delivered', 'WZ')).toBe('Dostarczono');
+    expect(deliveryStatusLabel('corrected', 'WZ')).toBe('Skorygowano');
+    expect(deliveryStatusLabel('cancelled', 'WZ-KOR')).toBe('Anulowano');
   });
 });
 
@@ -181,11 +227,67 @@ describe('DeliveryDocumentsPage', () => {
     });
     renderDeliveryRoute();
     await user.click(screen.getByRole('button', { name: 'Lista' }));
-    const select = screen.getByLabelText('Filtruj dokumenty po statusie');
-    await user.selectOptions(select, 'delivered');
     const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    await user.click(within(table).getByRole('button', { name: 'Status' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Dostarczono' }));
     expect(within(table).getByRole('link', { name: 'WZ/2026/0001' })).toBeInTheDocument();
     expect(within(table).queryByRole('link', { name: 'WZ/2026/0002' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: 'Szkic' }));
+    expect(within(table).getByRole('link', { name: 'WZ/2026/0001' })).toBeInTheDocument();
+    expect(within(table).getByRole('link', { name: 'WZ/2026/0002' })).toBeInTheDocument();
+  });
+
+  it('filters Lista by a checked client or by typed text', async () => {
+    const user = userEvent.setup();
+    const aroma = makeDeliveryDoc({ id: 'doc-aroma', document_number: 'WZ/2026/0014', customer_name: 'Cafe Aroma' });
+    const hotel = makeDeliveryDoc({ id: 'doc-hotel', document_number: 'WZ/2026/0013', customer_name: 'Hotel Grand' });
+    useDeliveryByRangeQueryMock.mockReturnValue({
+      data: { count: 2, next: null, previous: null, results: [aroma, hotel] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderDeliveryRoute();
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    await user.click(within(table).getByRole('button', { name: 'Klient' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Cafe Aroma' }));
+    expect(within(table).getByRole('link', { name: 'WZ/2026/0014' })).toBeInTheDocument();
+    expect(within(table).queryByRole('link', { name: 'WZ/2026/0013' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Cafe Aroma' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Szukaj w kolumnie Klient' }), 'hotel');
+    expect(within(table).queryByRole('link', { name: 'WZ/2026/0014' })).not.toBeInTheDocument();
+    expect(within(table).getByRole('link', { name: 'WZ/2026/0013' })).toBeInTheDocument();
+  });
+
+  it('shows the product name beside its quantity in the expanded row', async () => {
+    const user = userEvent.setup();
+    const doc = makeDeliveryDoc({
+      items: [
+        makeItem(),
+        makeItem({ id: 'item-2', product_id: 'prod-2', product_name: 'Rogal', quantity_planned: '4' }),
+      ],
+    });
+    useDeliveryByRangeQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [doc] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderDeliveryRoute();
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    await user.click(within(table).getByRole('button', { name: 'Rozwiń pozycje' }));
+    const bagietka = within(table).getByText('Bagietka').closest('tr');
+    expect(bagietka).toHaveTextContent('3 szt.');
+    const rogal = within(table).getByText('Rogal').closest('tr');
+    expect(rogal).toHaveTextContent('4 szt.');
+    const numberCell = within(table).getByRole('link', { name: 'WZ/2026/0001' }).closest('td');
+    const nameCell = within(table).getByText('Bagietka').closest('td');
+    expect(nameCell?.cellIndex).toBe(numberCell?.cellIndex);
   });
 
   it('updates the range query when custom dates are typed', async () => {
@@ -198,6 +300,58 @@ describe('DeliveryDocumentsPage', () => {
     const last = useDeliveryByRangeQueryMock.mock.calls.at(-1);
     expect(last?.[0]).toBe('2026-06-01');
     expect(last?.[1]).toBe('2026-06-15');
+  });
+
+  it('shows "Koryguje: WZ/..." annotation under WZ-KOR row in Lista tab', async () => {
+    const user = userEvent.setup();
+    const wzKor = makeDeliveryDoc({
+      id: 'kor-1',
+      document_type: 'WZ-KOR',
+      document_number: 'WZ-KOR/2026/0001',
+      status: 'delivered',
+      corrects_wz_id: 'wz-orig-1',
+      corrects_wz_number: 'WZ/2026/0004',
+    });
+    useDeliveryByRangeQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [wzKor] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderDeliveryRoute();
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    expect(within(table).getByRole('link', { name: 'WZ/2026/0004' })).toHaveAttribute('href', '/delivery/wz-orig-1');
+    expect(within(table).getByText(/Koryguje:/)).toBeInTheDocument();
+    // WZ-KOR with "delivered" status should show "Skorygowano", not "Dostarczono"
+    expect(within(table).getByText('Skorygowano')).toBeInTheDocument();
+    expect(within(table).queryByText('Dostarczono')).not.toBeInTheDocument();
+  });
+
+  it('shows "Korekta: WZ-KOR/..." annotation under WZ row that has corrections', async () => {
+    const user = userEvent.setup();
+    const wz = makeDeliveryDoc({
+      id: 'wz-1',
+      document_type: 'WZ',
+      document_number: 'WZ/2026/0004',
+      status: 'corrected',
+      corrections: [{ id: 'kor-uuid-1', document_number: 'WZ-KOR/2026/0001', issue_date: '2026-06-01' }],
+    });
+    useDeliveryByRangeQueryMock.mockReturnValue({
+      data: { count: 1, next: null, previous: null, results: [wz] },
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderDeliveryRoute();
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    const table = screen.getByRole('table', { name: 'Lista dokumentów' });
+    expect(within(table).getByRole('link', { name: 'WZ-KOR/2026/0001' })).toHaveAttribute('href', '/delivery/kor-uuid-1');
+    expect(within(table).getByText(/Korekta:/)).toBeInTheDocument();
+    // Also verify the corrected status badge is shown
+    expect(within(table).getByText('Skorygowano')).toBeInTheDocument();
   });
 
 });

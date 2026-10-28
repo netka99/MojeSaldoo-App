@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useDeliveryQuery, useCreateWzKorMutation } from '@/query/use-delivery';
-import type { DeliveryItem, WzKorItemPayload } from '@/types';
+import { useApplyWzCorrectionMutation } from '@/query/use-orders';
+import type { DeliveryDocument, DeliveryItem, WzKorItemPayload } from '@/types';
 
 const fmt = (v: string | number | null | undefined) => {
   if (v == null) return '0.000';
@@ -27,10 +28,21 @@ export function WzCorrectionCreatePage() {
 
   const { data: doc, isLoading } = useDeliveryQuery(id, Boolean(id));
 
+  const applyWzCorrectionM = useApplyWzCorrectionMutation();
+
   const [correctionReason, setCorrectionReason] = useState('');
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Modal state — shown after WZ-KOR is created successfully
+  const [orderUpdateModal, setOrderUpdateModal] = useState<{
+    orderId: string;
+    wzKorId: string;
+    wzKorNumber: string;
+    diff: Array<{ productName: string; productUnit: string; qtyBefore: number; qtyAfter: number }>;
+  } | null>(null);
+  const [orderUpdateError, setOrderUpdateError] = useState<string | null>(null);
 
   if (!id) {
     navigate('/delivery');
@@ -81,11 +93,48 @@ export function WzCorrectionCreatePage() {
         id,
         data: { items, correction_reason: correctionReason.trim() },
       });
+
+      // If linked to an order, show "update order?" modal
+      const orderId = doc.order_id;
+      if (orderId) {
+        const diff = buildDiff(doc, kor, quantities);
+        if (diff.length > 0) {
+          setOrderUpdateModal({
+            orderId,
+            wzKorId: kor.id,
+            wzKorNumber: kor.document_number ?? kor.id.slice(0, 8),
+            diff,
+          });
+          return; // don't navigate yet — wait for modal decision
+        }
+      }
+
       navigate(`/delivery/${kor.id}`);
     } catch (e) {
       setSubmitError(errMsg(e));
     }
   };
+
+  /** Build a diff: for each WZ item that has a return qty, compute before/after order quantity. */
+  function buildDiff(
+    wzDoc: typeof doc,
+    _kor: DeliveryDocument,
+    qtys: Record<string, string>,
+  ) {
+    return wzDoc.items
+      .filter((item: DeliveryItem) => parseFloat(qtys[item.id] ?? '0') > 0)
+      .map((item: DeliveryItem) => {
+        const delivered = parseFloat(fmt(item.quantity_actual ?? item.quantity_planned));
+        const returned = parseFloat(qtys[item.id] ?? '0');
+        const qtyAfter = Math.max(delivered - returned, 0);
+        return {
+          productName: item.product_name ?? '—',
+          productUnit: item.product_unit ?? '',
+          qtyBefore: delivered,
+          qtyAfter,
+        };
+      });
+  }
 
   const totalReturned = doc.items.reduce((sum: number, item: DeliveryItem) => {
     const qty = parseFloat(quantities[item.id] ?? '0');
@@ -119,8 +168,21 @@ export function WzCorrectionCreatePage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Pozycje do zwrotu</CardTitle>
+          <button
+            type="button"
+            onClick={() => {
+              const all: Record<string, string> = {};
+              doc.items.forEach((item: DeliveryItem) => {
+                all[item.id] = fmt(item.quantity_actual ?? item.quantity_planned);
+              });
+              setQuantities(all);
+            }}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Zwróć wszystko
+          </button>
         </CardHeader>
         <CardContent>
           <p className="mb-3 text-xs text-muted-foreground">
@@ -212,6 +274,75 @@ export function WzCorrectionCreatePage() {
           Anuluj
         </Button>
       </div>
+
+      {/* Modal: ask user whether to update the order quantities */}
+      {orderUpdateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-apple-float">
+            <h2 className="mb-1 text-base font-semibold text-slate-900">
+              Zaktualizować zamówienie?
+            </h2>
+            <p className="mb-4 text-sm text-slate-500">
+              Korekta {orderUpdateModal.wzKorNumber} zmienia dostarczone ilości. Czy zaktualizować
+              ilości na powiązanym zamówieniu?
+            </p>
+
+            {/* Diff table */}
+            <div className="mb-4 overflow-hidden rounded-lg border border-slate-200">
+              <div className="grid grid-cols-[1fr_80px_80px] bg-slate-50 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                <span>Produkt</span>
+                <span className="text-right">Było</span>
+                <span className="text-right text-rose-500">Będzie</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {orderUpdateModal.diff.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_80px_80px] items-center px-4 py-2 text-sm">
+                    <span className="truncate text-slate-700">{row.productName}</span>
+                    <span className="text-right tabular-nums text-slate-400 line-through">
+                      {row.qtyBefore} {row.productUnit}
+                    </span>
+                    <span className="text-right tabular-nums font-medium text-rose-700">
+                      {row.qtyAfter} {row.productUnit}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {orderUpdateError && (
+              <p className="mb-3 text-sm text-destructive">{orderUpdateError}</p>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <Button
+                onClick={async () => {
+                  setOrderUpdateError(null);
+                  try {
+                    await applyWzCorrectionM.mutateAsync({
+                      orderId: orderUpdateModal.orderId,
+                      wzKorId: orderUpdateModal.wzKorId,
+                    });
+                    navigate(`/delivery/${orderUpdateModal.wzKorId}`);
+                  } catch (e) {
+                    setOrderUpdateError(errMsg(e));
+                  }
+                }}
+                disabled={applyWzCorrectionM.isPending}
+                loading={applyWzCorrectionM.isPending}
+              >
+                Tak, zaktualizuj zamówienie
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/delivery/${orderUpdateModal.wzKorId}`)}
+                disabled={applyWzCorrectionM.isPending}
+              >
+                Nie, zostaw zamówienie bez zmian
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

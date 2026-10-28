@@ -3972,6 +3972,58 @@ class WzKorServiceTests(TestCase):
                 user=self.user,
             )
 
+    def test_full_correction_sets_original_wz_to_corrected(self):
+        """Returning all items should flip the original WZ status to 'corrected'."""
+        self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.uuid),
+                "quantity_returned": Decimal("10"),  # full qty
+            }],
+            user=self.user,
+        )
+        self.wz.refresh_from_db()
+        self.assertEqual(self.wz.status, DeliveryDocument.STATUS_CORRECTED)
+
+    def test_partial_correction_does_not_change_wz_status(self):
+        """Returning only part of the items should leave the original WZ as 'delivered'."""
+        self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.uuid),
+                "quantity_returned": Decimal("5"),  # partial
+            }],
+            user=self.user,
+        )
+        self.wz.refresh_from_db()
+        self.assertEqual(self.wz.status, DeliveryDocument.STATUS_DELIVERED)
+
+    def test_cumulative_corrections_set_corrected_status(self):
+        """Two partial corrections that together cover all items should mark WZ as corrected."""
+        # First partial correction
+        self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.uuid),
+                "quantity_returned": Decimal("6"),
+            }],
+            user=self.user,
+        )
+        self.wz.refresh_from_db()
+        self.assertEqual(self.wz.status, DeliveryDocument.STATUS_DELIVERED)
+
+        # Second correction covering the remaining quantity
+        self.service(
+            original_wz=self.wz,
+            correction_items=[{
+                "delivery_item_id": str(self.wz_item.uuid),
+                "quantity_returned": Decimal("4"),
+            }],
+            user=self.user,
+        )
+        self.wz.refresh_from_db()
+        self.assertEqual(self.wz.status, DeliveryDocument.STATUS_CORRECTED)
+
 
 class WzKorAPITests(TestCase):
     """POST /api/delivery/{id}/create-wz-correction/ endpoint."""
@@ -4076,6 +4128,52 @@ class WzKorAPITests(TestCase):
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_full_correction_via_api_sets_original_wz_corrected(self):
+        """Full correction via API endpoint flips original WZ status to 'corrected'."""
+        r = self.client.post(
+            self._url(self.wz.uuid),
+            data={
+                "items": [{"delivery_item_id": str(self.wz_item.uuid), "quantity_returned": "20.000"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.wz.refresh_from_db()
+        self.assertEqual(self.wz.status, DeliveryDocument.STATUS_CORRECTED)
+
+    def test_wz_kor_response_includes_corrects_wz_number(self):
+        """WZ-KOR API response should include corrects_wz_number pointing to the original."""
+        r = self.client.post(
+            self._url(self.wz.uuid),
+            data={
+                "items": [{"delivery_item_id": str(self.wz_item.uuid), "quantity_returned": "5.000"}],
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED, r.data)
+        self.assertIn("corrects_wz_number", r.data)
+        self.assertEqual(r.data["corrects_wz_number"], self.wz.document_number)
+
+    def test_original_wz_response_includes_corrections_list(self):
+        """After creating WZ-KOR, fetching the original WZ should list it in 'corrections'."""
+        kor_r = self.client.post(
+            self._url(self.wz.uuid),
+            data={
+                "items": [{"delivery_item_id": str(self.wz_item.uuid), "quantity_returned": "3.000"}],
+            },
+            format="json",
+        )
+        self.assertEqual(kor_r.status_code, status.HTTP_201_CREATED)
+        kor_number = kor_r.data["document_number"]
+
+        wz_r = self.client.get(
+            reverse("delivery-document-detail", kwargs={"uuid": str(self.wz.uuid)})
+        )
+        self.assertEqual(wz_r.status_code, 200)
+        corrections = wz_r.data.get("corrections", [])
+        self.assertEqual(len(corrections), 1)
+        self.assertEqual(corrections[0]["document_number"], kor_number)
 
 
 class PZExtraFieldsTests(TestCase):

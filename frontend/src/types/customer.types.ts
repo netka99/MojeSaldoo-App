@@ -18,6 +18,7 @@ export interface Customer {
   payment_terms: number;
   credit_limit: string | number;
   is_active: boolean;
+  image_url: string | null;
   // KSeF / FA-3 Podmiot2 flags
   is_jst: boolean;
   is_gv_member: boolean;
@@ -32,7 +33,7 @@ export interface Customer {
   updated_at: string;
 }
 
-export type CustomerWrite = Omit<Customer, 'id' | 'created_at' | 'updated_at' | 'user'> &
+export type CustomerWrite = Omit<Customer, 'id' | 'created_at' | 'updated_at' | 'user' | 'image_url'> &
   Partial<Pick<Customer, 'id'>>;
 
 export type PriceType = 'net' | 'gross';

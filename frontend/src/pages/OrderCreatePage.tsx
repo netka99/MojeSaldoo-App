@@ -93,6 +93,8 @@ interface CheckoutViewProps {
   submitError: string | null;
   generateWz: boolean;
   onGenerateWzChange: (v: boolean) => void;
+  wzDate: string;
+  onWzDateChange: (v: string) => void;
 }
 
 function TrashIcon() {
@@ -103,7 +105,7 @@ function TrashIcon() {
   );
 }
 
-function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPending, submitError, generateWz, onGenerateWzChange }: CheckoutViewProps) {
+function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPending, submitError, generateWz, onGenerateWzChange, wzDate, onWzDateChange }: CheckoutViewProps) {
   const getLineGross = (l: OrderDraftLine) => {
     const q = parseDecimalInput(l.quantity) ?? 0;
     const netU = parseDecimalInput(l.unitPriceNet);
@@ -118,7 +120,9 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
     const netU = parseDecimalInput(l.unitPriceNet);
     if (netU == null) return 0;
     const vat = parseDecimalInput(String(l.product.vat_rate)) ?? 0;
-    return unitGrossFromNet(netU, vat) * q;
+    // Round unit gross to 2 decimal places (same as displayed price) before multiplying
+    const unitG = Math.round(unitGrossFromNet(netU, vat) * 100) / 100;
+    return unitG * q;
   };
 
   const total = lines.reduce((s, l) => s + getLineGross(l), 0);
@@ -304,15 +308,28 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
                     </div>
                   </div>
 
-                  <label className="mb-3 flex cursor-pointer items-center gap-3 rounded-xl bg-primary/5 px-3 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={generateWz}
-                      onChange={(e) => onGenerateWzChange(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 accent-primary"
-                    />
-                    <span className="text-[14px] font-medium text-slate-700">Wygeneruj WZ od razu</span>
-                  </label>
+                  <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2.5">
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={generateWz}
+                        onChange={(e) => onGenerateWzChange(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 accent-primary"
+                      />
+                      <span className="text-[14px] font-medium text-slate-700">Wygeneruj WZ od razu</span>
+                    </label>
+                    {generateWz && (
+                      <label className="mt-2.5 block rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+                        <span className="mb-1.5 block text-sm font-medium text-slate-800">Data WZ</span>
+                        <input
+                          type="date"
+                          value={wzDate}
+                          onChange={(e) => onWzDateChange(e.target.value)}
+                          className="date-pill w-full border-solid border-slate-300 bg-white"
+                        />
+                      </label>
+                    )}
+                  </div>
 
                   <motion.button
                     whileTap={{ scale: 0.98 }}
@@ -610,6 +627,22 @@ function loadDraft(customerId?: string): Partial<OrderDraft> {
   }
 }
 
+/** Gdy nie ma customer_id w URL, znajdź najnowszy draft z klientem zapisany w sessionStorage. */
+function findLatestCustomerDraft(): Partial<OrderDraft> {
+  try {
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(`${DRAFT_KEY}_`)) {
+        const raw = sessionStorage.getItem(key);
+        if (raw) return JSON.parse(raw) as OrderDraft;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
 function saveDraft(draft: OrderDraft, customerId?: string) {
   try {
     sessionStorage.setItem(draftKey(customerId), JSON.stringify(draft));
@@ -636,7 +669,9 @@ export function OrderCreatePage() {
   const generateWzMutation = useGenerateDeliveryForOrderMutation();
   const { data: workflowSettings } = useWorkflowSettingsQuery(companyId || undefined);
 
-  const draft = loadDraft(urlCustomerId || undefined);
+  const draft = urlCustomerId
+    ? loadDraft(urlCustomerId)
+    : (sessionStorage.getItem(DRAFT_KEY) ? loadDraft() : findLatestCustomerDraft());
 
   const [deliveryDate, setDeliveryDate] = useState(draft.deliveryDate ?? urlDate);
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(
@@ -740,6 +775,9 @@ export function OrderCreatePage() {
     setGenerateWz(v);
     localStorage.setItem(WZ_CHECKBOX_STORAGE_KEY, String(v));
   };
+
+  const [wzDate, setWzDate] = useState<string>(() => deliveryDate || new Date().toISOString().slice(0, 10));
+  useEffect(() => { if (deliveryDate) setWzDate(deliveryDate); }, [deliveryDate]);
 
   const [numPadValue, setNumPadValue] = useState('0');
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -934,12 +972,16 @@ export function OrderCreatePage() {
       });
       if (generateWz && createdOrderId) {
         try {
-          const wz = await generateWzMutation.mutateAsync({ orderId: createdOrderId });
+          const wz = await generateWzMutation.mutateAsync({ orderId: createdOrderId, issueDate: wzDate });
           clearDraft(selectedCustomer.id);
-          navigate(`/delivery/${wz.id}`);
+          const wzNumber = wz.document_number ?? 'WZ';
+          setSubmitError(null);
+          // Pokaż sukces i wróć na listę zamówień
+          const d = deliveryDate.trim();
+          const backTo = d ? `/orders?date=${encodeURIComponent(d)}` : '/orders';
+          navigate(backTo, { state: { wzSuccess: `Zamówienie i ${wzNumber} zostały utworzone` } });
           return;
         } catch {
-          // WZ generation is best-effort — order was created; warn but don't block navigation
           setSubmitError('Zamówienie utworzone, ale nie udało się wygenerować WZ. Możesz to zrobić ręcznie.');
           clearDraft(selectedCustomer.id);
           const d = deliveryDate.trim();
@@ -961,10 +1003,47 @@ export function OrderCreatePage() {
     }
   };
 
-  const backToOrders = () => {
+  const doNavigateBack = () => {
     clearDraft(selectedCustomer?.id || urlCustomerId || undefined);
     const d = deliveryDate.trim();
     navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
+  };
+
+  const backToOrders = () => {
+    if (canSaveDraft) {
+      setShowDraftDialog(true);
+    } else {
+      doNavigateBack();
+    }
+  };
+
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [showDraftDialog, setShowDraftDialog] = useState(false);
+
+  const canSaveDraft = Boolean(selectedCustomer) && Boolean(deliveryDate.trim()) && lines.length > 0;
+
+  const saveDraftToServer = async () => {
+    if (!canSaveDraft) return;
+    setSavingDraft(true);
+    try {
+      const items: OrderItemWrite[] = lines.map((l) => {
+        const netU = parseDecimalInput(l.unitPriceNet)!;
+        const vat = parseDecimalInput(String(l.product.vat_rate)) ?? 0;
+        return {
+          product_id: l.product.id,
+          quantity: toApiDecimalString(parseDecimalInput(l.quantity) ?? 0),
+          unit_price_net: toApiDecimalString(netU),
+          unit_price_gross: toApiDecimalString(unitGrossFromNet(netU, vat)),
+          vat_rate: toApiDecimalString(vat),
+          discount_percent: toApiDecimalString(parseDecimalInput(l.discountPercent) ?? 0),
+        };
+      });
+      const body: OrderCreate = { customer_id: selectedCustomer!.id, delivery_date: deliveryDate, items };
+      await create.mutateAsync(body);
+      // brak confirm — zostaje jako draft
+    } finally {
+      setSavingDraft(false);
+    }
   };
 
   const numpadOpen = Boolean(activeProductId);
@@ -983,6 +1062,8 @@ export function OrderCreatePage() {
         submitError={submitError}
         generateWz={generateWz}
         onGenerateWzChange={handleGenerateWzChange}
+        wzDate={wzDate}
+        onWzDateChange={setWzDate}
       />
     );
   }
@@ -1294,6 +1375,50 @@ export function OrderCreatePage() {
             document.body,
           )
         : null}
+
+      {/* Dialog zapisu szkicu — przy wyjściu przyciskiem wstecz */}
+      {showDraftDialog && (
+        <div
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-foreground/30 backdrop-blur-sm sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Zapisz szkic zamówienia"
+          onClick={() => setShowDraftDialog(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-t-3xl bg-card p-6 shadow-[0_-8px_32px_rgba(0,0,0,0.14)] sm:rounded-2xl sm:mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-[17px] font-semibold text-foreground">Zapisać szkic?</h2>
+            <p className="mt-1.5 text-[14px] text-muted-foreground">
+              Zamówienie dla <span className="font-medium text-foreground">{selectedCustomer?.name}</span> zostanie zapisane jako szkic i będzie widoczne na liście zamówień.
+            </p>
+            <div className="mt-5 flex flex-col gap-2.5">
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                type="button"
+                disabled={savingDraft}
+                onClick={async () => {
+                  try { await saveDraftToServer(); } catch { /* zapis nie powiódł się — i tak wychodzimy */ }
+                  doNavigateBack();
+                }}
+                className="w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
+              >
+                {savingDraft ? 'Zapisywanie…' : 'Zapisz szkic'}
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                type="button"
+                disabled={savingDraft}
+                onClick={doNavigateBack}
+                className="w-full rounded-xl bg-destructive/10 py-3.5 text-[15px] font-semibold text-destructive disabled:opacity-60"
+              >
+                Anuluj zamówienie
+              </motion.button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

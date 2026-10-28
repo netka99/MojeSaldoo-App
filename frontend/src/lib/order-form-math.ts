@@ -33,7 +33,8 @@ export function lineTotalGross(
   discountPercent: number,
 ): number {
   if (!Number.isFinite(quantity) || !Number.isFinite(unitNet)) return 0;
-  const unitG = unitGrossFromNet(unitNet, vatPercent);
+  // Round unit gross to 2 dp before multiplying — matches backend (qty × unit_price_gross × disc)
+  const unitG = Math.round(unitGrossFromNet(unitNet, vatPercent) * 100) / 100;
   const t = quantity * unitG * discountFactor(discountPercent);
   return Math.round(t * 100) / 100;
 }

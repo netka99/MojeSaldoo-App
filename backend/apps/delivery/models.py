@@ -43,6 +43,7 @@ class DeliveryDocument(models.Model):
     STATUS_IN_TRANSIT = "in_transit"
     STATUS_DELIVERED = "delivered"
     STATUS_CANCELLED = "cancelled"
+    STATUS_CORRECTED = "corrected"
 
     STATUS_CHOICES = [
         (STATUS_DRAFT, "Draft"),
@@ -50,6 +51,7 @@ class DeliveryDocument(models.Model):
         (STATUS_IN_TRANSIT, "In Transit"),
         (STATUS_DELIVERED, "Delivered"),
         (STATUS_CANCELLED, "Cancelled"),
+        (STATUS_CORRECTED, "Corrected"),
     ]
 
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
@@ -177,6 +179,10 @@ class DeliveryDocument(models.Model):
         blank=True,
         default="",
         help_text="Nr dokumentu dostawcy (WZ/list przewozowy) — wypełniany ręcznie przy PZ.",
+    )
+    order_correction_applied = models.BooleanField(
+        default=False,
+        help_text="True when this WZ-KOR's quantities have been applied to the linked order (OrderItem.quantity updated).",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

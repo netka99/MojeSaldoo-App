@@ -19,6 +19,8 @@ class Invoice(models.Model):
     STATUS_PAID = "paid"
     STATUS_OVERDUE = "overdue"
     STATUS_CANCELLED = "cancelled"
+    STATUS_CORRECTED = "corrected"
+    STATUS_REFUND_DUE = "refund_due"
 
     # FA-3 RodzajFaktury: KOR is derived from is_correction=True; ZAL/ROZ must be
     # set explicitly. ZAL (advance) and ROZ (settlement) require additional XML
@@ -49,6 +51,8 @@ class Invoice(models.Model):
         (STATUS_PAID, "Opłacona"),
         (STATUS_OVERDUE, "Przeterminowana"),
         (STATUS_CANCELLED, "Anulowana"),
+        (STATUS_CORRECTED, "Skorygowana"),
+        (STATUS_REFUND_DUE, "Do zwrotu"),
     ]
     KSEF_STATUS_CHOICES = [
         ("not_sent", "Nie wysłana"),
@@ -196,6 +200,14 @@ class Invoice(models.Model):
         help_text="Required reason for FV-KOR.",
     )
     paid_at = models.DateTimeField(null=True, blank=True)
+    # For FV-KOR: net amount due after correction (KOR.total_gross - FV.total_gross).
+    # Negative = refund, zero = full cancel, positive = extra charge.
+    # None on regular invoices and draft corrections.
+    balance_due = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        null=True, blank=True,
+        help_text="Dla KOR: różnica brutto (KOR - FV). Ujemna = zwrot, zero = anulowanie, dodatnia = dopłata.",
+    )
     notes = models.TextField(blank=True, default="")
 
     # ---------------------------------------------------------------

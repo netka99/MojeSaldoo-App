@@ -47,10 +47,12 @@ export function invoiceStatusBadgeClassName(status: InvoiceStatus): string {
     case 'draft':     return 'bg-surface-container text-on-surface';
     case 'issued':    return 'bg-blue-100 text-blue-800';
     case 'sent':      return 'bg-indigo-100 text-indigo-900';
-    case 'paid':      return 'bg-green-100 text-green-800';
-    case 'overdue':   return 'bg-amber-100 text-amber-900';
-    case 'cancelled': return 'bg-red-100 text-red-800';
-    default:          return 'bg-surface-container text-on-surface';
+    case 'paid':        return 'bg-green-100 text-green-800';
+    case 'overdue':     return 'bg-amber-100 text-amber-900';
+    case 'cancelled':   return 'bg-red-100 text-red-800';
+    case 'corrected':   return 'bg-slate-100 text-slate-500';
+    case 'refund_due':  return 'bg-orange-100 text-orange-800';
+    default:            return 'bg-surface-container text-on-surface';
   }
 }
 
@@ -67,21 +69,27 @@ export function invoiceKsefStatusBadgeClassName(status: InvoiceKsefStatus): stri
 
 export function paymentLabel(status: InvoiceStatus): string {
   switch (status) {
-    case 'paid':      return 'Opłacona';
-    case 'overdue':   return 'Przeterminowana';
-    case 'cancelled': return 'Anulowana';
-    default:          return 'Nieopłacona';
+    case 'paid':        return 'Opłacona';
+    case 'overdue':     return 'Przeterminowana';
+    case 'cancelled':   return 'Anulowana';
+    case 'corrected':   return 'Skorygowana';
+    case 'refund_due':  return 'Do zwrotu';
+    default:            return 'Nieopłacona';
   }
 }
 
 export function paymentBadgeClassName(status: InvoiceStatus): string {
   switch (status) {
-    case 'paid':      return 'bg-green-100 text-green-800';
-    case 'overdue':   return 'bg-red-100 text-red-800';
-    case 'cancelled': return 'bg-surface-container text-on-surface-variant';
-    default:          return 'bg-amber-50 text-amber-800';
+    case 'paid':        return 'bg-green-100 text-green-800';
+    case 'overdue':     return 'bg-red-100 text-red-800';
+    case 'cancelled':   return 'bg-surface-container text-on-surface-variant';
+    case 'corrected':   return 'bg-slate-100 text-slate-500';
+    case 'refund_due':  return 'bg-orange-100 text-orange-800';
+    default:            return 'bg-amber-50 text-amber-800';
   }
 }
+
+const NON_PAYABLE = new Set<InvoiceStatus>(['paid', 'cancelled', 'corrected', 'refund_due']);
 
 // ─── Tab model ───────────────────────────────────────────────────────────────
 
@@ -429,7 +437,7 @@ function InvoicesPageContent() {
   const markPaidMutation = useMarkPaidInvoiceMutation();
   const selectAllRef = useRef<HTMLInputElement>(null);
 
-  const selectableItems = items.filter(r => r.status !== 'paid' && r.status !== 'cancelled');
+  const selectableItems = items.filter(r => !NON_PAYABLE.has(r.status));
   const selectedOnPage = selectableItems.filter(r => selectedIds.has(r.id));
   const allSelected = selectableItems.length > 0 && selectedOnPage.length === selectableItems.length;
   const someSelected = selectedIds.size > 0;
@@ -775,7 +783,7 @@ function InvoicesPageContent() {
           {items.map((row: Invoice) => (
             <div key={row.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
               <div className="flex items-start gap-3 px-4 py-3.5">
-                {selectionMode && row.status !== 'paid' && row.status !== 'cancelled' && (
+                {selectionMode && !NON_PAYABLE.has(row.status) && (
                   <input
                     type="checkbox"
                     aria-label={`Zaznacz fakturę ${row.invoice_number ?? row.id.slice(0, 8)}`}
@@ -799,12 +807,25 @@ function InvoicesPageContent() {
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-[15px] font-semibold text-gray-900">{formatGross(row.total_gross)}</p>
-                      <span className={cn(
-                        'text-[12px] font-medium',
-                        row.status === 'paid' ? 'text-emerald-700' : row.status === 'overdue' ? 'text-red-600' : 'text-amber-700',
-                      )}>
-                        {paymentLabel(row.status)}
-                      </span>
+                      {row.is_correction && row.balance_due != null ? (
+                        <span className={cn('text-[12px] font-medium',
+                          parseFloat(row.balance_due) === 0 ? 'text-slate-400' :
+                          parseFloat(row.balance_due) < 0 ? 'text-orange-600' : 'text-amber-700'
+                        )}>
+                          {parseFloat(row.balance_due) === 0
+                            ? 'Anuluje FV'
+                            : parseFloat(row.balance_due) < 0
+                            ? `Zwrot: ${formatGross(Math.abs(parseFloat(row.balance_due)).toFixed(2))}`
+                            : `Dopłata: ${formatGross(row.balance_due)}`}
+                        </span>
+                      ) : (
+                        <span className={cn(
+                          'text-[12px] font-medium',
+                          row.status === 'paid' ? 'text-emerald-700' : row.status === 'overdue' ? 'text-red-600' : row.status === 'corrected' ? 'text-slate-400' : row.status === 'refund_due' ? 'text-orange-600' : 'text-amber-700',
+                        )}>
+                          {paymentLabel(row.status)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="mt-2 flex items-center justify-between">
@@ -813,7 +834,7 @@ function InvoicesPageContent() {
                       <span className="text-[12px] text-gray-400">Termin: {formatDate(row.due_date)}</span>
                       <KsefDot status={row.ksef_status} />
                     </div>
-                    {!selectionMode && row.status !== 'paid' && row.status !== 'cancelled' && (
+                    {!selectionMode && !NON_PAYABLE.has(row.status) && (
                       <button
                         type="button"
                         onClick={() => void handleSingleMarkPaid(row.id)}
@@ -969,7 +990,7 @@ function InvoicesPageContent() {
                 <tr key={row.id} className={cn('group border-b border-gray-50 transition-colors', expandedRows.has(row.id) ? 'bg-gray-50/70' : 'hover:bg-gray-50/70')}>
                   {selectionMode && (
                     <td className="w-10 px-3 py-3.5">
-                      {row.status !== 'paid' && row.status !== 'cancelled' ? (
+                      {!NON_PAYABLE.has(row.status) ? (
                         <input
                           type="checkbox"
                           aria-label={`Zaznacz fakturę ${row.invoice_number ?? row.id.slice(0, 8)}`}
@@ -1038,10 +1059,23 @@ function InvoicesPageContent() {
                   </td>
                   <td className="px-3 py-3.5">
                     <div className="flex items-center gap-2">
-                      <span className={reportStatusClass(row.status)}>
-                        {paymentLabel(row.status)}
-                      </span>
-                      {!selectionMode && row.status !== 'paid' && row.status !== 'cancelled' && (
+                      {row.is_correction && row.balance_due != null ? (
+                        <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                          parseFloat(row.balance_due) === 0 ? 'bg-slate-100 text-slate-500' :
+                          parseFloat(row.balance_due) < 0 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-800'
+                        )}>
+                          {parseFloat(row.balance_due) === 0
+                            ? 'Anuluje FV'
+                            : parseFloat(row.balance_due) < 0
+                            ? `Zwrot: ${formatGross(Math.abs(parseFloat(row.balance_due)).toFixed(2))}`
+                            : `Dopłata: ${formatGross(row.balance_due)}`}
+                        </span>
+                      ) : (
+                        <span className={reportStatusClass(row.status)}>
+                          {paymentLabel(row.status)}
+                        </span>
+                      )}
+                      {!selectionMode && !NON_PAYABLE.has(row.status) && (
                         <button
                           type="button"
                           onClick={() => void handleSingleMarkPaid(row.id)}
@@ -1064,36 +1098,107 @@ function InvoicesPageContent() {
                 {expandedRows.has(row.id) && row.items?.length > 0 && (
                   <tr className="bg-gray-50/50">
                     <td colSpan={selectionMode ? 9 : 8} className="px-6 pb-3 pt-0">
-                      <table className="w-full text-[13px]">
-                        <thead>
-                          <tr className="border-b border-gray-100">
-                            <th className="pb-1.5 pt-2 text-left font-medium text-gray-400 w-full">Produkt</th>
-                            <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap pr-6">Ilość</th>
-                            <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap pr-6">Cena netto</th>
-                            <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap pr-6">VAT</th>
-                            <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap">Razem brutto</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {row.items.map(item => (
-                            <tr key={item.id} className="border-b border-gray-50 last:border-0">
-                              <td className="py-1.5 text-gray-700">{item.product_name}</td>
-                              <td className="py-1.5 text-right tabular-nums text-gray-500 pr-6">
-                                {Number(item.quantity)} {item.product_unit}
+                      {row.is_correction && row.corrects_invoice_items?.length ? (
+                        /* Unified comparison table: product | original | correction */
+                        <table className="mt-2 mx-8 w-[calc(100%-4rem)] overflow-hidden rounded-lg border border-slate-200 border-separate border-spacing-0 text-sm">
+                          <thead>
+                            <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              <th className="px-4 py-2 text-left font-bold">Produkt</th>
+                              <th className="px-4 py-2 text-right font-bold whitespace-nowrap">
+                                {row.corrects_invoice_id ? (
+                                  <Link to={`/invoices/${row.corrects_invoice_id}`} className="hover:underline normal-case tracking-normal" onClick={(e) => e.stopPropagation()}>
+                                    {row.corrects_invoice_number}
+                                  </Link>
+                                ) : 'Oryginał'}
+                              </th>
+                              <th className="px-4 py-2 text-right font-bold whitespace-nowrap text-rose-500">{row.invoice_number}</th>
+                              <th className="px-4 py-2 text-right font-bold whitespace-nowrap">Brutto orig.</th>
+                              <th className="px-4 py-2 text-right font-bold whitespace-nowrap text-rose-500">Brutto kor.</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {(() => {
+                              const korMap: Record<string, { quantity: string; unit: string; line_gross: string }> = {};
+                              for (const it of row.items) {
+                                korMap[it.product_name?.trim() ?? ''] = {
+                                  quantity: String(Number(it.quantity)),
+                                  unit: it.product_unit ?? '',
+                                  line_gross: it.line_gross,
+                                };
+                              }
+                              return row.corrects_invoice_items.map((orig, i) => {
+                                const kor = korMap[orig.product_name?.trim() ?? ''];
+                                const qtyChanged = kor && String(Number(kor.quantity)) !== String(Number(orig.quantity));
+                                const priceChanged = kor && kor.line_gross !== orig.line_gross;
+                                const changed = qtyChanged || priceChanged;
+                                return (
+                                  <tr key={i} className={changed ? 'bg-rose-50/60' : ''}>
+                                    <td className="px-4 py-2 text-slate-700">{orig.product_name || '—'}</td>
+                                    <td className={cn('px-4 py-2 text-right tabular-nums', changed ? 'text-slate-400 line-through' : 'text-slate-600')}>
+                                      {Number(orig.quantity)} {orig.product_unit}
+                                    </td>
+                                    <td className={cn('px-4 py-2 text-right tabular-nums font-medium', kor ? (qtyChanged ? 'text-rose-700' : 'text-slate-600') : 'text-slate-300')}>
+                                      {kor ? `${Number(kor.quantity)} ${kor.unit}` : '—'}
+                                    </td>
+                                    <td className={cn('px-4 py-2 text-right tabular-nums', changed ? 'text-slate-400 line-through' : 'text-slate-600')}>
+                                      {formatGross(orig.line_gross)}
+                                    </td>
+                                    <td className={cn('px-4 py-2 text-right tabular-nums font-medium', kor ? (priceChanged ? 'text-rose-700' : 'text-slate-600') : 'text-slate-300')}>
+                                      {kor ? formatGross(kor.line_gross) : '—'}
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            })()}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t border-slate-200 bg-slate-50 text-sm font-semibold text-slate-500">
+                              <td className="px-4 py-2 uppercase tracking-wider">Suma</td>
+                              <td /><td />
+                              <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                                {formatGross(row.corrects_invoice_items.reduce((s, it) => s + parseFloat(it.line_gross), 0).toFixed(2))}
                               </td>
-                              <td className="py-1.5 text-right tabular-nums text-gray-500 pr-6">
-                                {formatGross(item.unit_price_net)}
-                              </td>
-                              <td className="py-1.5 text-right tabular-nums text-gray-400 pr-6">
-                                {item.vat_rate}%
-                              </td>
-                              <td className="py-1.5 text-right tabular-nums font-medium text-gray-800">
-                                {formatGross(item.line_gross)}
+                              <td className="px-4 py-2 text-right tabular-nums text-slate-800">
+                                {formatGross(row.total_gross)}
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </tfoot>
+                        </table>
+                      ) : (
+                        /* Regular invoice or correction without original items loaded */
+                        <>
+                          {row.is_correction && row.corrects_invoice_id && (
+                            <p className="pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                              Korekta do:{' '}
+                              <Link to={`/invoices/${row.corrects_invoice_id}`} className="text-[#5856D6] hover:underline normal-case tracking-normal font-semibold">
+                                {row.corrects_invoice_number ?? row.corrects_invoice_id.slice(0, 8)}
+                              </Link>
+                            </p>
+                          )}
+                          <table className="w-full text-[13px]">
+                            <thead>
+                              <tr className="border-b border-gray-100">
+                                <th className="pb-1.5 pt-2 text-left font-medium text-gray-400 w-full">Produkt</th>
+                                <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap pr-6">Ilość</th>
+                                <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap pr-6">Cena netto</th>
+                                <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap pr-6">VAT</th>
+                                <th className="pb-1.5 pt-2 text-right font-medium text-gray-400 whitespace-nowrap">Razem brutto</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {row.items.map(item => (
+                                <tr key={item.id} className="border-b border-gray-50 last:border-0">
+                                  <td className="py-1.5 text-gray-700">{item.product_name}</td>
+                                  <td className="py-1.5 text-right tabular-nums text-gray-500 pr-6">{Number(item.quantity)} {item.product_unit}</td>
+                                  <td className="py-1.5 text-right tabular-nums text-gray-500 pr-6">{formatGross(item.unit_price_net)}</td>
+                                  <td className="py-1.5 text-right tabular-nums text-gray-400 pr-6">{item.vat_rate}%</td>
+                                  <td className="py-1.5 text-right tabular-nums font-medium text-gray-800">{formatGross(item.line_gross)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
                     </td>
                   </tr>
                 )}

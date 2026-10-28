@@ -27,6 +27,7 @@ import { useAuth } from '@/context/AuthContext';
 import { usePermission } from '@/hooks/usePermission';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { formatMoneyGross } from '@/lib/order-utils';
 import { openInvoicePrintWindow } from '@/lib/openInvoicePrintWindow';
 import { invoiceService } from '@/services/invoice.service';
 import { invoiceKsefStatusBadgeClassName, invoiceStatusBadgeClassName } from './InvoicesPage';
@@ -498,14 +499,15 @@ export function InvoiceDetailPage() {
   const showMarkPaid =
     invoice?.status === 'issued' ||
     invoice?.status === 'sent' ||
-    invoice?.status === 'overdue';
+    invoice?.status === 'overdue' ||
+    invoice?.status === 'refund_due';
   const showMarkUnpaid = invoice?.status === 'paid';
   const showSendToKsef = invoice?.status === 'issued' && invoice?.ksef_status === 'not_sent';
   const showResendKsef = invoice?.ksef_status === 'rejected';
   const showKsefRefresh = invoice?.ksef_status === 'pending';
   const showCreateCorrection =
     !invoice?.is_correction &&
-    (invoice?.status === 'issued' || invoice?.status === 'sent' || invoice?.status === 'paid');
+    (invoice?.status === 'issued' || invoice?.status === 'sent' || invoice?.status === 'paid' || invoice?.status === 'corrected');
 
   const numberLabel = invoice?.invoice_number ?? preview?.invoice?.invoice_number ?? id.slice(0, 8);
 
@@ -582,6 +584,19 @@ export function InvoiceDetailPage() {
             {invoice?.is_correction && invoice.correction_reason && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Powód: <span className="text-foreground">{invoice.correction_reason}</span>
+              </p>
+            )}
+            {!invoice?.is_correction && (invoice?.corrections?.length ?? 0) > 0 && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {invoice!.corrections!.length === 1 ? 'Korekta:' : 'Korekty:'}{' '}
+                {invoice!.corrections!.map((c, i) => (
+                  <span key={c.id}>
+                    {i > 0 && ', '}
+                    <Link to={`/invoices/${c.id}`} className="font-medium text-amber-600 hover:underline">
+                      {c.invoice_number ?? c.id.slice(0, 8)}
+                    </Link>
+                  </span>
+                ))}
               </p>
             )}
             {invoice && preview?.invoice.order_number && !invoice.orders_summary?.length ? (
@@ -986,6 +1001,50 @@ export function InvoiceDetailPage() {
               </div>
             )}
           </>
+        )}
+
+        {invoice?.is_correction && invoice.balance_due != null && invoice.corrects_invoice_id && (
+          <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+            <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 md:px-6">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 12h6m6 5a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <span className="text-sm font-semibold text-slate-900">Rozliczenie korekty</span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                <p className="text-sm text-slate-600">
+                  Oryginalna faktura{' '}
+                  <Link to={`/invoices/${invoice.corrects_invoice_id}`} className="font-medium text-primary hover:underline">
+                    {invoice.corrects_invoice_number}
+                  </Link>
+                </p>
+                <p className="text-sm tabular-nums text-slate-700">{formatMoneyGross(invoice.corrects_invoice_items ? invoice.corrects_invoice_items.reduce((s, i) => s + parseFloat(i.line_gross), 0).toFixed(2) : '0')}</p>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                <p className="text-sm text-slate-600">Korekta {invoice.invoice_number}</p>
+                <p className="text-sm tabular-nums text-slate-700">{formatMoneyGross(invoice.total_gross)}</p>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+                <p className="text-sm font-semibold text-slate-900">
+                  {parseFloat(invoice.balance_due) === 0
+                    ? 'Faktura anulowana — brak płatności'
+                    : parseFloat(invoice.balance_due) < 0
+                    ? 'Do zwrotu klientowi'
+                    : 'Dopłata od klienta'}
+                </p>
+                <p className={cn(
+                  'text-sm font-semibold tabular-nums',
+                  parseFloat(invoice.balance_due) === 0 ? 'text-slate-400' :
+                  parseFloat(invoice.balance_due) < 0 ? 'text-orange-600' : 'text-amber-700'
+                )}>
+                  {parseFloat(invoice.balance_due) === 0
+                    ? '0,00 zł'
+                    : formatMoneyGross(Math.abs(parseFloat(invoice.balance_due)).toFixed(2))}
+                </p>
+              </div>
+            </div>
+          </section>
         )}
 
         {canInvoices && (preview?.invoice?.status === 'draft' || invoice?.status === 'draft') && invoice && (

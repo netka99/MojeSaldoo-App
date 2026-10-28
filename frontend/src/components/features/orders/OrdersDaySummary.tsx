@@ -184,11 +184,10 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
     <div
       className={cn(
         'fixed bottom-[calc(83px+env(safe-area-inset-bottom))] left-0 right-0 z-40',
-        'md:bottom-0 md:left-64 md:pb-[max(0.35rem,env(safe-area-inset-bottom))]',
+        'md:bottom-0 md:left-64',
       )}
     >
-      <div className="mx-auto w-full max-w-3xl px-5">
-      <div className="overflow-hidden rounded-t-2xl border border-b-0 border-border/45 bg-card shadow-[0_-6px_24px_rgba(0,0,0,0.08)]">
+      <div className="overflow-hidden border-t border-slate-200 bg-white">
         {/* Expands upward */}
         <div
           className={cn(
@@ -198,12 +197,12 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
           id="orders-day-summary-panel"
           aria-hidden={!expanded}
         >
-          <div className="max-h-[min(55vh,24rem)] overflow-auto px-3 pb-2 pt-3">
+          <div className="mx-auto max-h-[min(55vh,24rem)] w-full max-w-3xl overflow-auto px-5 pb-2 pt-3">
             {productLines.length === 0 ? (
-              <p className="py-2 text-center text-[13px] text-muted-foreground">Brak pozycji w zamówieniach.</p>
+              <p className="py-2 text-center text-sm text-slate-500">Brak pozycji w zamówieniach.</p>
             ) : (
               <>
-                <table className="w-full table-fixed border-separate border-spacing-0 text-[13px]">
+                <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                   <caption className="sr-only">Pozycje sprzedaży złączone wg produktu</caption>
                   <colgroup>
                     <col />
@@ -217,7 +216,7 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
                       <th scope="col">Wartość</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/35">
+                  <tbody className="divide-y divide-slate-100">
                     {productLines.map((line) => (
                       <tr key={line.key}>
                         <td className="max-w-[1px] py-1.5 pr-2 text-left text-foreground">
@@ -235,8 +234,8 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
                     ))}
                   </tbody>
                 </table>
-                <div className="my-2 border-t border-border/55" />
-                <div className="flex items-baseline justify-between gap-2 text-[13px] font-semibold">
+                <div className="my-2 border-t border-slate-200" />
+                <div className="flex items-baseline justify-between gap-2 text-sm font-semibold text-slate-900">
                   <span className="text-foreground">Suma</span>
                   <span className="tabular-nums text-foreground">{subtotalFmt}</span>
                 </div>
@@ -245,17 +244,17 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
 
             {returnLines.length > 0 ? (
               <>
-                <p className="mb-1.5 mt-4 text-[12px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-500">
+                <p className="mb-1.5 mt-4 text-sm font-semibold text-amber-700">
                   Zwrot
                 </p>
-                <table className="w-full table-fixed border-separate border-spacing-0 text-[13px]">
+                <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                   <caption className="sr-only">Pozycje zwrotów</caption>
                   <colgroup>
                     <col />
                     <col className="w-[5rem]" />
                     <col className="w-[36%]" />
                   </colgroup>
-                  <tbody className="divide-y divide-border/35">
+                  <tbody className="divide-y divide-slate-100">
                     {returnLines.map((line) => (
                       <tr key={line.key}>
                         <td className="max-w-[1px] py-1.5 pr-2 text-left text-amber-700 dark:text-amber-400">
@@ -273,8 +272,8 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
                     ))}
                   </tbody>
                 </table>
-                <div className="my-2 border-t border-border/55" />
-                <div className="flex items-baseline justify-between gap-2 text-[13px] font-semibold text-amber-700 dark:text-amber-400">
+                <div className="my-2 border-t border-slate-200" />
+                <div className="flex items-baseline justify-between gap-2 text-sm font-semibold text-amber-700">
                   <span>Suma</span>
                   <span className="tabular-nums">−{returnsFmt}</span>
                 </div>
@@ -283,36 +282,34 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
           </div>
         </div>
 
-        {/* Compact strip — always visible */}
-        <div className="space-y-1 px-3 pt-2.5 pb-1">
-          <div className="flex justify-between text-[13px]">
-            <span className="text-muted-foreground">Suma pozycji</span>
-            <span className="tabular-nums text-foreground">{subtotalFmt}</span>
-          </div>
+        <div className="orders-day-compact">
           {returnsGross > 0.005 ? (
-            <div className="flex justify-between text-[13px] text-amber-600 dark:text-amber-500">
+            <div className="mx-auto flex w-full max-w-3xl justify-between px-5 py-2 text-sm text-amber-700">
               <span>Zwrot</span>
               <span className="tabular-nums">−{returnsFmt}</span>
             </div>
           ) : null}
-          <div className="flex justify-between border-t border-border/50 pt-1.5 text-[14px] font-semibold text-foreground">
-            <span>Suma</span>
-            <span className="tabular-nums">{dayTotalFmt}</span>
+          <div className="bg-primary/5">
+            <div className="mx-auto flex w-full max-w-3xl items-baseline justify-between gap-3 px-5 py-3">
+              <span className="text-sm font-semibold text-slate-800">Suma</span>
+              <span className="text-2xl font-bold tabular-nums tracking-tight text-primary">{dayTotalFmt}</span>
+            </div>
           </div>
         </div>
 
         <button
           type="button"
-          className="flex w-full items-center justify-between gap-2 border-t border-border/50 px-3 py-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          className="w-full border-t border-slate-200 text-left text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
           aria-expanded={expanded}
           aria-controls="orders-day-summary-panel"
           onClick={toggleExpanded}
           aria-label={summaryToggleLabel}
         >
-          Podsumowanie
-          <SummaryChevron open={expanded} className="h-4 w-4" />
+          <span className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 px-5 py-2.5">
+            Podsumowanie
+            <SummaryChevron open={expanded} className="h-4 w-4 text-slate-400" />
+          </span>
         </button>
-      </div>
       </div>
     </div>
   );

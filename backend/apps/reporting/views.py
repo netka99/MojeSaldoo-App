@@ -1639,3 +1639,118 @@ class JpkEwpExportView(ReportingModuleMixin, APIView):
         response = HttpResponse(xml_content, content_type="application/xml; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
+
+
+class ReconciliationReportView(ReportingModuleMixin, APIView):
+    """
+    GET /api/reports/reconciliation/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+
+    Returns per-status counts and gross totals for orders, delivery documents,
+    and invoices in the requested date range (filtered by delivery_date / issue_date).
+    Also returns reconciliation gaps: delivered orders without invoice.
+    """
+
+    def get(self, request):
+        from django.db.models import Q
+        company = request.user.current_company
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+
+        if not date_from or not date_to:
+            raise ValidationError({"detail": "Parametry date_from i date_to są wymagane."})
+
+        # ── Orders ──────────────────────────────────────────────────
+        order_qs = Order.objects.filter(
+            company=company,
+            delivery_date__gte=date_from,
+            delivery_date__lte=date_to,
+        )
+        order_totals = (
+            order_qs
+            .values("status")
+            .annotate(count=Count("id"), gross=Coalesce(Sum("total_gross"), Decimal("0"), output_field=_MONEY))
+            .order_by("status")
+        )
+        orders_all_count = order_qs.count()
+        orders_all_gross = order_qs.aggregate(s=Coalesce(Sum("total_gross"), Decimal("0"), output_field=_MONEY))["s"]
+
+        # ── Delivery documents ───────────────────────────────────────
+        delivery_qs = DeliveryDocument.objects.filter(
+            company=company,
+            issue_date__gte=date_from,
+            issue_date__lte=date_to,
+        )
+        delivery_totals = (
+            delivery_qs
+            .values("document_type", "status")
+            .annotate(count=Count("id"))
+            .order_by("document_type", "status")
+        )
+
+        # ── Invoices ─────────────────────────────────────────────────
+        invoice_qs = Invoice.objects.filter(
+            company=company,
+            issue_date__gte=date_from,
+            issue_date__lte=date_to,
+        )
+        invoice_totals = (
+            invoice_qs
+            .values("status")
+            .annotate(count=Count("id"), gross=Coalesce(Sum("total_gross"), Decimal("0"), output_field=_MONEY))
+            .order_by("status")
+        )
+        invoices_all_count = invoice_qs.count()
+        invoices_all_gross = invoice_qs.aggregate(s=Coalesce(Sum("total_gross"), Decimal("0"), output_field=_MONEY))["s"]
+
+        # ── Gaps: delivered/invoiced orders without an active invoice ─
+        active_invoice_statuses = {
+            Invoice.STATUS_DRAFT, Invoice.STATUS_ISSUED, Invoice.STATUS_SENT,
+            Invoice.STATUS_PAID, Invoice.STATUS_OVERDUE,
+        }
+        delivered_orders = order_qs.filter(
+            status__in=[Order.STATUS_DELIVERED, Order.STATUS_INVOICED]
+        )
+        gap_orders = []
+        for o in delivered_orders.prefetch_related("invoices", "invoice_orders__invoice"):
+            has_inv = (
+                o.invoices.filter(status__in=active_invoice_statuses, is_correction=False).exists()
+                or o.invoice_orders.filter(invoice__status__in=active_invoice_statuses).exists()
+            )
+            if not has_inv and o.status == Order.STATUS_DELIVERED:
+                gap_orders.append({
+                    "id": str(o.uuid),
+                    "order_number": o.order_number,
+                    "customer_name": o.customer.name if o.customer_id else "",
+                    "delivery_date": str(o.delivery_date),
+                    "total_gross": str(o.total_gross),
+                })
+
+        return Response({
+            "period": {"date_from": date_from, "date_to": date_to},
+            "orders": {
+                "by_status": [
+                    {"status": r["status"], "count": r["count"], "gross": str(r["gross"])}
+                    for r in order_totals
+                ],
+                "total_count": orders_all_count,
+                "total_gross": str(orders_all_gross),
+            },
+            "delivery": {
+                "by_type_status": [
+                    {"document_type": r["document_type"], "status": r["status"], "count": r["count"]}
+                    for r in delivery_totals
+                ],
+            },
+            "invoices": {
+                "by_status": [
+                    {"status": r["status"], "count": r["count"], "gross": str(r["gross"])}
+                    for r in invoice_totals
+                ],
+                "total_count": invoices_all_count,
+                "total_gross": str(invoices_all_gross),
+            },
+            "gaps": {
+                "delivered_without_invoice": gap_orders,
+                "count": len(gap_orders),
+            },
+        })

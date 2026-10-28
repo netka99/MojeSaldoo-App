@@ -11,7 +11,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from openpyxl import Workbook, load_workbook
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -20,6 +20,7 @@ from .models import Customer
 from .serializers import CustomerSerializer
 from apps.activity.log import log_activity
 from apps.activity.models import ActivityLog
+from apps.products.images import ProductImageError, build_product_thumbnail
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
@@ -96,6 +97,36 @@ class CustomerViewSet(viewsets.ModelViewSet):
         from rest_framework import status
         from rest_framework.response import Response
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="image",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
+    def image(self, request, uuid=None):
+        """Store only a 128px JPEG thumbnail. The original upload is discarded."""
+        customer = self.get_object()
+        if request.method == "DELETE":
+            if customer.image:
+                customer.image.delete(save=False)
+                customer.image = None
+                customer.save(update_fields=["image"])
+            return Response(CustomerSerializer(customer, context={"request": request}).data)
+
+        uploaded = request.FILES.get("image")
+        if not uploaded:
+            return Response({"detail": "Brak pliku zdjęcia."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            thumb = build_product_thumbnail(uploaded)
+        except ProductImageError as exc:
+            return Response({"detail": exc.message}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_name = customer.image.name if customer.image else None
+        customer.image.save(thumb.name, thumb, save=True)
+        if old_name and old_name != customer.image.name:
+            customer.image.storage.delete(old_name)
+        return Response(CustomerSerializer(customer, context={"request": request}).data)
 
     @action(
         detail=False, methods=["get"], url_path="lookup-nip",

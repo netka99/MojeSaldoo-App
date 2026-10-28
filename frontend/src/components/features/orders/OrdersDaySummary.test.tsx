@@ -52,7 +52,7 @@ function makeOrder(over: Partial<Order> = {}): Order {
 }
 
 describe('OrdersDaySummary', () => {
-  it('shows compact strip: Suma pozycji, Suma (day total), and Podsumowanie toggle', () => {
+  it('shows compact strip: Suma (day total) and Podsumowanie toggle', () => {
     render(
       <OrdersDaySummary
         orders={[
@@ -62,11 +62,11 @@ describe('OrdersDaySummary', () => {
         ]}
       />,
     );
-    expect(screen.getByText('Suma pozycji')).toBeInTheDocument();
+    expect(screen.getByText('Suma')).toBeInTheDocument();
     expect(screen.getByText('Podsumowanie')).toBeInTheDocument();
-    expect(screen.getByText('Suma pozycji').closest('div')?.textContent).toMatch(/0[,.]00/);
-    const compactStrip = screen.getByText('Suma pozycji').closest('.space-y-1');
+    const compactStrip = document.querySelector('.orders-day-compact');
     expect(compactStrip?.textContent).toMatch(/35[,.]50/);
+    expect(compactStrip?.textContent).not.toMatch(/Suma pozycji/);
     expect(screen.getByRole('button', { name: /Podsumowanie, Brak produktów/i })).toBeInTheDocument();
   });
 
@@ -90,7 +90,7 @@ describe('OrdersDaySummary', () => {
         ]}
       />,
     );
-    const compact = screen.getByText('Suma pozycji').closest('.space-y-1');
+    const compact = document.querySelector('.orders-day-compact');
     expect(compact).toBeTruthy();
     expect(within(compact as HTMLElement).getByText('Zwrot')).toBeInTheDocument();
   });

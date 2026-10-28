@@ -113,6 +113,9 @@ class OrderSerializer(UUIDModelSerializer):
         read_only=True,
     )
     has_active_invoice = serializers.BooleanField(read_only=True, default=False)
+    has_wz = serializers.BooleanField(read_only=True, default=False)
+    wz_numbers = serializers.SerializerMethodField()
+    invoice_numbers = serializers.SerializerMethodField()
     production_status = serializers.SerializerMethodField()
 
     class Meta:
@@ -142,9 +145,57 @@ class OrderSerializer(UUIDModelSerializer):
             "delivered_at",
             "items",
             "has_active_invoice",
+            "has_wz",
+            "wz_numbers",
+            "invoice_numbers",
             "production_status",
         ]
-        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice", "production_status"]
+        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice", "has_wz", "wz_numbers", "invoice_numbers", "production_status"]
+
+    def get_wz_numbers(self, obj) -> list[dict]:
+        result = []
+        for doc in obj.delivery_documents.all():
+            if not doc.document_number:
+                continue
+            corrections = [
+                {"id": str(kor.uuid), "number": kor.document_number}
+                for kor in doc.wz_corrections.all()
+                if kor.document_number
+            ]
+            result.append({
+                "id": str(doc.uuid),
+                "number": doc.document_number,
+                "corrections": corrections,
+            })
+        return result
+
+    def get_invoice_numbers(self, obj) -> list[dict]:
+        _active = {"draft", "issued", "sent", "paid", "overdue"}
+        seen: dict[str, dict] = {}  # invoice_number -> {id, number, has_correction}
+        # legacy single-order invoices
+        for inv in obj.invoices.all():
+            if inv.status in _active and not inv.is_correction and inv.invoice_number:
+                has_kor = any(
+                    c.status in _active for c in inv.corrections.all()
+                )
+                seen[inv.invoice_number] = {
+                    "id": str(inv.uuid),
+                    "number": inv.invoice_number,
+                    "has_correction": has_kor,
+                }
+        # multi-order invoices via InvoiceOrder junction
+        for io in obj.invoice_orders.all():
+            inv = io.invoice
+            if inv.status in _active and not inv.is_correction and inv.invoice_number:
+                has_kor = any(
+                    c.status in _active for c in inv.corrections.all()
+                )
+                seen[inv.invoice_number] = {
+                    "id": str(inv.uuid),
+                    "number": inv.invoice_number,
+                    "has_correction": has_kor,
+                }
+        return [v for _, v in sorted(seen.items())]
 
     def get_production_status(self, obj):
         orders = obj.production_orders.all()

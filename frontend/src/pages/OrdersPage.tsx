@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
-import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { OrderDayDateNav } from '@/components/features/orders/OrderDayDateNav';
 
 import { OrdersDaySummary } from '@/components/features/orders/OrdersDaySummary';
@@ -35,6 +36,9 @@ const PILLS: { key: FilterPill; label: string }[] = [
   { key: 'has_wz', label: 'Z WZ' },
   { key: 'no_wz', label: 'Bez WZ' },
 ];
+
+const actionBtn = 'h-auto shrink-0 rounded-2xl px-4 py-2.5 text-sm font-semibold shadow-none';
+const actionBtnSecondary = cn(actionBtn, 'border border-slate-200 bg-white text-slate-800 hover:bg-slate-50');
 
 function SearchIcon({ className }: { className?: string }) {
   return (
@@ -72,6 +76,7 @@ type ViewMode = 'day' | 'all';
 
 function OrdersPageContent() {
   const navigate = useNavigate();
+  const location = useLocation();
   const canOrders = usePermission('can_manage_orders');
   const [searchParams, setSearchParams] = useSearchParams();
   const date = searchParams.get('date') ?? todayIso();
@@ -79,6 +84,14 @@ function OrdersPageContent() {
 
   const [search, setSearch] = useState('');
   const [pill, setPill] = useState<FilterPill>('all');
+
+  const wzSuccessMsg = (location.state as { wzSuccess?: string } | null)?.wzSuccess ?? null;
+  useEffect(() => {
+    if (wzSuccessMsg) {
+      // Wyczyść state żeby toast nie wracał po odświeżeniu
+      window.history.replaceState({}, '');
+    }
+  }, [wzSuccessMsg]);
 
   const [wzSelectionMode, setWzSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -313,6 +326,7 @@ function OrdersPageContent() {
   );
 
   return (
+    <>
     <div
       className={cn(
         'mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-4',
@@ -320,15 +334,15 @@ function OrdersPageContent() {
       )}
     >
       {/* View mode toggle */}
-      <div className="flex gap-1 rounded-xl bg-surface-card p-1 shadow-soft self-start">
+      <div className="inline-flex gap-1 self-start rounded-2xl border border-slate-200 bg-white p-1">
         <button
           type="button"
           onClick={() => setViewMode('day')}
           className={cn(
-            'rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors',
+            'rounded-xl px-4 py-1.5 text-sm font-medium transition-colors',
             viewMode === 'day'
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground',
+              ? 'bg-primary text-white'
+              : 'text-slate-600 hover:bg-slate-50',
           )}
         >
           Widok dzienny
@@ -337,15 +351,20 @@ function OrdersPageContent() {
           type="button"
           onClick={() => setViewMode('all')}
           className={cn(
-            'rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors',
+            'rounded-xl px-4 py-1.5 text-sm font-medium transition-colors',
             viewMode === 'all'
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground',
+              ? 'bg-primary text-white'
+              : 'text-slate-600 hover:bg-slate-50',
           )}
         >
           Wszystkie otwarte
         </button>
       </div>
+      {viewMode === 'all' && (
+        <p className="px-1 text-xs text-slate-500">
+          Szkice, potwierdzone i w realizacji — ostatnie 60 dni i przyszłe. Bez anulowanych i zafakturowanych.
+        </p>
+      )}
 
       {viewMode === 'all' && (
         <AllOrdersView
@@ -364,8 +383,7 @@ function OrdersPageContent() {
 
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Wybierz sklep</h1>
-              <p className="mt-0.5 text-[13px] text-muted-foreground">Wybierz lokalizację do sprzedaży</p>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">Wybierz sklep</h1>
             </div>
             <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
               {deliveryEnabled && wzSelectionMode ? (
@@ -379,7 +397,7 @@ function OrdersPageContent() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="shrink-0 rounded-full"
+                    className={actionBtnSecondary}
                     disabled={generatingIds.size > 0}
                     onClick={onCancelWzSelection}
                   >
@@ -388,7 +406,7 @@ function OrdersPageContent() {
                   <Button
                     type="button"
                     size="sm"
-                    className="shrink-0 rounded-full"
+                    className={actionBtn}
                     disabled={selectedIds.size === 0 || generatingIds.size > 0}
                     loading={generatingIds.size > 0 && !wzProgress}
                     onClick={() => void onConfirmWzSelection()}
@@ -403,7 +421,7 @@ function OrdersPageContent() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="shrink-0 rounded-full"
+                    className={actionBtnSecondary}
                     onClick={() => navigate('/van-routes')}
                   >
                     Trasy Vana
@@ -412,7 +430,7 @@ function OrdersPageContent() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="shrink-0 rounded-full"
+                    className={actionBtnSecondary}
                     disabled={wzEligibleOrders.length === 0}
                     onClick={onEnterWzSelection}
                   >
@@ -424,7 +442,7 @@ function OrdersPageContent() {
                 <Button
                   type="button"
                   size="sm"
-                  className="shrink-0 rounded-full"
+                  className={actionBtn}
                   onClick={() => navigate(`/orders/new?date=${encodeURIComponent(date)}`)}
                 >
                   + Nowe zamówienie
@@ -435,14 +453,14 @@ function OrdersPageContent() {
 
           {/* Search */}
           <div className="relative">
-            <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground" />
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <input
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Szukaj sklepu…"
               aria-label="Szukaj sklepu po nazwie"
-              className="shadow-soft h-11 w-full rounded-xl border-0 bg-surface-card pl-11 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/25"
+              className="field-ios w-full pl-9"
             />
           </div>
 
@@ -454,10 +472,10 @@ function OrdersPageContent() {
                 type="button"
                 onClick={() => setPill(p.key)}
                 className={cn(
-                  'shrink-0 rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                  'shrink-0 rounded-2xl border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                   pill === p.key
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-surface-card text-foreground shadow-soft',
+                    ? 'border-primary bg-primary text-white'
+                    : 'border-slate-200 bg-white text-slate-700',
                 )}
               >
                 {p.label}
@@ -505,7 +523,7 @@ function OrdersPageContent() {
             >
               {grouped.map(([letter, rows]) => (
                 <section key={letter} aria-label={`Sklepy — ${letter}`}>
-                  <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <h2 className="mb-2 px-1 text-sm font-semibold text-slate-500">
                     {letter}
                   </h2>
                   <ul className="flex flex-col gap-2">
@@ -528,6 +546,7 @@ function OrdersPageContent() {
                             isGenerating={isGenerating}
                             onSelect={primaryOrder ? () => customerOrders.forEach((o) => { if (wzEligibleIdSet.has(o.id)) toggleSelect(o.id); }) : undefined}
                             onClick={() => handleCardClick(customer)}
+                            onAddOrder={canOrders ? () => navigate(`/orders/new?date=${encodeURIComponent(date)}&customer_id=${customer.id}`) : undefined}
                           />
                         </motion.li>
                       );
@@ -543,6 +562,23 @@ function OrdersPageContent() {
       )}
 
     </div>
+
+    {wzSuccessMsg && createPortal(
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 24 }}
+        className="fixed bottom-[calc(83px+1rem+env(safe-area-inset-bottom))] right-4 z-[300] flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-lg md:bottom-6"
+        role="status"
+      >
+        <svg className="h-5 w-5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+          <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[14px] font-medium text-emerald-800">{wzSuccessMsg}</span>
+      </motion.div>,
+      document.body,
+    )}
+    </>
   );
 }
 
@@ -557,12 +593,12 @@ function ItemRow({ item }: { item: OrderItem }) {
         'sm:grid sm:grid-cols-[minmax(0,1fr)_5.5rem_8rem] sm:gap-x-4',
       )}
     >
-      <span className="min-w-0 flex-1 truncate text-foreground">{item.product_name}</span>
+      <span className="min-w-0 flex-1 truncate text-slate-600">{item.product_name}</span>
       <div className="flex shrink-0 items-baseline justify-end gap-2 sm:contents">
-        <span className="w-[4rem] shrink-0 text-right tabular-nums text-foreground sm:w-auto">
+        <span className="w-[4rem] shrink-0 text-right tabular-nums text-slate-600 sm:w-auto">
           {formatOrderLineQuantityWithUnit(item.quantity, unit)}
         </span>
-        <span className="min-w-[4.875rem] shrink-0 text-right tabular-nums font-medium text-foreground sm:min-w-0">
+        <span className="min-w-[4.875rem] shrink-0 text-right font-semibold tabular-nums text-slate-900 sm:min-w-0">
           {formatMoneyGrossLocal(item.line_total_gross)}
         </span>
       </div>
@@ -572,7 +608,13 @@ function ItemRow({ item }: { item: OrderItem }) {
 
 /* ─── Multi-order product list with per-order groups + totals ───── */
 
-function MultiOrderItemList({ orders }: { orders: Order[] }) {
+function MultiOrderItemList({
+  orders,
+  wzByOrderId,
+}: {
+  orders: Order[];
+  wzByOrderId: Map<string, DeliveryDocument[]>;
+}) {
   // Aggregate all items across orders by product_id for the totals row
   const totalsMap = new Map<string, { name: string; unit: string; qty: number; gross: number }>();
   for (const order of orders) {
@@ -597,56 +639,66 @@ function MultiOrderItemList({ orders }: { orders: Order[] }) {
   const grandTotal = totals.reduce((s, t) => s + t.gross, 0);
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-3">
       {orders.map((order, idx) => (
-        <div key={order.id}>
-          {/* Order header */}
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {order.order_number ?? `Zamówienie ${idx + 1}`}
+        <Link
+          key={order.id}
+          to={`/orders/${order.id}`}
+          className="block rounded-xl bg-[#F2F2F7] px-3 py-2.5 transition-colors hover:bg-slate-200/60 active:bg-slate-200"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="text-sm font-semibold text-primary">
+              {order.order_number ?? `Zamówienie ${idx + 1}`}
+            </span>
+            {(wzByOrderId.get(order.id) ?? []).map((wz) => (
+              <span key={wz.id} className="text-xs font-medium text-emerald-700">
+                {wz.document_number ?? 'WZ'}
+              </span>
+            ))}
+            {order.status === 'cancelled' && (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-600">
+                Anulowane
+              </span>
+            )}
           </p>
           <ul className="space-y-1">
             {order.items.map((item, i) => (
               <ItemRow key={item.id ?? `${item.product_id}-${i}`} item={item} />
             ))}
           </ul>
-          {/* Divider between orders */}
-          {idx < orders.length - 1 && (
-            <div className="mt-2 border-t border-border/40" aria-hidden />
-          )}
-        </div>
+        </Link>
       ))}
 
-      {/* Aggregated totals row */}
-      <div className="border-t border-border pt-2">
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Łącznie
-        </p>
+      <section className="border-t border-slate-200 pt-3">
+        <p className="mb-1 text-sm font-semibold text-slate-800">Razem</p>
         <ul className="space-y-1">
           {totals.map((t) => (
             <li
               key={t.name}
               className={cn(
-                'min-w-0 py-0.5 text-sm flex flex-nowrap items-baseline gap-2',
+                'flex min-w-0 flex-nowrap items-baseline gap-2 py-0.5 text-sm',
                 'sm:grid sm:grid-cols-[minmax(0,1fr)_5.5rem_8rem] sm:gap-x-4',
               )}
             >
-              <span className="min-w-0 flex-1 truncate font-medium text-foreground">{t.name}</span>
+              <span className="min-w-0 flex-1 truncate text-slate-600">{t.name}</span>
               <div className="flex shrink-0 items-baseline justify-end gap-2 sm:contents">
-                <span className="w-[4rem] shrink-0 text-right tabular-nums text-foreground sm:w-auto">
+                <span className="w-[4rem] shrink-0 text-right tabular-nums text-slate-600 sm:w-auto">
                   {Number.isInteger(t.qty) ? t.qty : t.qty.toFixed(2)} {t.unit}
                 </span>
-                <span className="min-w-[4.875rem] shrink-0 text-right tabular-nums font-semibold text-foreground sm:min-w-0">
+                <span className="min-w-[4.875rem] shrink-0 text-right font-semibold tabular-nums text-slate-900 sm:min-w-0">
                   {formatMoneyGrossLocal(t.gross)}
                 </span>
               </div>
             </li>
           ))}
         </ul>
-        <div className="mt-1.5 flex justify-between border-t border-border/60 pt-1.5 text-[13px]">
-          <span className="font-semibold text-foreground">Suma</span>
-          <span className="tabular-nums font-bold text-foreground">{formatMoneyGrossLocal(grandTotal)}</span>
+        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3 border-t border-slate-200 pt-2.5 sm:grid-cols-[minmax(0,1fr)_5.5rem_8rem] sm:gap-x-4">
+          <span className="text-sm font-semibold text-slate-900">Suma</span>
+          <span className="hidden sm:block" aria-hidden />
+          <span className="text-right text-base font-bold tabular-nums text-primary">{formatMoneyGrossLocal(grandTotal)}</span>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -682,6 +734,7 @@ function CustomerShopRow({
   isGenerating,
   onSelect,
   onClick,
+  onAddOrder,
 }: CustomerShopRowProps) {
   const [expanded, setExpanded] = useState(false);
   const deliveryEnabled = useModuleGuard('delivery');
@@ -716,6 +769,14 @@ function CustomerShopRow({
     return { type: 'multi' as const, totalWz, totalZw, missingWz };
   }, [hasOrder, multipleOrders, primaryOrder, orders, wzByOrderId, zwByOrderId]);
 
+  const orderTotalLabel = hasOrder
+    ? formatMoneyGrossLocal(
+        multipleOrders
+          ? orders.reduce((sum, o) => sum + (parseFloat(String(o.total_gross)) || 0), 0)
+          : primaryOrder!.total_gross,
+      )
+    : null;
+
   const toggleExpand = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
     if (items.length > 0) setExpanded((v) => !v);
@@ -724,8 +785,8 @@ function CustomerShopRow({
   return (
     <div
       className={cn(
-        'shadow-soft w-full overflow-hidden rounded-2xl bg-surface-card text-left transition-colors',
-        hasOrder && 'border-l-4 border-solid',
+        'w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition-colors md:rounded-3xl',
+        hasOrder && 'border-l-4',
         hasOrder && orderStatusLeftBorderClass(primaryOrder!.status),
       )}
     >
@@ -741,127 +802,77 @@ function CustomerShopRow({
         {/* Icon */}
         <div
           className={cn(
-            'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
-            isCompany ? 'bg-primary/10 text-primary' : 'bg-surface-low text-on-surface-variant',
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl overflow-hidden',
+            !customer.image_url && (isCompany ? 'bg-primary/10 text-primary' : 'bg-surface-low text-on-surface-variant'),
           )}
           aria-hidden
         >
-          <BuildingIcon className="h-5 w-5" />
+          {customer.image_url ? (
+            <img src={customer.image_url} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <BuildingIcon className="h-4 w-4" />
+          )}
         </div>
 
-        {/* Info */}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-medium text-foreground">{customer.name}</p>
-            {hasOrder && !multipleOrders && (
-              <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', orderStatusBadgeClassName(primaryOrder!.status))}>
-                {ORDER_STATUS_LABELS_PL[primaryOrder!.status]}
-              </span>
-            )}
-            {multipleOrders && (
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-                {orders.length} zamówienia
-              </span>
-            )}
-          </div>
-
-          {/* WZ badges */}
-          {wzBadges && deliveryEnabled && canManageDelivery && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              {wzBadges.type === 'single' && (
-                <>
-                  {wzBadges.showMissing && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                      Brak WZ
-                    </span>
-                  )}
-                  {wzBadges.wzDocs.map((wz) => (
-                    <span key={wz.id} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                      {wz.document_number ?? 'WZ'}
-                    </span>
-                  ))}
-                  {wzBadges.zwDocs.map((zw) => (
-                    <span key={zw.id} className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                      {zw.document_number ?? 'ZW'}
-                    </span>
-                  ))}
-                </>
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-sm font-medium text-slate-800">{customer.name}</p>
+              {hasOrder && !multipleOrders && (
+                <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', orderStatusBadgeClassName(primaryOrder!.status))}>
+                  {ORDER_STATUS_LABELS_PL[primaryOrder!.status]}
+                </span>
               )}
-              {wzBadges.type === 'multi' && (
-                <>
-                  {wzBadges.missingWz > 0 && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                      {wzBadges.missingWz} bez WZ
-                    </span>
-                  )}
-                  {wzBadges.totalWz > 0 && (
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                      {wzBadges.totalWz} WZ
-                    </span>
-                  )}
-                  {wzBadges.totalZw > 0 && (
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                      {wzBadges.totalZw} ZW
-                    </span>
-                  )}
-                </>
+              {multipleOrders && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                  {orders.length} zam.
+                </span>
               )}
+              {hasOrder && productionEnabled && (() => {
+                const prodStatus = orders.some((o) => o.production_status === 'completed') ? 'completed'
+                  : orders.some((o) => o.production_status === 'in_progress') ? 'in_progress' : null;
+                if (!prodStatus) return null;
+                return prodStatus === 'completed'
+                  ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Wyprodukowano</span>
+                  : <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">W produkcji</span>;
+              })()}
             </div>
-          )}
 
-          {/* Production status badge — only when production module is enabled */}
-          {hasOrder && productionEnabled && (() => {
-            const prodStatus = orders.some((o) => o.production_status === 'completed')
-              ? 'completed'
-              : orders.some((o) => o.production_status === 'in_progress')
-              ? 'in_progress'
-              : null;
-            if (!prodStatus) return null;
-            return (
-              <div className="mt-1">
-                {prodStatus === 'completed' ? (
-                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">
-                    Wyprodukowano
-                  </span>
-                ) : (
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-                    W produkcji
-                  </span>
+            {hasOrder && (
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                {!multipleOrders && primaryOrder?.order_number && (
+                  <span>{primaryOrder.order_number}</span>
+                )}
+                {!multipleOrders && (
+                  <span>· {items.length} poz.</span>
+                )}
+                {wzBadges && deliveryEnabled && canManageDelivery && (
+                  <>
+                    {wzBadges.type === 'single' && (
+                      <>
+                        {wzBadges.showMissing && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Brak WZ</span>}
+                        {wzBadges.wzDocs.map((wz) => <span key={wz.id} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">{wz.document_number ?? 'WZ'}</span>)}
+                        {wzBadges.zwDocs.map((zw) => <span key={zw.id} className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{zw.document_number ?? 'ZW'}</span>)}
+                      </>
+                    )}
+                    {wzBadges.type === 'multi' && (
+                      <>
+                        {wzBadges.missingWz > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{wzBadges.missingWz} bez WZ</span>}
+                        {wzBadges.totalWz > 0 && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">{wzBadges.totalWz} WZ</span>}
+                        {wzBadges.totalZw > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{wzBadges.totalZw} ZW</span>}
+                      </>
+                    )}
+                  </>
                 )}
               </div>
-            );
-          })()}
-
-          {customer.city?.trim() && (
-            <p className="mt-0.5 truncate text-[13px] text-muted-foreground">{customer.city}</p>
-          )}
-
-          {hasOrder && (
-            <div className="mt-2 flex items-center gap-4">
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Dziś</p>
-                <p className="text-[15px] font-semibold tabular-nums text-foreground">
-                  {formatMoneyGrossLocal(
-                    multipleOrders
-                      ? orders.reduce((sum, o) => sum + (parseFloat(String(o.total_gross)) || 0), 0)
-                      : primaryOrder!.total_gross,
-                  )}
-                </p>
-              </div>
-              <div className="h-8 w-px bg-border" aria-hidden />
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  {multipleOrders ? 'Zamówienia' : 'Pozycje'}
-                </p>
-                <p className="text-[15px] font-semibold tabular-nums text-foreground">
-                  {multipleOrders ? orders.length : items.length}
-                </p>
-              </div>
-            </div>
+            )}
+          </div>
+          {orderTotalLabel && (
+            <p className="shrink-0 pt-0.5 text-sm font-semibold tabular-nums text-slate-900">{orderTotalLabel}</p>
           )}
         </div>
 
-        {/* Right: checkbox / spinner / expand toggle */}
+        {/* Right: checkbox / spinner / add / expand toggle */}
         <div className="flex shrink-0 items-start gap-1 pt-0.5">
           {selectable ? (
             <span className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center">
@@ -881,7 +892,9 @@ function CustomerShopRow({
               role="status"
               aria-label="Generowanie WZ…"
             />
-          ) : orders.some((o) => o.items.length > 0) ? (
+          ) : (
+            <>
+              {orders.some((o) => o.items.length > 0) ? (
             <button
               type="button"
               aria-label={expanded ? 'Zwiń produkty' : 'Rozwiń produkty'}
@@ -897,7 +910,9 @@ function CustomerShopRow({
                 <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
-          ) : null}
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
@@ -914,7 +929,7 @@ function CustomerShopRow({
             <div className="hidden w-11 shrink-0 self-stretch sm:block" aria-hidden />
             <div className="min-w-0 flex-1">
               {multipleOrders ? (
-                <MultiOrderItemList orders={orders} />
+                <MultiOrderItemList orders={orders} wzByOrderId={wzByOrderId} />
               ) : (
                 <ul className="space-y-1">
                   {items.map((item, i) => (
@@ -927,6 +942,25 @@ function CustomerShopRow({
           </div>
         </div>
       </div>
+
+      {/* Dodaj zamówienie — dół karty po prawej */}
+      {onAddOrder && hasOrder && !wzSelectionMode && (
+        <div className="flex justify-end border-t border-border/30 px-3.5 py-2">
+          <div className="relative group">
+            <button
+              type="button"
+              aria-label="Dodaj zamówienie dla tego klienta"
+              onClick={(e) => { e.stopPropagation(); onAddOrder(); }}
+              className="flex items-center gap-1.5 rounded-full bg-primary/8 px-3 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+              </svg>
+              Nowe zamówienie
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -943,6 +977,7 @@ interface CustomerShopRowProps {
   isGenerating: boolean;
   onSelect?: () => void;
   onClick: () => void;
+  onAddOrder?: () => void;
 }
 
 function orderStatusLeftBorderClass(status: Order['status']): string {
@@ -1025,14 +1060,14 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Otwarte zamówienia</h1>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">Otwarte zamówienia</h1>
+          <p className="mt-1 text-xs text-slate-500">
             {orders.length > 0 ? `${orders.length} zamówień ze wszystkich dni` : 'Brak otwartych zamówień'}
           </p>
         </div>
         <div className="flex items-center gap-2">
           {canOrders && (
-            <Button type="button" size="sm" className="shrink-0 rounded-full" onClick={onNewOrder}>
+            <Button type="button" size="sm" className={actionBtn} onClick={onNewOrder}>
               + Nowe zamówienie
             </Button>
           )}
@@ -1041,14 +1076,14 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
 
       {/* Search */}
       <div className="relative">
-        <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground" />
+        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
         <input
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Szukaj po kliencie lub numerze…"
           aria-label="Szukaj zamówień"
-          className="shadow-soft h-11 w-full rounded-xl border-0 bg-surface-card pl-11 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/25"
+          className="field-ios w-full pl-9"
         />
       </div>
 
@@ -1080,8 +1115,8 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                 <button
                   type="button"
                   className={cn(
-                    'shadow-soft w-full overflow-hidden rounded-2xl bg-surface-card text-left transition-colors',
-                    'border-l-4 border-solid',
+                    'w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition-colors md:rounded-3xl',
+                    'border-l-4',
                     orderStatusLeftBorderClass(order.status),
                     'hover:bg-surface-low/40 active:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
                   )}
@@ -1104,12 +1139,30 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                           <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">W produkcji</span>
                         )}
                       </div>
-                      {order.order_number && (
-                        <p className="mt-0.5 text-[12px] text-muted-foreground">{order.order_number}</p>
+                      {(order.order_number || (order.wz_numbers?.length ?? 0) > 0 || (order.invoice_numbers?.length ?? 0) > 0) && (
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                          {order.order_number && (
+                            <span className="text-[12px] text-muted-foreground">{order.order_number}</span>
+                          )}
+                          {order.wz_numbers?.map((d) => (
+                            <span key={d.id} className="contents">
+                              <Link to={`/delivery/${d.id}`} onClick={(e) => e.stopPropagation()} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-200">{d.number}</Link>
+                              {d.corrections?.map((kor) => (
+                                <Link key={kor.id} to={`/delivery/${kor.id}`} onClick={(e) => e.stopPropagation()} className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200">{kor.number}</Link>
+                              ))}
+                            </span>
+                          ))}
+                          {order.invoice_numbers?.map((d) => (
+                            <Link key={d.id} to={`/invoices/${d.id}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 hover:bg-violet-200">
+                              {d.number}
+                              {d.has_correction && <span className="ml-0.5 text-amber-500" title="Wystawiono korektę">KOR</span>}
+                            </Link>
+                          ))}
+                        </div>
                       )}
                     </div>
                     <div className="shrink-0 text-right">
-                      <p className="text-[15px] font-semibold tabular-nums text-foreground">
+                      <p className="text-sm font-semibold tabular-nums text-slate-900">
                         {formatMoneyGrossLocal(order.total_gross)}
                       </p>
                       <p className="text-[11px] tabular-nums text-muted-foreground">

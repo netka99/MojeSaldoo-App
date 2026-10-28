@@ -75,8 +75,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 "order__customer",
                 "user",
                 "delivery_document",
+                "corrects_invoice",
             )
-            .prefetch_related("items", "items__product", "items__order_item", "corrections", "invoice_orders")
+            .prefetch_related("items", "items__product", "items__order_item", "corrections", "invoice_orders", "corrects_invoice__items")
             .order_by("-created_at")
         )
         return filter_queryset_for_current_company(qs, self.request.user)
@@ -521,6 +522,33 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.status = Invoice.STATUS_ISSUED
             invoice.user = request.user
             invoice.save(update_fields=["status", "user", "updated_at"])
+        # If this is a correction — update original invoice status and compute balance_due
+        if invoice.is_correction and invoice.corrects_invoice_id:
+            original = invoice.corrects_invoice
+            orig_was_paid = original.status == Invoice.STATUS_PAID
+
+            # balance_due = KOR.total_gross - FV.total_gross (brutto difference)
+            # negative = refund, zero = full cancel, positive = extra charge
+            balance = (invoice.total_gross or Decimal("0")) - (original.total_gross or Decimal("0"))
+            invoice.balance_due = balance
+
+            # Determine KOR status based on balance and original payment state
+            if balance == Decimal("0"):
+                # Full cancellation — nothing to pay or refund
+                invoice.status = Invoice.STATUS_CORRECTED
+            elif orig_was_paid and balance < Decimal("0"):
+                # Original was paid, correction reduces amount → refund owed
+                invoice.status = Invoice.STATUS_REFUND_DUE
+            elif not orig_was_paid and balance < Decimal("0"):
+                # Original unpaid, correction reduces amount → less to pay (stays issued)
+                pass  # status already set to STATUS_ISSUED above
+            # balance > 0 → extra charge, stays STATUS_ISSUED
+
+            invoice.save(update_fields=["status", "balance_due", "updated_at"])
+
+            original.status = Invoice.STATUS_CORRECTED
+            original.save(update_fields=["status", "updated_at"])
+
         log_activity(
             user=request.user, action="invoice.issue",
             status=ActivityLog.STATUS_SUCCESS,
@@ -535,10 +563,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             Invoice.STATUS_ISSUED,
             Invoice.STATUS_SENT,
             Invoice.STATUS_OVERDUE,
+            Invoice.STATUS_REFUND_DUE,
         )
         if invoice.status not in payable_statuses:
             raise ValidationError(
-                {"detail": "Tylko wystawione, wysłane lub przeterminowane faktury mogą być oznaczone jako zapłacone."}
+                {"detail": "Tylko wystawione, wysłane, przeterminowane lub do zwrotu faktury mogą być oznaczone jako zapłacone."}
             )
         invoice.status = Invoice.STATUS_PAID
         invoice.paid_at = timezone.now()
@@ -560,7 +589,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "Tylko opłacone faktury mogą być cofnięte do statusu nieopłaconej."}
             )
-        invoice.status = Invoice.STATUS_ISSUED
+        # For KOR: restore to refund_due or issued based on balance_due
+        if invoice.is_correction and invoice.balance_due is not None:
+            if invoice.balance_due < Decimal("0"):
+                invoice.status = Invoice.STATUS_REFUND_DUE
+            else:
+                invoice.status = Invoice.STATUS_ISSUED
+        else:
+            invoice.status = Invoice.STATUS_ISSUED
         invoice.paid_at = None
         invoice.user = request.user
         invoice.save(

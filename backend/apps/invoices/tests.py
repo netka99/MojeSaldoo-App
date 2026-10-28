@@ -3280,3 +3280,326 @@ class PaymentReceivedAtTests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
         inv = Invoice.objects.get(uuid=r.data["id"])
         self.assertEqual(str(inv.payment_received_at), "2026-09-10")
+
+
+# ---------------------------------------------------------------------------
+# Correction invoice: issue action, balance_due, status transitions
+# ---------------------------------------------------------------------------
+
+
+class InvoiceCorrectionIssueTests(TestCase):
+    """
+    Tests for the `issue` action correction branch:
+    balance_due calculation and status transitions for both KOR and original FV.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-issue-user", email="kor-issue@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR Issue Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        CompanyModule.objects.get_or_create(
+            company=self.company, module="invoicing", defaults={"is_enabled": True}
+        )
+        self.customer = Customer.objects.create(name="Test Client", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Bread", unit="szt", price_gross="10.00"
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _make_fv(self, total_gross, status=None):
+        """Create a ready-to-correct issued invoice with one item."""
+        inv = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=status or Invoice.STATUS_ISSUED,
+            total_gross=Decimal(str(total_gross)),
+        )
+        InvoiceItem.objects.create(
+            invoice=inv,
+            product=self.product,
+            product_name="Bread",
+            product_unit="szt",
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("8.13"),
+            vat_rate=Decimal("23"),
+        )
+        return inv
+
+    def _make_kor(self, original, total_gross):
+        """Create a draft KOR correction linked to original."""
+        kor = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=self.customer,
+            issue_date=date(2026, 6, 15),
+            sale_date=date(2026, 6, 15),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_DRAFT,
+            is_correction=True,
+            corrects_invoice=original,
+            total_gross=Decimal(str(total_gross)),
+        )
+        InvoiceItem.objects.create(
+            invoice=kor,
+            product=self.product,
+            product_name="Bread",
+            product_unit="szt",
+            quantity=Decimal("1"),
+            unit_price_net=Decimal("8.13"),
+            vat_rate=Decimal("23"),
+        )
+        return kor
+
+    def _issue_url(self, invoice):
+        return reverse("invoice-issue", kwargs={"uuid": str(invoice.uuid)})
+
+    def test_full_cancellation_sets_both_to_corrected_and_balance_zero(self):
+        """KOR total == FV total → KOR gets 'corrected', original gets 'corrected', balance_due=0."""
+        fv = self._make_fv("100.00")
+        kor = self._make_kor(fv, "100.00")
+
+        r = self.client.post(self._issue_url(kor), data={"issue_date": "2026-06-15"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        kor.refresh_from_db()
+        fv.refresh_from_db()
+        self.assertEqual(kor.status, Invoice.STATUS_CORRECTED)
+        self.assertEqual(fv.status, Invoice.STATUS_CORRECTED)
+        self.assertEqual(kor.balance_due, Decimal("0.00"))
+
+    def test_partial_reduction_paid_original_sets_kor_refund_due(self):
+        """Original paid + KOR total < FV total → KOR gets 'refund_due', balance_due is negative."""
+        fv = self._make_fv("100.00", status=Invoice.STATUS_PAID)
+        kor = self._make_kor(fv, "60.00")
+
+        r = self.client.post(self._issue_url(kor), data={"issue_date": "2026-06-15"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        kor.refresh_from_db()
+        fv.refresh_from_db()
+        self.assertEqual(kor.status, Invoice.STATUS_REFUND_DUE)
+        self.assertEqual(fv.status, Invoice.STATUS_CORRECTED)
+        self.assertEqual(kor.balance_due, Decimal("-40.00"))
+
+    def test_partial_reduction_unpaid_original_kor_stays_issued(self):
+        """Original unpaid + KOR total < FV total → KOR stays 'issued', balance_due is negative."""
+        fv = self._make_fv("100.00")  # issued, not paid
+        kor = self._make_kor(fv, "70.00")
+
+        r = self.client.post(self._issue_url(kor), data={"issue_date": "2026-06-15"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        kor.refresh_from_db()
+        fv.refresh_from_db()
+        self.assertEqual(kor.status, Invoice.STATUS_ISSUED)
+        self.assertEqual(fv.status, Invoice.STATUS_CORRECTED)
+        self.assertEqual(kor.balance_due, Decimal("-30.00"))
+
+    def test_extra_charge_kor_stays_issued_balance_positive(self):
+        """KOR total > FV total → KOR stays 'issued', balance_due is positive."""
+        fv = self._make_fv("100.00")
+        kor = self._make_kor(fv, "120.00")
+
+        r = self.client.post(self._issue_url(kor), data={"issue_date": "2026-06-15"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        kor.refresh_from_db()
+        fv.refresh_from_db()
+        self.assertEqual(kor.status, Invoice.STATUS_ISSUED)
+        self.assertEqual(fv.status, Invoice.STATUS_CORRECTED)
+        self.assertEqual(kor.balance_due, Decimal("20.00"))
+
+    def test_issue_response_includes_balance_due(self):
+        """API response for issued KOR should include balance_due field."""
+        fv = self._make_fv("100.00")
+        kor = self._make_kor(fv, "60.00")
+
+        r = self.client.post(self._issue_url(kor), data={"issue_date": "2026-06-15"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn("balance_due", r.data)
+        self.assertEqual(Decimal(r.data["balance_due"]), Decimal("-40.00"))
+
+    def test_issue_non_correction_does_not_set_balance_due(self):
+        """Issuing a regular (non-correction) invoice should leave balance_due as None."""
+        fv = self._make_fv("100.00", status=Invoice.STATUS_DRAFT)
+        fv.status = Invoice.STATUS_DRAFT
+        fv.save(update_fields=["status"])
+
+        r = self.client.post(self._issue_url(fv), data={"issue_date": "2026-06-01"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        fv.refresh_from_db()
+        self.assertIsNone(fv.balance_due)
+
+
+class InvoiceCorrectionMarkUnpaidTests(TestCase):
+    """mark-unpaid on a KOR should restore the correct status based on balance_due."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-unpaid-user", email="kor-unpaid@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR Unpaid Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        CompanyModule.objects.get_or_create(
+            company=self.company, module="invoicing", defaults={"is_enabled": True}
+        )
+        self.customer = Customer.objects.create(name="Test Client", company=self.company)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _make_paid_kor(self, balance_due):
+        """Create a KOR that is already in STATUS_PAID with the given balance_due."""
+        return Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=self.customer,
+            issue_date=date(2026, 6, 15),
+            sale_date=date(2026, 6, 15),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_PAID,
+            is_correction=True,
+            balance_due=Decimal(str(balance_due)),
+            total_gross=Decimal("60.00"),
+        )
+
+    def _url(self, inv):
+        return reverse("invoice-mark-unpaid", kwargs={"uuid": str(inv.uuid)})
+
+    def test_mark_unpaid_kor_with_negative_balance_restores_refund_due(self):
+        """KOR with negative balance_due: mark-unpaid → status reverts to 'refund_due'."""
+        kor = self._make_paid_kor("-40.00")
+        r = self.client.post(self._url(kor))
+        self.assertEqual(r.status_code, 200, r.data)
+        kor.refresh_from_db()
+        self.assertEqual(kor.status, Invoice.STATUS_REFUND_DUE)
+
+    def test_mark_unpaid_kor_with_zero_balance_restores_issued(self):
+        """KOR with zero balance_due: mark-unpaid → status reverts to 'issued'."""
+        kor = self._make_paid_kor("0.00")
+        r = self.client.post(self._url(kor))
+        self.assertEqual(r.status_code, 200, r.data)
+        kor.refresh_from_db()
+        self.assertEqual(kor.status, Invoice.STATUS_ISSUED)
+
+    def test_mark_unpaid_regular_invoice_always_restores_issued(self):
+        """Regular (non-correction) invoice: mark-unpaid always → 'issued'."""
+        inv = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_PAID,
+            total_gross=Decimal("100.00"),
+        )
+        r = self.client.post(self._url(inv))
+        self.assertEqual(r.status_code, 200, r.data)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, Invoice.STATUS_ISSUED)
+
+
+class InvoiceCorrectionSerializerTests(TestCase):
+    """
+    corrects_invoice_id exposed as UUID, corrections list on original,
+    corrects_invoice_items mirrors original's lines.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kor-ser-user", email="kor-ser@test.com", password="pass"
+        )
+        self.company = Company.objects.create(name="KOR Ser Co")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", is_active=True
+        )
+        self.user.current_company = self.company
+        self.user.save()
+        CompanyModule.objects.get_or_create(
+            company=self.company, module="invoicing", defaults={"is_enabled": True}
+        )
+        self.customer = Customer.objects.create(name="Test Client", company=self.company)
+        self.product = Product.objects.create(
+            company=self.company, name="Roll", unit="szt", price_gross="5.00"
+        )
+        self.fv = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=self.customer,
+            issue_date=date(2026, 6, 1),
+            sale_date=date(2026, 6, 1),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_ISSUED,
+            total_gross=Decimal("50.00"),
+        )
+        self.fv_item = InvoiceItem.objects.create(
+            invoice=self.fv,
+            product=self.product,
+            product_name="Roll",
+            product_unit="szt",
+            quantity=Decimal("10"),
+            unit_price_net=Decimal("4.07"),
+            vat_rate=Decimal("23"),
+        )
+        self.kor = Invoice.objects.create(
+            company=self.company,
+            user=self.user,
+            customer=self.customer,
+            issue_date=date(2026, 6, 15),
+            sale_date=date(2026, 6, 15),
+            due_date=date(2026, 6, 30),
+            status=Invoice.STATUS_DRAFT,
+            is_correction=True,
+            corrects_invoice=self.fv,
+            total_gross=Decimal("0.00"),
+        )
+        self.api_client = APIClient()
+        self.api_client.force_authenticate(user=self.user)
+
+    def test_kor_corrects_invoice_id_is_uuid_string(self):
+        """corrects_invoice_id in KOR response should be the original FV's UUID, not DB pk."""
+        r = self.api_client.get(reverse("invoice-detail", kwargs={"uuid": str(self.kor.uuid)}))
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["corrects_invoice_id"], str(self.fv.uuid))
+
+    def test_original_fv_corrections_list_includes_kor(self):
+        """After creating KOR, the original FV's 'corrections' list should include it."""
+        r = self.api_client.get(reverse("invoice-detail", kwargs={"uuid": str(self.fv.uuid)}))
+        self.assertEqual(r.status_code, 200, r.data)
+        corrections = r.data.get("corrections", [])
+        self.assertEqual(len(corrections), 1)
+        self.assertEqual(corrections[0]["id"], str(self.kor.uuid))
+
+    def test_kor_corrects_invoice_items_mirrors_original_lines(self):
+        """corrects_invoice_items on the KOR should reflect the original FV's line items."""
+        r = self.api_client.get(reverse("invoice-detail", kwargs={"uuid": str(self.kor.uuid)}))
+        self.assertEqual(r.status_code, 200, r.data)
+        items = r.data.get("corrects_invoice_items")
+        self.assertIsNotNone(items)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["product_name"], "Roll")
+        self.assertEqual(Decimal(items[0]["quantity"]), Decimal("10"))
+
+    def test_regular_invoice_corrects_invoice_items_is_none(self):
+        """Non-correction invoice should have corrects_invoice_items=None."""
+        r = self.api_client.get(reverse("invoice-detail", kwargs={"uuid": str(self.fv.uuid)}))
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data.get("corrects_invoice_items"))

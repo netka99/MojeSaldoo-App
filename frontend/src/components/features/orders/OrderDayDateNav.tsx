@@ -67,10 +67,9 @@ function openNativeDatePicker(input: HTMLInputElement) {
 }
 
 const ctrlBtn = cn(
-  'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-input bg-background',
-  'text-base font-medium text-foreground shadow-sm',
-  'ring-offset-background transition-colors hover:bg-muted/60',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+  'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700',
+  'text-base transition-colors hover:bg-slate-200',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
 );
 
 export function OrderDayDateNav({ date, onChange }: OrderDayDateNavProps) {
@@ -121,8 +120,8 @@ export function OrderDayDateNav({ date, onChange }: OrderDayDateNavProps) {
       <button
         type="button"
         className={cn(
-          'min-w-0 rounded-2xl border border-transparent px-4 py-2 text-center text-base font-semibold text-foreground',
-          'ring-offset-background hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+          'min-w-0 rounded-2xl px-4 py-2 text-center text-sm font-semibold text-slate-900',
+          'hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
         )}
         aria-haspopup="dialog"
         aria-label={`Wybierz datę na kalendarzu (${formatDayNavLabel(date)})`}

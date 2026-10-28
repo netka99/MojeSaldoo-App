@@ -247,12 +247,16 @@ class DeliveryDocumentListSerializer(UUIDModelSerializer):
     linked_wz_id = UUIDRelatedField(source="linked_wz", read_only=True)
     van_route_id = UUIDRelatedField(source="van_route", read_only=True)
     from_supplier_id = UUIDRelatedField(source="from_supplier", read_only=True)
+    corrects_wz_id = UUIDRelatedField(source="corrects_wz", read_only=True)
     order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     supplier_name = serializers.SerializerMethodField()
     from_warehouse_name = serializers.SerializerMethodField()
     to_warehouse_name = serializers.SerializerMethodField()
     van_route_date = serializers.SerializerMethodField()
+    corrects_wz_number = serializers.SerializerMethodField()
+    corrections = serializers.SerializerMethodField()
+    corrects_wz_items = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -286,6 +290,10 @@ class DeliveryDocumentListSerializer(UUIDModelSerializer):
             "external_document_number",
             "created_at",
             "updated_at",
+            "corrects_wz_id",
+            "corrects_wz_number",
+            "corrections",
+            "corrects_wz_items",
         ]
         read_only_fields = fields
 
@@ -320,6 +328,38 @@ class DeliveryDocumentListSerializer(UUIDModelSerializer):
         if obj.van_route_id:
             return obj.van_route.date.isoformat()
         return None
+
+    def get_corrects_wz_number(self, obj):
+        if obj.corrects_wz_id:
+            return obj.corrects_wz.document_number or None
+        return None
+
+    def get_corrections(self, obj):
+        wz_kor = list(
+            obj.wz_corrections.only("id", "uuid", "document_number", "issue_date", "order_correction_applied").order_by("created_at")
+        )
+        return [
+            {
+                "id": str(c.uuid),
+                "document_number": c.document_number,
+                "issue_date": str(c.issue_date),
+                "order_correction_applied": c.order_correction_applied,
+            }
+            for c in wz_kor
+        ]
+
+    def get_corrects_wz_items(self, obj):
+        if not obj.corrects_wz_id:
+            return None
+        return [
+            {
+                "product_name": it.product.name if it.product_id else "",
+                "product_unit": it.product.unit if it.product_id else "",
+                "quantity_planned": str(it.quantity_planned) if it.quantity_planned is not None else None,
+                "quantity_actual": str(it.quantity_actual) if it.quantity_actual is not None else None,
+            }
+            for it in obj.corrects_wz.items.select_related("product").all()
+        ]
 
 
 class DeliveryDocumentSerializer(UUIDModelSerializer):
@@ -382,7 +422,10 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
 
     corrects_pz_id = UUIDRelatedField(source="corrects_pz", read_only=True)
     corrects_pz_number = serializers.SerializerMethodField()
+    corrects_wz_id = UUIDRelatedField(source="corrects_wz", read_only=True)
+    corrects_wz_number = serializers.SerializerMethodField()
     corrections = serializers.SerializerMethodField()
+    corrects_wz_items = serializers.SerializerMethodField()
 
     # Legacy write field — still accepted for backward compat; creates a ksef_link.
     # New code should use ksef_invoice_ids (list) via the patch endpoint.
@@ -434,11 +477,14 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             "ksef_invoice_ref",
             "corrects_pz_id",
             "corrects_pz_number",
+            "corrects_wz_id",
+            "corrects_wz_number",
             "corrections",
+            "corrects_wz_items",
             "items",
             "return_documents",
         ]
-        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "ksef_invoice_refs", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrections"]
+        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "ksef_invoice_refs", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrects_wz_id", "corrects_wz_number", "corrections", "corrects_wz_items"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -511,7 +557,11 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
 
     def get_linked_invoices(self, obj):
         return [
-            {"id": str(inv.uuid), "invoice_number": inv.invoice_number or ""}
+            {
+                "id": str(inv.uuid),
+                "invoice_number": inv.invoice_number or "",
+                "has_correction": len(inv.corrections.all()) > 0,
+            }
             for inv in obj.invoices.all().order_by("created_at")
         ]
 
@@ -525,17 +575,49 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             return obj.corrects_pz.document_number or None
         return None
 
+    def get_corrects_wz_number(self, obj):
+        if obj.corrects_wz_id:
+            return obj.corrects_wz.document_number or None
+        return None
+
     def get_corrections(self, obj):
-        """Minimal list of PZ-KOR / WZ-KOR documents that correct this document."""
+        """List of PZ-KOR / WZ-KOR documents that correct this document, with their items."""
         pz_kor = list(
-            obj.pz_corrections.only("id", "uuid", "document_number", "issue_date").order_by("created_at")
+            obj.pz_corrections.prefetch_related("items__product").order_by("created_at")
         )
         wz_kor = list(
-            obj.wz_corrections.only("id", "uuid", "document_number", "issue_date").order_by("created_at")
+            obj.wz_corrections.prefetch_related("items__product").order_by("created_at")
         )
+        result = []
+        for c in pz_kor + wz_kor:
+            result.append({
+                "id": str(c.uuid),
+                "document_number": c.document_number,
+                "issue_date": str(c.issue_date),
+                "order_correction_applied": c.order_correction_applied,
+                "items": [
+                    {
+                        "product_name": it.product.name if it.product_id else "",
+                        "product_unit": it.product.unit if it.product_id else "",
+                        "quantity_planned": str(it.quantity_planned) if it.quantity_planned is not None else None,
+                        "quantity_actual": str(it.quantity_actual) if it.quantity_actual is not None else None,
+                    }
+                    for it in c.items.all()
+                ],
+            })
+        return result
+
+    def get_corrects_wz_items(self, obj):
+        if not obj.corrects_wz_id:
+            return None
         return [
-            {"id": str(c.uuid), "document_number": c.document_number, "issue_date": str(c.issue_date)}
-            for c in pz_kor + wz_kor
+            {
+                "product_name": it.product.name if it.product_id else "",
+                "product_unit": it.product.unit if it.product_id else "",
+                "quantity_planned": str(it.quantity_planned) if it.quantity_planned is not None else None,
+                "quantity_actual": str(it.quantity_actual) if it.quantity_actual is not None else None,
+            }
+            for it in obj.corrects_wz.items.select_related("product").all()
         ]
 
     def get_ksef_invoice_refs(self, obj):

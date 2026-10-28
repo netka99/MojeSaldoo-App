@@ -343,3 +343,35 @@ export type ProductMarginRow = {
   estimatedGrossProfit: string | number | null;
   estimatedMarginPercent: number | null;
 };
+
+export type ReconciliationOrderRow = { status: string; count: number; gross: string };
+export type ReconciliationDeliveryRow = { document_type: string; status: string; count: number };
+export type ReconciliationInvoiceRow = { status: string; count: number; gross: string };
+export type ReconciliationGapOrder = {
+  id: string;
+  order_number: string | null;
+  customer_name: string;
+  delivery_date: string;
+  total_gross: string;
+};
+
+export type ReconciliationReport = {
+  period: { date_from: string; date_to: string };
+  orders: {
+    by_status: ReconciliationOrderRow[];
+    total_count: number;
+    total_gross: string;
+  };
+  delivery: {
+    by_type_status: ReconciliationDeliveryRow[];
+  };
+  invoices: {
+    by_status: ReconciliationInvoiceRow[];
+    total_count: number;
+    total_gross: string;
+  };
+  gaps: {
+    delivered_without_invoice: ReconciliationGapOrder[];
+    count: number;
+  };
+};

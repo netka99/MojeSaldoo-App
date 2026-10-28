@@ -89,6 +89,13 @@ class Customer(models.Model):
     podmiot3_postal_code = models.CharField(max_length=10, blank=True, null=True)
     podmiot3_country = models.CharField(max_length=2, blank=True, null=True, default="PL")
 
+    image = models.ImageField(
+        upload_to="customer_thumbs/",
+        blank=True,
+        null=True,
+        help_text="Square JPEG thumbnail (128 × 128 px).",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

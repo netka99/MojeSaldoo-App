@@ -286,12 +286,14 @@ export function CustomerList({
                       >
                         <div
                           className={cn(
-                            'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
-                            company ? 'bg-primary-light text-primary' : 'bg-surface-low text-on-surface-variant',
+                            'flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl',
+                            !c.image_url && (company ? 'bg-primary-light text-primary' : 'bg-surface-low text-on-surface-variant'),
                           )}
                           aria-hidden
                         >
-                          {company ? (
+                          {c.image_url ? (
+                            <img src={c.image_url} alt="" className="h-full w-full object-cover" />
+                          ) : company ? (
                             <BuildingIcon className="h-5 w-5" />
                           ) : (
                             <UserIcon className="h-5 w-5" />

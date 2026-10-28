@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -285,9 +285,17 @@ function FormSection({
   );
 }
 
+const CUSTOMER_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const CUSTOMER_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+export interface CustomerImageChange {
+  file: File | null;
+  remove: boolean;
+}
+
 export interface CustomerFormProps {
   customer?: Customer | null;
-  onSubmit: (data: CustomerWrite) => void | Promise<void>;
+  onSubmit: (data: CustomerWrite, image?: CustomerImageChange) => void | Promise<void>;
   onCancel?: () => void;
   isLoading?: boolean;
   submitLabel?: string;
@@ -320,6 +328,48 @@ export function CustomerForm({
   const nipLookup = useNipLookupMutation();
   const [nipLookupError, setNipLookupError] = useState<string | null>(null);
 
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [removeImage, setRemoveImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
+
+  const shownImage = removeImage
+    ? null
+    : imagePreview ?? customer?.image_url ?? null;
+  const imageLetter = (customer?.name ?? 'S').charAt(0).toUpperCase();
+
+  const handleImagePick = (file: File | undefined) => {
+    setImageError(null);
+    if (!file) return;
+    if (!CUSTOMER_IMAGE_TYPES.includes(file.type)) {
+      setImageError('Dozwolone formaty: JPEG, PNG, WebP.');
+      return;
+    }
+    if (file.size > CUSTOMER_IMAGE_MAX_BYTES) {
+      setImageError('Zdjęcie jest za duże. Maksymalnie 5 MB.');
+      return;
+    }
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setRemoveImage(false);
+  };
+
+  const clearImage = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(null);
+    setImagePreview(null);
+    setRemoveImage(true);
+    setImageError(null);
+  };
+
   const handleNipLookup = async () => {
     const nip = getValues('nip').trim();
     if (!validateNipChecksum(nip)) {
@@ -345,7 +395,9 @@ export function CustomerForm({
   }, [customer?.id, customer?.updated_at, reset]);
 
   const submit = handleSubmit(async (values) => {
-    await onSubmit(formValuesToCustomerWrite(values, customer?.id));
+    const imageChange: CustomerImageChange | undefined =
+      imageFile || removeImage ? { file: imageFile, remove: removeImage } : undefined;
+    await onSubmit(formValuesToCustomerWrite(values, customer?.id), imageChange);
   });
 
   const inField = (name: keyof CustomerFormValues) =>
@@ -364,6 +416,37 @@ export function CustomerForm({
 
       <div className="space-y-4">
         <FormSection title="Dane podstawowe" Icon={IconUser}>
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-slate-800">Zdjęcie sklepu</span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-[#F2F2F7] text-base font-semibold text-primary"
+                aria-label="Wybierz zdjęcie sklepu"
+              >
+                {shownImage ? (
+                  <img src={shownImage} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  imageLetter
+                )}
+              </button>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                onChange={(e) => handleImagePick(e.target.files?.[0])}
+              />
+              {shownImage && (
+                <button type="button" className="text-sm font-medium text-slate-700 hover:underline" onClick={clearImage}>
+                  Usuń zdjęcie
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">JPEG, PNG lub WebP, maks. 5 MB. Zapisujemy tylko małą miniaturę.</p>
+            {imageError && <p className="mt-1.5 text-xs text-destructive">{imageError}</p>}
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
               label="Nazwa wyświetlana"

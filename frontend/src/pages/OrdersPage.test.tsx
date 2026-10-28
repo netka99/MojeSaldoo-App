@@ -317,7 +317,7 @@ describe('OrdersPage', () => {
     );
     renderOrders('/orders');
     expect(screen.getByRole('button', { name: /Podsumowanie, 2 produkty/i })).toBeInTheDocument();
-    expect(screen.getByText('Suma pozycji').closest('div')?.textContent).toMatch(/150[,.]50/);
+    expect(document.querySelector('.orders-day-compact')?.textContent).toMatch(/150[,.]50/);
   });
 
   it('does not render Załaduj Van when delivery module disabled', () => {

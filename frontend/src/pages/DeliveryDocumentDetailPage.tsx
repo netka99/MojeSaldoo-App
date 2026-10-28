@@ -1142,6 +1142,15 @@ export function DeliveryDocumentDetailPage() {
                         : (doc.customer_name || '—')
                     } · {formatIssueDate(doc.issue_date)}
                   </span>
+                  {(doc.corrections ?? []).length > 0 && doc.corrections!.map((kor) => (
+                    <Link
+                      key={kor.id}
+                      to={`/delivery/${kor.id}`}
+                      className="rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200"
+                    >
+                      Korekta: {kor.document_number ?? kor.id.slice(0, 8)}
+                    </Link>
+                  ))}
                   {isFetching && (
                     <span className="text-[12px] text-muted-foreground">Aktualizowanie…</span>
                   )}
@@ -1304,6 +1313,9 @@ export function DeliveryDocumentDetailPage() {
                         <Link to={`/invoices/${inv.id}`} className="font-medium text-primary hover:underline">
                           Faktura {inv.invoice_number?.trim() ? inv.invoice_number : inv.id.slice(0, 8)}
                         </Link>
+                        {inv.has_correction && (
+                          <span className="ml-1.5 text-xs font-medium text-amber-600">(wystawiono korektę)</span>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -1549,6 +1561,36 @@ export function DeliveryDocumentDetailPage() {
                 onZwItemChange={handleZwItemChange}
               />
             )}
+
+            {/* WZ corrections (WZ-KOR) — show what was corrected */}
+            {(doc.corrections ?? []).filter(c => c.items && c.items.length > 0).map((kor) => (
+              <div key={kor.id} className="overflow-hidden rounded-2xl bg-card shadow-soft">
+                <div className="flex items-center justify-between border-b border-border/50 bg-purple-50/60 px-4 py-3">
+                  <div>
+                    <p className="text-[13px] font-semibold text-purple-800">
+                      Korekta: {kor.document_number ?? kor.id.slice(0, 8)}
+                    </p>
+                    <p className="text-[12px] text-purple-600">{formatIssueDate(kor.issue_date)}</p>
+                  </div>
+                  <Link
+                    to={`/delivery/${kor.id}`}
+                    className="rounded-full bg-purple-100 px-3 py-1 text-[12px] font-medium text-purple-700 hover:bg-purple-200"
+                  >
+                    Otwórz →
+                  </Link>
+                </div>
+                <div className="divide-y divide-border/40">
+                  {kor.items!.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-[13px] text-foreground">{item.product_name || '—'}</span>
+                      <span className="text-[13px] font-medium text-rose-700 tabular-nums">
+                        {item.quantity_actual ?? item.quantity_planned ?? '?'} {item.product_unit}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
 
             {/* PZ: extra fields (shown when editing, read-only otherwise in the info card above) */}
             {isPZ && isEditing && (

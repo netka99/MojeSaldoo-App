@@ -1257,6 +1257,117 @@ class WorkflowSettingsAPITests(TestCase):
         # Turning OFF must not alter any document status
         self.assertEqual(wz_saved.status, DeliveryDocument.STATUS_SAVED)
 
+    # ------------------------------------------------------------------
+    # *_changed_at timestamp and ActivityLog tests
+    # ------------------------------------------------------------------
+
+    def test_patch_sets_changed_at_when_flag_changes(self):
+        """Toggling a boolean flag sets its *_changed_at timestamp."""
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.patch(self.url, {"auto_wz_on_order": True}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        ws = CompanyWorkflowSettings.objects.get(company=self.co)
+        self.assertIsNotNone(ws.auto_wz_on_order_changed_at)
+
+    def test_patch_does_not_set_changed_at_when_value_unchanged(self):
+        """Sending the same value as currently stored must NOT update *_changed_at."""
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"auto_wz_on_order": False}
+        )
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch(self.url, {"auto_wz_on_order": False}, format="json")
+        ws = CompanyWorkflowSettings.objects.get(company=self.co)
+        self.assertIsNone(ws.auto_wz_on_order_changed_at)
+
+    def test_get_returns_changed_at_fields(self):
+        """GET response includes all four *_changed_at fields."""
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        for field in (
+            "orders_required_changed_at",
+            "wz_required_before_invoice_changed_at",
+            "auto_wz_on_order_changed_at",
+            "auto_deliver_wz_changed_at",
+        ):
+            self.assertIn(field, r.data, msg=f"Missing field: {field}")
+
+    def test_changed_at_is_read_only(self):
+        """Supplying *_changed_at in the PATCH body must not overwrite the DB value."""
+        self.client.force_authenticate(user=self.admin)
+        # First toggle so timestamp gets set
+        self.client.patch(self.url, {"orders_required": True}, format="json")
+        ws_after_first = CompanyWorkflowSettings.objects.get(company=self.co)
+        ts_after_first = ws_after_first.orders_required_changed_at
+        self.assertIsNotNone(ts_after_first)
+
+        # Now try to overwrite *_changed_at via the API (should be silently ignored)
+        self.client.patch(
+            self.url,
+            {"orders_required_changed_at": "2000-01-01T00:00:00Z"},
+            format="json",
+        )
+        ws_after_second = CompanyWorkflowSettings.objects.get(company=self.co)
+        self.assertEqual(ws_after_second.orders_required_changed_at, ts_after_first)
+
+    def test_patch_creates_activity_log_entry(self):
+        """Toggling a boolean flag must create an ActivityLog entry."""
+        from apps.activity.models import ActivityLog
+
+        self.client.force_authenticate(user=self.admin)
+        # wz_required_before_invoice defaults to True — patch to False triggers change
+        r = self.client.patch(self.url, {"wz_required_before_invoice": False}, format="json")
+        self.assertEqual(r.status_code, 200)
+
+        log = ActivityLog.objects.filter(
+            action="workflow_settings.changed",
+            object_type="workflow_settings",
+            object_id="wz_required_before_invoice",
+        ).first()
+        self.assertIsNotNone(log, "Expected ActivityLog entry was not created")
+        self.assertEqual(log.status, ActivityLog.STATUS_SUCCESS)
+        self.assertIn("wz_required_before_invoice", log.error_detail)
+        self.assertIn("False", log.error_detail)
+
+    def test_no_activity_log_when_value_unchanged(self):
+        """No ActivityLog entry must be created when the value does not change."""
+        from apps.activity.models import ActivityLog
+
+        CompanyWorkflowSettings.objects.update_or_create(
+            company=self.co, defaults={"orders_required": False}
+        )
+        self.client.force_authenticate(user=self.admin)
+        before_count = ActivityLog.objects.filter(
+            action="workflow_settings.changed",
+            object_type="workflow_settings",
+            object_id="orders_required",
+        ).count()
+        self.client.patch(self.url, {"orders_required": False}, format="json")
+        after_count = ActivityLog.objects.filter(
+            action="workflow_settings.changed",
+            object_type="workflow_settings",
+            object_id="orders_required",
+        ).count()
+        self.assertEqual(before_count, after_count)
+
+    def test_multiple_flags_changed_creates_multiple_log_entries(self):
+        """Changing two flags in one PATCH creates two ActivityLog entries."""
+        from apps.activity.models import ActivityLog
+
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch(
+            self.url,
+            {"orders_required": True, "auto_wz_on_order": True},
+            format="json",
+        )
+        logs = ActivityLog.objects.filter(
+            action="workflow_settings.changed",
+            object_type="workflow_settings",
+        )
+        logged_flags = {log.object_id for log in logs}
+        self.assertIn("orders_required", logged_flags)
+        self.assertIn("auto_wz_on_order", logged_flags)
+
 
 # ---------------------------------------------------------------------------
 # KSeF environment tests

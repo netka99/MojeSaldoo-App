@@ -257,3 +257,76 @@ class CustomerImportTests(TestCase):
         buf.name = "test.xlsx"
         r = self.client.post(reverse("customer-import-customers"), {"file": buf, "dry_run": "true"}, format="multipart")
         self.assertIn(r.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+
+class CustomerImageUploadTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="image-cust-user",
+            email="imagecust@test.com",
+            password="test12345",
+        )
+        self.company = _company_with_user(self.user)
+        self.user.current_company = self.company
+        self.user.save(update_fields=["current_company"])
+        self.customer = Customer.objects.create(
+            user=self.user, company=self.company, name="Photo Shop"
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _image_url(self):
+        return reverse("customer-image", args=[self.customer.uuid])
+
+    def _make_png_upload(self, width=400, height=180):
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        buf = io.BytesIO()
+        Image.new("RGB", (width, height), (12, 80, 160)).save(buf, format="PNG")
+        return SimpleUploadedFile("shop.png", buf.getvalue(), content_type="image/png")
+
+    def test_upload_stores_128px_square_jpeg_thumbnail(self):
+        from PIL import Image
+        upload = self._make_png_upload(400, 180)
+        r = self.client.post(self._image_url(), {"image": upload}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("image_url", r.data)
+        self.assertIsNotNone(r.data["image_url"])
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.image.name.endswith(".jpg"))
+        self.assertLess(self.customer.image.size, 20_000)
+        with Image.open(self.customer.image.path) as saved:
+            self.assertEqual(saved.size, (128, 128))
+            self.assertEqual(saved.format, "JPEG")
+
+    def test_upload_and_delete_removes_image(self):
+        upload = self._make_png_upload()
+        self.client.post(self._image_url(), {"image": upload}, format="multipart")
+        self.customer.refresh_from_db()
+        self.assertTrue(bool(self.customer.image))
+
+        r = self.client.delete(self._image_url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.customer.refresh_from_db()
+        self.assertFalse(bool(self.customer.image))
+        self.assertIsNone(r.data["image_url"])
+
+    def test_upload_rejects_non_image(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        upload = SimpleUploadedFile("notes.txt", b"not a photo", content_type="text/plain")
+        r = self.client.post(self._image_url(), {"image": upload}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.customer.refresh_from_db()
+        self.assertFalse(bool(self.customer.image))
+
+    def test_upload_no_file_returns_400(self):
+        r = self.client.post(self._image_url(), {}, format="multipart")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_serializer_returns_image_url_field(self):
+        r = self.client.get(reverse("customer-list"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        row = next(x for x in r.data["results"] if x["name"] == "Photo Shop")
+        self.assertIn("image_url", row)
+        self.assertIsNone(row["image_url"])

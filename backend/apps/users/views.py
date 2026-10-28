@@ -273,14 +273,49 @@ class CompanyWorkflowSettingsView(APIView):
         return Response(CompanyWorkflowSettingsSerializer(settings).data)
 
     def patch(self, request, company_id):
+        from django.utils import timezone as _tz
+        from apps.activity.log import log_activity
+        from apps.activity.models import ActivityLog
+
         company, err = self._get_company_or_403(request, company_id, require_write=True)
         if err:
             return err
         settings = get_workflow_settings(company)
+
+        # Snapshot current values of all boolean flags before update
+        _BOOLEAN_FLAGS = [
+            "orders_required",
+            "wz_required_before_invoice",
+            "auto_wz_on_order",
+            "auto_deliver_wz",
+        ]
+        before = {f: getattr(settings, f) for f in _BOOLEAN_FLAGS}
         was_auto_deliver = settings.auto_deliver_wz
+
         ser = CompanyWorkflowSettingsSerializer(settings, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
+
+        # Set *_changed_at for any boolean flag that actually changed
+        now = _tz.now()
+        changed_flags = []
+        for flag in _BOOLEAN_FLAGS:
+            new_val = ser.validated_data.get(flag, before[flag])
+            if new_val != before[flag]:
+                setattr(ser.instance, f"{flag}_changed_at", now)
+                changed_flags.append((flag, before[flag], new_val))
+
         ser.save()
+
+        # Log each changed flag to ActivityLog
+        for flag, old_val, new_val in changed_flags:
+            log_activity(
+                user=request.user,
+                action="workflow_settings.changed",
+                status=ActivityLog.STATUS_SUCCESS,
+                object_type="workflow_settings",
+                object_id=flag,
+                error_detail=f"{flag}: {old_val} → {new_val}",
+            )
 
         # When auto_deliver_wz is turned on, close all open WZ documents
         if not was_auto_deliver and ser.instance.auto_deliver_wz:
