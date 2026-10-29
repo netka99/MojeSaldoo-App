@@ -249,6 +249,8 @@ class OrderSerializer(UUIDModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
+        if not items_data:
+            raise serializers.ValidationError({"items": "Zamówienie musi zawierać co najmniej jedną pozycję."})
         if validated_data.get("order_date") is None:
             validated_data["order_date"] = timezone.localdate()
         order = Order.objects.create(**validated_data)
@@ -256,6 +258,8 @@ class OrderSerializer(UUIDModelSerializer):
             OrderItem.objects.create(order=order, **self._build_line_kwargs(row))
         order.refresh_from_db()
         order.calculate_total()
+        if order.total_gross <= 0:
+            raise serializers.ValidationError({"total_gross": "Zamówienie musi mieć wartość większą od 0. Sprawdź ceny produktów."})
         return order
 
     @staticmethod

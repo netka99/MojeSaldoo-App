@@ -217,6 +217,16 @@ class InvoiceSerializer(UUIDModelSerializer):
                 DeliveryDocument.objects.filter(company_id=cc_id)
             )
 
+    def validate(self, data):
+        # Customer is required for manual invoices (no order linkage)
+        order = data.get("order") or (self.instance.order if self.instance else None)
+        customer = data.get("customer") or (self.instance.customer if self.instance else None)
+        if not order and not customer:
+            raise serializers.ValidationError(
+                {"customer_id": "Klient jest wymagany."}
+            )
+        return data
+
     def update(self, instance, validated_data):
         if instance.status != Invoice.STATUS_DRAFT:
             raise serializers.ValidationError(

@@ -375,3 +375,90 @@ export type ReconciliationReport = {
     count: number;
   };
 };
+
+export type FlowProblem =
+  | 'delivered_no_invoice'
+  | 'delivered_no_wz'
+  | 'wz_no_invoice'
+  | 'invoice_overdue'
+  | 'wz_zw_no_fvkor';
+
+export type FlowZwDoc = { id: string; number: string | null };
+
+export type FlowWzEntry = {
+  id: string;
+  number: string | null;
+  status: string;
+  zw: FlowZwDoc[];
+};
+
+export type FlowOrderLine = {
+  product_id: string | null;
+  product_name: string;
+  unit: string;
+  ordered_qty: string;
+  delivered_qty: string;
+  returned_qty: string;
+  invoiced_qty: string;
+  unit_price_gross: string;
+};
+
+export type FlowInvoiceCorrection = {
+  id: string;
+  number: string | null;
+  status: string;
+  issue_date: string | null;
+  total_gross: string;
+  correction_reason: string;
+};
+
+export type FlowInvoiceEntry = {
+  id: string;
+  number: string | null;
+  status: string;
+  due_date: string | null;
+  total_gross: string;
+  corrections: FlowInvoiceCorrection[];
+  cross_period: boolean;
+};
+
+export type FlowOrderDetail = {
+  id: string | null;
+  order_number: string | null;
+  delivery_date: string;
+  status: string | null;
+  total_gross: string | null;
+  lines: FlowOrderLine[];
+  wz: FlowWzEntry[];
+  invoices: FlowInvoiceEntry[];
+  ok: boolean;
+  problem: FlowProblem | null;
+};
+
+export type FlowManualInvoice = {
+  id: string;
+  number: string | null;
+  status: string;
+  issue_date: string | null;
+  due_date: string | null;
+  total_gross: string;
+  lines: { product_name: string; unit: string; quantity: string }[];
+};
+
+export type FlowCustomerRow = {
+  customer_id: string;
+  customer_name: string;
+  orders: { total: number; open: number; invoiced: number; cancelled: number };
+  wz: { total: number; without_invoice: number };
+  invoices: { total: number; overdue: number; total_gross: string };
+  problems: FlowProblem[];
+  orders_detail: FlowOrderDetail[];
+  manual_invoices: FlowManualInvoice[];
+};
+
+export type CustomerFlowReport = {
+  period: { date_from: string; date_to: string };
+  wz_required: boolean;
+  returns_mode: string;
+  customers: FlowCustomerRow[];
+};

@@ -193,6 +193,10 @@ def generate_invoice_from_order(
         )
 
     recalculate_invoice_totals(invoice)
+    if invoice.total_gross <= Decimal("0.00"):
+        raise ValidationError(
+            {"total_gross": "Faktura musi mieć wartość większą od 0. Sprawdź czy zamówienie ma pozycje z cenami."}
+        )
     invoice.save(
         update_fields=[
             "subtotal_net",
@@ -551,6 +555,10 @@ def generate_invoice_from_orders(
         )
 
     recalculate_invoice_totals(invoice)
+    if invoice.total_gross <= Decimal("0.00"):
+        raise ValidationError(
+            {"total_gross": "Faktura musi mieć wartość większą od 0. Sprawdź czy zamówienia mają pozycje z cenami."}
+        )
     invoice.save(update_fields=["subtotal_net", "subtotal_gross", "vat_amount", "total_gross", "updated_at"])
     if form_data:
         apply_submitted_invoice_fields(invoice, form_data, company=company, customer=customer)
@@ -737,6 +745,10 @@ def create_manual_invoice(
         invoice_items.append(invoice_item)
 
     recalculate_invoice_totals(invoice)
+    if invoice.total_gross <= Decimal("0.00"):
+        raise ValidationError(
+            {"total_gross": "Faktura ręczna musi mieć wartość większą od 0."}
+        )
     invoice.save(update_fields=["subtotal_net", "subtotal_gross", "vat_amount", "total_gross", "updated_at"])
 
     # Link ZAL invoices for ROZ

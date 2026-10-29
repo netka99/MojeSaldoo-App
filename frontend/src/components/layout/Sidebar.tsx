@@ -247,8 +247,8 @@ function NavSectionSprzedaz() {
           </ModuleNavItem>
         )}
         {canOrders && (
-          <ModuleNavItem module="reporting" to="/reports/reconciliation" icon={<NavGlyph name="list" />}>
-            Raport rozliczeniowy
+          <ModuleNavItem module="reporting" to="/reports/customer-flow" icon={<NavGlyph name="list" />}>
+            Przepływ rozliczeniowy
           </ModuleNavItem>
         )}
         {canInvoices && (

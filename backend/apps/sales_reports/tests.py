@@ -110,7 +110,7 @@ class DailySalesReportAPITests(TestCase):
             "notes": "Test",
             "lines": [
                 {
-                    "product": self.product.pk,
+                    "product": str(self.product.uuid),
                     "product_name": self.product.name,
                     "unit": "szt.",
                     "qty": "5.000",

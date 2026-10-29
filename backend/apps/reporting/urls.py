@@ -25,4 +25,5 @@ urlpatterns = [
     path("customer-margin/", views.CustomerMarginView.as_view(), name="report-customer-margin"),
     path("jpk-ewp/", views.JpkEwpExportView.as_view(), name="report-jpk-ewp"),
     path("reconciliation/", views.ReconciliationReportView.as_view(), name="report-reconciliation"),
+    path("customer-flow/", views.CustomerFlowReportView.as_view(), name="report-customer-flow"),
 ]

@@ -36,6 +36,7 @@ from apps.van_routes.models import VanRoute
 from apps.activity.log import log_error
 
 from .serializers import ReportingInvoiceSerializer, ReportingRejectedInvoiceSerializer
+from .flow_report import build_customer_flow
 from .jpk_ewp_generator import generate_jpk_ewp
 
 _MONEY = DecimalField(max_digits=14, decimal_places=2)
@@ -1754,3 +1755,16 @@ class ReconciliationReportView(ReportingModuleMixin, APIView):
                 "count": len(gap_orders),
             },
         })
+
+
+class CustomerFlowReportView(ReportingModuleMixin, APIView):
+    """GET /api/reports/customer-flow/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD"""
+
+    def get(self, request):
+        date_from = request.query_params.get("date_from")
+        date_to   = request.query_params.get("date_to")
+        if not date_from or not date_to:
+            raise ValidationError({"detail": "Parametry date_from i date_to są wymagane."})
+        company = request.user.current_company
+        data = build_customer_flow(company, date_from, date_to)
+        return Response(data)

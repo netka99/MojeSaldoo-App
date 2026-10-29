@@ -578,7 +578,7 @@ function PriceInputModeSection({ companyId, currentMode, canEdit, onSaved }: Pri
 // Invoice Returns Mode Section
 // ---------------------------------------------------------------------------
 
-type InvoiceReturnsMode = 'fv_kor' | 'net_qty' | 'lines';
+type InvoiceReturnsMode = 'fv_kor' | 'net_qty';
 
 const RETURNS_MODE_OPTIONS: { value: InvoiceReturnsMode; title: string; description: string }[] = [
   {
@@ -590,11 +590,6 @@ const RETURNS_MODE_OPTIONS: { value: InvoiceReturnsMode; title: string; descript
     value: 'net_qty',
     title: 'Netto w ilości',
     description: 'Przy fakturowaniu dostarczona ilość jest automatycznie pomniejszana o zwroty (dostarczone − zwroty).',
-  },
-  {
-    value: 'lines',
-    title: 'Osobna linia ze zwrotem',
-    description: 'Zwrot pojawia się jako ujemna pozycja na tej samej fakturze.',
   },
 ];
 
@@ -716,7 +711,7 @@ function InvoiceReturnsSection({ companyId, currentMode, canEdit, onSaved }: Inv
         </p>
       )}
 
-      <ul className="grid gap-3 lg:grid-cols-3">
+      <ul className="grid gap-3 lg:grid-cols-2">
         {RETURNS_MODE_OPTIONS.map((opt) => {
           const selected = mode === opt.value;
           return (

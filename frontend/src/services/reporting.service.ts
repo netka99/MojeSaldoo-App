@@ -1,5 +1,6 @@
 import { api } from './api';
 import type {
+  CustomerFlowReport,
   CustomerMarginReport,
   DashboardSummary,
   ExpiryAlertRow,
@@ -95,6 +96,10 @@ export const reportingService = {
   /** Reconciliation report: orders vs delivery docs vs invoices for a period. */
   fetchReconciliation: (params: { date_from: string; date_to: string }) =>
     api.get<ReconciliationReport>(`${basePath}reconciliation/`, { params }),
+
+  /** Per-customer flow report: order → WZ → invoice with problem flags. */
+  fetchCustomerFlow: (params: { date_from: string; date_to: string }) =>
+    api.get<CustomerFlowReport>(`${basePath}customer-flow/`, { params }),
 
   /** Download JPK_EWP(3) XML for a ryczałt company. */
   downloadJpkEwp: async (year: number, month: number): Promise<void> => {

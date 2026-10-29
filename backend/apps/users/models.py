@@ -104,11 +104,9 @@ class Company(models.Model):
 
     INVOICE_RETURNS_FVKOR = "fv_kor"
     INVOICE_RETURNS_NET = "net_qty"
-    INVOICE_RETURNS_LINES = "lines"
     INVOICE_RETURNS_CHOICES = [
         (INVOICE_RETURNS_FVKOR, "Oddzielna korekta FV-KOR (domyślne)"),
         (INVOICE_RETURNS_NET,   "Netto w ilości (dostarczone − zwroty)"),
-        (INVOICE_RETURNS_LINES, "Osobna linia ze zwrotem"),
     ]
 
     KSEF_MANDATORY = "mandatory"
