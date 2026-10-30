@@ -100,6 +100,7 @@ function OrdersPageContent() {
   const [wzError, setWzError] = useState<string | null>(null);
 
   const deliveryEnabled = useModuleGuard('delivery');
+  const productionEnabled = useModuleGuard('production');
   const canManageDelivery = usePermission('can_manage_delivery');
   const generateWzM = useGenerateDeliveryForOrderMutation();
 
@@ -426,6 +427,17 @@ function OrdersPageContent() {
                   >
                     Trasy Vana
                   </Button>
+                  {productionEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className={actionBtnSecondary}
+                      onClick={() => navigate(`/production/orders?date_from=${date}&date_to=${date}`)}
+                    >
+                      Produkcja dnia
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     variant="outline"
