@@ -822,6 +822,13 @@ export function ProductionOrdersPage() {
     }
   }, [tab, planningLoading, planningItems.length]);
 
+  // Auto-select all when plan loads or tab changes
+  useEffect(() => {
+    if (!planningLoading && planningItems.length > 0) {
+      setSelectedRecipeIds(new Set(planningItems.map((i) => i.recipe_id)));
+    }
+  }, [planningItems]);
+
   const selectedItems = planningItems.filter((i) => selectedRecipeIds.has(i.recipe_id));
 
   function toggleItem(recipeId: string) {
@@ -1001,8 +1008,8 @@ export function ProductionOrdersPage() {
         )}
       </section>
 
-      {/* ── Ingredients summary (all open items, always visible) ── */}
-      {planningItems.length > 0 && <IngredientsSummary items={planningItems} />}
+      {/* ── Ingredients summary — reacts to checkboxes ── */}
+      {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} />}
 
       {/* ── Manual order modal ── */}
       {form.open && (
