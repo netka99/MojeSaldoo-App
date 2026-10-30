@@ -21,14 +21,14 @@ export const MODULE_CARD_COPY: Record<
   { title: string; description: string; statusOn: string; statusOff: string }
 > = {
   products: {
-    title: 'Produkty i magazyn',
-    description: 'Katalog, partie, stany i lokalizacje magazynowe.',
+    title: 'Produkty i koszty',
+    description: 'Katalog produktów, śledzenie kosztów zakupu i produkcji. Wymagane do fakturowania i zamówień.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },
   warehouses: {
-    title: 'Magazyny',
-    description: 'Definicje magazynów i stany w wielu lokalizacjach.',
+    title: 'Wiele magazynów',
+    description: 'Dla firm z kilkoma lokalizacjami: oddział, van, sklep. Jeśli masz jedno miejsce — zostaw wyłączone.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },
@@ -76,7 +76,7 @@ export const MODULE_CARD_COPY: Record<
   },
   production: {
     title: 'Produkcja',
-    description: 'Receptury, zlecenia produkcji. RW = rozchód surowców, PW = przyjęcie wyrobu gotowego na magazyn.',
+    description: 'Receptury i zlecenia produkcji. Śledź ile kosztuje wytworzenie produktu z surowców.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },
