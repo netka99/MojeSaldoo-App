@@ -331,7 +331,7 @@ function NavSectionDostawa() {
       <NavGroupTitle>Dostawa</NavGroupTitle>
       <div className="space-y-0.5">
         {canRoutes && (
-          <ModuleNavItem module="delivery" to="/van-routes" icon={<NavGlyph name="truck" />}>
+          <ModuleNavItem module="van_routes" to="/van-routes" icon={<NavGlyph name="truck" />}>
             Trasy Vana
           </ModuleNavItem>
         )}
