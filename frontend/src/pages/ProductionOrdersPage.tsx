@@ -24,13 +24,18 @@ const n2 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 });
 
 // ── Source order row (expandable) ────────────────────────────────────────────
 
-function SourceOrderRow({ order: o, checked, onToggle }: {
+function SourceOrderRow({ order: o, checked, onToggle, highlightProductId }: {
   order: Order;
   checked: boolean;
   onToggle: () => void;
+  highlightProductId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const items = o.items ?? [];
+  const highlightedItem = highlightProductId
+    ? items.find((i) => i.product_id === highlightProductId)
+    : undefined;
+
   return (
     <div className={cn(checked && 'bg-primary/5')}>
       <div className="flex items-center gap-2.5 px-3 py-2">
@@ -45,26 +50,33 @@ function SourceOrderRow({ order: o, checked, onToggle }: {
           className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
           onClick={() => setExpanded((v) => !v)}
         >
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <span className="text-sm font-medium">{o.order_number ?? o.id}</span>
             <span className="ml-2 text-sm text-muted-foreground">{o.customer_name}</span>
             {o.delivery_date && (
               <span className="ml-2 text-xs text-muted-foreground">· {o.delivery_date}</span>
             )}
           </div>
-          {items.length > 0 && (
-            <svg viewBox="0 0 24 24" fill="none" className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
-              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {highlightedItem && (
+              <span className="text-sm font-semibold text-slate-800 tabular-nums">
+                {parseFloat(String(highlightedItem.quantity)).toLocaleString('pl-PL')} {highlightedItem.product_unit}
+              </span>
+            )}
+            {items.length > 0 && (
+              <svg viewBox="0 0 24 24" fill="none" className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', expanded && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
+                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </div>
         </button>
       </div>
       {expanded && items.length > 0 && (
         <div className="border-t border-border/40 bg-muted/20 px-3 pb-2 pt-1.5">
           {items.map((item, i) => (
-            <div key={i} className="flex items-baseline justify-between gap-2 py-0.5">
-              <span className="text-xs text-foreground">{item.product_name}</span>
-              <span className="text-xs tabular-nums text-muted-foreground shrink-0">
+            <div key={i} className={cn('flex items-baseline justify-between gap-2 py-0.5', item.product_id === highlightProductId && 'font-medium text-primary')}>
+              <span className="text-xs">{item.product_name}</span>
+              <span className="text-xs tabular-nums shrink-0">
                 {parseFloat(String(item.quantity)).toLocaleString('pl-PL')} {item.product_unit}
               </span>
             </div>
@@ -89,6 +101,7 @@ function OrderForm({
   prefillRecipeId,
   prefillQty,
   prefillSourceOrders,
+  highlightProductId,
   onSave,
   onCancel,
   saving,
@@ -97,6 +110,7 @@ function OrderForm({
   prefillRecipeId?: string;
   prefillQty?: number;
   prefillSourceOrders?: string[];
+  highlightProductId?: string;
   onSave: (data: ProductionOrderCreate) => void;
   onCancel: () => void;
   saving: boolean;
@@ -341,6 +355,7 @@ function OrderForm({
                 key={o.id}
                 order={o}
                 checked={sourceOrderIds.has(o.id)}
+                highlightProductId={highlightProductId}
                 onToggle={() =>
                   setSourceOrderIds((prev) => {
                     const next = new Set(prev);
@@ -765,7 +780,7 @@ function IngredientsSummary({ items }: { items: ProductionPlanningItem[] }) {
 type PlanTab = 'today' | 'open' | 'range';
 type FormState =
   | { open: false }
-  | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[] };
+  | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[]; highlightProductId?: string };
 
 export function ProductionOrdersPage() {
   const canProduction = usePermission('can_manage_production');
@@ -800,6 +815,12 @@ export function ProductionOrdersPage() {
   const orders = ordersData?.results ?? [];
   const activeOrders = orders.filter((o) => o.status !== 'completed');
 
+  // Auto-switch from "Dziś" to "Otwarte" when today has no items
+  useEffect(() => {
+    if (tab === 'today' && !planningLoading && planningItems.length === 0) {
+      setTab('open');
+    }
+  }, [tab, planningLoading, planningItems.length]);
 
   const selectedItems = planningItems.filter((i) => selectedRecipeIds.has(i.recipe_id));
 
@@ -971,6 +992,7 @@ export function ProductionOrdersPage() {
                     prefillRecipeId: item.recipe_id,
                     prefillQty: Math.ceil(stockTracked ? Number(item.shortfall) : Number(item.total_ordered)),
                     prefillSourceOrders: item.orders.map((o) => o.order_number),
+                    highlightProductId: item.product_id,
                   })}
                 />
               );
@@ -986,7 +1008,7 @@ export function ProductionOrdersPage() {
       {form.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40" onClick={() => setForm({ open: false })} />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-apple-float md:rounded-3xl">
+          <div className="relative z-10 w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-apple-float md:rounded-3xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <p className="text-sm font-semibold text-slate-900">
                 {form.prefillRecipeId ? 'Zmień zlecenie produkcji' : 'Nowe zlecenie produkcji'}
@@ -1007,6 +1029,7 @@ export function ProductionOrdersPage() {
                 prefillRecipeId={form.open ? form.prefillRecipeId : undefined}
                 prefillQty={form.open ? form.prefillQty : undefined}
                 prefillSourceOrders={form.open ? form.prefillSourceOrders : undefined}
+                highlightProductId={form.open ? form.highlightProductId : undefined}
                 onSave={(d) => void handleCreate(d)}
                 onCancel={() => setForm({ open: false })}
                 saving={createM.isPending}
