@@ -89,7 +89,7 @@ function BackIcon() {
   return <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth={2.5} aria-hidden><path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 function ChevronDown({ open }: { open: boolean }) {
-  return <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')} stroke="currentColor" strokeWidth={2} aria-hidden><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+  return <svg viewBox="0 0 24 24" fill="none" className={cn('h-4 w-4 shrink-0 text-slate-600 transition-transform', open && 'rotate-180')} stroke="currentColor" strokeWidth={2.5} aria-hidden><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 function OkIcon() {
   return <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-emerald-500" stroke="currentColor" strokeWidth={2.5} aria-hidden><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -123,12 +123,12 @@ function LinesTable({ lines }: { lines: FlowOrderLine[] }) {
   return (
     <table className="w-full text-xs">
       <thead>
-        <tr className="border-b border-slate-100">
-          <th className="py-1.5 pl-3 pr-2 text-left font-medium text-slate-400 uppercase tracking-wide">Produkt</th>
-          <th className="py-1.5 px-2 text-right font-medium text-slate-400 uppercase tracking-wide">Zamów.</th>
-          <th className="py-1.5 px-2 text-right font-medium text-slate-400 uppercase tracking-wide">Dost.</th>
-          <th className="py-1.5 px-2 text-right font-medium text-slate-400 uppercase tracking-wide">Zwrot</th>
-          <th className="py-1.5 pl-2 pr-3 text-right font-medium text-slate-400 uppercase tracking-wide">Zafakt.</th>
+        <tr className="border-b border-slate-300">
+          <th className="border-r border-slate-300 py-1.5 pl-5 pr-3 text-left font-semibold uppercase tracking-wide text-slate-500">Produkt</th>
+          <th className="py-1.5 px-2 text-right font-semibold uppercase tracking-wide text-slate-500">Zamów.</th>
+          <th className="py-1.5 px-2 text-right font-semibold uppercase tracking-wide text-slate-500">Dost.</th>
+          <th className="py-1.5 px-2 text-right font-semibold uppercase tracking-wide text-slate-500">Zwrot</th>
+          <th className="py-1.5 pl-2 pr-5 text-right font-semibold uppercase tracking-wide text-slate-500">Zafakt.</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-50">
@@ -141,7 +141,7 @@ function LinesTable({ lines }: { lines: FlowOrderLine[] }) {
           const hasGap = Math.abs(diff) > 0.001 && invoiced > 0;
           return (
             <tr key={l.product_id ?? i} className="hover:bg-slate-50/60">
-              <td className="py-1.5 pl-3 pr-2 font-medium text-slate-700">
+              <td className="border-r border-slate-300 py-1.5 pl-5 pr-3 font-medium text-slate-700">
                 {l.product_name}
                 {l.unit && <span className="ml-1 text-slate-400 font-normal">{l.unit}</span>}
               </td>
@@ -150,7 +150,7 @@ function LinesTable({ lines }: { lines: FlowOrderLine[] }) {
               <td className="py-1.5 px-2 text-right tabular-nums text-slate-500">
                 {parseFloat(l.returned_qty) > 0 ? <span className="text-amber-600">−{fmtQty(l.returned_qty)}</span> : '—'}
               </td>
-              <td className="py-1.5 pl-2 pr-3 text-right tabular-nums">
+              <td className="py-1.5 pl-2 pr-5 text-right tabular-nums">
                 <span className={hasGap ? 'font-semibold text-amber-600' : 'text-slate-600'}>
                   {invoiced > 0 ? fmtQty(l.invoiced_qty) : '—'}
                 </span>
@@ -197,40 +197,22 @@ function OrderDetailRow({ row, striped }: { row: FlowOrderDetail; striped: boole
       'border-t border-slate-200',
       !row.ok ? 'bg-amber-50' : striped ? 'bg-slate-100' : 'bg-white',
     )}>
-      <div className="grid grid-cols-3 divide-x divide-slate-200">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_2.5rem] divide-x divide-slate-200 border-b border-slate-200">
         <div className="min-w-0 px-3 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              {row.id ? (
-                <Link to={`/orders/${row.id}`} className="text-sm font-medium text-primary hover:underline">
-                  {row.order_number ?? '—'}
-                </Link>
-              ) : (
-                <p className="text-sm text-slate-400">—</p>
-              )}
-              <p className="text-xs text-slate-500">
-                {row.status ? `${statusLabel} · ${fmtDate(row.delivery_date)}` : '—'}
-              </p>
-              {row.total_gross && (
-                <p className="text-xs font-medium tabular-nums text-slate-700">{plnFmt(row.total_gross)}</p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {row.problem === 'invoice_overdue' ? <ErrIcon /> : row.ok ? <OkIcon /> : <WarnIcon />}
-              <ProblemBadge problem={row.problem} />
-              {hasLines && (
-                <button
-                  type="button"
-                  onClick={() => setLinesOpen((v) => !v)}
-                  className="flex items-center rounded-lg px-1 py-0.5 text-slate-500 hover:bg-slate-100"
-                  title="Pokaż linie produktów"
-                  aria-expanded={linesOpen}
-                >
-                  <ChevronDown open={linesOpen} />
-                </button>
-              )}
-            </div>
-          </div>
+          {row.id ? (
+            <Link to={`/orders/${row.id}`} className="text-sm font-medium text-primary hover:underline">
+              {row.order_number ?? '—'}
+            </Link>
+          ) : (
+            <p className="text-sm text-slate-400">—</p>
+          )}
+          <p className="text-xs text-slate-500">
+            {row.status ? `${statusLabel} · ${fmtDate(row.delivery_date)}` : '—'}
+          </p>
+          {row.total_gross && (
+            <p className="text-xs font-medium tabular-nums text-slate-700">{plnFmt(row.total_gross)}</p>
+          )}
+          {row.problem && <div className="mt-1"><ProblemBadge problem={row.problem} /></div>}
         </div>
 
         <div className="min-w-0 px-3 py-2.5">
@@ -306,11 +288,28 @@ function OrderDetailRow({ row, striped }: { row: FlowOrderDetail; striped: boole
             </div>
           )}
         </div>
+
+        <div className="flex min-w-0 flex-col items-center justify-start gap-1 py-2.5">
+          {row.problem === 'invoice_overdue' ? <ErrIcon /> : !row.ok ? <WarnIcon /> : null}
+          {hasLines && (
+            <button
+              type="button"
+              onClick={() => setLinesOpen((v) => !v)}
+              className="flex items-center rounded-lg px-1 py-0.5 text-slate-500 hover:bg-slate-100"
+              title="Pokaż linie produktów"
+              aria-expanded={linesOpen}
+            >
+              <ChevronDown open={linesOpen} />
+            </button>
+          )}
+        </div>
       </div>
 
       {linesOpen && hasLines && (
-        <div className="border-t border-slate-100 bg-white">
-          <LinesTable lines={row.lines} />
+        <div className="px-3 pb-3 pt-3">
+          <div className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-md">
+            <LinesTable lines={row.lines} />
+          </div>
         </div>
       )}
     </div>
@@ -440,10 +439,11 @@ function OrdersBlock({ orders }: { orders: FlowOrderDetail[] }) {
       </button>
       {open && (
         <>
-          <div className="grid grid-cols-3 divide-x divide-slate-200 border-t border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-400">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_2.5rem] divide-x divide-slate-200 border-t border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
             <span className="px-3 py-1.5">Zamówienie</span>
             <span className="px-3 py-1.5">WZ</span>
             <span className="px-3 py-1.5">Faktura</span>
+            <span className="py-1.5" />
           </div>
           {orders.length === 0 ? (
             <p className="border-t border-slate-100 px-3 py-2 text-sm text-slate-400">Brak pozycji.</p>
