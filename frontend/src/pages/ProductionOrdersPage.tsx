@@ -747,17 +747,24 @@ export function ProductionOrdersPage() {
     setTimeout(() => document.getElementById('production-form')?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
 
+  // Items with real shortfall (tracked stock, demand > stock)
   const shortfallCount = planningItems.filter((i) => {
-    // Untracked finished goods always need production (produce to order)
-    const needsProduction = i.stock_available == null
-      ? Number(i.total_ordered) > 0
-      : Number(i.shortfall) > 0;
-    if (!needsProduction) return false;
-    const demand = i.stock_available == null ? Number(i.total_ordered) : Number(i.shortfall);
+    if (i.stock_available == null) return false; // produce-to-order — not an alarm
+    if (Number(i.shortfall) <= 0) return false;
     const inProd = orders
       .filter((o) => o.status !== 'completed' && o.recipe === i.recipe_id)
       .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-    return inProd < demand;
+    return inProd < Number(i.shortfall);
+  }).length;
+
+  // Items to schedule (produce-to-order, no stock tracking) — neutral info
+  const toScheduleCount = planningItems.filter((i) => {
+    if (i.stock_available != null) return false;
+    if (Number(i.total_ordered) <= 0) return false;
+    const inProd = orders
+      .filter((o) => o.status !== 'completed' && o.recipe === i.recipe_id)
+      .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
+    return inProd < Number(i.total_ordered);
   }).length;
 
   return (
@@ -788,9 +795,14 @@ export function ProductionOrdersPage() {
                 onChange={(e) => setDateTo(e.target.value)}
               />
             </div>
-            {!planningLoading && planningItems.length > 0 && shortfallCount > 0 && (
+            {!planningLoading && shortfallCount > 0 && (
               <span className="text-xs font-medium text-destructive">
-                {shortfallCount} {shortfallCount === 1 ? 'wyrób wymaga' : 'wyroby wymagają'} produkcji
+                {shortfallCount} {shortfallCount === 1 ? 'wyrób — niedobór' : 'wyroby — niedobór'}
+              </span>
+            )}
+            {!planningLoading && toScheduleCount > 0 && (
+              <span className="text-xs font-medium text-slate-500">
+                {toScheduleCount} {toScheduleCount === 1 ? 'wyrób do zlecenia' : 'wyroby do zlecenia'}
               </span>
             )}
           </div>
