@@ -31,6 +31,17 @@ class Product(models.Model):
     min_stock_alert = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     shelf_life_days = models.IntegerField(blank=True, null=True)
     # Purchase cost tracking — updated automatically on each PZ receipt or production order
+    PRODUCT_TYPE_MATERIAL = "material"
+    PRODUCT_TYPE_FINISHED = "finished"
+    PRODUCT_TYPE_TRADE = "trade"
+    PRODUCT_TYPE_SERVICE = "service"
+    PRODUCT_TYPE_CHOICES = [
+        (PRODUCT_TYPE_MATERIAL, "Surowiec"),
+        (PRODUCT_TYPE_FINISHED, "Wyrób gotowy"),
+        (PRODUCT_TYPE_TRADE, "Towar handlowy"),
+        (PRODUCT_TYPE_SERVICE, "Usługa"),
+    ]
+
     COST_SOURCE_PZ = "pz"
     COST_SOURCE_PRODUCTION = "production"
     COST_SOURCE_RECIPE = "recipe"
@@ -64,6 +75,12 @@ class Product(models.Model):
         help_text="Unit cost from the most recent PZ receipt.",
     )
     avg_cost_updated_at = models.DateTimeField(null=True, blank=True)
+    product_type = models.CharField(
+        max_length=20,
+        choices=PRODUCT_TYPE_CHOICES,
+        default=PRODUCT_TYPE_TRADE,
+        help_text="Classification: material | finished | trade | service",
+    )
     is_service = models.BooleanField(
         default=False,
         help_text=(
@@ -103,6 +120,16 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def tracks_stock(self) -> bool:
+        """True when stock movements should be written for this product."""
+        if self.product_type == self.PRODUCT_TYPE_SERVICE:
+            return False
+        if self.product_type in (self.PRODUCT_TYPE_MATERIAL, self.PRODUCT_TYPE_TRADE):
+            return True
+        # FINISHED: tracked only when track_batches is enabled
+        return bool(self.track_batches)
 
     def delete(self, *args, **kwargs):
         if self.image:

@@ -433,9 +433,10 @@ function PlanningRow({
   canManage: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const shortfall = Number(item.shortfall);
-  const hasShortfall = shortfall > 0;
-  const covered = draftQtyInProduction >= shortfall;
+  const stockTracked = item.stock_available != null;
+  const shortfallNum = stockTracked ? Number(item.shortfall) : Number(item.total_ordered);
+  const hasShortfall = stockTracked && Number(item.shortfall) > 0;
+  const covered = draftQtyInProduction >= shortfallNum;
 
   return (
     <div className="border-b last:border-b-0">
@@ -443,9 +444,9 @@ function PlanningRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-sm">{item.product_name}</span>
-            {hasShortfall ? (
+            {!stockTracked ? null : hasShortfall ? (
               <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                niedobór {n2.format(shortfall)} {item.product_unit}
+                niedobór {n2.format(shortfallNum)} {item.product_unit}
               </span>
             ) : (
               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
@@ -463,9 +464,10 @@ function PlanningRow({
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Zamówiono: <strong className="text-foreground">{n2.format(Number(item.total_ordered))}</strong>
-            {' · '}
-            Stan: <strong className="text-foreground">{n2.format(Number(item.stock_available))} {item.product_unit}</strong>
-            {hasShortfall && item.estimated_unit_cost != null && (
+            {stockTracked && (
+              <>{' · '}Stan: <strong className="text-foreground">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
+            )}
+            {item.estimated_unit_cost != null && (
               <>
                 {' · '}
                 Koszt produkcji: <strong className="text-foreground">{pln.format(Number(item.estimated_total_cost))}</strong>
@@ -492,8 +494,8 @@ function PlanningRow({
           >
             {expanded ? 'zwiń' : 'szczegóły'}
           </button>
-          {hasShortfall && canManage && (
-            <Button size="sm" onClick={() => onCreateOrder(item.recipe_id, shortfall, item.orders.map((o) => o.order_number))}>
+          {(hasShortfall || !stockTracked) && canManage && (
+            <Button size="sm" onClick={() => onCreateOrder(item.recipe_id, shortfallNum, item.orders.map((o) => o.order_number))}>
               + Zlecenie
             </Button>
           )}
@@ -746,11 +748,16 @@ export function ProductionOrdersPage() {
   }
 
   const shortfallCount = planningItems.filter((i) => {
-    if (Number(i.shortfall) <= 0) return false;
+    // Untracked finished goods always need production (produce to order)
+    const needsProduction = i.stock_available == null
+      ? Number(i.total_ordered) > 0
+      : Number(i.shortfall) > 0;
+    if (!needsProduction) return false;
+    const demand = i.stock_available == null ? Number(i.total_ordered) : Number(i.shortfall);
     const inProd = orders
       .filter((o) => o.status !== 'completed' && o.recipe === i.recipe_id)
       .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-    return inProd < Number(i.shortfall);
+    return inProd < demand;
   }).length;
 
   return (

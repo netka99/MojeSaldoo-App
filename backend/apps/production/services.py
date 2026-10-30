@@ -408,14 +408,26 @@ def get_production_planning(company, date_from=None, date_to=None):
         total_ordered = demand["total_ordered"]
 
         # Current stock of the finished product
-        stock_available = Decimal(
-            sum(s.quantity_available or 0 for s in recipe.product.stocks.all())
+        # For finished-type products without batch tracking, stock is not maintained —
+        # they are produced to order. In this case we skip the shortfall calculation.
+        finished_product = recipe.product
+        tracks = (
+            finished_product.product_type != "finished"
+            or finished_product.track_batches
         )
-        shortfall = max(Decimal("0"), total_ordered - stock_available)
+        if tracks:
+            stock_available = Decimal(
+                sum(s.quantity_available or 0 for s in finished_product.stocks.all())
+            )
+            shortfall = max(Decimal("0"), total_ordered - stock_available)
+        else:
+            stock_available = None
+            shortfall = None
 
         # Batches of recipe needed to cover the shortfall
         yield_qty = Decimal(str(recipe.yield_quantity)) if recipe.yield_quantity else Decimal("1")
-        batches_needed = shortfall / yield_qty if shortfall > 0 else Decimal("0")
+        production_qty = shortfall if shortfall is not None else total_ordered
+        batches_needed = production_qty / yield_qty if production_qty > 0 else Decimal("0")
 
         # Per-ingredient requirements and cost
         ingredients = []
@@ -453,7 +465,7 @@ def get_production_planning(company, date_from=None, date_to=None):
 
         if all_have_cost and recipe.items.exists():
             estimated_unit_cost = total_ingredient_cost_per_batch / yield_qty
-            estimated_total_cost = estimated_unit_cost * shortfall if shortfall > 0 else Decimal("0")
+            estimated_total_cost = estimated_unit_cost * production_qty if production_qty > 0 else Decimal("0")
         else:
             estimated_unit_cost = None
             estimated_total_cost = None
@@ -462,14 +474,14 @@ def get_production_planning(company, date_from=None, date_to=None):
             {
                 "product_id": pid,
                 "product_name": demand["product_name"],
-                "product_unit": recipe.product.unit,
+                "product_unit": finished_product.unit,
                 "recipe_id": str(recipe.uuid),
-                "recipe_name": recipe.name or recipe.product.name,
+                "recipe_name": recipe.name or finished_product.name,
                 "recipe_yield_quantity": yield_qty,
                 "total_ordered": total_ordered,
                 "stock_available": stock_available,
                 "shortfall": shortfall,
-                "suggested_production_qty": shortfall,
+                "suggested_production_qty": production_qty,
                 "estimated_unit_cost": estimated_unit_cost,
                 "estimated_total_cost": estimated_total_cost,
                 "ingredients": ingredients,

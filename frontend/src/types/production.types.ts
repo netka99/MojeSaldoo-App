@@ -42,8 +42,8 @@ export type ProductionPlanningItem = {
   recipe_name: string;
   recipe_yield_quantity: string | number;
   total_ordered: string | number;
-  stock_available: string | number;
-  shortfall: string | number;
+  stock_available: string | number | null;
+  shortfall: string | number | null;
   suggested_production_qty: string | number;
   estimated_unit_cost: string | number | null;
   estimated_total_cost: string | number | null;

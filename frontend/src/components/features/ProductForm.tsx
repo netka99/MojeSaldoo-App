@@ -34,6 +34,7 @@ const optionalCostStr = z
   });
 
 export const productFormSchema = z.object({
+  product_type: z.enum(['material', 'finished', 'trade', 'service']),
   is_service: z.boolean(),
   name: z.string().min(1, 'Nazwa jest wymagana').max(255),
   description: z.string().max(5000),
@@ -60,6 +61,7 @@ export const productFormSchema = z.object({
 export type ProductFormValues = z.infer<typeof productFormSchema>;
 
 const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
+  product_type: 'trade',
   is_service: false,
   name: '',
   description: '',
@@ -81,6 +83,7 @@ const EMPTY_PRODUCT_DEFAULTS: ProductFormValues = {
 
 const EMPTY_SERVICE_DEFAULTS: ProductFormValues = {
   ...EMPTY_PRODUCT_DEFAULTS,
+  product_type: 'service',
   is_service: true,
   unit: 'godz',
   track_batches: false,
@@ -92,6 +95,7 @@ const VAT_PRESETS = ['0', '5', '8', '23'] as const;
 
 function productToFormDefaults(product: Product): ProductFormValues {
   return {
+    product_type: product.product_type ?? (product.is_service ? 'service' : 'trade'),
     is_service: product.is_service ?? false,
     name: product.name,
     description: product.description ?? '',
@@ -125,7 +129,8 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
   const markup = values.markup_percent.trim();
   return {
     ...(id ? { id } : {}),
-    is_service: values.is_service,
+    product_type: values.product_type,
+    is_service: values.product_type === 'service',
     name: values.name,
     description: values.description.trim() ? values.description.trim() : null,
     unit: values.unit,
@@ -278,7 +283,8 @@ export function ProductForm({
 
   const { isGross } = usePriceInputMode();
 
-  const isService = useWatch({ control, name: 'is_service' });
+  const productType = useWatch({ control, name: 'product_type' });
+  const isService = productType === 'service';
   const priceNet = useWatch({ control, name: 'price_net' });
   const priceGross = useWatch({ control, name: 'price_gross' });
   const vatRate = useWatch({ control, name: 'vat_rate' });
@@ -402,38 +408,46 @@ export function ProductForm({
 
   return (
     <form noValidate onSubmit={submit} className="space-y-4 pb-4">
-      {/* Service / Product toggle — shown only when creating a new item */}
+      {/* Product type selector — shown only when creating a new item */}
       {!product && (
         <Controller
-          name="is_service"
+          name="product_type"
           control={control}
-          render={({ field }) => (
-            <div className="grid grid-cols-2 gap-2">
-              {([false, true] as const).map((val) => (
-                <button
-                  key={String(val)}
-                  type="button"
-                  aria-pressed={field.value === val}
-                  onClick={() => {
-                    field.onChange(val);
-                    // Switch unit default when toggling type on an empty form
-                    setValue('unit', val ? 'godz' : 'szt');
-                    setValue('track_batches', !val);
-                  }}
-                  className={cn(
-                    'flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-all',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                    field.value === val
-                      ? 'border-primary bg-primary/5 shadow-sm text-foreground'
-                      : 'border-border bg-background text-muted-foreground hover:border-primary/40',
-                  )}
-                >
-                  <span>{val ? '🛎️' : '📦'}</span>
-                  {val ? 'Usługa' : 'Produkt fizyczny'}
-                </button>
-              ))}
-            </div>
-          )}
+          render={({ field }) => {
+            const TYPE_OPTIONS = [
+              { value: 'trade' as const,    label: 'Towar handlowy', icon: '🛒', unit: 'szt', track: true },
+              { value: 'material' as const, label: 'Surowiec',        icon: '🧱', unit: 'szt', track: true },
+              { value: 'finished' as const, label: 'Wyrób gotowy',    icon: '📦', unit: 'szt', track: false },
+              { value: 'service' as const,  label: 'Usługa',          icon: '🛎️', unit: 'godz', track: false },
+            ];
+            return (
+              <div className="grid grid-cols-2 gap-2">
+                {TYPE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    aria-pressed={field.value === opt.value}
+                    onClick={() => {
+                      field.onChange(opt.value);
+                      setValue('is_service', opt.value === 'service');
+                      setValue('unit', opt.unit);
+                      setValue('track_batches', opt.track);
+                    }}
+                    className={cn(
+                      'flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-all',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                      field.value === opt.value
+                        ? 'border-primary bg-primary/5 shadow-sm text-foreground'
+                        : 'border-border bg-background text-muted-foreground hover:border-primary/40',
+                    )}
+                  >
+                    <span>{opt.icon}</span>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            );
+          }}
         />
       )}
 

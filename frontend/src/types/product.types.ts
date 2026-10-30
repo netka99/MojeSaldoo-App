@@ -18,6 +18,8 @@ export interface Product {
   track_batches: boolean;
   min_stock_alert: string | number;
   shelf_life_days: number | null;
+  /** Product classification: material | finished | trade | service */
+  product_type: 'material' | 'finished' | 'trade' | 'service';
   /** True when this entry is a service (not a physical product). */
   is_service: boolean;
   is_resalable: boolean;

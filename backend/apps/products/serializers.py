@@ -41,6 +41,7 @@ class ProductSerializer(UUIDModelSerializer):
             "track_batches",
             "min_stock_alert",
             "shelf_life_days",
+            "product_type",
             "is_service",
             "is_resalable",
             "markup_percent",
@@ -72,10 +73,18 @@ class ProductSerializer(UUIDModelSerializer):
         return value
 
     def _apply_service_defaults(self, validated_data: dict) -> dict:
-        """When is_service=True, force track_batches=False and is_resalable=True."""
-        if validated_data.get("is_service", False):
+        """Sync product_type ↔ is_service and enforce type-specific field defaults."""
+        pt = validated_data.get("product_type")
+        is_svc = validated_data.get("is_service", False)
+
+        # product_type wins; fall back to is_service for legacy callers
+        if pt == Product.PRODUCT_TYPE_SERVICE or (pt is None and is_svc):
+            validated_data["product_type"] = Product.PRODUCT_TYPE_SERVICE
+            validated_data["is_service"] = True
             validated_data["track_batches"] = False
             validated_data["is_resalable"] = True
+        elif pt is not None:
+            validated_data["is_service"] = False
         return validated_data
 
     def create(self, validated_data):
@@ -83,11 +92,19 @@ class ProductSerializer(UUIDModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        # Propagate is_service flag even when not explicitly set in this PATCH
-        is_service = validated_data.get("is_service", instance.is_service)
-        if is_service:
+        pt = validated_data.get("product_type", instance.product_type)
+        if pt == Product.PRODUCT_TYPE_SERVICE:
+            validated_data["is_service"] = True
             validated_data["track_batches"] = False
             validated_data["is_resalable"] = True
+        elif "product_type" in validated_data:
+            validated_data["is_service"] = False
+        else:
+            # Legacy path: product_type not sent, honour is_service
+            if validated_data.get("is_service", instance.is_service):
+                validated_data["product_type"] = Product.PRODUCT_TYPE_SERVICE
+                validated_data["track_batches"] = False
+                validated_data["is_resalable"] = True
 
         # If avg_cost is being manually set, force source = manual
         # unless a higher-priority source is already set (pz or production)
