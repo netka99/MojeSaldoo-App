@@ -1001,8 +1001,8 @@ export function ProductionOrdersPage() {
         )}
       </section>
 
-      {/* ── Ingredients summary ── */}
-      {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} />}
+      {/* ── Ingredients summary (all open items, always visible) ── */}
+      {planningItems.length > 0 && <IngredientsSummary items={planningItems} />}
 
       {/* ── Manual order modal ── */}
       {form.open && (
