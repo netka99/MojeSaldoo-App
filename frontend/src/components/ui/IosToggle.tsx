@@ -6,14 +6,19 @@ export interface IosToggleProps {
   label: string;
   description: string;
   disabled?: boolean;
+  /** Row inside an existing card, without its own surface. */
+  embedded?: boolean;
 }
 
-export function IosToggle({ checked, onChange, label, description, disabled }: IosToggleProps) {
+export function IosToggle({ checked, onChange, label, description, disabled, embedded = false }: IosToggleProps) {
   return (
-    <div className="shadow-soft flex items-center justify-between gap-4 rounded-2xl bg-surface-card p-4">
+    <div className={cn(
+      'flex items-center justify-between gap-3',
+      !embedded && 'shadow-soft rounded-2xl bg-surface-card p-4',
+    )}>
       <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground">{label}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        <p className={cn('text-sm font-medium', embedded ? 'text-slate-800' : 'text-foreground')}>{label}</p>
+        <p className={cn('mt-0.5 text-xs', embedded ? 'text-slate-500' : 'text-muted-foreground')}>{description}</p>
       </div>
       <button
         type="button"

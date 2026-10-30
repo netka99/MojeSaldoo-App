@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { forwardRef, useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type SVGProps } from 'react';
 import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { IosToggle } from '@/components/ui/IosToggle';
 import { cn } from '@/lib/utils';
@@ -152,16 +151,6 @@ function formValuesToProductWrite(values: ProductFormValues, id?: string): Produ
   };
 }
 
-const ksefFieldInputClass = cn(
-  'h-11 min-h-[44px] rounded-xl border-0 bg-secondary px-3.5 text-[15px] text-foreground shadow-none',
-  'placeholder:text-muted-foreground focus:bg-secondary focus:shadow-none focus:ring-2 focus:ring-primary/30',
-);
-
-const ksefTextareaClass = cn(
-  ksefFieldInputClass,
-  'min-h-[88px] resize-none py-2.5 leading-snug',
-);
-
 type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
 
 function IconPackage(props: SVGProps<SVGSVGElement>) {
@@ -250,6 +239,49 @@ function fieldStateCls(value: string | undefined) {
     : 'border-dashed border-[#D4D2EE] bg-white placeholder:text-slate-500';
 }
 
+function choiceBtnClass(active: boolean) {
+  return cn(
+    'rounded-2xl px-3 py-1.5 text-sm font-medium transition-colors',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+    active
+      ? 'bg-primary text-primary-foreground'
+      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+  );
+}
+
+const TextField = forwardRef<
+  HTMLInputElement,
+  InputHTMLAttributes<HTMLInputElement> & {
+    label: string;
+    error?: string;
+    helperText?: string;
+    stateValue?: string;
+  }
+>(function TextField({ label, error, helperText, stateValue, className, ...props }, ref) {
+  return (
+    <div>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-slate-800">{label}</span>
+        <input
+          {...props}
+          ref={ref}
+          className={cn(
+            'field-ios',
+            fieldStateCls(stateValue),
+            error && 'ring-2 ring-destructive/40 focus:ring-destructive/40',
+            className,
+          )}
+        />
+      </label>
+      {error ? (
+        <p className="mt-1.5 text-xs text-destructive">{error}</p>
+      ) : helperText ? (
+        <p className="mt-1.5 text-xs text-slate-500">{helperText}</p>
+      ) : null}
+    </div>
+  );
+});
+
 function SectionHeader({ Icon, title }: { Icon: IconComp; title: string }) {
   return (
     <div className="flex items-center gap-2.5">
@@ -315,6 +347,10 @@ export function ProductForm({
   }, [isGross, priceGross, vatRate, setValue]);
 
   const productName = useWatch({ control, name: 'name' });
+  const description = useWatch({ control, name: 'description' });
+  const unit = useWatch({ control, name: 'unit' });
+  const shelfLifeDays = useWatch({ control, name: 'shelf_life_days' });
+  const minStockAlert = useWatch({ control, name: 'min_stock_alert' });
   const avgCostManual = useWatch({ control, name: 'avg_cost_manual' });
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -399,9 +435,6 @@ export function ProductForm({
     await onSubmit(payload);
   });
 
-  const inField = (name: keyof ProductFormValues) =>
-    cn(ksefFieldInputClass, errors[name] && 'ring-2 ring-destructive/40 focus:ring-destructive/40');
-
   const normalizedVat =
     vatRate != null && String(vatRate).trim() !== ''
       ? String(Number(String(vatRate).replace(',', '.').trim()))
@@ -447,14 +480,14 @@ export function ProductForm({
                       }
                     }}
                     className={cn(
-                      'flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-all',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                      'flex items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm font-medium transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                       field.value === opt.value
-                        ? 'border-primary bg-primary/5 shadow-sm text-foreground'
-                        : 'border-border bg-background text-muted-foreground hover:border-primary/40',
+                        ? 'border-primary bg-primary/5 text-slate-900'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-primary/40',
                     )}
                   >
-                    <span>{opt.icon}</span>
+                    <span aria-hidden>{opt.icon}</span>
                     {opt.label}
                   </button>
                 ))}
@@ -474,7 +507,7 @@ export function ProductForm({
         <div className="px-4 pt-4 pb-2">
           <SectionHeader Icon={IconPackage} title={isService ? 'Dane usługi' : 'Dane podstawowe'} />
         </div>
-        <div className="px-4 pb-4 pt-3 space-y-4">
+        <div className="space-y-3 px-4 pb-4 pt-3">
           {/* Photo picker */}
           <div>
             <span className="mb-1.5 block text-sm font-medium text-slate-800">Zdjęcie</span>
@@ -482,7 +515,7 @@ export function ProductForm({
               <button
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
-                className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-[#F2F2F7] text-base font-semibold text-primary"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#D4D2EE] bg-white text-sm font-semibold text-primary"
                 aria-label="Wybierz zdjęcie produktu"
               >
                 {shownImage ? (
@@ -508,51 +541,50 @@ export function ProductForm({
             {imageError && <p className="mt-1.5 text-xs text-destructive">{imageError}</p>}
           </div>
 
-          {/* Name */}
-          <Input
+          <TextField
             label="Nazwa"
             placeholder={isService ? 'np. Naprawa zmywarki' : 'np. Kartacze'}
             required
-            {...register('name')}
+            stateValue={productName}
             error={errors.name?.message}
-            className={cn(inField('name'), fieldStateCls(productName))}
+            {...register('name')}
           />
 
-          {/* Description */}
-          <div className="space-y-2">
-            <label htmlFor="product-description" className="mb-1.5 block text-sm font-medium text-slate-800">
-              Opis
-            </label>
+          <label className="block" htmlFor="product-description">
+            <span className="mb-1.5 block text-sm font-medium text-slate-800">Opis</span>
             <textarea
               id="product-description"
               placeholder={isService ? 'Co obejmuje usługa' : 'Opcjonalny opis produktu'}
-              className={cn(ksefTextareaClass, errors.description && 'ring-2 ring-destructive/40')}
+              className={cn(
+                'field-ios-tall min-h-[4.5rem] resize-y',
+                fieldStateCls(description),
+                errors.description && 'ring-2 ring-destructive/40',
+              )}
               {...register('description')}
             />
             {errors.description?.message && (
-              <p className="text-xs text-destructive">{errors.description.message}</p>
+              <p className="mt-1.5 text-xs text-destructive">{errors.description.message}</p>
             )}
-          </div>
+          </label>
 
-          {/* Unit + shelf_life_days */}
-          <div className={cn('grid gap-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
-            <Input
+          <div className={cn('grid gap-3', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
+            <TextField
               label="Jednostka"
               placeholder={isService ? 'godz / usługa / projekt' : 'szt'}
               required
-              {...register('unit')}
+              stateValue={unit}
               error={errors.unit?.message}
-              className={cn(inField('unit'), fieldStateCls(useWatch({ control, name: 'unit' })))}
+              {...register('unit')}
             />
             {!isService && (
-              <Input
+              <TextField
                 label="Termin przydatności (dni)"
                 type="number"
                 min={0}
                 placeholder="np. 30"
-                {...register('shelf_life_days')}
+                stateValue={shelfLifeDays}
                 error={errors.shelf_life_days?.message}
-                className={cn(inField('shelf_life_days'), fieldStateCls(useWatch({ control, name: 'shelf_life_days' })))}
+                {...register('shelf_life_days')}
               />
             )}
           </div>
@@ -564,52 +596,51 @@ export function ProductForm({
         <div className="px-4 pt-4 pb-2">
           <SectionHeader Icon={IconTag} title="Sprzedaż" />
         </div>
-        <div className="px-4 pb-4 pt-3 space-y-4">
-          {/* Price grid */}
-          <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-3 px-4 pb-4 pt-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {isGross ? (
               <>
-                <Input
+                <TextField
                   label="Cena brutto sprzedaży"
                   inputMode="decimal"
-                  {...register('price_gross')}
+                  stateValue={priceGross}
                   error={errors.price_gross?.message}
-                  className={inField('price_gross')}
+                  {...register('price_gross')}
                 />
-                <Input
+                <TextField
                   label="Cena netto (obliczona)"
                   inputMode="decimal"
-                  {...register('price_net')}
+                  stateValue={priceNet}
                   error={errors.price_net?.message}
-                  className={inField('price_net')}
+                  {...register('price_net')}
                 />
               </>
             ) : (
               <>
-                <div className="space-y-1">
-                  <Input
+                <div>
+                  <TextField
                     label="Cena netto sprzedaży"
                     inputMode="decimal"
-                    {...register('price_net')}
+                    stateValue={priceNet}
                     error={errors.price_net?.message}
-                    className={inField('price_net')}
+                    {...register('price_net')}
                   />
                   {suggestedPriceNet && suggestedPriceNet !== priceNet?.trim() && (
                     <button
                       type="button"
-                      className="text-xs text-primary underline-offset-2 hover:underline"
+                      className="mt-1.5 text-xs text-primary underline-offset-2 hover:underline"
                       onClick={() => setValue('price_net', suggestedPriceNet, { shouldValidate: true })}
                     >
                       Zastosuj sugerowaną: {suggestedPriceNet} zł
                     </button>
                   )}
                 </div>
-                <Input
+                <TextField
                   label="Cena brutto"
                   inputMode="decimal"
-                  {...register('price_gross')}
+                  stateValue={priceGross}
                   error={errors.price_gross?.message}
-                  className={inField('price_gross')}
+                  {...register('price_gross')}
                 />
               </>
             )}
@@ -630,12 +661,7 @@ export function ProductForm({
                           key={v}
                           type="button"
                           onClick={() => field.onChange(v)}
-                          className={cn(
-                            'h-11 min-w-[3.25rem] flex-1 rounded-xl text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
-                            normalizedVat === v
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-secondary text-foreground',
-                          )}
+                          className={choiceBtnClass(normalizedVat === v)}
                         >
                           {v}%
                         </button>
@@ -645,31 +671,31 @@ export function ProductForm({
                 />
               </>
             ) : (
-              <Input
+              <TextField
                 label="Stawka VAT (%)"
                 inputMode="decimal"
-                {...register('vat_rate')}
+                stateValue={vatRate}
                 error={errors.vat_rate?.message}
-                className={inField('vat_rate')}
                 helperText="Niestandardowa stawka z katalogu — wpisz wartość ręcznie."
+                {...register('vat_rate')}
               />
             )}
           </div>
 
           {/* Markup */}
           {(!isService || isResalable) && (
-            <Input
+            <TextField
               label="Narzut / marża (%)"
               inputMode="decimal"
               placeholder="np. 55"
+              stateValue={markupPercent}
               helperText={
                 avgCost != null && avgCost > 0
                   ? `Aktualny koszt zakupu: ${avgCost.toFixed(4)} zł/jm`
                   : 'Koszt zakupu pojawi się po pierwszym PZ, produkcji lub wpisz ręcznie poniżej'
               }
-              {...register('markup_percent')}
               error={errors.markup_percent?.message}
-              className={cn(inField('markup_percent'), fieldStateCls(markupPercent))}
+              {...register('markup_percent')}
             />
           )}
 
@@ -681,6 +707,7 @@ export function ProductForm({
                 control={control}
                 render={({ field }) => (
                   <IosToggle
+                    embedded
                     checked={field.value}
                     onChange={field.onChange}
                     label="Produkt do sprzedaży"
@@ -700,7 +727,7 @@ export function ProductForm({
           <div className="px-4 pt-4 pb-2">
             <SectionHeader Icon={IconDatabase} title="Koszty i magazyn" />
           </div>
-          <div className="px-4 pb-4 pt-3 space-y-4">
+          <div className="space-y-3 px-4 pb-4 pt-3">
             {/* avg_cost */}
             {(() => {
               const source = product?.avg_cost_source;
@@ -716,7 +743,7 @@ export function ProductForm({
                   {isAutoSet ? (
                     <div>
                       <p className="mb-1.5 block text-sm font-medium text-slate-800">Koszt własny (avg_cost)</p>
-                      <div className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#D4D2EE] bg-white px-3 py-2 text-sm">
                         <span className="tabular-nums font-medium">
                           {product?.avg_cost != null ? `${Number(product.avg_cost).toFixed(4)} zł/jm` : '—'}
                         </span>
@@ -731,18 +758,18 @@ export function ProductForm({
                       </div>
                     </div>
                   ) : (
-                    <Input
+                    <TextField
                       label="Koszt własny (avg_cost)"
                       inputMode="decimal"
                       placeholder="np. 2.5000"
+                      stateValue={avgCostManual}
                       helperText={
                         source === 'recipe'
                           ? 'Szacunek z receptury — wpisz rzeczywisty koszt aby nadpisać'
                           : 'Ręczny koszt — zostanie zastąpiony automatycznie po pierwszym PZ lub produkcji'
                       }
-                      {...register('avg_cost_manual')}
                       error={errors.avg_cost_manual?.message}
-                      className={cn(inField('avg_cost_manual'), fieldStateCls(avgCostManual))}
+                      {...register('avg_cost_manual')}
                     />
                   )}
                 </div>
@@ -755,6 +782,7 @@ export function ProductForm({
               control={control}
               render={({ field }) => (
                 <IosToggle
+                  embedded
                   checked={field.value}
                   onChange={field.onChange}
                   label="Śledzenie partii (FIFO)"
@@ -771,12 +799,12 @@ export function ProductForm({
             />
 
             {/* min_stock_alert */}
-            <Input
+            <TextField
               label="Alert minimalnego stanu"
               inputMode="decimal"
-              {...register('min_stock_alert')}
+              stateValue={minStockAlert}
               error={errors.min_stock_alert?.message}
-              className={cn(inField('min_stock_alert'), fieldStateCls(useWatch({ control, name: 'min_stock_alert' })))}
+              {...register('min_stock_alert')}
             />
           </div>
         </section>
@@ -816,29 +844,29 @@ export function ProductForm({
           </div>
         </button>
         {codesOpen && (
-          <div className="divide-y divide-slate-200 border-t border-slate-200 px-4 pb-4 pt-3 space-y-4">
-            <Input
+          <div className="space-y-3 border-t border-slate-200 px-4 pb-4 pt-3">
+            <TextField
               label="Kod PKWiU"
               type="text"
               placeholder="np. 10.89.19.0"
+              stateValue={watchedPkwiu}
               helperText="Przydatne przy fakturach KSeF"
-              {...register('pkwiu')}
               error={errors.pkwiu?.message}
-              className={cn(inField('pkwiu'), fieldStateCls(watchedPkwiu))}
+              {...register('pkwiu')}
             />
-            <div className={cn('grid gap-4 pt-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
-              <Input
+            <div className={cn('grid gap-3', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
+              <TextField
                 label="SKU / kod wewnętrzny"
-                {...register('sku')}
+                stateValue={watchedSku}
                 error={errors.sku?.message}
-                className={cn(inField('sku'), fieldStateCls(watchedSku))}
+                {...register('sku')}
               />
               {!isService && (
-                <Input
+                <TextField
                   label="Kod kreskowy"
-                  {...register('barcode')}
+                  stateValue={watchedBarcode}
                   error={errors.barcode?.message}
-                  className={cn(inField('barcode'), fieldStateCls(watchedBarcode))}
+                  {...register('barcode')}
                 />
               )}
             </div>
@@ -851,26 +879,39 @@ export function ProductForm({
         name="is_active"
         control={control}
         render={({ field }) => (
-          <IosToggle
-            checked={field.value}
-            onChange={field.onChange}
-            label={isService ? 'Aktywna w katalogu' : 'Aktywny w katalogu'}
-            description="Widoczny przy zamówieniach i fakturach"
-            disabled={isLoading}
-          />
+          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 md:rounded-3xl">
+            <IosToggle
+              embedded
+              checked={field.value}
+              onChange={field.onChange}
+              label={isService ? 'Aktywna w katalogu' : 'Aktywny w katalogu'}
+              description="Widoczny przy zamówieniach i fakturach"
+              disabled={isLoading}
+            />
+          </div>
         )}
       />
 
       {/* Sticky bottom bar */}
-      <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">
+      <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-slate-200 bg-[#F2F2F7] px-4 py-3 sm:-mx-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button type="submit" className="w-full sm:flex-1" loading={isLoading}>
+          <Button
+            type="submit"
+            className="h-auto w-full rounded-2xl px-5 py-2.5 text-sm font-semibold sm:flex-1"
+            loading={isLoading}
+          >
             {submitLabel ?? (product
               ? 'Zapisz zmiany'
               : isService ? 'Zapisz usługę' : 'Zapisz produkt')}
           </Button>
           {onCancel && (
-            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={onCancel} disabled={isLoading}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-none sm:w-auto"
+              onClick={onCancel}
+              disabled={isLoading}
+            >
               Anuluj
             </Button>
           )}

@@ -8,7 +8,6 @@ import { useProductQuery, useUpdateProductMutation, useDeleteProductMutation } f
 import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
-import { cn } from '@/lib/utils';
 import type { ProductWrite } from '@/types';
 
 function ChevronLeftIcon({ className }: { className?: string }) {
@@ -61,37 +60,37 @@ export function ProductEditPage() {
   }
 
   return (
-    <div className="safe-area-pt safe-area-pb mx-auto max-w-xl space-y-4 px-4 pb-8 pt-4 sm:max-w-2xl sm:px-6 lg:max-w-3xl">
+    <div className="safe-area-pt safe-area-pb mx-auto max-w-xl space-y-3 px-4 pb-8 pt-4 sm:max-w-2xl sm:px-6 lg:max-w-3xl">
       <header className="flex items-center gap-3">
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="shadow-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-card text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          aria-label="Wróć do listy"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary md:h-10 md:w-10"
+          aria-label="Wróć"
         >
           <ChevronLeftIcon className="h-5 w-5" />
         </button>
         <div className="min-w-0 flex-1">
-          <h1 className="text-[1.25rem] font-semibold leading-tight tracking-tight text-foreground sm:text-[1.375rem]">
+          <h1 className="truncate text-base font-bold tracking-tight text-slate-900 md:text-xl">
             Edytuj produkt
           </h1>
-          <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+          <p className="truncate text-xs text-slate-500">
             {product?.name ?? (isLoading ? 'Ładowanie…' : '')}
           </p>
         </div>
         <Link
           to={`/products/${id}/movements`}
-          className="shadow-soft flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-surface-card px-3 text-[13px] font-medium text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           aria-label="Historia ruchów"
         >
-          <ClockIcon className="h-4 w-4 text-muted-foreground" />
+          <ClockIcon className="h-4 w-4 text-slate-500" />
           <span className="hidden sm:inline">Historia ruchów</span>
         </Link>
       </header>
 
       {isError && (
         <div
-          className="shadow-soft flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
           role="alert"
         >
           <p className="text-sm text-destructive">
@@ -142,11 +141,9 @@ export function ProductEditPage() {
           />
 
           {/* ── Delete zone ──────────────────────────────────────── */}
-          <div className="shadow-soft rounded-2xl border border-destructive/20 bg-surface-card p-4">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Usuń produkt
-            </p>
-            <p className="mt-1 text-[13px] text-on-surface-variant">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl">
+            <p className="text-sm font-semibold text-slate-900">Usuń produkt</p>
+            <p className="mt-1 text-xs text-slate-500">
               Możliwe tylko gdy produkt nie ma ruchów magazynowych, zamówień, WZ/PZ ani faktur.
             </p>
 
@@ -159,7 +156,7 @@ export function ProductEditPage() {
             {!confirmDelete ? (
               <button
                 type="button"
-                className="mt-3 rounded-xl border border-destructive/40 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5"
+                className="mt-3 rounded-2xl border border-destructive/40 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5"
                 onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
               >
                 Usuń produkt
@@ -170,7 +167,7 @@ export function ProductEditPage() {
                 <button
                   type="button"
                   disabled={deleteMutation.isPending}
-                  className="rounded-xl bg-destructive px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                  className="rounded-2xl bg-destructive px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                   onClick={async () => {
                     setDeleteError(null);
                     try {
@@ -192,7 +189,7 @@ export function ProductEditPage() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-foreground"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
                   onClick={() => setConfirmDelete(false)}
                 >
                   Anuluj
@@ -201,14 +198,12 @@ export function ProductEditPage() {
             )}
           </div>
 
-          <div className="shadow-soft rounded-2xl bg-surface-card p-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Stan magazynowy
-              </p>
+              <p className="text-sm font-semibold text-slate-900">Stan magazynowy</p>
               <Link
                 to={`/products/${id}/adjust-stock`}
-                className="text-xs font-semibold text-primary hover:underline"
+                className="text-sm font-medium text-primary hover:underline"
               >
                 Korekta
               </Link>
@@ -236,7 +231,7 @@ export function ProductEditPage() {
                 ))}
               </div>
             ) : (
-              <p className="mt-2 text-[13px] text-on-surface-variant">
+              <p className="mt-2 text-xs text-slate-500">
                 Brak danych o stanie — dodaj stan przez korektę.
               </p>
             )}
@@ -244,9 +239,7 @@ export function ProductEditPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               <Link
                 to={`/products/${id}/movements`}
-                className={cn(
-                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
-                )}
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 Historia ruchów
               </Link>
@@ -262,9 +255,7 @@ export function ProductEditPage() {
                     price_gross: product.price_gross,
                   })
                 }
-                className={cn(
-                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
-                )}
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 Drukuj etykietę
               </button>

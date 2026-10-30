@@ -100,6 +100,7 @@ function OrdersPageContent() {
   const [wzError, setWzError] = useState<string | null>(null);
 
   const deliveryEnabled = useModuleGuard('delivery');
+  const vanRoutesEnabled = useModuleGuard('van_routes');
   const productionEnabled = useModuleGuard('production');
   const canManageDelivery = usePermission('can_manage_delivery');
   const generateWzM = useGenerateDeliveryForOrderMutation();
@@ -418,15 +419,17 @@ function OrdersPageContent() {
               ) : null}
               {deliveryEnabled && !wzSelectionMode ? (
                 <>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={actionBtnSecondary}
-                    onClick={() => navigate('/van-routes')}
-                  >
-                    Trasy Vana
-                  </Button>
+                  {vanRoutesEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className={actionBtnSecondary}
+                      onClick={() => navigate('/van-routes')}
+                    >
+                      Trasy Vana
+                    </Button>
+                  )}
                   {productionEnabled && (
                     <Button
                       type="button"

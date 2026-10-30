@@ -7,6 +7,7 @@ export const MODULE_DISPLAY_ORDER: ModuleName[] = [
   'customers',
   'orders',
   'delivery',
+  'van_routes',
   'invoicing',
   'ksef',
   'purchasing',
@@ -89,6 +90,18 @@ export const MODULE_CARD_COPY: Record<
   reporting: {
     title: 'Raporty',
     description: 'Analityka, zestawienia i eksporty.',
+    statusOn: 'Moduł aktywny',
+    statusOff: 'Moduł wyłączony',
+  },
+  van_routes: {
+    title: 'Trasy Vana',
+    description: 'Planowanie i rozliczanie tras dostawcy. Dla firm które dostarczają towar busem do wielu klientów dziennie.',
+    statusOn: 'Moduł aktywny',
+    statusOff: 'Moduł wyłączony',
+  },
+  ksef_inbox: {
+    title: 'KSeF — odbiór faktur',
+    description: 'Odbieranie faktur zakupowych z KSeF od dostawców.',
     statusOn: 'Moduł aktywny',
     statusOff: 'Moduł wyłączony',
   },
