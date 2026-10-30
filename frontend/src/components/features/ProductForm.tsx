@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ComponentType, type ReactNode, type S
 import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { motion } from 'framer-motion';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { IosToggle } from '@/components/ui/IosToggle';
@@ -208,39 +207,24 @@ function IconBox(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-const sectionMotion = {
-  hidden: { opacity: 0, y: 8 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 380, damping: 32 } },
-};
-
-function iconBoxClass() {
-  return 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-light text-primary';
+function IconDatabase(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <ellipse cx="12" cy="5" rx="9" ry="3" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
-function FormSection({
-  title,
-  Icon,
-  children,
-}: {
-  title: string;
-  Icon: IconComp;
-  children: ReactNode;
-}) {
+function IconHash(props: SVGProps<SVGSVGElement>) {
   return (
-    <motion.section
-      variants={sectionMotion}
-      initial="hidden"
-      animate="show"
-      className="shadow-soft rounded-2xl bg-surface-card p-4"
-    >
-      <div className="mb-4 flex items-center gap-2.5">
-        <div className={iconBoxClass()}>
-          <Icon className="h-4 w-4" />
-        </div>
-        <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
-      </div>
-      <div className="space-y-4">{children}</div>
-    </motion.section>
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <line x1="4" y1="9" x2="20" y2="9" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
+      <line x1="4" y1="15" x2="20" y2="15" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
+      <line x1="10" y1="3" x2="8" y2="21" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
+      <line x1="16" y1="3" x2="14" y2="21" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -258,6 +242,23 @@ export interface ProductFormProps {
   onCancel?: () => void;
   isLoading?: boolean;
   submitLabel?: string;
+}
+
+function fieldStateCls(value: string | undefined) {
+  return value?.trim()
+    ? 'border-solid border-[#D4D2EE] bg-white'
+    : 'border-dashed border-[#D4D2EE] bg-white placeholder:text-slate-500';
+}
+
+function SectionHeader({ Icon, title }: { Icon: IconComp; title: string }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Icon className="h-4 w-4" />
+      </span>
+      <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+    </div>
+  );
 }
 
 export function ProductForm({
@@ -320,6 +321,7 @@ export function ProductForm({
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [removeImage, setRemoveImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [codesOpen, setCodesOpen] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -406,9 +408,15 @@ export function ProductForm({
       : '';
   const vatPresetActive = (VAT_PRESETS as readonly string[]).includes(normalizedVat);
 
+  // For accordion badge
+  const watchedPkwiu = useWatch({ control, name: 'pkwiu' });
+  const watchedSku = useWatch({ control, name: 'sku' });
+  const watchedBarcode = useWatch({ control, name: 'barcode' });
+  const hasAnyCodes = !!(watchedPkwiu?.trim() || watchedSku?.trim() || watchedBarcode?.trim());
+
   return (
-    <form noValidate onSubmit={submit} className="space-y-4 pb-4">
-      {/* Product type selector */}
+    <form noValidate onSubmit={submit} className="space-y-3 pb-4">
+      {/* 1. Product type selector */}
       <Controller
         name="product_type"
         control={control}
@@ -461,8 +469,13 @@ export function ProductForm({
         }}
       />
 
-      <div className="space-y-4">
-        <FormSection title={isService ? 'Dane usługi' : 'Dane podstawowe'} Icon={IconPackage}>
+      {/* 2. Dane podstawowe */}
+      <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        <div className="px-4 pt-4 pb-2">
+          <SectionHeader Icon={IconPackage} title={isService ? 'Dane usługi' : 'Dane podstawowe'} />
+        </div>
+        <div className="px-4 pb-4 pt-3 space-y-4">
+          {/* Photo picker */}
           <div>
             <span className="mb-1.5 block text-sm font-medium text-slate-800">Zdjęcie</span>
             <div className="flex items-center gap-3">
@@ -494,16 +507,20 @@ export function ProductForm({
             <p className="mt-1.5 text-xs text-slate-500">JPEG, PNG lub WebP, maks. 5 MB. Zapisujemy tylko małą miniaturę.</p>
             {imageError && <p className="mt-1.5 text-xs text-destructive">{imageError}</p>}
           </div>
+
+          {/* Name */}
           <Input
             label="Nazwa"
             placeholder={isService ? 'np. Naprawa zmywarki' : 'np. Kartacze'}
             required
             {...register('name')}
             error={errors.name?.message}
-            className={inField('name')}
+            className={cn(inField('name'), fieldStateCls(productName))}
           />
+
+          {/* Description */}
           <div className="space-y-2">
-            <label htmlFor="product-description" className="text-sm font-medium leading-none text-foreground">
+            <label htmlFor="product-description" className="mb-1.5 block text-sm font-medium text-slate-800">
               Opis
             </label>
             <textarea
@@ -516,6 +533,8 @@ export function ProductForm({
               <p className="text-xs text-destructive">{errors.description.message}</p>
             )}
           </div>
+
+          {/* Unit + shelf_life_days */}
           <div className={cn('grid gap-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
             <Input
               label="Jednostka"
@@ -523,7 +542,7 @@ export function ProductForm({
               required
               {...register('unit')}
               error={errors.unit?.message}
-              className={inField('unit')}
+              className={cn(inField('unit'), fieldStateCls(useWatch({ control, name: 'unit' })))}
             />
             {!isService && (
               <Input
@@ -533,13 +552,20 @@ export function ProductForm({
                 placeholder="np. 30"
                 {...register('shelf_life_days')}
                 error={errors.shelf_life_days?.message}
-                className={inField('shelf_life_days')}
+                className={cn(inField('shelf_life_days'), fieldStateCls(useWatch({ control, name: 'shelf_life_days' })))}
               />
             )}
           </div>
-        </FormSection>
+        </div>
+      </section>
 
-        <FormSection title="Cennik i VAT" Icon={IconTag}>
+      {/* 3. Sprzedaż */}
+      <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        <div className="px-4 pt-4 pb-2">
+          <SectionHeader Icon={IconTag} title="Sprzedaż" />
+        </div>
+        <div className="px-4 pb-4 pt-3 space-y-4">
+          {/* Price grid */}
           <div className="grid gap-4 sm:grid-cols-2">
             {isGross ? (
               <>
@@ -588,73 +614,12 @@ export function ProductForm({
               </>
             )}
           </div>
-          {!isService && (() => {
-            const source = product?.avg_cost_source;
-            const autoSources: Array<typeof source> = ['pz', 'production'];
-            const isAutoSet = autoSources.includes(source ?? null as never);
-            const sourceLabel =
-              source === 'pz' ? 'z PZ' :
-              source === 'production' ? 'z produkcji' :
-              source === 'recipe' ? 'szacunek z receptury' : null;
 
-            return (
-              <div className="space-y-1">
-                {isAutoSet ? (
-                  <div>
-                    <p className="mb-1 text-sm font-medium text-foreground">Koszt własny (avg_cost)</p>
-                    <div className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-sm">
-                      <span className="tabular-nums font-medium">
-                        {product?.avg_cost != null ? `${Number(product.avg_cost).toFixed(4)} zł/jm` : '—'}
-                      </span>
-                      {sourceLabel && (
-                        <span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
-                          {sourceLabel}
-                        </span>
-                      )}
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        Ustawiany automatycznie — nie można edytować ręcznie
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <Input
-                    label="Koszt własny (avg_cost)"
-                    inputMode="decimal"
-                    placeholder="np. 2.5000"
-                    helperText={
-                      source === 'recipe'
-                        ? 'Szacunek z receptury — wpisz rzeczywisty koszt aby nadpisać'
-                        : 'Ręczny koszt — zostanie zastąpiony automatycznie po pierwszym PZ lub produkcji'
-                    }
-                    {...register('avg_cost_manual')}
-                    error={errors.avg_cost_manual?.message}
-                    className={inField('avg_cost_manual')}
-                  />
-                )}
-              </div>
-            );
-          })()}
-          {!isService && isResalable && (
-            <div className="space-y-1">
-              <Input
-                label="Narzut / marża (%)"
-                inputMode="decimal"
-                placeholder="np. 55"
-                helperText={
-                  avgCost != null && avgCost > 0
-                    ? `Aktualny koszt zakupu: ${avgCost.toFixed(4)} zł/jm`
-                    : 'Koszt zakupu pojawi się po pierwszym PZ, produkcji lub wpisz ręcznie powyżej'
-                }
-                {...register('markup_percent')}
-                error={errors.markup_percent?.message}
-                className={inField('markup_percent')}
-              />
-            </div>
-          )}
+          {/* VAT */}
           <div className="space-y-2">
             {vatPresetActive ? (
               <>
-                <p className="text-sm font-medium text-foreground">Stawka VAT</p>
+                <p className="mb-1.5 block text-sm font-medium text-slate-800">Stawka VAT</p>
                 <Controller
                   name="vat_rate"
                   control={control}
@@ -690,98 +655,213 @@ export function ProductForm({
               />
             )}
           </div>
-        </FormSection>
 
-        <FormSection title={isService ? 'Klasyfikacja i kody' : 'Magazyn i kody'} Icon={IconBox}>
-          <Input
-            label="Kod PKWiU"
-            type="text"
-            placeholder="np. 10.89.19.0"
-            helperText="Przydatne przy fakturach KSeF"
-            {...register('pkwiu')}
-            error={errors.pkwiu?.message}
-            className={inField('pkwiu')}
-          />
-          <div className={cn('grid gap-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
+          {/* Markup */}
+          {(!isService || isResalable) && (
             <Input
-              label="SKU / kod wewnętrzny"
-              {...register('sku')}
-              error={errors.sku?.message}
-              className={inField('sku')}
+              label="Narzut / marża (%)"
+              inputMode="decimal"
+              placeholder="np. 55"
+              helperText={
+                avgCost != null && avgCost > 0
+                  ? `Aktualny koszt zakupu: ${avgCost.toFixed(4)} zł/jm`
+                  : 'Koszt zakupu pojawi się po pierwszym PZ, produkcji lub wpisz ręcznie poniżej'
+              }
+              {...register('markup_percent')}
+              error={errors.markup_percent?.message}
+              className={cn(inField('markup_percent'), fieldStateCls(markupPercent))}
             />
+          )}
+
+          {/* Divider + is_resalable toggle */}
+          <div className="border-t border-slate-100 mt-2 pt-3">
             {!isService && (
-              <Input
-                label="Kod kreskowy"
-                {...register('barcode')}
-                error={errors.barcode?.message}
-                className={inField('barcode')}
+              <Controller
+                name="is_resalable"
+                control={control}
+                render={({ field }) => (
+                  <IosToggle
+                    checked={field.value}
+                    onChange={field.onChange}
+                    label="Produkt do sprzedaży"
+                    description="Pojawia się na fakturach i zamówieniach klientów. Wyłącz dla surowców używanych tylko w produkcji."
+                    disabled={isLoading}
+                  />
+                )}
               />
             )}
           </div>
-          {!isService && (
+        </div>
+      </section>
+
+      {/* 4. Koszty i magazyn — hidden for services */}
+      {!isService && (
+        <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+          <div className="px-4 pt-4 pb-2">
+            <SectionHeader Icon={IconDatabase} title="Koszty i magazyn" />
+          </div>
+          <div className="px-4 pb-4 pt-3 space-y-4">
+            {/* avg_cost */}
+            {(() => {
+              const source = product?.avg_cost_source;
+              const autoSources: Array<typeof source> = ['pz', 'production'];
+              const isAutoSet = autoSources.includes(source ?? null as never);
+              const sourceLabel =
+                source === 'pz' ? 'z PZ' :
+                source === 'production' ? 'z produkcji' :
+                source === 'recipe' ? 'szacunek z receptury' : null;
+
+              return (
+                <div className="space-y-1">
+                  {isAutoSet ? (
+                    <div>
+                      <p className="mb-1.5 block text-sm font-medium text-slate-800">Koszt własny (avg_cost)</p>
+                      <div className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-sm">
+                        <span className="tabular-nums font-medium">
+                          {product?.avg_cost != null ? `${Number(product.avg_cost).toFixed(4)} zł/jm` : '—'}
+                        </span>
+                        {sourceLabel && (
+                          <span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+                            {sourceLabel}
+                          </span>
+                        )}
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          Ustawiany automatycznie — nie można edytować ręcznie
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <Input
+                      label="Koszt własny (avg_cost)"
+                      inputMode="decimal"
+                      placeholder="np. 2.5000"
+                      helperText={
+                        source === 'recipe'
+                          ? 'Szacunek z receptury — wpisz rzeczywisty koszt aby nadpisać'
+                          : 'Ręczny koszt — zostanie zastąpiony automatycznie po pierwszym PZ lub produkcji'
+                      }
+                      {...register('avg_cost_manual')}
+                      error={errors.avg_cost_manual?.message}
+                      className={cn(inField('avg_cost_manual'), fieldStateCls(avgCostManual))}
+                    />
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* track_batches toggle */}
+            <Controller
+              name="track_batches"
+              control={control}
+              render={({ field }) => (
+                <IosToggle
+                  checked={field.value}
+                  onChange={field.onChange}
+                  label="Śledzenie partii (FIFO)"
+                  description={
+                    productType === 'finished'
+                      ? 'Śledź stan gotowych wyrobów w magazynie. Wyłącz jeśli produkujesz na bieżąco pod zamówienie — bez trzymania zapasów.'
+                      : productType === 'material'
+                      ? 'Śledź partie surowców i ich koszty. Wymagane do liczenia kosztu wytworzenia w produkcji.'
+                      : 'Śledź partie towaru i ich koszty zakupu (FIFO). Wymagane do wyliczenia marży.'
+                  }
+                  disabled={isLoading}
+                />
+              )}
+            />
+
+            {/* min_stock_alert */}
             <Input
               label="Alert minimalnego stanu"
               inputMode="decimal"
               {...register('min_stock_alert')}
               error={errors.min_stock_alert?.message}
-              className={inField('min_stock_alert')}
+              className={cn(inField('min_stock_alert'), fieldStateCls(useWatch({ control, name: 'min_stock_alert' })))}
             />
-          )}
-        </FormSection>
+          </div>
+        </section>
+      )}
+
+      {/* 5. Kody i klasyfikacja — accordion */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between px-4 py-3.5 text-left hover:bg-slate-50/60"
+          onClick={() => setCodesOpen((o) => !o)}
+          aria-expanded={codesOpen}
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <IconHash className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Kody i klasyfikacja</p>
+              <p className="text-xs text-slate-500">Nie są wymagane do wystawienia faktury</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {hasAnyCodes && (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                ustawione
+              </span>
+            )}
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden
+              className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', codesOpen && 'rotate-180')}
+            >
+              <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </button>
+        {codesOpen && (
+          <div className="divide-y divide-slate-200 border-t border-slate-200 px-4 pb-4 pt-3 space-y-4">
+            <Input
+              label="Kod PKWiU"
+              type="text"
+              placeholder="np. 10.89.19.0"
+              helperText="Przydatne przy fakturach KSeF"
+              {...register('pkwiu')}
+              error={errors.pkwiu?.message}
+              className={cn(inField('pkwiu'), fieldStateCls(watchedPkwiu))}
+            />
+            <div className={cn('grid gap-4 pt-4', isService ? 'grid-cols-1' : 'sm:grid-cols-2')}>
+              <Input
+                label="SKU / kod wewnętrzny"
+                {...register('sku')}
+                error={errors.sku?.message}
+                className={cn(inField('sku'), fieldStateCls(watchedSku))}
+              />
+              {!isService && (
+                <Input
+                  label="Kod kreskowy"
+                  {...register('barcode')}
+                  error={errors.barcode?.message}
+                  className={cn(inField('barcode'), fieldStateCls(watchedBarcode))}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="space-y-3">
-        {!isService && (
-          <Controller
-            name="is_resalable"
-            control={control}
-            render={({ field }) => (
-              <IosToggle
-                checked={field.value}
-                onChange={field.onChange}
-                label="Produkt do sprzedaży"
-                description="Pojawia się na fakturach i zamówieniach klientów. Wyłącz dla surowców używanych tylko w produkcji."
-                disabled={isLoading}
-              />
-            )}
+      {/* 6. is_active toggle */}
+      <Controller
+        name="is_active"
+        control={control}
+        render={({ field }) => (
+          <IosToggle
+            checked={field.value}
+            onChange={field.onChange}
+            label={isService ? 'Aktywna w katalogu' : 'Aktywny w katalogu'}
+            description="Widoczny przy zamówieniach i fakturach"
+            disabled={isLoading}
           />
         )}
-        {!isService && (
-          <Controller
-            name="track_batches"
-            control={control}
-            render={({ field }) => (
-              <IosToggle
-                checked={field.value}
-                onChange={field.onChange}
-                label="Śledzenie partii (FIFO)"
-                description={
-                  productType === 'finished'
-                    ? 'Śledź stan gotowych wyrobów w magazynie. Wyłącz jeśli produkujesz na bieżąco pod zamówienie — bez trzymania zapasów.'
-                    : productType === 'material'
-                    ? 'Śledź partie surowców i ich koszty. Wymagane do liczenia kosztu wytworzenia w produkcji.'
-                    : 'Śledź partie towaru i ich koszty zakupu (FIFO). Wymagane do wyliczenia marży.'
-                }
-                disabled={isLoading}
-              />
-            )}
-          />
-        )}
-        <Controller
-          name="is_active"
-          control={control}
-          render={({ field }) => (
-            <IosToggle
-              checked={field.value}
-              onChange={field.onChange}
-              label={isService ? 'Aktywna w katalogu' : 'Aktywny w katalogu'}
-              description="Widoczny przy zamówieniach i fakturach"
-              disabled={isLoading}
-            />
-          )}
-        />
-      </div>
+      />
 
+      {/* Sticky bottom bar */}
       <div className="sticky bottom-0 z-10 -mx-4 mt-2 border-t border-border/80 bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Button type="submit" className="w-full sm:flex-1" loading={isLoading}>
