@@ -408,19 +408,21 @@ export function ProductForm({
 
   return (
     <form noValidate onSubmit={submit} className="space-y-4 pb-4">
-      {/* Product type selector — shown only when creating a new item */}
-      {!product && (
-        <Controller
-          name="product_type"
-          control={control}
-          render={({ field }) => {
-            const TYPE_OPTIONS = [
-              { value: 'trade' as const,    label: 'Towar handlowy', icon: '🛒', unit: 'szt', track: true },
-              { value: 'material' as const, label: 'Surowiec',        icon: '🧱', unit: 'szt', track: true },
-              { value: 'finished' as const, label: 'Wyrób gotowy',    icon: '📦', unit: 'szt', track: false },
-              { value: 'service' as const,  label: 'Usługa',          icon: '🛎️', unit: 'godz', track: false },
-            ];
-            return (
+      {/* Product type selector */}
+      <Controller
+        name="product_type"
+        control={control}
+        render={({ field }) => {
+          const TYPE_OPTIONS = [
+            { value: 'trade' as const,    label: 'Towar handlowy', icon: '🛒', unit: 'szt', track: true },
+            { value: 'material' as const, label: 'Surowiec',        icon: '🧱', unit: 'szt', track: true },
+            { value: 'finished' as const, label: 'Wyrób gotowy',    icon: '📦', unit: 'szt', track: false },
+            { value: 'service' as const,  label: 'Usługa',          icon: '🛎️', unit: 'godz', track: false },
+          ];
+          const stockTotal = Number(product?.stock_total ?? 0);
+          const showServiceWarning = field.value === 'service' && stockTotal > 0;
+          return (
+            <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 {TYPE_OPTIONS.map((opt) => (
                   <button
@@ -430,8 +432,10 @@ export function ProductForm({
                     onClick={() => {
                       field.onChange(opt.value);
                       setValue('is_service', opt.value === 'service');
-                      setValue('unit', opt.unit);
-                      setValue('track_batches', opt.track);
+                      if (!product) {
+                        setValue('unit', opt.unit);
+                        setValue('track_batches', opt.track);
+                      }
                     }}
                     className={cn(
                       'flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-all',
@@ -446,10 +450,15 @@ export function ProductForm({
                   </button>
                 ))}
               </div>
-            );
-          }}
-        />
-      )}
+              {showServiceWarning && (
+                <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                  Ten produkt ma {stockTotal} szt. na stanie. Usługi nie śledzą magazynu — stan pozostanie zamrożony. Możesz go wyzerować ręcznie przez korektę stanu w magazynie.
+                </p>
+              )}
+            </div>
+          );
+        }}
+      />
 
       <div className="space-y-4">
         <FormSection title={isService ? 'Dane usługi' : 'Dane podstawowe'} Icon={IconPackage}>
