@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { format, addDays } from 'date-fns';
+import { useState, useEffect, useMemo } from 'react';
+import { format } from 'date-fns';
 import { Link, Navigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -21,12 +21,6 @@ import type { Order } from '@/types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const n2 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 });
-const n4 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 4 });
-
-const inputClass = cn(
-  'flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
-  'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-);
 
 // ── Source order row (expandable) ────────────────────────────────────────────
 
@@ -120,7 +114,11 @@ function OrderForm({
   const [notes, setNotes] = useState(autoNotes);
   const { data: ordersData } = useOrderListQuery(1, { status: 'confirmed', page_size: 100 });
 
-  // Auto-select orders from plan when order list loads
+  const inputClass = cn(
+    'flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
+    'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+  );
+
   useEffect(() => {
     if (sourceOrdersPrefilled || !prefillSourceOrders?.length || !ordersData?.results) return;
     const matched = new Set(
@@ -133,6 +131,7 @@ function OrderForm({
       setSourceOrdersPrefilled(true);
     }
   }, [ordersData, prefillSourceOrders, sourceOrdersPrefilled]);
+
   const [batchInputs, setBatchInputs] = useState<BatchInputRow[]>(() => {
     if (!prefillRecipeId) return [];
     const recipe = recipes.find((r) => r.id === prefillRecipeId);
@@ -211,6 +210,8 @@ function OrderForm({
     onSave(payload);
   }
 
+  const allOrders = ordersData?.results ?? [];
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {lockedFromPlanning && prefillSourceOrders && prefillSourceOrders.length > 0 && (
@@ -252,153 +253,105 @@ function OrderForm({
             required
           />
         </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Ilość wyprodukowana *</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
-              className={inputClass}
-              value={qtyProduced}
-              onChange={(e) => setQtyProduced(e.target.value)}
-              placeholder="np. 300"
-              required
-            />
-            {selectedRecipe && (
-              <span className="shrink-0 text-sm text-muted-foreground">{selectedRecipe.product_unit}</span>
-            )}
-          </div>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Tryb</label>
-          <select
-            className={inputClass}
-            value={mode}
-            onChange={(e) => setMode(e.target.value as 'simple' | 'batch')}
-          >
-            <option value="simple">Prosty — z receptury</option>
-            <option value="batch">Wsad — realne zużycie</option>
-          </select>
-          <p className="text-xs text-muted-foreground">
-            {mode === 'simple'
-              ? 'Zużycie surowców obliczone automatycznie z receptury.'
-              : 'Podaj ile surowców faktycznie poszło (wlicza odpady w koszt).'}
-          </p>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-muted-foreground">Tryb</label>
+        <div className="flex gap-2">
+          {(['simple', 'batch'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                mode === m
+                  ? 'border-primary bg-primary text-white'
+                  : 'border-border bg-background text-muted-foreground hover:bg-muted/50',
+              )}
+            >
+              {m === 'simple' ? 'Prosty (wg receptury)' : 'Wsad (ręczne ilości)'}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Zamówienia klienta (opcjonalne — MTO) */}
-      {ordersData && ordersData.results.length > 0 && (
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            Zamówienia klienta (opcjonalne — MTO)
-          </label>
-          <div className="rounded-md border border-input divide-y divide-border">
-            {ordersData.results.map((o) => (
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-muted-foreground">Ilość wyrobów *</label>
+        <input
+          type="number"
+          min="0"
+          step="any"
+          className={inputClass}
+          value={qtyProduced}
+          onChange={(e) => setQtyProduced(e.target.value)}
+          required
+        />
+      </div>
+
+      {mode === 'batch' && (
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground">Surowce użyte w wsadzie</label>
+          {batchInputs.map((row, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <select
+                className={cn(inputClass, 'flex-1')}
+                value={row.ingredient}
+                onChange={(e) => updateBatchIngredient(idx, e.target.value)}
+              >
+                <option value="">— surowiec —</option>
+                {allProducts.filter((p) => p.product_type === 'material' || p.product_type === 'trade').map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder={row.ingredient_unit || 'ilość'}
+                className={cn(inputClass, 'w-24')}
+                value={row.quantity_used}
+                onChange={(e) => updateBatchRow(idx, e.target.value)}
+              />
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-destructive"
+                onClick={() => removeBatchRow(idx)}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="text-xs font-medium text-primary hover:underline"
+            onClick={addBatchRow}
+          >
+            + Dodaj surowiec
+          </button>
+        </div>
+      )}
+
+      {allOrders.length > 0 && (
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Powiązane zamówienia</label>
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {allOrders.map((o) => (
               <SourceOrderRow
                 key={o.id}
                 order={o}
                 checked={sourceOrderIds.has(o.id)}
-                onToggle={() => setSourceOrderIds((prev) => {
-                  const next = new Set(prev);
-                  next.has(o.id) ? next.delete(o.id) : next.add(o.id);
-                  return next;
-                })}
+                onToggle={() =>
+                  setSourceOrderIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(o.id)) next.delete(o.id);
+                    else next.add(o.id);
+                    return next;
+                  })
+                }
               />
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
-            Zaznacz zamówienia pod które produkujesz. Kliknij wiersz aby zobaczyć pozycje. Zostaw puste jeśli produkujesz na zapas (MTS).
-          </p>
-        </div>
-      )}
-
-      {/* Batch mode */}
-      {mode === 'batch' && selectedRecipe && (
-        <div className="rounded-md border border-border p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-medium">Realne zużycie surowców</h3>
-            <span className="text-xs text-muted-foreground">Możesz zmienić surowiec lub dodać zamiennik</span>
-          </div>
-          <div className="space-y-2">
-            {batchInputs.map((row, idx) => {
-              const recipeItem = selectedRecipe.items.find((i) => i.ingredient === row.ingredient);
-              const stockRaw = recipeItem?.ingredient_stock_total
-                ?? allProducts.find((p) => p.id === row.ingredient)?.stock_total;
-              const inStock = stockRaw != null ? Number(stockRaw) : undefined;
-              return (
-                <div key={idx}>
-                  <div className="grid grid-cols-[1fr_120px_auto] items-center gap-2">
-                    <select
-                      className={cn(inputClass, 'h-8 text-xs')}
-                      value={row.ingredient}
-                      onChange={(e) => updateBatchIngredient(idx, e.target.value)}
-                      required
-                    >
-                      <option value="">— wybierz surowiec —</option>
-                      {allProducts.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.001"
-                        className={cn(inputClass, 'h-8 text-xs')}
-                        placeholder="ilość"
-                        value={row.quantity_used}
-                        onChange={(e) => updateBatchRow(idx, e.target.value)}
-                      />
-                      <span className="shrink-0 text-xs text-muted-foreground">{row.ingredient_unit}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-xs text-muted-foreground hover:text-destructive"
-                      onClick={() => removeBatchRow(idx)}
-                      title="Usuń wiersz"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  {inStock !== undefined && (
-                    <span className={cn('mt-0.5 block text-xs', inStock <= 0 ? 'text-destructive font-medium' : 'text-muted-foreground')}>
-                      stan: {n4.format(inStock)} {row.ingredient_unit}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={addBatchRow}>
-            + Dodaj surowiec
-          </Button>
-        </div>
-      )}
-
-      {/* Simple mode — estimated consumption */}
-      {mode === 'simple' && selectedRecipe && qtyProduced && (
-        <div className="rounded-md border border-border bg-muted/30 p-3">
-          <p className="mb-1 text-xs font-medium text-muted-foreground">Szacowane zużycie surowców:</p>
-          <ul className="space-y-0.5 text-xs">
-            {selectedRecipe.items.map((item) => {
-              const scale = Number(qtyProduced) / Number(selectedRecipe.yield_quantity);
-              const needed = Number(item.quantity) * scale;
-              const inStock = item.ingredient_stock_total != null ? Number(item.ingredient_stock_total) : undefined;
-              const insufficient = inStock !== undefined && inStock < needed;
-              return (
-                <li key={item.id} className={insufficient ? 'text-destructive font-medium' : ''}>
-                  {item.ingredient_name}: {n4.format(needed)} {item.unit || item.ingredient_unit}
-                  {inStock !== undefined && (
-                    <span className={cn('ml-2', insufficient ? 'text-destructive' : 'text-muted-foreground')}>
-                      (stan: {n4.format(inStock)}{insufficient ? ' — za mało!' : ''})
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
         </div>
       )}
 
@@ -409,118 +362,13 @@ function OrderForm({
 
       <div className="flex gap-2">
         <Button type="submit" disabled={saving || !recipeId || !qtyProduced}>
-          {saving ? 'Zapisywanie…' : 'Utwórz zlecenie'}
+          {saving ? 'Zapisywanie…' : 'Zatwierdź zlecenie'}
         </Button>
         <Button type="button" variant="outline" onClick={onCancel}>
           Anuluj
         </Button>
       </div>
     </form>
-  );
-}
-
-// ── Planning row ──────────────────────────────────────────────────────────────
-
-function PlanningRow({
-  item,
-  draftQtyInProduction,
-  onCreateOrder,
-  canManage,
-}: {
-  item: ProductionPlanningItem;
-  draftQtyInProduction: number;
-  onCreateOrder: (recipeId: string, qty: number, sourceOrders: string[]) => void;
-  canManage: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const stockTracked = item.stock_available != null;
-  const shortfallNum = stockTracked ? Number(item.shortfall) : Number(item.total_ordered);
-  const hasShortfall = stockTracked && Number(item.shortfall) > 0;
-  const covered = draftQtyInProduction >= shortfallNum;
-
-  return (
-    <div className="border-b last:border-b-0">
-      <div className="flex items-center justify-between gap-3 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-sm">{item.product_name}</span>
-            {!stockTracked ? null : hasShortfall ? (
-              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                niedobór {n2.format(shortfallNum)} {item.product_unit}
-              </span>
-            ) : (
-              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                stan ok
-              </span>
-            )}
-            {draftQtyInProduction > 0 && (
-              <span className={cn(
-                'rounded-full px-2 py-0.5 text-xs font-medium',
-                covered ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700',
-              )}>
-                w produkcji: {n2.format(draftQtyInProduction)} {item.product_unit}
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Zamówiono: <strong className="text-foreground">{n2.format(Number(item.total_ordered))}</strong>
-            {stockTracked && (
-              <>{' · '}Stan: <strong className="text-foreground">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
-            )}
-            {item.estimated_unit_cost != null && (
-              <>
-                {' · '}
-                Koszt produkcji: <strong className="text-foreground">{pln.format(Number(item.estimated_total_cost))}</strong>
-                <span className="ml-1 text-muted-foreground">(wg avg_cost)</span>
-              </>
-            )}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {item.orders.map((o, i) => (
-              <span key={o.order_id}>
-                {i > 0 && <span className="mx-1">·</span>}
-                <span className="text-foreground">{o.order_number}</span>
-                <span className="ml-1">{o.customer_name}</span>
-                {o.delivery_date && <span className="ml-1 text-muted-foreground">({o.delivery_date})</span>}
-              </span>
-            ))}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-            onClick={() => setExpanded((v) => !v)}
-          >
-            {expanded ? 'zwiń' : 'szczegóły'}
-          </button>
-          {(hasShortfall || !stockTracked) && canManage && (
-            <Button size="sm" onClick={() => onCreateOrder(item.recipe_id, shortfallNum, item.orders.map((o) => o.order_number))}>
-              + Zlecenie
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="bg-muted/20 px-4 pb-3 pt-1">
-          <p className="mb-1 text-xs font-medium text-muted-foreground">Potrzebne surowce:</p>
-          <ul className="space-y-0.5">
-            {item.ingredients.map((ing) => (
-              <li
-                key={ing.ingredient_id}
-                className={cn('text-xs', !ing.has_enough_stock ? 'text-destructive font-medium' : 'text-muted-foreground')}
-              >
-                {ing.ingredient_name}: {n2.format(Number(ing.quantity_needed))} {ing.ingredient_unit}
-                <span className="ml-2">
-                  (stan: {n2.format(Number(ing.stock_available))}{!ing.has_enough_stock ? ' — za mało!' : ''})
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -546,25 +394,24 @@ function OrderCard({
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [ingredientsOpen, setIngredientsOpen] = useState(false);
 
-  const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+  const plnFmt = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
   return (
     <div className={cn(
       'rounded-xl border p-4',
       isCompleted ? 'border-green-200 bg-green-50/40' : 'border-amber-200 bg-amber-50/40',
     )}>
-      {/* Success banner */}
       {completedData && (
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-green-400/40 bg-green-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <svg className="h-4 w-4 shrink-0 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              <p className="text-sm font-semibold text-green-800">Zlecenie zakończone!</p>
+              <p className="text-sm font-semibold text-green-800">Produkcja zatwierdzona!</p>
             </div>
             <p className="text-xs text-green-700">
               RW: {completedData.rw_document_number ?? '—'} · PW: {completedData.pw_document_number ?? '—'}
               {completedData.real_unit_cost !== null && (
-                <> · Koszt/szt.: {pln.format(Number(completedData.real_unit_cost))}</>
+                <> · Koszt/szt.: {plnFmt.format(Number(completedData.real_unit_cost))}</>
               )}
             </p>
           </div>
@@ -574,7 +421,6 @@ function OrderCard({
         </div>
       )}
 
-      {/* Error banner */}
       {completeError && (() => {
         const match = completeError.match(/dla '([^']+)':/);
         const productName = match?.[1];
@@ -617,7 +463,7 @@ function OrderCard({
           {order.notes && !order.source_orders_info?.length ? <p className="mt-0.5 text-xs text-muted-foreground">{order.notes}</p> : null}
           {isCompleted && order.real_unit_cost !== null && (
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Koszt/szt.: {pln.format(Number(order.real_unit_cost))} · Łączny: {pln.format(Number(order.total_input_cost))}
+              Koszt/szt.: {plnFmt.format(Number(order.real_unit_cost))} · Łączny: {plnFmt.format(Number(order.total_input_cost))}
             </p>
           )}
           {order.source_orders_info?.length > 0 && (
@@ -641,7 +487,6 @@ function OrderCard({
             </p>
           )}
 
-          {/* Składniki */}
           {order.recipe_items?.length > 0 && order.mode === 'simple' && (
             <div className="mt-1.5">
               <button
@@ -669,7 +514,7 @@ function OrderCard({
               {order.inputs.map((inp) => (
                 <li key={inp.id}>
                   {inp.ingredient_name}: {inp.quantity_used} {inp.unit}
-                  {inp.fifo_cost !== null && <span className="ml-1">({pln.format(Number(inp.fifo_cost))})</span>}
+                  {inp.fifo_cost !== null && <span className="ml-1">({plnFmt.format(Number(inp.fifo_cost))})</span>}
                 </li>
               ))}
             </ul>
@@ -707,8 +552,99 @@ function OrderCard({
   );
 }
 
+// ── Ingredients summary (aggregate across all selected items) ─────────────────
+
+type IngredientSummaryRow = {
+  id: string;
+  name: string;
+  unit: string;
+  totalNeeded: number;
+  stockAvailable: number;
+  hasEnough: boolean;
+  sources: { productName: string; qty: number }[];
+};
+
+function IngredientsSummary({ items }: { items: ProductionPlanningItem[] }) {
+  const summary = useMemo(() => {
+    const map = new Map<string, IngredientSummaryRow>();
+    for (const item of items) {
+      for (const ing of item.ingredients) {
+        const existing = map.get(ing.ingredient_id);
+        const qty = Number(ing.quantity_needed);
+        if (existing) {
+          existing.totalNeeded += qty;
+          existing.sources.push({ productName: item.product_name, qty });
+          // has_enough is per-item; recalculate against stock
+          existing.hasEnough = existing.stockAvailable >= existing.totalNeeded;
+        } else {
+          map.set(ing.ingredient_id, {
+            id: ing.ingredient_id,
+            name: ing.ingredient_name,
+            unit: ing.ingredient_unit,
+            totalNeeded: qty,
+            stockAvailable: Number(ing.stock_available),
+            hasEnough: Number(ing.stock_available) >= qty,
+            sources: [{ productName: item.product_name, qty }],
+          });
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => (a.hasEnough ? 1 : -1) - (b.hasEnough ? 1 : -1));
+  }, [items]);
+
+  if (summary.length === 0) return null;
+
+  const missing = summary.filter((r) => !r.hasEnough);
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+      <div className="flex items-center gap-3 px-4 py-3.5 md:px-6">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+          <svg className="h-4 w-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        <span className="text-sm font-semibold text-slate-900">Potrzebne surowce</span>
+        {missing.length > 0 && (
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+            {missing.length} za mało
+          </span>
+        )}
+      </div>
+      <div className="divide-y divide-slate-100 border-t border-slate-100">
+        {summary.map((row) => (
+          <div key={row.id} className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+            <div>
+              <p className={cn('text-sm font-medium', !row.hasEnough ? 'text-red-700' : 'text-slate-800')}>
+                {row.name}
+                {!row.hasEnough && (
+                  <span className="ml-2 text-xs font-normal text-red-500">
+                    brakuje {n2.format(row.totalNeeded - row.stockAvailable)} {row.unit}
+                  </span>
+                )}
+              </p>
+              {row.sources.length > 1 && (
+                <p className="text-xs text-slate-400">
+                  {row.sources.map((s) => `${s.productName}: ${n2.format(s.qty)} ${row.unit}`).join(' + ')}
+                </p>
+              )}
+            </div>
+            <div className="shrink-0 text-right">
+              <p className={cn('text-sm font-semibold tabular-nums', !row.hasEnough ? 'text-red-700' : 'text-slate-900')}>
+                {n2.format(row.totalNeeded)} {row.unit}
+              </p>
+              <p className="text-xs text-slate-400">stan: {n2.format(row.stockAvailable)}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+type PlanTab = 'today' | 'open' | 'range';
 type FormState =
   | { open: false }
   | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[] };
@@ -718,28 +654,86 @@ export function ProductionOrdersPage() {
 
   if (!authStorage.getAccessToken()) return <Navigate to="/login" replace />;
 
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState(format(addDays(new Date(), 7), 'yyyy-MM-dd'));
+  const today = format(new Date(), 'yyyy-MM-dd');
 
+  const [tab, setTab] = useState<PlanTab>('today');
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo] = useState(today);
+  const [selectedRecipeIds, setSelectedRecipeIds] = useState<Set<string>>(new Set());
+  const [activeOrdersOpen, setActiveOrdersOpen] = useState(true);
   const [page] = useState(1);
   const [form, setForm] = useState<FormState>({ open: false });
+  const [bulkCreating, setBulkCreating] = useState(false);
+
+  const planningParams = useMemo(() => {
+    if (tab === 'today') return { date_from: today, date_to: today };
+    if (tab === 'open') return {};
+    return { date_from: dateFrom, date_to: dateTo };
+  }, [tab, today, dateFrom, dateTo]);
 
   const { data: ordersData, isLoading: ordersLoading } = useProductionOrdersQuery(page);
   const { data: recipes = [] } = useRecipesQuery();
-  const { data: planningItems = [], isLoading: planningLoading } = useProductionPlanningQuery({
-    date_from: dateFrom,
-    date_to: dateTo,
-  });
+  const { data: planningItems = [], isLoading: planningLoading } = useProductionPlanningQuery(planningParams);
 
   const createM = useCreateProductionOrderMutation();
   const completeM = useCompleteProductionOrderMutation();
   const deleteM = useDeleteProductionOrderMutation();
 
   const orders = ordersData?.results ?? [];
+  const activeOrders = orders.filter((o) => o.status !== 'completed');
+
+  // Auto-select all items when plan loads
+  useEffect(() => {
+    if (planningItems.length > 0) {
+      setSelectedRecipeIds(new Set(planningItems.map((i) => i.recipe_id)));
+    }
+  }, [planningItems]);
+
+  const selectedItems = planningItems.filter((i) => selectedRecipeIds.has(i.recipe_id));
+
+  function toggleItem(recipeId: string) {
+    setSelectedRecipeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(recipeId)) next.delete(recipeId);
+      else next.add(recipeId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (selectedRecipeIds.size === planningItems.length) {
+      setSelectedRecipeIds(new Set());
+    } else {
+      setSelectedRecipeIds(new Set(planningItems.map((i) => i.recipe_id)));
+    }
+  }
 
   async function handleCreate(data: ProductionOrderCreate) {
     await createM.mutateAsync(data);
     setForm({ open: false });
+  }
+
+  async function handleBulkCreate() {
+    if (selectedItems.length === 0) return;
+    setBulkCreating(true);
+    try {
+      for (const item of selectedItems) {
+        const qty = item.stock_available == null
+          ? Number(item.total_ordered)
+          : Math.max(0, Number(item.shortfall));
+        if (qty <= 0) continue;
+        await createM.mutateAsync({
+          recipe: item.recipe_id,
+          date: tab === 'today' ? today : format(new Date(), 'yyyy-MM-dd'),
+          mode: 'simple',
+          quantity_produced: Math.ceil(qty),
+          source_orders: item.orders.map((o) => o.order_id),
+          notes: `Dla zamówień: ${item.orders.map((o) => o.order_number).join(', ')}`,
+        });
+      }
+    } finally {
+      setBulkCreating(false);
+    }
   }
 
   function openFormFromPlanning(recipeId: string, qty: number, sourceOrders: string[]) {
@@ -747,210 +741,250 @@ export function ProductionOrdersPage() {
     setTimeout(() => document.getElementById('production-form')?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
 
-  // Items with real shortfall (tracked stock, demand > stock)
-  const shortfallCount = planningItems.filter((i) => {
-    if (i.stock_available == null) return false; // produce-to-order — not an alarm
-    if (Number(i.shortfall) <= 0) return false;
-    const inProd = orders
-      .filter((o) => o.status !== 'completed' && o.recipe === i.recipe_id)
-      .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-    return inProd < Number(i.shortfall);
-  }).length;
+  const allSelected = planningItems.length > 0 && selectedRecipeIds.size === planningItems.length;
+  const someSelected = selectedRecipeIds.size > 0 && !allSelected;
 
-  // Items to schedule (produce-to-order, no stock tracking) — neutral info
-  const toScheduleCount = planningItems.filter((i) => {
-    if (i.stock_available != null) return false;
-    if (Number(i.total_ordered) <= 0) return false;
-    const inProd = orders
-      .filter((o) => o.status !== 'completed' && o.recipe === i.recipe_id)
-      .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-    return inProd < Number(i.total_ordered);
-  }).length;
+  const tabs: { id: PlanTab; label: string }[] = [
+    { id: 'today', label: 'Dziś' },
+    { id: 'open', label: 'Otwarte' },
+    { id: 'range', label: 'Zakres dat' },
+  ];
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-3 p-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Produkcja</h1>
+        <h1 className="text-base font-bold text-slate-900 md:text-xl">Produkcja</h1>
       </div>
 
-      {/* ── Planning — what to produce ── */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <CardTitle className="text-sm">Co wyprodukować</CardTitle>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                className={cn(inputClass, 'h-7 w-36 text-xs')}
-                value={dateFrom}
-                placeholder="od"
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
-              <span className="text-xs text-muted-foreground">—</span>
-              <input
-                type="date"
-                className={cn(inputClass, 'h-7 w-36 text-xs')}
-                value={dateTo}
-                placeholder="do"
-                onChange={(e) => setDateTo(e.target.value)}
-              />
-            </div>
-            {!planningLoading && shortfallCount > 0 && (
-              <span className="text-xs font-medium text-destructive">
-                {shortfallCount} {shortfallCount === 1 ? 'wyrób — niedobór' : 'wyroby — niedobór'}
-              </span>
-            )}
-            {!planningLoading && toScheduleCount > 0 && (
-              <span className="text-xs font-medium text-slate-500">
-                {toScheduleCount} {toScheduleCount === 1 ? 'wyrób do zlecenia' : 'wyroby do zlecenia'}
-              </span>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {/* ── Info: what appears in the plan ── */}
-          <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
-            <p className="text-xs text-slate-500 leading-relaxed">
-              <span className="font-medium text-slate-700">Co tu widać?</span>{' '}
-              Tylko wyroby, które mają aktywną recepturę <span className="font-medium">i</span> otwarte, potwierdzone zamówienia klientów w wybranym okresie.
-              Produkty kupowane od dostawcy (bez receptury) tu nie trafiają — uzupełniaj je przez dokument PZ.
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Produkt nie pojawia się? Sprawdź, czy ma recepturę w{' '}
-              <a href="/production/recipes" className="text-primary hover:underline">
-                Receptury
-              </a>
-              {' '}i czy zamówienie jest potwierdzone (status: przyjęte).
-            </p>
-          </div>
-          {planningLoading && <p className="p-4 text-sm text-muted-foreground">Ładowanie…</p>}
-          {!planningLoading && planningItems.length === 0 && (
-            <p className="p-4 text-sm text-muted-foreground">
-              Brak otwartych zamówień na wyroby z recepturami w wybranym okresie.
-            </p>
-          )}
-          {!planningLoading && planningItems.length > 0 && (() => {
-            const visibleItems = planningItems
-              .map((item) => {
-                const draftQtyInProduction = orders
-                  .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
-                  .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-                return { item, draftQtyInProduction };
-              })
-              .filter(({ item, draftQtyInProduction }) =>
-                !(Number(item.shortfall) > 0 && draftQtyInProduction >= Number(item.shortfall))
-              );
+      {/* ── Plan section ── */}
+      <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        {/* Tabs */}
+        <div className="flex items-center gap-1 border-b border-slate-100 px-4 pt-3 md:px-6">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'rounded-t-lg px-3 py-2 text-sm font-medium transition-colors',
+                tab === t.id
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-slate-500 hover:text-slate-700',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-            if (visibleItems.length === 0) {
+        {/* Date range picker for "Zakres" tab */}
+        {tab === 'range' && (
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 md:px-6">
+            <input
+              type="date"
+              className="h-8 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+            <span className="text-xs text-slate-400">—</span>
+            <input
+              type="date"
+              className="h-8 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+          </div>
+        )}
+
+        {/* Header row with select-all + Zatwierdź */}
+        {!planningLoading && planningItems.length > 0 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
+            <label className="flex cursor-pointer items-center gap-2.5">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={allSelected}
+                ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                onChange={toggleAll}
+              />
+              <span className="text-sm text-slate-600">
+                {selectedRecipeIds.size > 0
+                  ? `Zaznaczono ${selectedRecipeIds.size} z ${planningItems.length}`
+                  : 'Zaznacz wszystkie'}
+              </span>
+            </label>
+            {canProduction && selectedItems.length > 0 && (
+              <Button
+                size="sm"
+                disabled={bulkCreating}
+                onClick={() => void handleBulkCreate()}
+              >
+                {bulkCreating ? 'Zatwierdzanie…' : `Zatwierdź produkcję (${selectedItems.length})`}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Planning items */}
+        {planningLoading && <p className="px-4 py-6 text-sm text-slate-400">Ładowanie…</p>}
+        {!planningLoading && planningItems.length === 0 && (
+          <p className="px-4 py-6 text-sm text-slate-400">
+            {tab === 'today'
+              ? 'Brak zamówień na dziś z recepturami.'
+              : 'Brak otwartych zamówień na wyroby z recepturami.'}
+          </p>
+        )}
+        {!planningLoading && planningItems.length > 0 && (
+          <div className="divide-y divide-slate-100">
+            {planningItems.map((item) => {
+              const isSelected = selectedRecipeIds.has(item.recipe_id);
+              const stockTracked = item.stock_available != null;
+              const hasShortfall = stockTracked && Number(item.shortfall) > 0;
+              const draftInProd = orders
+                .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
+                .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
+
               return (
-                <p className="p-4 text-sm text-muted-foreground">
-                  Wszystkie niedobory są już w produkcji.
-                </p>
+                <div
+                  key={item.recipe_id}
+                  className={cn('transition-colors', isSelected && 'bg-primary/5')}
+                >
+                  <div className="flex items-center gap-3 px-4 py-3 md:px-6">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary shrink-0"
+                      checked={isSelected}
+                      onChange={() => toggleItem(item.recipe_id)}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-slate-900">{item.product_name}</span>
+                        {stockTracked && hasShortfall && (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                            niedobór {n2.format(Number(item.shortfall))} {item.product_unit}
+                          </span>
+                        )}
+                        {stockTracked && !hasShortfall && (
+                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                            stan ok
+                          </span>
+                        )}
+                        {draftInProd > 0 && (
+                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                            w produkcji: {n2.format(draftInProd)} {item.product_unit}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Do produkcji: <strong className="text-slate-800">{n2.format(Number(item.total_ordered))} {item.product_unit}</strong>
+                        {stockTracked && (
+                          <> · Stan: <strong className="text-slate-800">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
+                        )}
+                        {item.estimated_total_cost != null && Number(item.estimated_total_cost) > 0 && (
+                          <> · Koszt: <strong className="text-slate-800">{pln.format(Number(item.estimated_total_cost))}</strong></>
+                        )}
+                      </p>
+                    </div>
+                    {canProduction && (
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs text-slate-400 underline-offset-2 hover:text-primary hover:underline"
+                        onClick={() => openFormFromPlanning(
+                          item.recipe_id,
+                          stockTracked ? Number(item.shortfall) : Number(item.total_ordered),
+                          item.orders.map((o) => o.order_number),
+                        )}
+                      >
+                        ręcznie
+                      </button>
+                    )}
+                  </div>
+                </div>
               );
-            }
+            })}
+          </div>
+        )}
+      </section>
 
-            return (
-              <div>
-                {visibleItems.map(({ item, draftQtyInProduction }) => (
-                  <PlanningRow
-                    key={item.product_id}
-                    item={item}
-                    draftQtyInProduction={draftQtyInProduction}
-                    onCreateOrder={openFormFromPlanning}
-                    canManage={canProduction}
-                  />
-                ))}
-              </div>
-            );
-          })()}
-        </CardContent>
-      </Card>
+      {/* ── Ingredients summary ── */}
+      {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} />}
 
       {/* ── Inline order creation form ── */}
       {form.open && (
-        <Card id="production-form">
-          <CardHeader>
-            <CardTitle className="text-sm">
-              {form.prefillRecipeId ? 'Nowe zlecenie produkcji (z planu)' : 'Nowe zlecenie produkcji'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <OrderForm
-              recipes={recipes}
-              prefillRecipeId={form.open ? form.prefillRecipeId : undefined}
-              prefillQty={form.open ? form.prefillQty : undefined}
-              prefillSourceOrders={form.open ? form.prefillSourceOrders : undefined}
-              onSave={(d) => void handleCreate(d)}
-              onCancel={() => setForm({ open: false })}
-              saving={createM.isPending}
-            />
-          </CardContent>
-        </Card>
+        <section id="production-form" className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl md:p-6">
+          <p className="mb-4 text-sm font-semibold text-slate-900">
+            {form.prefillRecipeId ? 'Ręczne zlecenie produkcji' : 'Nowe zlecenie produkcji'}
+          </p>
+          <OrderForm
+            recipes={recipes}
+            prefillRecipeId={form.open ? form.prefillRecipeId : undefined}
+            prefillQty={form.open ? form.prefillQty : undefined}
+            prefillSourceOrders={form.open ? form.prefillSourceOrders : undefined}
+            onSave={(d) => void handleCreate(d)}
+            onCancel={() => setForm({ open: false })}
+            saving={createM.isPending}
+          />
+        </section>
       )}
 
-      {/* ── Production orders list ── */}
-      <div className="flex items-center gap-3 pt-2">
-        <span className="text-base font-semibold">Zlecenia produkcji</span>
-        <div className="flex-1 border-t border-border" />
-        {!form.open && canProduction && (
-          <Button size="sm" onClick={() => setForm({ open: true })}>+ Nowe zlecenie</Button>
-        )}
-      </div>
-
-      {ordersLoading && <p className="text-sm text-muted-foreground">Ładowanie…</p>}
-      {!ordersLoading && orders.length === 0 && (
-        <p className="text-sm text-muted-foreground">Brak zleceń produkcji.</p>
-      )}
-      {!ordersLoading && orders.length > 0 && (() => {
-        const draft = orders.filter((o) => o.status !== 'completed');
-        const completed = orders.filter((o) => o.status === 'completed');
-
-        return (
-          <div className="space-y-6">
-            {draft.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-amber-700">
-                  W produkcji ({draft.length})
-                </p>
-                <div className="space-y-2">
-                  {draft.map((o) => (
-                    <OrderCard
-                      key={o.id}
-                      order={o}
-                      canProduction={canProduction}
-                      onComplete={(id) => completeM.mutateAsync(id)}
-                      onDelete={(id) => deleteM.mutateAsync(id)}
-                      completing={completeM.isPending}
-                      deleting={deleteM.isPending}
-                    />
-                  ))}
-                </div>
-              </div>
+      {/* ── Active orders (collapsible) ── */}
+      <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between px-4 py-3.5 text-left hover:bg-slate-50/60 md:px-6"
+          onClick={() => setActiveOrdersOpen((v) => !v)}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900">Aktywne zlecenia</span>
+            {activeOrders.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                {activeOrders.length}
+              </span>
             )}
-            {completed.length > 0 && (
-              <div className="space-y-2">
-                {draft.length > 0 && <div className="border-t border-border" />}
-                <p className="text-xs font-medium uppercase tracking-wide text-green-700">
-                  Zakończone ({completed.length})
-                </p>
-                <div className="space-y-2">
-                  {completed.map((o) => (
-                    <OrderCard
-                      key={o.id}
-                      order={o}
-                      canProduction={canProduction}
-                      onComplete={(id) => completeM.mutateAsync(id)}
-                      onDelete={(id) => deleteM.mutateAsync(id)}
-                      completing={completeM.isPending}
-                      deleting={deleteM.isPending}
-                    />
-                  ))}
-                </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {canProduction && !form.open && (
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                onClick={(e) => { e.stopPropagation(); setForm({ open: true }); }}
+              >
+                + Ręczne zlecenie
+              </button>
+            )}
+            <svg
+              className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', activeOrdersOpen && 'rotate-180')}
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+            >
+              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </button>
+
+        {activeOrdersOpen && (
+          <div className="border-t border-slate-100">
+            {ordersLoading && <p className="px-4 py-4 text-sm text-slate-400">Ładowanie…</p>}
+            {!ordersLoading && activeOrders.length === 0 && (
+              <p className="px-4 py-4 text-sm text-slate-400">Brak aktywnych zleceń.</p>
+            )}
+            {!ordersLoading && activeOrders.length > 0 && (
+              <div className="space-y-2 p-3">
+                {activeOrders.map((o) => (
+                  <OrderCard
+                    key={o.id}
+                    order={o}
+                    canProduction={canProduction}
+                    onComplete={(id) => completeM.mutateAsync(id)}
+                    onDelete={(id) => deleteM.mutateAsync(id)}
+                    completing={completeM.isPending}
+                    deleting={deleteM.isPending}
+                  />
+                ))}
               </div>
             )}
           </div>
-        );
-      })()}
+        )}
+      </section>
     </div>
   );
 }
