@@ -420,7 +420,8 @@ export function ProductForm({
             { value: 'service' as const,  label: 'Usługa',          icon: '🛎️', unit: 'godz', track: false },
           ];
           const stockTotal = Number(product?.stock_total ?? 0);
-          const showServiceWarning = field.value === 'service' && stockTotal > 0;
+          const selectedOption = TYPE_OPTIONS.find((o) => o.value === field.value);
+          const showStockWarning = selectedOption?.track === false && stockTotal > 0;
           return (
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
@@ -450,9 +451,9 @@ export function ProductForm({
                   </button>
                 ))}
               </div>
-              {showServiceWarning && (
+              {showStockWarning && (
                 <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-                  Ten produkt ma {stockTotal} szt. na stanie. Usługi nie śledzą magazynu — stan pozostanie zamrożony. Możesz go wyzerować ręcznie przez korektę stanu w magazynie.
+                  Ten produkt ma {stockTotal} szt. na stanie. Wybrany typ nie śledzi magazynu — stan pozostanie zamrożony i nie będzie automatycznie aktualizowany. Możesz go wyzerować ręcznie przez korektę stanu w magazynie.
                 </p>
               )}
             </div>
