@@ -552,6 +552,124 @@ function OrderCard({
   );
 }
 
+// ── Planning item row (with expandable ingredients) ──────────────────────────
+
+function PlanningItem({
+  item,
+  isSelected,
+  stockTracked,
+  hasShortfall,
+  draftInProd,
+  canManage,
+  onToggle,
+  onOpenModal,
+}: {
+  item: ProductionPlanningItem;
+  isSelected: boolean;
+  stockTracked: boolean;
+  hasShortfall: boolean;
+  draftInProd: number;
+  canManage: boolean;
+  onToggle: () => void;
+  onOpenModal: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasIngredients = item.ingredients.length > 0;
+
+  return (
+    <div className={cn('transition-colors', isSelected && 'bg-primary/5')}>
+      <div className="flex items-center gap-3 px-4 py-3 md:px-6">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-primary shrink-0"
+          checked={isSelected}
+          onChange={onToggle}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-slate-900">{item.product_name}</span>
+            {stockTracked && hasShortfall && (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                niedobór {n2.format(Number(item.shortfall))} {item.product_unit}
+              </span>
+            )}
+            {stockTracked && !hasShortfall && (
+              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                stan ok
+              </span>
+            )}
+            {draftInProd > 0 && (
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                w produkcji: {n2.format(draftInProd)} {item.product_unit}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Do produkcji: <strong className="text-slate-800">{n2.format(Number(item.total_ordered))} {item.product_unit}</strong>
+            {stockTracked && (
+              <> · Stan: <strong className="text-slate-800">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
+            )}
+            {item.estimated_total_cost != null && Number(item.estimated_total_cost) > 0 && (
+              <> · Koszt: <strong className="text-slate-800">{pln.format(Number(item.estimated_total_cost))}</strong></>
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {canManage && (
+            <button
+              type="button"
+              className="text-xs text-slate-400 underline-offset-2 hover:text-primary hover:underline"
+              onClick={onOpenModal}
+            >
+              zmień ilość
+            </button>
+          )}
+          {hasIngredients && (
+            <button
+              type="button"
+              className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              <svg
+                className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+              >
+                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              surowce
+            </button>
+          )}
+        </div>
+      </div>
+
+      {expanded && hasIngredients && (
+        <div className="border-t border-slate-100 bg-slate-50/60 px-4 pb-3 pt-2 md:px-6">
+          <div className="space-y-1">
+            {item.ingredients.map((ing) => (
+              <div key={ing.ingredient_id} className="flex items-center justify-between gap-3">
+                <span className={cn('text-xs', !ing.has_enough_stock ? 'font-medium text-red-700' : 'text-slate-600')}>
+                  {ing.ingredient_name}
+                  {!ing.has_enough_stock && (
+                    <span className="ml-1 text-red-400">— za mało!</span>
+                  )}
+                </span>
+                <div className="shrink-0 text-right">
+                  <span className={cn('text-xs font-medium tabular-nums', !ing.has_enough_stock ? 'text-red-700' : 'text-slate-800')}>
+                    {n2.format(Number(ing.quantity_needed))} {ing.ingredient_unit}
+                  </span>
+                  <span className="ml-2 text-xs text-slate-400">
+                    (stan: {n2.format(Number(ing.stock_available))})
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Ingredients summary (aggregate across all selected items) ─────────────────
 
 type IngredientSummaryRow = {
@@ -682,12 +800,6 @@ export function ProductionOrdersPage() {
   const orders = ordersData?.results ?? [];
   const activeOrders = orders.filter((o) => o.status !== 'completed');
 
-  // Auto-select all items when plan loads
-  useEffect(() => {
-    if (planningItems.length > 0) {
-      setSelectedRecipeIds(new Set(planningItems.map((i) => i.recipe_id)));
-    }
-  }, [planningItems]);
 
   const selectedItems = planningItems.filter((i) => selectedRecipeIds.has(i.recipe_id));
 
@@ -845,61 +957,22 @@ export function ProductionOrdersPage() {
                 .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
 
               return (
-                <div
+                <PlanningItem
                   key={item.recipe_id}
-                  className={cn('transition-colors', isSelected && 'bg-primary/5')}
-                >
-                  <div className="flex items-center gap-3 px-4 py-3 md:px-6">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-primary shrink-0"
-                      checked={isSelected}
-                      onChange={() => toggleItem(item.recipe_id)}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-slate-900">{item.product_name}</span>
-                        {stockTracked && hasShortfall && (
-                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                            niedobór {n2.format(Number(item.shortfall))} {item.product_unit}
-                          </span>
-                        )}
-                        {stockTracked && !hasShortfall && (
-                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                            stan ok
-                          </span>
-                        )}
-                        {draftInProd > 0 && (
-                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                            w produkcji: {n2.format(draftInProd)} {item.product_unit}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Do produkcji: <strong className="text-slate-800">{n2.format(Number(item.total_ordered))} {item.product_unit}</strong>
-                        {stockTracked && (
-                          <> · Stan: <strong className="text-slate-800">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
-                        )}
-                        {item.estimated_total_cost != null && Number(item.estimated_total_cost) > 0 && (
-                          <> · Koszt: <strong className="text-slate-800">{pln.format(Number(item.estimated_total_cost))}</strong></>
-                        )}
-                      </p>
-                    </div>
-                    {canProduction && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-xs text-slate-400 underline-offset-2 hover:text-primary hover:underline"
-                        onClick={() => openFormFromPlanning(
-                          item.recipe_id,
-                          stockTracked ? Number(item.shortfall) : Number(item.total_ordered),
-                          item.orders.map((o) => o.order_number),
-                        )}
-                      >
-                        ręcznie
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  item={item}
+                  isSelected={isSelected}
+                  stockTracked={stockTracked}
+                  hasShortfall={hasShortfall}
+                  draftInProd={draftInProd}
+                  canManage={canProduction}
+                  onToggle={() => toggleItem(item.recipe_id)}
+                  onOpenModal={() => setForm({
+                    open: true,
+                    prefillRecipeId: item.recipe_id,
+                    prefillQty: Math.ceil(stockTracked ? Number(item.shortfall) : Number(item.total_ordered)),
+                    prefillSourceOrders: item.orders.map((o) => o.order_number),
+                  })}
+                />
               );
             })}
           </div>
@@ -909,22 +982,38 @@ export function ProductionOrdersPage() {
       {/* ── Ingredients summary ── */}
       {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} />}
 
-      {/* ── Inline order creation form ── */}
+      {/* ── Manual order modal ── */}
       {form.open && (
-        <section id="production-form" className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl md:p-6">
-          <p className="mb-4 text-sm font-semibold text-slate-900">
-            {form.prefillRecipeId ? 'Ręczne zlecenie produkcji' : 'Nowe zlecenie produkcji'}
-          </p>
-          <OrderForm
-            recipes={recipes}
-            prefillRecipeId={form.open ? form.prefillRecipeId : undefined}
-            prefillQty={form.open ? form.prefillQty : undefined}
-            prefillSourceOrders={form.open ? form.prefillSourceOrders : undefined}
-            onSave={(d) => void handleCreate(d)}
-            onCancel={() => setForm({ open: false })}
-            saving={createM.isPending}
-          />
-        </section>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setForm({ open: false })} />
+          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-apple-float md:rounded-3xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <p className="text-sm font-semibold text-slate-900">
+                {form.prefillRecipeId ? 'Zmień zlecenie produkcji' : 'Nowe zlecenie produkcji'}
+              </p>
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200"
+                onClick={() => setForm({ open: false })}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
+                  <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto p-5">
+              <OrderForm
+                recipes={recipes}
+                prefillRecipeId={form.open ? form.prefillRecipeId : undefined}
+                prefillQty={form.open ? form.prefillQty : undefined}
+                prefillSourceOrders={form.open ? form.prefillSourceOrders : undefined}
+                onSave={(d) => void handleCreate(d)}
+                onCancel={() => setForm({ open: false })}
+                saving={createM.isPending}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Active orders (collapsible) ── */}
