@@ -697,7 +697,7 @@ type IngredientSummaryRow = {
   sources: { productName: string; qty: number }[];
 };
 
-function IngredientsSummary({ items }: { items: ProductionPlanningItem[] }) {
+function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningItem[]; totalCount: number }) {
   const summary = useMemo(() => {
     const map = new Map<string, IngredientSummaryRow>();
     for (const item of items) {
@@ -737,7 +737,14 @@ function IngredientsSummary({ items }: { items: ProductionPlanningItem[] }) {
             <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </div>
-        <span className="text-sm font-semibold text-slate-900">Potrzebne surowce</span>
+        <div>
+          <span className="text-sm font-semibold text-slate-900">Potrzebne surowce</span>
+          <p className="text-xs text-slate-400">
+            {items.length === totalCount
+              ? `dla wszystkich ${totalCount} produktów`
+              : `dla ${items.length} z ${totalCount} zaznaczonych`}
+          </p>
+        </div>
         {missing.length > 0 && (
           <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
             {missing.length} za mało
@@ -1009,7 +1016,7 @@ export function ProductionOrdersPage() {
       </section>
 
       {/* ── Ingredients summary — reacts to checkboxes ── */}
-      {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} />}
+      {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} totalCount={planningItems.length} />}
 
       {/* ── Manual order modal ── */}
       {form.open && (
