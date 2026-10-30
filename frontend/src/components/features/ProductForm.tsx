@@ -755,7 +755,13 @@ export function ProductForm({
                 checked={field.value}
                 onChange={field.onChange}
                 label="Śledzenie partii (FIFO)"
-                description="Rejestruj partie towaru przy przyjęciu"
+                description={
+                  productType === 'finished'
+                    ? 'Śledź stan gotowych wyrobów w magazynie. Wyłącz jeśli produkujesz na bieżąco pod zamówienie — bez trzymania zapasów.'
+                    : productType === 'material'
+                    ? 'Śledź partie surowców i ich koszty. Wymagane do liczenia kosztu wytworzenia w produkcji.'
+                    : 'Śledź partie towaru i ich koszty zakupu (FIFO). Wymagane do wyliczenia marży.'
+                }
                 disabled={isLoading}
               />
             )}
