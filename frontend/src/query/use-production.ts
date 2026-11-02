@@ -115,6 +115,8 @@ export function useCreateProductionOrderMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
       void queryClient.invalidateQueries({ queryKey: planningKeys.all });
+      // Invalidate customer orders so production_status refreshes in modal
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }
