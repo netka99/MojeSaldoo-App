@@ -825,7 +825,7 @@ function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningIt
 type PlanTab = 'today' | 'open' | 'range';
 type FormState =
   | { open: false }
-  | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[]; highlightProductId?: string };
+  | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[]; highlightProductId?: string; error?: string };
 
 export function ProductionOrdersPage() {
   const canProduction = usePermission('can_manage_production');
@@ -894,8 +894,13 @@ export function ProductionOrdersPage() {
   }
 
   async function handleCreate(data: ProductionOrderCreate) {
-    await createM.mutateAsync(data);
-    setForm({ open: false });
+    try {
+      await createM.mutateAsync(data);
+      setForm({ open: false });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Błąd zapisu zlecenia.';
+      setForm((prev) => prev.open ? { ...prev, error: msg } : prev);
+    }
   }
 
   async function handleBulkCreate() {
@@ -1080,6 +1085,11 @@ export function ProductionOrdersPage() {
                 </svg>
               </button>
             </div>
+            {form.open && form.error && (
+              <div className="mx-5 mt-4 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
+                {form.error}
+              </div>
+            )}
             <div className="max-h-[70vh] overflow-y-auto p-5">
               <OrderForm
                 recipes={recipes}
