@@ -32,6 +32,7 @@ export type PlanningOrder = {
   customer_name: string;
   quantity: string | number;
   delivery_date: string | null;
+  in_production: boolean;
 };
 
 export type ProductionPlanningItem = {

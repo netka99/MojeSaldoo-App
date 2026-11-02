@@ -376,11 +376,23 @@ def get_production_planning(company, date_from=None, date_to=None):
                     "delivery_date": (
                         order.delivery_date.isoformat() if order.delivery_date else None
                     ),
+                    "in_production": str(order.uuid) in active_production_order_ids,
                 }
             )
 
     if not product_demand:
         return []
+
+    # Find order IDs that already have an active (non-completed) production order
+    active_production_order_ids = set(
+        ProductionOrder.objects.filter(
+            company=company,
+            status__in=["pending", "in_progress"],
+        )
+        .values_list("source_orders__uuid", flat=True)
+    )
+    active_production_order_ids.discard(None)
+    active_production_order_ids = {str(uid) for uid in active_production_order_ids}
 
     # Load active recipes for the demanded products only
     recipes = (

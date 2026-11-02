@@ -131,12 +131,12 @@ function OrderForm({
     'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
   );
 
-  // Filter orders to only those containing this product
-  const allOrders = (ordersData?.results ?? []).filter((o) =>
-    highlightProductId
-      ? (o.items ?? []).some((i) => i.product_id === highlightProductId)
-      : true
-  );
+  // Filter orders to only those containing this product, excluding already in production
+  const allOrders = (ordersData?.results ?? []).filter((o) => {
+    if (o.production_status === 'in_progress') return false;
+    if (highlightProductId) return (o.items ?? []).some((i) => i.product_id === highlightProductId);
+    return true;
+  });
 
   useEffect(() => {
     if (sourceOrdersPrefilled || !prefillSourceOrders?.length || !ordersData?.results) return;
@@ -598,6 +598,7 @@ function PlanningItem({
   stockTracked,
   hasShortfall,
   draftInProd,
+  allInProduction,
   canManage,
   onToggle,
   onOpenModal,
@@ -607,6 +608,7 @@ function PlanningItem({
   stockTracked: boolean;
   hasShortfall: boolean;
   draftInProd: number;
+  allInProduction: boolean;
   canManage: boolean;
   onToggle: () => void;
   onOpenModal: () => void;
@@ -615,12 +617,13 @@ function PlanningItem({
   const hasIngredients = item.ingredients.length > 0;
 
   return (
-    <div className={cn('transition-colors', isSelected && 'bg-primary/5')}>
+    <div className={cn('transition-colors', allInProduction ? 'opacity-50' : isSelected && 'bg-primary/5')}>
       <div className="flex items-center gap-3 px-4 py-3 md:px-6">
         <input
           type="checkbox"
           className="h-4 w-4 accent-primary shrink-0"
-          checked={isSelected}
+          checked={isSelected && !allInProduction}
+          disabled={allInProduction}
           onChange={onToggle}
         />
         <div className="min-w-0 flex-1">
@@ -636,7 +639,12 @@ function PlanningItem({
                 stan ok
               </span>
             )}
-            {draftInProd > 0 && (
+            {allInProduction && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                wszystkie zamówienia w produkcji
+              </span>
+            )}
+            {!allInProduction && draftInProd > 0 && (
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
                 w produkcji: {n2.format(draftInProd)} {item.product_unit}
               </span>
@@ -653,7 +661,7 @@ function PlanningItem({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {canManage && (
+          {canManage && !allInProduction && (
             <button
               type="button"
               className="text-xs text-slate-400 underline-offset-2 hover:text-primary hover:underline"
@@ -888,8 +896,10 @@ export function ProductionOrdersPage() {
     setBulkCreating(true);
     try {
       for (const item of selectedItems) {
+        const availableOrders = item.orders.filter((o) => !o.in_production);
+        if (availableOrders.length === 0) continue; // all already in production
         const qty = item.stock_available == null
-          ? Number(item.total_ordered)
+          ? availableOrders.reduce((s, o) => s + Number(o.quantity), 0)
           : Math.max(0, Number(item.shortfall));
         if (qty <= 0) continue;
         await createM.mutateAsync({
@@ -897,8 +907,8 @@ export function ProductionOrdersPage() {
           date: tab === 'today' ? today : format(new Date(), 'yyyy-MM-dd'),
           mode: 'simple',
           quantity_produced: Math.ceil(qty),
-          source_orders: item.orders.map((o) => o.order_id),
-          notes: `Dla zamówień: ${item.orders.map((o) => o.order_number).join(', ')}`,
+          source_orders: availableOrders.map((o) => o.order_id),
+          notes: `Dla zamówień: ${availableOrders.map((o) => o.order_number).join(', ')}`,
         });
       }
     } finally {
@@ -1013,6 +1023,8 @@ export function ProductionOrdersPage() {
               const draftInProd = orders
                 .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
                 .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
+              const allInProduction = item.orders.length > 0 && item.orders.every((o) => o.in_production);
+              const availableOrders = item.orders.filter((o) => !o.in_production);
 
               return (
                 <PlanningItem
@@ -1022,13 +1034,14 @@ export function ProductionOrdersPage() {
                   stockTracked={stockTracked}
                   hasShortfall={hasShortfall}
                   draftInProd={draftInProd}
+                  allInProduction={allInProduction}
                   canManage={canProduction}
                   onToggle={() => toggleItem(item.recipe_id)}
                   onOpenModal={() => setForm({
                     open: true,
                     prefillRecipeId: item.recipe_id,
                     prefillQty: Math.ceil(stockTracked ? Number(item.shortfall) : Number(item.total_ordered)),
-                    prefillSourceOrders: item.orders.map((o) => o.order_number),
+                    prefillSourceOrders: availableOrders.map((o) => o.order_number),
                     highlightProductId: item.product_id,
                   })}
                 />
