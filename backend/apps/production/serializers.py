@@ -213,6 +213,22 @@ class ProductionOrderCreateSerializer(UUIDModelSerializer):
                 raise serializers.ValidationError(
                     {"inputs": "Tryb wsadu wymaga podania składników (inputs)."}
                 )
+        # Block duplicate orders for the same source orders
+        source_orders = data.get("source_orders") or []
+        if source_orders:
+            already_in_production = ProductionOrder.objects.filter(
+                status=ProductionOrder.STATUS_DRAFT,
+                source_orders__in=source_orders,
+            ).values_list("order_number", "source_orders__order_number")
+            conflicts = [
+                f"{src} (zlecenie {prd})"
+                for prd, src in already_in_production
+                if src
+            ]
+            if conflicts:
+                raise serializers.ValidationError(
+                    {"source_orders": f"Zamówienia już w aktywnym zleceniu: {', '.join(conflicts)}"}
+                )
         return data
 
     def create(self, validated_data):
