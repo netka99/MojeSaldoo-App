@@ -351,6 +351,16 @@ def get_production_planning(company, date_from=None, date_to=None):
     if date_to:
         orders_qs = orders_qs.filter(delivery_date__lte=date_to)
 
+    # Find order IDs that already have an active (non-completed) production order
+    active_production_order_ids = {
+        str(uid)
+        for uid in ProductionOrder.objects.filter(
+            company=company,
+            status__in=["pending", "in_progress"],
+        ).values_list("source_orders__uuid", flat=True)
+        if uid is not None
+    }
+
     # Aggregate remaining demand per product
     product_demand: dict = {}
     for order in orders_qs:
@@ -382,17 +392,6 @@ def get_production_planning(company, date_from=None, date_to=None):
 
     if not product_demand:
         return []
-
-    # Find order IDs that already have an active (non-completed) production order
-    active_production_order_ids = set(
-        ProductionOrder.objects.filter(
-            company=company,
-            status__in=["pending", "in_progress"],
-        )
-        .values_list("source_orders__uuid", flat=True)
-    )
-    active_production_order_ids.discard(None)
-    active_production_order_ids = {str(uid) for uid in active_production_order_ids}
 
     # Load active recipes for the demanded products only
     recipes = (
