@@ -120,17 +120,22 @@ function OrderForm({
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [mode, setMode] = useState<'simple' | 'batch'>('simple');
   const [qtyProduced, setQtyProduced] = useState(prefillQty ? String(prefillQty) : '');
+  const [qtyManuallyEdited, setQtyManuallyEdited] = useState(false);
   const [sourceOrderIds, setSourceOrderIds] = useState<Set<string>>(new Set());
   const [sourceOrdersPrefilled, setSourceOrdersPrefilled] = useState(false);
-  const autoNotes = prefillSourceOrders?.length
-    ? `Dla zamówień: ${prefillSourceOrders.join(', ')}`
-    : '';
-  const [notes, setNotes] = useState(autoNotes);
+  const [notes, setNotes] = useState('');
   const { data: ordersData } = useOrderListQuery(1, { status: 'confirmed', page_size: 100 });
 
   const inputClass = cn(
     'flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
     'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+  );
+
+  // Filter orders to only those containing this product
+  const allOrders = (ordersData?.results ?? []).filter((o) =>
+    highlightProductId
+      ? (o.items ?? []).some((i) => i.product_id === highlightProductId)
+      : true
   );
 
   useEffect(() => {
@@ -145,6 +150,27 @@ function OrderForm({
       setSourceOrdersPrefilled(true);
     }
   }, [ordersData, prefillSourceOrders, sourceOrdersPrefilled]);
+
+  // Recalculate qty from checked orders when highlightProductId is set
+  useEffect(() => {
+    if (qtyManuallyEdited || !highlightProductId || sourceOrderIds.size === 0) return;
+    const total = allOrders
+      .filter((o) => sourceOrderIds.has(o.id))
+      .reduce((sum, o) => {
+        const item = (o.items ?? []).find((i) => i.product_id === highlightProductId);
+        return sum + (item ? parseFloat(String(item.quantity)) : 0);
+      }, 0);
+    if (total > 0) setQtyProduced(String(Math.ceil(total)));
+  }, [sourceOrderIds, highlightProductId, qtyManuallyEdited]);
+
+  // Auto-update notes from checked orders
+  useEffect(() => {
+    if (!highlightProductId) return;
+    const checked = allOrders.filter((o) => sourceOrderIds.has(o.id));
+    if (checked.length > 0) {
+      setNotes(`Dla zamówień: ${checked.map((o) => o.order_number ?? o.id).join(', ')}`);
+    }
+  }, [sourceOrderIds, highlightProductId]);
 
   const [batchInputs, setBatchInputs] = useState<BatchInputRow[]>(() => {
     if (!prefillRecipeId) return [];
@@ -224,16 +250,8 @@ function OrderForm({
     onSave(payload);
   }
 
-  const allOrders = ordersData?.results ?? [];
-
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {lockedFromPlanning && prefillSourceOrders && prefillSourceOrders.length > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
-          <span className="text-muted-foreground shrink-0">Na podstawie zamówień:</span>
-          <span className="font-medium">{prefillSourceOrders.join(', ')}</span>
-        </div>
-      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">Receptura *</label>
@@ -291,14 +309,19 @@ function OrderForm({
       </div>
 
       <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Ilość wyrobów *</label>
+        <label className="text-xs font-medium text-muted-foreground">
+          Ilość wyrobów *
+          {highlightProductId && !qtyManuallyEdited && (
+            <span className="ml-1.5 font-normal text-slate-400">— obliczone z zaznaczonych zamówień</span>
+          )}
+        </label>
         <input
           type="number"
           min="0"
           step="any"
           className={inputClass}
           value={qtyProduced}
-          onChange={(e) => setQtyProduced(e.target.value)}
+          onChange={(e) => { setQtyProduced(e.target.value); setQtyManuallyEdited(true); }}
           required
         />
       </div>
