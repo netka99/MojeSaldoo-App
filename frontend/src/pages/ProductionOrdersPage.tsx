@@ -35,13 +35,15 @@ function SourceOrderRow({ order: o, checked, onToggle, highlightProductId }: {
   const highlightedItem = highlightProductId
     ? items.find((i) => i.product_id === highlightProductId)
     : undefined;
+  const inProduction = o.production_status === 'in_progress';
 
   return (
-    <div className={cn(checked && 'bg-primary/5')}>
+    <div className={cn(inProduction ? 'opacity-50' : checked && 'bg-primary/5')}>
       <div className="flex items-center gap-2.5 px-3 py-2">
         <input
           type="checkbox"
-          checked={checked}
+          checked={checked && !inProduction}
+          disabled={inProduction}
           onChange={onToggle}
           className="h-4 w-4 accent-primary shrink-0"
         />
@@ -55,6 +57,9 @@ function SourceOrderRow({ order: o, checked, onToggle, highlightProductId }: {
             <span className="ml-2 text-sm text-muted-foreground">{o.customer_name}</span>
             {o.delivery_date && (
               <span className="ml-2 text-xs text-muted-foreground">· {o.delivery_date}</span>
+            )}
+            {inProduction && (
+              <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">w produkcji</span>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -131,9 +136,8 @@ function OrderForm({
     'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
   );
 
-  // Filter orders to only those containing this product, excluding already in production
+  // Filter orders to only those containing this product
   const allOrders = (ordersData?.results ?? []).filter((o) => {
-    if (o.production_status === 'in_progress') return false;
     if (highlightProductId) return (o.items ?? []).some((i) => i.product_id === highlightProductId);
     return true;
   });
@@ -142,7 +146,10 @@ function OrderForm({
     if (sourceOrdersPrefilled || !prefillSourceOrders?.length || !ordersData?.results) return;
     const matched = new Set(
       ordersData.results
-        .filter((o) => prefillSourceOrders.includes(o.order_number ?? ''))
+        .filter((o) =>
+          prefillSourceOrders.includes(o.order_number ?? '') &&
+          o.production_status !== 'in_progress'
+        )
         .map((o) => o.id)
     );
     if (matched.size > 0) {
