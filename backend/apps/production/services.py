@@ -356,7 +356,7 @@ def get_production_planning(company, date_from=None, date_to=None):
         str(uid)
         for uid in ProductionOrder.objects.filter(
             company=company,
-            status__in=["pending", "in_progress"],
+            status=ProductionOrder.STATUS_DRAFT,
         ).values_list("source_orders__uuid", flat=True)
         if uid is not None
     }
