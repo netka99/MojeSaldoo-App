@@ -169,16 +169,40 @@ def complete_production_order(order: ProductionOrder, user) -> ProductionOrder:
         }
         input_map = {}
 
+    completion_date = timezone.now().date()
+
+    # Resolve linked source orders for notes / FK
+    source_orders = list(
+        order.source_links.select_related("order__customer").values_list("order", flat=True).distinct()
+    )
+    linked_orders = list(
+        order.source_links.select_related("order__customer")
+        .values_list("order__order_number", flat=True)
+        .distinct()
+    )
+    single_order = None
+    single_customer = None
+    if len(source_orders) == 1:
+        from apps.orders.models import Order as SalesOrder
+        single_order = SalesOrder.objects.filter(id=source_orders[0]).first()
+        single_customer = single_order.customer if single_order else None
+
+    order_notes = ""
+    if linked_orders:
+        order_notes = f" ({', '.join(linked_orders)})"
+
     with transaction.atomic():
         # ── 1. Create RW document ─────────────────────────────────────────────
         rw = DeliveryDocument.objects.create(
             company=order.company,
             user=user,
             document_type=DeliveryDocument.DOC_TYPE_RW,
-            issue_date=order.date,
+            issue_date=completion_date,
             from_warehouse=warehouse,
             status=DeliveryDocument.STATUS_DELIVERED,
-            notes=f"Automatyczne RW dla zlecenia {order.order_number}",
+            order=single_order,
+            to_customer=single_customer,
+            notes=f"Automatyczne RW dla zlecenia {order.order_number}{order_notes}",
         )
 
         total_cost = Decimal("0")
@@ -226,10 +250,12 @@ def complete_production_order(order: ProductionOrder, user) -> ProductionOrder:
             company=order.company,
             user=user,
             document_type=DeliveryDocument.DOC_TYPE_PZ,  # PW reuses PZ type internally
-            issue_date=order.date,
+            issue_date=completion_date,
             to_warehouse=warehouse,
             status=DeliveryDocument.STATUS_DELIVERED,
-            notes=f"Automatyczne PW dla zlecenia {order.order_number}",
+            order=single_order,
+            to_customer=single_customer,
+            notes=f"Automatyczne PW dla zlecenia {order.order_number}{order_notes}",
         )
         DeliveryItem.objects.create(
             delivery_document=pw,
@@ -351,24 +377,62 @@ def get_production_planning(company, date_from=None, date_to=None):
     if date_to:
         orders_qs = orders_qs.filter(delivery_date__lte=date_to)
 
-    # Find order IDs that already have an active (non-completed) production order
-    active_production_order_ids = {
-        str(uid)
-        for uid in ProductionOrder.objects.filter(
-            company=company,
-            status=ProductionOrder.STATUS_DRAFT,
-        ).values_list("source_orders__uuid", flat=True)
-        if uid is not None
-    }
+    # Build per-order scheduled quantity from active (draft) ProductionOrderSource links
+    # scheduled_qty_by_order: {order_uuid_str: total_quantity_already_scheduled}
+    from .models import ProductionOrderSource
+
+    # Group links by production_order so we can detect legacy rows (quantity=0)
+    from collections import defaultdict
+    links_by_prod: dict = defaultdict(list)
+    for link in (
+        ProductionOrderSource.objects
+        .filter(
+            production_order__company=company,
+            production_order__status__in=[ProductionOrder.STATUS_DRAFT, ProductionOrder.STATUS_COMPLETED],
+        )
+        .select_related("order", "production_order__recipe__product")
+    ):
+        links_by_prod[link.production_order_id].append(link)
+
+    # Key: (order_uuid, product_uuid) → scheduled quantity
+    # This prevents bułka's scheduled qty from bleeding into chalka/chleb on same order
+    scheduled_qty_by_order_product: dict = {}
+    for prod_id, links in links_by_prod.items():
+        total_link_qty = sum(lnk.quantity for lnk in links)
+        if total_link_qty > 0:
+            product_uuid = str(links[0].production_order.recipe.product.uuid)
+            for lnk in links:
+                key = (str(lnk.order.uuid), product_uuid)
+                scheduled_qty_by_order_product[key] = (
+                    scheduled_qty_by_order_product.get(key, Decimal("0")) + lnk.quantity
+                )
+        # Legacy (quantity=0): skip per-order tracking — product_level_remaining handles it
+
+    # Sum of already-scheduled qty per recipe's finished product (for stock-tracked products)
+    active_qty_by_product: dict = {}
+    for po in ProductionOrder.objects.filter(
+        company=company,
+        status__in=[ProductionOrder.STATUS_DRAFT, ProductionOrder.STATUS_COMPLETED],
+    ).select_related("recipe__product"):
+        if po.recipe_id and po.recipe.product_id:
+            ppid = str(po.recipe.product.uuid)
+            active_qty_by_product[ppid] = (
+                active_qty_by_product.get(ppid, Decimal("0")) + (po.quantity_produced or Decimal("0"))
+            )
 
     # Aggregate remaining demand per product
     product_demand: dict = {}
     for order in orders_qs:
+        oid = str(order.uuid)
         for item in order.items.all():
             pid = str(item.product.uuid)
-            remaining = item.quantity - (item.quantity_delivered or Decimal("0"))
-            if remaining <= 0:
+            total_remaining = item.quantity - (item.quantity_delivered or Decimal("0"))
+            if total_remaining <= 0:
                 continue
+            # Scheduled qty is keyed by (order, product) so different products on same order
+            # don't interfere with each other
+            scheduled_for_order_product = scheduled_qty_by_order_product.get((oid, pid), Decimal("0"))
+            unscheduled = max(Decimal("0"), total_remaining - scheduled_for_order_product)
             if pid not in product_demand:
                 product_demand[pid] = {
                     "product_id": pid,
@@ -376,17 +440,20 @@ def get_production_planning(company, date_from=None, date_to=None):
                     "total_ordered": Decimal("0"),
                     "orders": [],
                 }
-            product_demand[pid]["total_ordered"] += remaining
+            product_demand[pid]["total_ordered"] += total_remaining
             product_demand[pid]["orders"].append(
                 {
-                    "order_id": str(order.uuid),
+                    "order_id": oid,
                     "order_number": order.order_number,
                     "customer_name": order.customer.name if order.customer_id else "",
-                    "quantity": remaining,
+                    "quantity": total_remaining,
+                    "scheduled_qty": scheduled_for_order_product,
+                    "remaining_qty": unscheduled,
                     "delivery_date": (
                         order.delivery_date.isoformat() if order.delivery_date else None
                     ),
-                    "in_production": str(order.uuid) in active_production_order_ids,
+                    "in_production": scheduled_for_order_product > 0,
+                    "fully_scheduled": unscheduled <= 0,
                 }
             )
 
@@ -417,6 +484,12 @@ def get_production_planning(company, date_from=None, date_to=None):
 
         demand = product_demand[pid]
         total_ordered = demand["total_ordered"]
+        already_scheduled = active_qty_by_product.get(pid, Decimal("0"))
+
+        # Sum of remaining (unscheduled) demand across all orders for this product
+        unscheduled_ordered = Decimal(
+            sum(Decimal(str(o["remaining_qty"])) for o in demand["orders"])
+        )
 
         # Current stock of the finished product
         # For finished-type products without batch tracking, stock is not maintained —
@@ -437,7 +510,14 @@ def get_production_planning(company, date_from=None, date_to=None):
 
         # Batches of recipe needed to cover the shortfall
         yield_qty = Decimal(str(recipe.yield_quantity)) if recipe.yield_quantity else Decimal("1")
-        production_qty = shortfall if shortfall is not None else total_ordered
+        # suggested_production_qty = unscheduled demand (orders not yet in any active production order)
+        # We use product-level fallback (total - already_scheduled) to handle legacy orders (quantity=0 links)
+        product_level_remaining = max(Decimal("0"), total_ordered - already_scheduled)
+        if unscheduled_ordered > 0:
+            # Cap by product_level_remaining to handle legacy links correctly
+            production_qty = min(product_level_remaining, unscheduled_ordered)
+        else:
+            production_qty = product_level_remaining
         batches_needed = production_qty / yield_qty if production_qty > 0 else Decimal("0")
 
         # Per-ingredient requirements and cost
@@ -490,6 +570,7 @@ def get_production_planning(company, date_from=None, date_to=None):
                 "recipe_name": recipe.name or finished_product.name,
                 "recipe_yield_quantity": yield_qty,
                 "total_ordered": total_ordered,
+                "already_scheduled": already_scheduled,
                 "stock_available": stock_available,
                 "shortfall": shortfall,
                 "suggested_production_qty": production_qty,

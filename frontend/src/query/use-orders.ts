@@ -121,6 +121,7 @@ export function useCreateOrderMutation() {
     mutationFn: (body: OrderCreate) => orderService.createOrder(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }
@@ -134,6 +135,7 @@ export function useUpdateOrderMutation() {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: orderKeys.detail(data.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.changelog(data.id) });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }
@@ -154,6 +156,7 @@ export function useConfirmOrderMutation() {
     onSuccess: (data: Order) => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: orderKeys.detail(data.id) });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }
@@ -165,6 +168,7 @@ export function useCancelOrderMutation() {
     onSuccess: (data: Order) => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: orderKeys.detail(data.id) });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }
@@ -187,6 +191,7 @@ export function useDeleteOrderMutation() {
     onSuccess: (_void, id) => {
       void queryClient.removeQueries({ queryKey: orderKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }

@@ -69,6 +69,7 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
             .prefetch_related(
                 "inputs", "inputs__ingredient",
                 "recipe__items", "recipe__items__ingredient",
+                "source_links", "source_links__order", "source_links__order__customer",
             )
             .order_by("-date", "-created_at")
         )
@@ -84,6 +85,20 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             created_by=self.request.user,
         )
+
+    def create(self, request, *args, **kwargs):
+        write_serializer = ProductionOrderCreateSerializer(
+            data=request.data, context=self.get_serializer_context()
+        )
+        write_serializer.is_valid(raise_exception=True)
+        self.perform_create(write_serializer)
+        instance = write_serializer.instance
+        read_serializer = ProductionOrderSerializer(
+            instance, context=self.get_serializer_context()
+        )
+        from rest_framework import status as drf_status
+        from rest_framework.response import Response
+        return Response(read_serializer.data, status=drf_status.HTTP_201_CREATED)
 
     def perform_destroy(self, instance):
         if instance.status == ProductionOrder.STATUS_COMPLETED:

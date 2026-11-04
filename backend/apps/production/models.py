@@ -141,6 +141,7 @@ class ProductionOrder(models.Model):
     source_orders = models.ManyToManyField(
         "orders.Order",
         blank=True,
+        through="ProductionOrderSource",
         related_name="production_orders",
         help_text="Optional: customer orders this production run fulfils (MTO).",
     )
@@ -188,6 +189,37 @@ class ProductionOrder(models.Model):
         )
         seq = int(last.split("/")[-1]) + 1 if last else 1
         return f"{prefix}{seq:04d}"
+
+
+class ProductionOrderSource(models.Model):
+    """
+    Through-table for ProductionOrder ↔ Order M2M.
+    Stores how many units from a specific customer order this production run covers.
+    """
+
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    production_order = models.ForeignKey(
+        ProductionOrder,
+        on_delete=models.CASCADE,
+        related_name="source_links",
+    )
+    order = models.ForeignKey(
+        "orders.Order",
+        on_delete=models.CASCADE,
+        related_name="production_source_links",
+    )
+    quantity = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="How many units of the finished product this production covers for this order.",
+    )
+
+    class Meta:
+        unique_together = [("production_order", "order")]
+        ordering = ["order__order_number"]
+
+    def __str__(self):
+        return f"{self.production_order} → {self.order} ({self.quantity})"
 
 
 class ProductionOrderInput(models.Model):

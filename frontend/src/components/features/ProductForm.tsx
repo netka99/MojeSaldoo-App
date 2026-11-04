@@ -508,47 +508,59 @@ export function ProductForm({
           <SectionHeader Icon={IconPackage} title={isService ? 'Dane usługi' : 'Dane podstawowe'} />
         </div>
         <div className="space-y-3 px-4 pb-4 pt-3">
-          {/* Photo picker */}
           <div>
-            <span className="mb-1.5 block text-sm font-medium text-slate-800">Zdjęcie</span>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#D4D2EE] bg-white text-sm font-semibold text-primary"
-                aria-label="Wybierz zdjęcie produktu"
-              >
-                {shownImage ? (
-                  <img src={shownImage} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  imageLetter
-                )}
-              </button>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="sr-only"
-                onChange={(e) => handleImagePick(e.target.files?.[0])}
-              />
-              {shownImage && (
-                <button type="button" className="text-sm font-medium text-slate-700 hover:underline" onClick={clearImage}>
+          <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 sm:grid-cols-[4rem_20rem]">
+            <span className="text-sm font-medium text-slate-800">Zdjęcie</span>
+            <label htmlFor="product-name" className="text-sm font-medium text-slate-800">
+              Nazwa
+            </label>
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border border-[#D4D2EE] bg-white text-sm font-semibold text-primary"
+              aria-label="Wybierz zdjęcie produktu"
+            >
+              {shownImage ? (
+                <img src={shownImage} alt="" className="h-full w-full object-cover" />
+              ) : (
+                imageLetter
+              )}
+            </button>
+            <input
+              id="product-name"
+              placeholder={isService ? 'np. Naprawa zmywarki' : 'np. Kartacze'}
+              required
+              className={cn(
+                'field-ios',
+                fieldStateCls(productName),
+                errors.name && 'ring-2 ring-destructive/40 focus:ring-destructive/40',
+              )}
+              {...register('name')}
+            />
+            {errors.name?.message && (
+              <p className="col-start-2 text-xs text-destructive">{errors.name.message}</p>
+            )}
+          </div>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            onChange={(e) => handleImagePick(e.target.files?.[0])}
+          />
+          <p className="mt-1.5 text-xs text-slate-500">
+            JPEG, PNG lub WebP, maks. 5 MB. Zapisujemy tylko małą miniaturę.
+            {shownImage && (
+              <>
+                {' '}
+                <button type="button" className="font-medium text-slate-700 hover:underline" onClick={clearImage}>
                   Usuń zdjęcie
                 </button>
-              )}
-            </div>
-            <p className="mt-1.5 text-xs text-slate-500">JPEG, PNG lub WebP, maks. 5 MB. Zapisujemy tylko małą miniaturę.</p>
-            {imageError && <p className="mt-1.5 text-xs text-destructive">{imageError}</p>}
+              </>
+            )}
+          </p>
+          {imageError && <p className="mt-1.5 text-xs text-destructive">{imageError}</p>}
           </div>
-
-          <TextField
-            label="Nazwa"
-            placeholder={isService ? 'np. Naprawa zmywarki' : 'np. Kartacze'}
-            required
-            stateValue={productName}
-            error={errors.name?.message}
-            {...register('name')}
-          />
 
           <label className="block" htmlFor="product-description">
             <span className="mb-1.5 block text-sm font-medium text-slate-800">Opis</span>

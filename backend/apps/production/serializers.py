@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.common.serializers import UUIDModelSerializer
 
-from .models import ProductionOrder, ProductionOrderInput, Recipe, RecipeItem
+from .models import ProductionOrder, ProductionOrderInput, ProductionOrderSource, Recipe, RecipeItem
 
 
 class RecipeItemSerializer(UUIDModelSerializer):
@@ -117,6 +117,20 @@ class ProductionOrderInputSerializer(UUIDModelSerializer):
         read_only_fields = ["fifo_cost"]
 
 
+class ProductionOrderSourceSerializer(serializers.ModelSerializer):
+    """Read representation of a source order link."""
+    order_id = serializers.CharField(source="order.uuid", read_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    customer_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductionOrderSource
+        fields = ["order_id", "order_number", "customer_name", "quantity"]
+
+    def get_customer_name(self, obj):
+        return obj.order.customer.name if obj.order.customer_id else None
+
+
 class ProductionOrderSerializer(UUIDModelSerializer):
     recipe_name = serializers.SerializerMethodField()
     finished_product_name = serializers.CharField(
@@ -188,18 +202,28 @@ class ProductionOrderSerializer(UUIDModelSerializer):
     def get_source_orders_info(self, obj):
         return [
             {
-                "id": str(o.uuid),
-                "order_number": o.order_number,
-                "customer_name": o.customer.name if o.customer_id else None,
+                "id": str(link.order.uuid),
+                "order_number": link.order.order_number,
+                "customer_name": link.order.customer.name if link.order.customer_id else None,
+                "quantity": link.quantity,
             }
-            for o in obj.source_orders.select_related("customer").all()
+            for link in obj.source_links.select_related("order", "order__customer").all()
         ]
 
 
+# ── Write serializer for source orders ───────────────────────────────────────
+
+class SourceOrderInputSerializer(serializers.Serializer):
+    """One entry in source_orders during order creation."""
+    order = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
 class ProductionOrderCreateSerializer(UUIDModelSerializer):
-    """Used for order creation — accepts nested batch inputs."""
+    """Used for order creation — accepts nested batch inputs and source order links."""
 
     inputs = ProductionOrderInputSerializer(many=True, required=False)
+    source_orders = SourceOrderInputSerializer(many=True, required=False)
 
     class Meta:
         model = ProductionOrder
@@ -214,29 +238,80 @@ class ProductionOrderCreateSerializer(UUIDModelSerializer):
                     {"inputs": "Tryb wsadu wymaga podania składników (inputs)."}
                 )
         # Block duplicate orders for the same source orders
-        source_orders = data.get("source_orders") or []
-        if source_orders:
-            already_in_production = ProductionOrder.objects.filter(
-                status=ProductionOrder.STATUS_DRAFT,
-                source_orders__in=source_orders,
-            ).values_list("order_number", "source_orders__order_number")
-            conflicts = [
-                f"{src} (zlecenie {prd})"
-                for prd, src in already_in_production
-                if src
-            ]
+        source_entries = data.get("source_orders") or []
+        if source_entries:
+            from apps.orders.models import Order
+            order_uuids = [e["order"] for e in source_entries]
+            orders = list(Order.objects.filter(uuid__in=order_uuids))
+            # Find orders already fully scheduled (remaining_qty <= 0)
+            # by comparing total order demand vs already scheduled quantity
+            from apps.orders.models import OrderItem
+            from decimal import Decimal as D
+            already_in_production = ProductionOrderSource.objects.filter(
+                production_order__status=ProductionOrder.STATUS_DRAFT,
+                order__uuid__in=order_uuids,
+                quantity__gt=0,
+            ).select_related("production_order", "order")
+
+            # Group scheduled qty per order
+            scheduled_by_order: dict = {}
+            for link in already_in_production:
+                oid = str(link.order.uuid)
+                scheduled_by_order[oid] = scheduled_by_order.get(oid, D("0")) + link.quantity
+
+            # Find the quantity being requested for each order from the new submission
+            requested_by_order = {str(e["order"]): D(str(e["quantity"])) for e in source_entries}
+
+            conflicts = []
+            for oid, scheduled in scheduled_by_order.items():
+                requested = requested_by_order.get(oid, D("0"))
+                if requested <= 0:
+                    continue
+                # Find the order's total remaining demand
+                order_obj = next((o for o in Order.objects.filter(uuid=oid)), None)
+                if order_obj is None:
+                    continue
+                # Would scheduling requested qty exceed total order demand?
+                total_for_order = D(str(
+                    sum(
+                        item.quantity - (item.quantity_delivered or D("0"))
+                        for item in order_obj.items.all()
+                    )
+                ))
+                if scheduled + requested > total_for_order:
+                    prod_number = ProductionOrderSource.objects.filter(
+                        production_order__status=ProductionOrder.STATUS_DRAFT,
+                        order__uuid=oid, quantity__gt=0
+                    ).values_list("production_order__order_number", flat=True).first()
+                    conflicts.append(f"{order_obj.order_number} (zlecenie {prod_number})")
             if conflicts:
                 raise serializers.ValidationError(
                     {"source_orders": f"Zamówienia już w aktywnym zleceniu: {', '.join(conflicts)}"}
                 )
+            # Attach resolved Order objects for use in create()
+            order_map = {str(o.uuid): o for o in orders}
+            data["_resolved_source_orders"] = [
+                (order_map[str(e["order"])], e["quantity"])
+                for e in source_entries
+                if str(e["order"]) in order_map
+            ]
         return data
 
     def create(self, validated_data):
+        from decimal import Decimal
         inputs_data = validated_data.pop("inputs", [])
-        source_orders = validated_data.pop("source_orders", [])
+        validated_data.pop("source_orders", [])
+        resolved_sources = validated_data.pop("_resolved_source_orders", [])
+
         order = ProductionOrder.objects.create(**validated_data)
-        if source_orders:
-            order.source_orders.set(source_orders)
+
+        for customer_order, quantity in resolved_sources:
+            ProductionOrderSource.objects.create(
+                production_order=order,
+                order=customer_order,
+                quantity=quantity,
+            )
+
         for inp in inputs_data:
             ingredient = inp["ingredient"]
             ProductionOrderInput.objects.create(

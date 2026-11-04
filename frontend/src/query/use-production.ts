@@ -55,6 +55,7 @@ export function useCreateRecipeMutation() {
     mutationFn: (data: RecipeCreate) => productionService.createRecipe(data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recipeKeys.list(companyId) });
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all });
     },
   });
 }
@@ -69,6 +70,7 @@ export function useUpdateRecipeMutation(id: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recipeKeys.list(companyId) });
       void queryClient.invalidateQueries({ queryKey: recipeKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all });
     },
   });
 }
@@ -82,6 +84,7 @@ export function useDeleteRecipeMutation() {
     mutationFn: (id: string) => productionService.deleteRecipe(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recipeKeys.list(companyId) });
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all });
     },
   });
 }
@@ -143,6 +146,8 @@ export function useDeleteProductionOrderMutation() {
     mutationFn: (id: string) => productionService.deleteOrder(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }

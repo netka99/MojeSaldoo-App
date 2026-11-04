@@ -256,12 +256,15 @@ class CompanyWorkflowSettingsSerializer(UUIDModelSerializer):
             "auto_wz_on_order_changed_at",
             "auto_deliver_wz",
             "auto_deliver_wz_changed_at",
+            "production_complete_immediately",
+            "production_complete_immediately_changed_at",
         ]
         read_only_fields = [
             "orders_required_changed_at",
             "wz_required_before_invoice_changed_at",
             "auto_wz_on_order_changed_at",
             "auto_deliver_wz_changed_at",
+            "production_complete_immediately_changed_at",
         ]
 
 

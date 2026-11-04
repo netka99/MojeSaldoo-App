@@ -41,6 +41,7 @@ export function useUpdateProductMutation() {
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: productKeys.all });
       void queryClient.invalidateQueries({ queryKey: productKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }
@@ -53,6 +54,7 @@ export function usePatchProductMutation() {
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: productKeys.all });
       void queryClient.invalidateQueries({ queryKey: productKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
     },
   });
 }
@@ -76,6 +78,7 @@ export function useUpdateProductStockMutation() {
       void queryClient.invalidateQueries({ queryKey: productKeys.all });
       void queryClient.invalidateQueries({ queryKey: productKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: warehouseStockKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['production', 'planning'] });
       if (body.warehouse_id) {
         void queryClient.invalidateQueries({ queryKey: stockSnapshotKeys.byWarehouse(body.warehouse_id) });
       }

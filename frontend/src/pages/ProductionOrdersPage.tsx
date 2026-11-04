@@ -13,10 +13,12 @@ import {
 } from '@/query/use-production';
 import { useAllProductsQuery } from '@/query/use-products';
 import { useOrderListQuery } from '@/query/use-orders';
+import { useWorkflowSettingsQuery } from '@/query/use-companies';
+import { useAuth } from '@/context/AuthContext';
 import { authStorage } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
-import type { ProductionOrder, ProductionOrderCreate, ProductionPlanningItem, Recipe } from '@/types/production.types';
+import type { PlanningOrder, ProductionOrder, ProductionOrderCreate, ProductionPlanningItem, Recipe } from '@/types/production.types';
 import type { Order } from '@/types';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
@@ -24,26 +26,28 @@ const n2 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 });
 
 // ── Source order row (expandable) ────────────────────────────────────────────
 
-function SourceOrderRow({ order: o, checked, onToggle, highlightProductId }: {
+function SourceOrderRow({ order: o, checked, onToggle, highlightProductId, scheduledQty, totalQty }: {
   order: Order;
   checked: boolean;
   onToggle: () => void;
   highlightProductId?: string;
+  scheduledQty?: number;   // how much of this order is already in active production
+  totalQty?: number;       // total remaining for this order (for the highlighted product)
 }) {
   const [expanded, setExpanded] = useState(false);
   const items = o.items ?? [];
   const highlightedItem = highlightProductId
     ? items.find((i) => i.product_id === highlightProductId)
     : undefined;
-  const inProduction = o.production_status === 'in_progress';
+  const inProduction = (scheduledQty ?? 0) > 0;
+  const fullyScheduled = totalQty != null && scheduledQty != null && scheduledQty >= totalQty;
 
   return (
-    <div className={cn(inProduction ? 'opacity-50' : checked && 'bg-primary/5')}>
+    <div className={cn(fullyScheduled ? 'opacity-50' : checked && 'bg-primary/5')}>
       <div className="flex items-center gap-2.5 px-3 py-2">
         <input
           type="checkbox"
-          checked={checked && !inProduction}
-          disabled={inProduction}
+          checked={checked}
           onChange={onToggle}
           className="h-4 w-4 accent-primary shrink-0"
         />
@@ -58,15 +62,30 @@ function SourceOrderRow({ order: o, checked, onToggle, highlightProductId }: {
             {o.delivery_date && (
               <span className="ml-2 text-xs text-muted-foreground">· {o.delivery_date}</span>
             )}
-            {inProduction && (
-              <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">w produkcji</span>
+            {inProduction && scheduledQty != null && (
+              <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                w produkcji: {n2.format(scheduledQty)} szt.
+              </span>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {highlightedItem && (
-              <span className="text-sm font-semibold text-slate-800 tabular-nums">
-                {parseFloat(String(highlightedItem.quantity)).toLocaleString('pl-PL')} {highlightedItem.product_unit}
-              </span>
+              <div className="text-right">
+                {inProduction && scheduledQty != null && totalQty != null && scheduledQty < totalQty ? (
+                  <>
+                    <span className="text-sm font-semibold text-slate-800 tabular-nums">
+                      {n2.format(totalQty - scheduledQty)} szt.
+                    </span>
+                    <span className="ml-1 text-xs text-slate-400 line-through tabular-nums">
+                      {n2.format(totalQty)}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-sm font-semibold text-slate-800 tabular-nums">
+                    {parseFloat(String(highlightedItem.quantity)).toLocaleString('pl-PL')} {highlightedItem.product_unit}
+                  </span>
+                )}
+              </div>
             )}
             {items.length > 0 && (
               <svg viewBox="0 0 24 24" fill="none" className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', expanded && 'rotate-180')} stroke="currentColor" strokeWidth={2}>
@@ -107,6 +126,7 @@ function OrderForm({
   prefillQty,
   prefillSourceOrders,
   highlightProductId,
+  defaultCompleteImmediately,
   onSave,
   onCancel,
   saving,
@@ -114,13 +134,15 @@ function OrderForm({
   recipes: Recipe[];
   prefillRecipeId?: string;
   prefillQty?: number;
-  prefillSourceOrders?: string[];
+  prefillSourceOrders?: PlanningOrder[];   // planning orders with remaining_qty/scheduled_qty
   highlightProductId?: string;
-  onSave: (data: ProductionOrderCreate) => void;
+  defaultCompleteImmediately?: boolean;
+  onSave: (data: ProductionOrderCreate, completeImmediately: boolean) => void;
   onCancel: () => void;
   saving: boolean;
 }) {
   const lockedFromPlanning = !!prefillRecipeId;
+  const [completeImmediately, setCompleteImmediately] = useState(defaultCompleteImmediately ?? false);
   const [recipeId, setRecipeId] = useState(prefillRecipeId ?? '');
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [mode, setMode] = useState<'simple' | 'batch'>('simple');
@@ -136,48 +158,66 @@ function OrderForm({
     'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
   );
 
-  // Filter orders to only those containing this product
+  // Build a map from customer order UUID → PlanningOrder (for remaining_qty / scheduled_qty)
+  const planningOrderMap = useMemo(() => {
+    const map = new Map<string, PlanningOrder>();
+    for (const po of prefillSourceOrders ?? []) map.set(po.order_id, po);
+    return map;
+  }, [prefillSourceOrders]);
+
+  // Filter customer orders from orders API to only those relevant for this product
   const allOrders = (ordersData?.results ?? []).filter((o) => {
+    if (prefillSourceOrders?.length) {
+      // When coming from planning: show only orders that are in the planning list
+      return prefillSourceOrders.some((po) => po.order_id === o.id);
+    }
     if (highlightProductId) return (o.items ?? []).some((i) => i.product_id === highlightProductId);
     return true;
   });
 
   useEffect(() => {
     if (sourceOrdersPrefilled || !prefillSourceOrders?.length || !ordersData?.results) return;
+    // Pre-select orders that have remaining qty (not fully scheduled)
     const matched = new Set(
       ordersData.results
-        .filter((o) =>
-          prefillSourceOrders.includes(o.order_number ?? '') &&
-          o.production_status !== 'in_progress'
-        )
+        .filter((o) => {
+          const po = planningOrderMap.get(o.id);
+          return po != null && Number(po.remaining_qty) > 0;
+        })
         .map((o) => o.id)
     );
     if (matched.size > 0) {
       setSourceOrderIds(matched);
       setSourceOrdersPrefilled(true);
     }
-  }, [ordersData, prefillSourceOrders, sourceOrdersPrefilled]);
+  }, [ordersData, prefillSourceOrders, sourceOrdersPrefilled, planningOrderMap]);
 
-  // Recalculate qty from checked orders when highlightProductId is set
+  // Recalculate qty from checked orders using remaining_qty from planning data
   useEffect(() => {
-    if (qtyManuallyEdited || !highlightProductId || sourceOrderIds.size === 0) return;
-    const total = allOrders
-      .filter((o) => sourceOrderIds.has(o.id))
-      .reduce((sum, o) => {
-        const item = (o.items ?? []).find((i) => i.product_id === highlightProductId);
-        return sum + (item ? parseFloat(String(item.quantity)) : 0);
-      }, 0);
+    if (qtyManuallyEdited || sourceOrderIds.size === 0) return;
+    let total = 0;
+    for (const id of sourceOrderIds) {
+      const po = planningOrderMap.get(id);
+      if (po) {
+        total += Number(po.remaining_qty);
+      } else if (highlightProductId) {
+        // Fallback: use item quantity from customer order data
+        const o = allOrders.find((x) => x.id === id);
+        const item = o?.items?.find((i) => i.product_id === highlightProductId);
+        if (item) total += parseFloat(String(item.quantity));
+      }
+    }
     if (total > 0) setQtyProduced(String(Math.ceil(total)));
-  }, [sourceOrderIds, highlightProductId, qtyManuallyEdited]);
+  }, [sourceOrderIds, planningOrderMap, highlightProductId, qtyManuallyEdited]);
 
   // Auto-update notes from checked orders
   useEffect(() => {
-    if (!highlightProductId) return;
+    if (!highlightProductId && !prefillSourceOrders?.length) return;
     const checked = allOrders.filter((o) => sourceOrderIds.has(o.id));
     if (checked.length > 0) {
       setNotes(`Dla zamówień: ${checked.map((o) => o.order_number ?? o.id).join(', ')}`);
     }
-  }, [sourceOrderIds, highlightProductId]);
+  }, [sourceOrderIds, highlightProductId, prefillSourceOrders]);
 
   const [batchInputs, setBatchInputs] = useState<BatchInputRow[]>(() => {
     if (!prefillRecipeId) return [];
@@ -241,12 +281,20 @@ function OrderForm({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const totalQty = Number(qtyProduced);
+    // Build source_orders with quantities
+    const sourceOrdersPayload = [...sourceOrderIds].map((id) => {
+      const po = planningOrderMap.get(id);
+      // Use remaining_qty from planning if available; otherwise use the produced qty
+      const qty = po != null ? Math.min(Number(po.remaining_qty), totalQty) : totalQty;
+      return { order: id, quantity: qty };
+    });
     const payload: ProductionOrderCreate = {
       recipe: recipeId,
       date,
       mode,
-      quantity_produced: Number(qtyProduced),
-      source_orders: [...sourceOrderIds],
+      quantity_produced: totalQty,
+      source_orders: sourceOrdersPayload.length > 0 ? sourceOrdersPayload : undefined,
       notes,
     };
     if (mode === 'batch') {
@@ -254,7 +302,7 @@ function OrderForm({
         .filter((r) => r.ingredient && Number(r.quantity_used) > 0)
         .map((r) => ({ ingredient: r.ingredient, quantity_used: Number(r.quantity_used), unit: r.ingredient_unit }));
     }
-    onSave(payload);
+    onSave(payload, completeImmediately);
   }
 
   return (
@@ -380,22 +428,27 @@ function OrderForm({
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">Powiązane zamówienia</label>
           <div className="divide-y divide-border rounded-lg border border-border">
-            {allOrders.map((o) => (
-              <SourceOrderRow
-                key={o.id}
-                order={o}
-                checked={sourceOrderIds.has(o.id)}
-                highlightProductId={highlightProductId}
-                onToggle={() =>
-                  setSourceOrderIds((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(o.id)) next.delete(o.id);
-                    else next.add(o.id);
-                    return next;
-                  })
-                }
-              />
-            ))}
+            {allOrders.map((o) => {
+              const po = planningOrderMap.get(o.id);
+              return (
+                <SourceOrderRow
+                  key={o.id}
+                  order={o}
+                  checked={sourceOrderIds.has(o.id)}
+                  highlightProductId={highlightProductId}
+                  scheduledQty={po ? Number(po.scheduled_qty) : undefined}
+                  totalQty={po ? Number(po.quantity) : undefined}
+                  onToggle={() =>
+                    setSourceOrderIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(o.id)) next.delete(o.id);
+                      else next.add(o.id);
+                      return next;
+                    })
+                  }
+                />
+              );
+            })}
           </div>
         </div>
       )}
@@ -405,9 +458,36 @@ function OrderForm({
         <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
+      <div className="flex items-center gap-2.5">
+        <label className="flex cursor-pointer items-center gap-2.5">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={completeImmediately}
+            onChange={(e) => setCompleteImmediately(e.target.checked)}
+          />
+          <span className="text-sm text-slate-700">Zakończ produkcję od razu (wystaw RW+PW)</span>
+        </label>
+        <div className="group relative">
+          <svg className="h-4 w-4 shrink-0 cursor-help text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01" strokeLinecap="round"/>
+          </svg>
+          <div className="absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 opacity-0 shadow-apple-md transition-opacity group-hover:opacity-100 group-hover:delay-150">
+            Możesz ustawić to na stałe w{' '}
+            <Link to="/settings/company" className="font-medium text-primary hover:underline">
+              Ustawienia → Przepływ dokumentów
+            </Link>
+          </div>
+        </div>
+      </div>
+
       <div className="flex gap-2">
         <Button type="submit" disabled={saving || !recipeId || !qtyProduced}>
-          {saving ? 'Zapisywanie…' : 'Zatwierdź zlecenie'}
+          {saving
+            ? 'Zapisywanie…'
+            : completeImmediately
+              ? 'Zatwierdź i zakończ'
+              : 'Zatwierdź zlecenie'}
         </Button>
         <Button type="button" variant="outline" onClick={onCancel}>
           Anuluj
@@ -581,15 +661,14 @@ function OrderCard({
             >
               {completing ? '…' : 'Zakończ'}
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive"
+            <button
+              type="button"
+              className="rounded-xl border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
               disabled={deleting}
               onClick={() => void onDelete(order.id)}
             >
-              Usuń
-            </Button>
+              {deleting ? '…' : 'Usuń'}
+            </button>
           </div>
         )}
       </div>
@@ -658,7 +737,10 @@ function PlanningItem({
             )}
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
-            Do produkcji: <strong className="text-slate-800">{n2.format(Number(item.total_ordered))} {item.product_unit}</strong>
+            Do zaplanowania: <strong className="text-slate-800">{n2.format(Number(item.suggested_production_qty))} {item.product_unit}</strong>
+            {Number(item.already_scheduled) > 0 && (
+              <> · Łącznie: <strong className="text-slate-800">{n2.format(Number(item.total_ordered))} {item.product_unit}</strong></>
+            )}
             {stockTracked && (
               <> · Stan: <strong className="text-slate-800">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
             )}
@@ -667,11 +749,11 @@ function PlanningItem({
             )}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           {canManage && !allInProduction && (
             <button
               type="button"
-              className="text-xs text-slate-400 underline-offset-2 hover:text-primary hover:underline"
+              className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20"
               onClick={onOpenModal}
             >
               zmień ilość
@@ -680,16 +762,21 @@ function PlanningItem({
           {hasIngredients && (
             <button
               type="button"
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+              className={cn(
+                'flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
+                expanded
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+              )}
               onClick={() => setExpanded((v) => !v)}
             >
+              surowce
               <svg
-                className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')}
-                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+                className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
               >
                 <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              surowce
             </button>
           )}
         </div>
@@ -736,6 +823,7 @@ type IngredientSummaryRow = {
 };
 
 function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningItem[]; totalCount: number }) {
+  const [open, setOpen] = useState(true);
   const summary = useMemo(() => {
     const map = new Map<string, IngredientSummaryRow>();
     for (const item of items) {
@@ -769,13 +857,17 @@ function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningIt
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
-      <div className="flex items-center gap-3 px-4 py-3.5 md:px-6">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50/60 md:px-6"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
           <svg className="h-4 w-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
             <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <span className="text-sm font-semibold text-slate-900">Potrzebne surowce</span>
           <p className="text-xs text-slate-400">
             {items.length === totalCount
@@ -788,34 +880,42 @@ function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningIt
             {missing.length} za mało
           </span>
         )}
-      </div>
-      <div className="divide-y divide-slate-100 border-t border-slate-100">
-        {summary.map((row) => (
-          <div key={row.id} className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
-            <div>
-              <p className={cn('text-sm font-medium', !row.hasEnough ? 'text-red-700' : 'text-slate-800')}>
-                {row.name}
-                {!row.hasEnough && (
-                  <span className="ml-2 text-xs font-normal text-red-500">
-                    brakuje {n2.format(row.totalNeeded - row.stockAvailable)} {row.unit}
-                  </span>
-                )}
-              </p>
-              {row.sources.length > 1 && (
-                <p className="text-xs text-slate-400">
-                  {row.sources.map((s) => `${s.productName}: ${n2.format(s.qty)} ${row.unit}`).join(' + ')}
+        <svg
+          className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')}
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+        >
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="divide-y divide-slate-100 border-t border-slate-100">
+          {summary.map((row) => (
+            <div key={row.id} className="flex items-center justify-between gap-3 px-4 py-2.5 md:px-6">
+              <div>
+                <p className={cn('text-sm font-medium', !row.hasEnough ? 'text-red-700' : 'text-slate-800')}>
+                  {row.name}
+                  {!row.hasEnough && (
+                    <span className="ml-2 text-xs font-normal text-red-500">
+                      brakuje {n2.format(row.totalNeeded - row.stockAvailable)} {row.unit}
+                    </span>
+                  )}
                 </p>
-              )}
+                {row.sources.length > 1 && (
+                  <p className="text-xs text-slate-400">
+                    {row.sources.map((s) => `${s.productName}: ${n2.format(s.qty)} ${row.unit}`).join(' + ')}
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0 text-right">
+                <p className={cn('text-sm font-semibold tabular-nums', !row.hasEnough ? 'text-red-700' : 'text-slate-900')}>
+                  {n2.format(row.totalNeeded)} {row.unit}
+                </p>
+                <p className="text-xs text-slate-400">stan: {n2.format(row.stockAvailable)}</p>
+              </div>
             </div>
-            <div className="shrink-0 text-right">
-              <p className={cn('text-sm font-semibold tabular-nums', !row.hasEnough ? 'text-red-700' : 'text-slate-900')}>
-                {n2.format(row.totalNeeded)} {row.unit}
-              </p>
-              <p className="text-xs text-slate-400">stan: {n2.format(row.stockAvailable)}</p>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -825,7 +925,7 @@ function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningIt
 type PlanTab = 'today' | 'open' | 'range';
 type FormState =
   | { open: false }
-  | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: string[]; highlightProductId?: string; error?: string };
+  | { open: true; prefillRecipeId?: string; prefillQty?: number; prefillSourceOrders?: PlanningOrder[]; highlightProductId?: string; error?: string };
 
 export function ProductionOrdersPage() {
   const canProduction = usePermission('can_manage_production');
@@ -839,15 +939,22 @@ export function ProductionOrdersPage() {
   const [dateTo, setDateTo] = useState(today);
   const [selectedRecipeIds, setSelectedRecipeIds] = useState<Set<string>>(new Set());
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(true);
+  const [completedOrdersOpen, setCompletedOrdersOpen] = useState(false);
   const [page] = useState(1);
   const [form, setForm] = useState<FormState>({ open: false });
   const [bulkCreating, setBulkCreating] = useState(false);
+  const [completionResult, setCompletionResult] = useState<ProductionOrder | null>(null);
 
   const planningParams = useMemo(() => {
     if (tab === 'today') return { date_from: today, date_to: today };
     if (tab === 'open') return {};
     return { date_from: dateFrom, date_to: dateTo };
   }, [tab, today, dateFrom, dateTo]);
+
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId || undefined);
+  const defaultCompleteImmediately = workflowSettings?.production_complete_immediately ?? false;
 
   const { data: ordersData, isLoading: ordersLoading } = useProductionOrdersQuery(page);
   const { data: recipes = [] } = useRecipesQuery();
@@ -859,6 +966,7 @@ export function ProductionOrdersPage() {
 
   const orders = ordersData?.results ?? [];
   const activeOrders = orders.filter((o) => o.status !== 'completed');
+  const completedOrders = orders.filter((o) => o.status === 'completed').slice(0, 10);
 
   // Auto-switch from "Dziś" to "Otwarte" when today has no items
   useEffect(() => {
@@ -867,10 +975,15 @@ export function ProductionOrdersPage() {
     }
   }, [tab, planningLoading, planningItems.length]);
 
-  // Auto-select all when plan loads or tab changes
+  // Items that are schedulable (not all orders fully scheduled)
+  const schedulableItems = planningItems.filter(
+    (i) => !(i.orders.length > 0 && i.orders.every((o) => Number(o.remaining_qty) <= 0))
+  );
+
+  // Auto-select all schedulable items when plan loads or tab changes
   useEffect(() => {
     if (!planningLoading && planningItems.length > 0) {
-      setSelectedRecipeIds(new Set(planningItems.map((i) => i.recipe_id)));
+      setSelectedRecipeIds(new Set(schedulableItems.map((i) => i.recipe_id)));
     }
   }, [planningItems]);
 
@@ -886,16 +999,20 @@ export function ProductionOrdersPage() {
   }
 
   function toggleAll() {
-    if (selectedRecipeIds.size === planningItems.length) {
+    if (selectedRecipeIds.size === schedulableItems.length) {
       setSelectedRecipeIds(new Set());
     } else {
-      setSelectedRecipeIds(new Set(planningItems.map((i) => i.recipe_id)));
+      setSelectedRecipeIds(new Set(schedulableItems.map((i) => i.recipe_id)));
     }
   }
 
-  async function handleCreate(data: ProductionOrderCreate) {
+  async function handleCreate(data: ProductionOrderCreate, completeImmediately = false) {
     try {
-      await createM.mutateAsync(data);
+      const created = await createM.mutateAsync(data);
+      if (completeImmediately) {
+        const completed = await completeM.mutateAsync(created.id);
+        setCompletionResult(completed);
+      }
       setForm({ open: false });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Błąd zapisu zlecenia.';
@@ -908,19 +1025,20 @@ export function ProductionOrdersPage() {
     setBulkCreating(true);
     try {
       for (const item of selectedItems) {
-        const availableOrders = item.orders.filter((o) => !o.in_production);
-        if (availableOrders.length === 0) continue; // all already in production
-        const qty = item.stock_available == null
-          ? availableOrders.reduce((s, o) => s + Number(o.quantity), 0)
-          : Math.max(0, Number(item.shortfall));
+        const ordersWithRemaining = item.orders.filter((o) => Number(o.remaining_qty) > 0);
+        if (ordersWithRemaining.length === 0) continue;
+        const qty = Number(item.suggested_production_qty);
         if (qty <= 0) continue;
         await createM.mutateAsync({
           recipe: item.recipe_id,
           date: tab === 'today' ? today : format(new Date(), 'yyyy-MM-dd'),
           mode: 'simple',
           quantity_produced: Math.ceil(qty),
-          source_orders: availableOrders.map((o) => o.order_id),
-          notes: `Dla zamówień: ${availableOrders.map((o) => o.order_number).join(', ')}`,
+          source_orders: ordersWithRemaining.map((o) => ({
+            order: o.order_id,
+            quantity: Number(o.remaining_qty),
+          })),
+          notes: `Dla zamówień: ${ordersWithRemaining.map((o) => o.order_number).join(', ')}`,
         });
       }
     } finally {
@@ -933,7 +1051,7 @@ export function ProductionOrdersPage() {
     setTimeout(() => document.getElementById('production-form')?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
 
-  const allSelected = planningItems.length > 0 && selectedRecipeIds.size === planningItems.length;
+  const allSelected = schedulableItems.length > 0 && selectedRecipeIds.size === schedulableItems.length;
   const someSelected = selectedRecipeIds.size > 0 && !allSelected;
 
   const tabs: { id: PlanTab; label: string }[] = [
@@ -947,6 +1065,10 @@ export function ProductionOrdersPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-base font-bold text-slate-900 md:text-xl">Produkcja</h1>
       </div>
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+        {/* ── LEFT COLUMN: plan + surowce ── */}
+        <div className="flex flex-col gap-3 lg:min-w-0 lg:flex-1">
 
       {/* ── Plan section ── */}
       <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
@@ -1001,7 +1123,7 @@ export function ProductionOrdersPage() {
               />
               <span className="text-sm text-slate-600">
                 {selectedRecipeIds.size > 0
-                  ? `Zaznaczono ${selectedRecipeIds.size} z ${planningItems.length}`
+                  ? `Zaznaczono ${selectedRecipeIds.size} z ${schedulableItems.length}`
                   : 'Zaznacz wszystkie'}
               </span>
             </label>
@@ -1035,8 +1157,8 @@ export function ProductionOrdersPage() {
               const draftInProd = orders
                 .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
                 .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-              const allInProduction = item.orders.length > 0 && item.orders.every((o) => o.in_production);
-              const availableOrders = item.orders.filter((o) => !o.in_production);
+              // Use fresh activeOrders data to determine in-production status
+              const allFullyScheduled = item.orders.length > 0 && item.orders.every((o) => Number(o.remaining_qty) <= 0);
 
               return (
                 <PlanningItem
@@ -1046,14 +1168,14 @@ export function ProductionOrdersPage() {
                   stockTracked={stockTracked}
                   hasShortfall={hasShortfall}
                   draftInProd={draftInProd}
-                  allInProduction={allInProduction}
+                  allInProduction={allFullyScheduled}
                   canManage={canProduction}
                   onToggle={() => toggleItem(item.recipe_id)}
                   onOpenModal={() => setForm({
                     open: true,
                     prefillRecipeId: item.recipe_id,
-                    prefillQty: Math.ceil(stockTracked ? Number(item.shortfall) : Number(item.total_ordered)),
-                    prefillSourceOrders: availableOrders.map((o) => o.order_number),
+                    prefillQty: Math.ceil(Number(item.suggested_production_qty)),
+                    prefillSourceOrders: item.orders,
                     highlightProductId: item.product_id,
                   })}
                 />
@@ -1065,6 +1187,107 @@ export function ProductionOrdersPage() {
 
       {/* ── Ingredients summary — reacts to checkboxes ── */}
       {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} totalCount={planningItems.length} />}
+
+        </div>{/* end left column */}
+
+        {/* ── RIGHT COLUMN: zlecenia ── */}
+        <div className="flex flex-col gap-3 lg:w-[480px] lg:shrink-0">
+
+      {/* ── Active orders (collapsible) ── */}
+      <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        <div className="flex w-full items-center justify-between px-4 py-3.5 md:px-6">
+          <button
+            type="button"
+            className="flex flex-1 items-center gap-2 text-left"
+            onClick={() => setActiveOrdersOpen((v) => !v)}
+          >
+            <span className="text-sm font-semibold text-slate-900">Aktywne zlecenia</span>
+            {activeOrders.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                {activeOrders.length}
+              </span>
+            )}
+            <svg
+              className={cn('ml-auto h-4 w-4 shrink-0 text-slate-400 transition-transform', activeOrdersOpen && 'rotate-180')}
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+            >
+              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {canProduction && !form.open && (
+            <button
+              type="button"
+              className="ml-3 shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90"
+              onClick={() => setForm({ open: true })}
+            >
+              + Ręczne zlecenie
+            </button>
+          )}
+        </div>
+
+        {activeOrdersOpen && (
+          <div className="border-t border-slate-100">
+            {ordersLoading && <p className="px-4 py-4 text-sm text-slate-400">Ładowanie…</p>}
+            {!ordersLoading && activeOrders.length === 0 && (
+              <p className="px-4 py-4 text-sm text-slate-400">Brak aktywnych zleceń.</p>
+            )}
+            {!ordersLoading && activeOrders.length > 0 && (
+              <div className="space-y-2 p-3">
+                {activeOrders.map((o) => (
+                  <OrderCard
+                    key={o.id}
+                    order={o}
+                    canProduction={canProduction}
+                    onComplete={async (id) => { const r = await completeM.mutateAsync(id); setCompletionResult(r); }}
+                    onDelete={(id) => deleteM.mutateAsync(id)}
+                    completing={completeM.isPending}
+                    deleting={deleteM.isPending}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {completedOrders.length > 0 && (
+          <div className="border-t border-slate-100">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-slate-50/60"
+              onClick={() => setCompletedOrdersOpen((v) => !v)}
+            >
+              <span className="text-sm font-semibold text-slate-900">Ostatnie zakończone</span>
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                {completedOrders.length}
+              </span>
+              <svg
+                className={cn('ml-auto h-4 w-4 shrink-0 text-slate-400 transition-transform', completedOrdersOpen && 'rotate-180')}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+              >
+                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {completedOrdersOpen && (
+              <div className="space-y-2 p-3">
+                {completedOrders.map((o) => (
+                  <OrderCard
+                    key={o.id}
+                    order={o}
+                    canProduction={canProduction}
+                    onComplete={async (id) => { const r = await completeM.mutateAsync(id); setCompletionResult(r); }}
+                    onDelete={(id) => deleteM.mutateAsync(id)}
+                    completing={completeM.isPending}
+                    deleting={deleteM.isPending}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+        </div>{/* end right column */}
+      </div>{/* end two-column layout */}
 
       {/* ── Manual order modal ── */}
       {form.open && (
@@ -1097,7 +1320,8 @@ export function ProductionOrdersPage() {
                 prefillQty={form.open ? form.prefillQty : undefined}
                 prefillSourceOrders={form.open ? form.prefillSourceOrders : undefined}
                 highlightProductId={form.open ? form.highlightProductId : undefined}
-                onSave={(d) => void handleCreate(d)}
+                defaultCompleteImmediately={defaultCompleteImmediately}
+                onSave={(d, complete) => void handleCreate(d, complete)}
                 onCancel={() => setForm({ open: false })}
                 saving={createM.isPending}
               />
@@ -1106,62 +1330,55 @@ export function ProductionOrdersPage() {
         </div>
       )}
 
-      {/* ── Active orders (collapsible) ── */}
-      <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
-        <div className="flex w-full items-center justify-between px-4 py-3.5 md:px-6">
-          <button
-            type="button"
-            className="flex flex-1 items-center gap-2 text-left"
-            onClick={() => setActiveOrdersOpen((v) => !v)}
-          >
-            <span className="text-sm font-semibold text-slate-900">Aktywne zlecenia</span>
-            {activeOrders.length > 0 && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                {activeOrders.length}
-              </span>
-            )}
-            <svg
-              className={cn('ml-auto h-4 w-4 shrink-0 text-slate-400 transition-transform', activeOrdersOpen && 'rotate-180')}
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
-            >
-              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          {canProduction && !form.open && (
+      {/* ── Completion success modal ── */}
+      {completionResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setCompletionResult(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-apple-float md:rounded-3xl">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100">
+              <svg className="h-6 w-6 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="text-base font-semibold text-slate-900">Produkcja zakończona!</p>
+            <p className="mt-1 text-sm font-medium text-slate-700">{completionResult.finished_product_name}</p>
+            <p className="text-xs text-slate-400">{completionResult.order_number}</p>
+            <div className="mt-4 space-y-2 rounded-xl bg-slate-50 px-4 py-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Wyprodukowano</span>
+                <span className="font-semibold text-slate-900">
+                  {n2.format(Number(completionResult.quantity_produced))} szt.
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">RW (rozchód surowców)</span>
+                <span className="font-medium text-slate-900">{completionResult.rw_document_number ?? '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">PW (przychód wyrobów)</span>
+                <span className="font-medium text-slate-900">{completionResult.pw_document_number ?? '—'}</span>
+              </div>
+              {completionResult.real_unit_cost !== null && (
+                <div className="flex justify-between border-t border-slate-200 pt-2">
+                  <span className="text-slate-500">Koszt jednostkowy</span>
+                  <span className="font-semibold text-slate-900">
+                    {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(Number(completionResult.real_unit_cost))}
+                  </span>
+                </div>
+              )}
+            </div>
             <button
               type="button"
-              className="ml-3 shrink-0 rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
-              onClick={() => setForm({ open: true })}
+              className="mt-5 w-full rounded-2xl bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primary/90"
+              onClick={() => setCompletionResult(null)}
             >
-              + Ręczne zlecenie
+              OK
             </button>
-          )}
-        </div>
-
-        {activeOrdersOpen && (
-          <div className="border-t border-slate-100">
-            {ordersLoading && <p className="px-4 py-4 text-sm text-slate-400">Ładowanie…</p>}
-            {!ordersLoading && activeOrders.length === 0 && (
-              <p className="px-4 py-4 text-sm text-slate-400">Brak aktywnych zleceń.</p>
-            )}
-            {!ordersLoading && activeOrders.length > 0 && (
-              <div className="space-y-2 p-3">
-                {activeOrders.map((o) => (
-                  <OrderCard
-                    key={o.id}
-                    order={o}
-                    canProduction={canProduction}
-                    onComplete={(id) => completeM.mutateAsync(id)}
-                    onDelete={(id) => deleteM.mutateAsync(id)}
-                    completing={completeM.isPending}
-                    deleting={deleteM.isPending}
-                  />
-                ))}
-              </div>
-            )}
           </div>
-        )}
-      </section>
+        </div>
+      )}
+
     </div>
   );
 }

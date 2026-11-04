@@ -30,9 +30,12 @@ export type PlanningOrder = {
   order_id: string;
   order_number: string;
   customer_name: string;
-  quantity: string | number;
+  quantity: string | number;           // total remaining (delivered subtracted)
+  scheduled_qty: string | number;      // already in active production order(s)
+  remaining_qty: string | number;      // quantity - scheduled_qty
   delivery_date: string | null;
-  in_production: boolean;
+  in_production: boolean;              // scheduled_qty > 0
+  fully_scheduled: boolean;            // remaining_qty <= 0
 };
 
 export type ProductionPlanningItem = {
@@ -43,6 +46,7 @@ export type ProductionPlanningItem = {
   recipe_name: string;
   recipe_yield_quantity: string | number;
   total_ordered: string | number;
+  already_scheduled: string | number;
   stock_available: string | number | null;
   shortfall: string | number | null;
   suggested_production_qty: string | number;
@@ -113,7 +117,7 @@ export type ProductionOrder = {
   pw_document: string | null;
   pw_document_number: string | null;
   source_orders: string[];
-  source_orders_info: { id: string; order_number: string | null; customer_name: string | null }[];
+  source_orders_info: { id: string; order_number: string | null; customer_name: string | null; quantity: string | number }[];
   notes: string;
   inputs: ProductionOrderInput[];
   recipe_items: { ingredient_name: string; unit: string; quantity_needed: number | string }[];
@@ -126,7 +130,7 @@ export type ProductionOrderCreate = {
   date: string;
   mode: ProductionOrderMode;
   quantity_produced: number | string;
-  source_orders?: string[];
+  source_orders?: { order: string; quantity: number | string }[];
   notes?: string;
   inputs?: {
     ingredient: string;

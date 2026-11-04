@@ -288,6 +288,7 @@ class CompanyWorkflowSettingsView(APIView):
             "wz_required_before_invoice",
             "auto_wz_on_order",
             "auto_deliver_wz",
+            "production_complete_immediately",
         ]
         before = {f: getattr(settings, f) for f in _BOOLEAN_FLAGS}
         was_auto_deliver = settings.auto_deliver_wz

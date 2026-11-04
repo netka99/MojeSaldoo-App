@@ -312,12 +312,12 @@ type WorkflowSettingsSectionProps = {
 };
 
 function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSectionProps) {
-  const [confirmField, setConfirmField] = useState<'auto_deliver_wz' | null>(null);
+  const [confirmField, setConfirmField] = useState<'auto_deliver_wz' | 'production_complete_immediately' | null>(null);
   const { data: settings, isPending, isError } = useWorkflowSettingsQuery(companyId);
   const updateMutation = useUpdateWorkflowSettingsMutation(companyId);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const toggle = async (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz', next: boolean) => {
+  const toggle = async (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately', next: boolean) => {
     if (!canEdit) return;
     setSaveError(null);
     try {
@@ -327,10 +327,10 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
     }
   };
 
-  const changedAtField = (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz') =>
+  const changedAtField = (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately') =>
     `${field}_changed_at` as keyof typeof settings;
 
-  const rows: { field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz'; title: string; description: string; confirmOnEnable?: string }[] = [
+  const rows: { field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately'; title: string; description: string; confirmOnEnable?: string }[] = [
     {
       field: 'orders_required',
       title: 'Wymagaj zamówienia przed WZ',
@@ -356,6 +356,12 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
         'Włączone: zatwierdzenie WZ = dostarczone od razu. Zamówienie zamyka się automatycznie. Idealne gdy ta sama osoba drukuje i dostarcza towar.\n' +
         'Wyłączone: WZ przechodzi przez etapy Zapisano → W drodze → Dostarczone. Przydatne gdy dostawa i potwierdzenie odbioru to dwa osobne kroki w firmie.',
       confirmOnEnable: 'Wszystkie otwarte dokumenty WZ (w statusie "Zapisano" lub "W drodze") zostaną automatycznie oznaczone jako Dostarczone. Czy chcesz kontynuować?',
+    },
+    {
+      field: 'production_complete_immediately',
+      title: 'Zakończ produkcję od razu',
+      description:
+        'Gdy włączone, formularz tworzenia zlecenia produkcji domyślnie zaznacza opcję "Zakończ od razu" — zlecenie jest tworzone i dokumenty RW+PW wystawiane w jednym kroku. Idealne dla piekarni, gdzie produkcja i ewidencja odbywają się równocześnie.',
     },
   ];
 
@@ -409,7 +415,7 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
                     disabled={disabled}
                     onToggle={() => {
                       if (!enabled && row.confirmOnEnable) {
-                        setConfirmField(row.field as 'auto_deliver_wz');
+                        setConfirmField(row.field as 'auto_deliver_wz' | 'production_complete_immediately');
                       } else {
                         void toggle(row.field, !enabled);
                       }

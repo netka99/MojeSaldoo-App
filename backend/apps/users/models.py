@@ -375,12 +375,21 @@ class CompanyWorkflowSettings(models.Model):
             "prints the WZ is also the driver — no separate 'mark as delivered' step needed."
         ),
     )
+    production_complete_immediately = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, the production order form defaults to 'complete immediately' — "
+            "creating the order and issuing RW+PW documents in one step. "
+            "Useful for bakeries where production and recording happen at the same time."
+        ),
+    )
 
     # Timestamps tracking when each boolean flag was last changed (None = never changed).
     orders_required_changed_at = models.DateTimeField(null=True, blank=True)
     wz_required_before_invoice_changed_at = models.DateTimeField(null=True, blank=True)
     auto_wz_on_order_changed_at = models.DateTimeField(null=True, blank=True)
     auto_deliver_wz_changed_at = models.DateTimeField(null=True, blank=True)
+    production_complete_immediately_changed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Company workflow settings"

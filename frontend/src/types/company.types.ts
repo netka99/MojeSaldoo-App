@@ -159,6 +159,8 @@ export interface CompanyWorkflowSettings {
   auto_wz_on_order_changed_at: string | null;
   auto_deliver_wz: boolean;
   auto_deliver_wz_changed_at: string | null;
+  production_complete_immediately: boolean;
+  production_complete_immediately_changed_at: string | null;
 }
 
 export interface CompanyWrite {
