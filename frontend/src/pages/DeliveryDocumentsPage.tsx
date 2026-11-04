@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/context/AuthContext';
 import { useMyCompaniesQuery } from '@/query/use-companies';
@@ -13,7 +13,7 @@ import { authStorage } from '@/services/api';
 import { deliveryService } from '@/services/delivery.service';
 import { DELIVERY_STATUS_LABELS_PL, deliveryStatusFilterOptions } from '@/constants/deliveryStatusPl';
 import { openMultiWZPrintWindow } from '@/lib/openMultiWZPrintWindow';
-import { ReportExpandIcon } from '@/lib/reportSurface';
+import { ReportExpandIcon, reportPresetClass } from '@/lib/reportSurface';
 import { cn } from '@/lib/utils';
 import type { DeliveryDocument, DeliveryDocumentStatus, DeliveryDocumentType, DeliveryItem, UserPermissions } from '@/types';
 import { createPortal } from 'react-dom';
@@ -114,19 +114,33 @@ export function buildDeliveryListFilters(
 }
 
 type ViewMode = 'list' | 'by-shop';
+type DocGroup = 'all' | 'external' | 'internal';
+
+const EXTERNAL_TYPES = new Set<DeliveryDocumentType>(['WZ', 'ZW', 'PZ', 'WZ-KOR', 'PZ-KOR']);
+const INTERNAL_TYPES = new Set<DeliveryDocumentType>(['RW', 'MM']);
+
+const segmentTrackClass = 'inline-flex w-fit flex-wrap items-center gap-2';
+
+function segmentButtonClass(active: boolean) {
+  return cn(
+    reportPresetClass,
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+    active
+      ? 'border-primary bg-primary text-primary-foreground'
+      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+  );
+}
 
 function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode) => void }) {
   return (
-    <div className="inline-flex w-fit gap-1 rounded-xl border-2 border-border bg-muted-foreground/15 p-1" role="group" aria-label="Tryb widoku">
+    <div className={segmentTrackClass} role="group" aria-label="Tryb widoku">
       {(['by-shop', 'list'] as const).map((m) => (
         <button
           key={m}
           type="button"
           onClick={() => onChange(m)}
-          className={cn(
-            'rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-            mode === m ? 'bg-white text-primary shadow-sm font-semibold' : 'text-foreground/70 font-medium hover:text-foreground',
-          )}
+          aria-pressed={mode === m}
+          className={segmentButtonClass(mode === m)}
         >
           {m === 'list' ? 'Lista' : 'Wg sklepu'}
         </button>
@@ -144,12 +158,6 @@ function fmtQty(v: string | number | null | undefined): string {
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function yesterdayIso(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
 }
 
 function thisWeekRange(): { from: string; to: string } {
@@ -1025,6 +1033,10 @@ function ExpandableDocRow({
           {printMode && <td />}
           <td colSpan={99} className="px-3 pb-3 pt-1">
             <div className="flex flex-col gap-3">
+              {/* Notes — show for RW/PZ from production */}
+              {row.notes?.trim() && (
+                <p className="text-xs text-slate-500">{row.notes}</p>
+              )}
               {/* Links row — only show corrections (document link is in the row header) */}
               {(row.corrections?.length ?? 0) > 0 && (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -1131,16 +1143,27 @@ function DeliveryDocumentsPageContent() {
 
   const hasPermission = (key: keyof UserPermissions): boolean =>
     !!(user?.is_company_admin || user?.permissions?.[key]);
-  // --- Shared date range (default: current month) ---
-  const [dateFrom, setDateFrom] = useState(() => currentMonthRange().from);
-  const [dateTo, setDateTo] = useState(() => currentMonthRange().to);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // --- Shared date range (persisted in URL) ---
+  const defaultFrom = currentMonthRange().from;
+  const defaultTo = currentMonthRange().to;
+  const dateFrom = searchParams.get('from') ?? defaultFrom;
+  const dateTo = searchParams.get('to') ?? defaultTo;
+  const setDateFrom = (v: string) => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('from', v); return n; }, { replace: true });
+  const setDateTo = (v: string) => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('to', v); return n; }, { replace: true });
 
   // --- View / print state ---
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const viewMode = (searchParams.get('view') as ViewMode | null) ?? 'list';
+  const setViewMode = (m: ViewMode) => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('view', m); return n; }, { replace: true });
   const [printMode, setPrintMode] = useState(false);
   const [printSelectedIds, setPrintSelectedIds] = useState<Set<string>>(() => new Set());
   const [isPrinting, setIsPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+
+  const docGroup = (searchParams.get('group') as DocGroup | null) ?? 'all';
+  const setDocGroup = (g: DocGroup) => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('group', g); return n; }, { replace: true });
 
   // --- Lista-tab client-side filters (column headers; empty set = all) ---
   const [listStatuses, setListStatuses] = useState<Set<DeliveryDocumentStatus>>(() => new Set());
@@ -1154,7 +1177,8 @@ function DeliveryDocumentsPageContent() {
   const [openColumn, setOpenColumn] = useState<ListColumn | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [listPage, setListPage] = useState(1);
-  const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
+  const sortBy = (searchParams.get('sort') as 'number' | 'date' | null) ?? 'number';
+  const setSortBy = (s: 'number' | 'date') => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('sort', s); return n; }, { replace: true });
 
   // --- Single shared query ---
   const { data, isFetching, isError, error, refetch } = useDeliveryByRangeQuery(dateFrom, dateTo);
@@ -1200,6 +1224,8 @@ function DeliveryDocumentsPageContent() {
     const customerQuery = listCustomerQuery.trim();
     const driverQuery = listDriverQuery.trim();
     return docs.filter((doc) => {
+      if (docGroup === 'external' && !EXTERNAL_TYPES.has(doc.document_type)) return false;
+      if (docGroup === 'internal' && !INTERNAL_TYPES.has(doc.document_type)) return false;
       if (listTypes.size > 0 && !listTypes.has(doc.document_type)) return false;
       if (listStatuses.size > 0 && !listStatuses.has(doc.status)) return false;
       if (numberQuery && !includesFold(doc.document_number?.trim() || '', numberQuery)) return false;
@@ -1219,11 +1245,11 @@ function DeliveryDocumentsPageContent() {
       }
       return true;
     });
-  }, [docs, listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery]);
+  }, [docs, docGroup, listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery]);
 
   useEffect(() => {
     setListPage(1);
-  }, [listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery, dateFrom, dateTo]);
+  }, [docGroup, listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery, dateFrom, dateTo]);
 
   useEffect(() => {
     if (!openColumn) return;
@@ -1284,19 +1310,17 @@ function DeliveryDocumentsPageContent() {
   const pagedListDocs = filteredListDocs.slice((listPage - 1) * PAGE_SIZE, listPage * PAGE_SIZE);
 
   // --- Quick date range helpers ---
-  const setRange = (from: string, to: string) => { setDateFrom(from); setDateTo(to); };
+  const setRange = (from: string, to: string) => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('from', from); n.set('to', to); return n; }, { replace: true });
   const isActiveRange = (from: string, to: string) => dateFrom === from && dateTo === to;
   const isRange = dateFrom !== dateTo;
 
   const today = todayIso();
-  const yesterday = yesterdayIso();
   const thisWeek = thisWeekRange();
   const thisMonth = currentMonthRange();
   const prevMonth = prevMonthRange();
 
   const quickRanges = [
     { label: 'Dziś', from: today, to: today },
-    { label: 'Wczoraj', from: yesterday, to: yesterday },
     { label: 'Ten tydzień', from: thisWeek.from, to: thisWeek.to },
     { label: 'Ten miesiąc', from: thisMonth.from, to: thisMonth.to },
     { label: 'Poprzedni miesiąc', from: prevMonth.from, to: prevMonth.to },
@@ -1344,29 +1368,11 @@ function DeliveryDocumentsPageContent() {
           )}
         </div>
 
-        {/* Toolbar: tabs | custom date inputs | print */}
-        <div className="flex flex-wrap items-center gap-3">
-          <ViewToggle mode={viewMode} onChange={setViewMode} />
-
-          <div className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5">
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              aria-label="Data wystawienia od"
-              className="border-none bg-transparent p-0 text-xs outline-none"
-            />
-            <span className="text-muted-foreground">→</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              aria-label="Data wystawienia do"
-              className="border-none bg-transparent p-0 text-xs outline-none"
-            />
-          </div>
-
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+        {/* Pasek 1: CO — widok, potem grupa dokumentów. Drukuj zostaje przy widoku. */}
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 md:rounded-3xl">
+            <ViewToggle mode={viewMode} onChange={setViewMode} />
+            <div className="ml-auto flex shrink-0 items-center gap-2">
             {printMode ? (
               <>
                 <Button type="button" size="sm" className="shrink-0" disabled={printSelectedIds.size === 0 || isPrinting} onClick={() => void handlePrint()}>
@@ -1383,29 +1389,66 @@ function DeliveryDocumentsPageContent() {
                 Drukuj WZ
               </Button>
             )}
+            </div>
           </div>
+          {viewMode === 'list' && (
+            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 md:rounded-3xl">
+            <div className={segmentTrackClass} role="group" aria-label="Grupa dokumentów">
+              {([['all', 'Wszystkie'], ['external', 'Zewnętrzne'], ['internal', 'Wewnętrzne']] as [DocGroup, string][]).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setDocGroup(value)}
+                  aria-pressed={docGroup === value}
+                  className={segmentButtonClass(docGroup === value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            </div>
+          )}
         </div>
 
-        {/* Quick ranges + counters */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-          <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-muted/30 p-1">
-            {quickRanges.map(({ label, from, to }) => (
-              <button
-                key={label}
-                type="button"
-                className={cn(
-                  'rounded px-3 py-1 text-[11px] font-bold uppercase transition-colors',
-                  isActiveRange(from, to)
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-                onClick={() => setRange(from, to)}
-              >
-                {label}
-              </button>
-            ))}
+        {/* Pasek 2: KIEDY — dropdown skrótów | custom date range | liczniki */}
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 md:rounded-3xl">
+          <div className="relative">
+            <select
+              aria-label="Szybki zakres dat"
+              value={quickRanges.find(({ from, to }) => isActiveRange(from, to))?.label ?? 'custom'}
+              onChange={(e) => {
+                const range = quickRanges.find((r) => r.label === e.target.value);
+                if (range) setRange(range.from, range.to);
+              }}
+              className="select-pill border-[#D4D2EE] bg-white font-normal text-slate-900 focus:border-primary focus:bg-white"
+            >
+              <option value="custom">Własny zakres</option>
+              {quickRanges.map(({ label }) => (
+                <option key={label} value={label}>{label}</option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            aria-label="Data wystawienia od"
+            className="date-pill border-[#D4D2EE] bg-white font-normal text-slate-900 focus:border-primary focus:bg-white"
+          />
+          <span className="text-slate-400">→</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            aria-label="Data wystawienia do"
+            className="date-pill border-[#D4D2EE] bg-white font-normal text-slate-900 focus:border-primary focus:bg-white"
+          />
+          <div className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
             {isFetching ? (
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
             ) : (
@@ -1419,6 +1462,7 @@ function DeliveryDocumentsPageContent() {
           </div>
         </div>
 
+        {/* placeholder to satisfy JSX — removed old counters block below */}
         {isError && (
           <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3" role="alert">
             <p className="text-sm text-destructive">{queryErrorMessage(error)}</p>
