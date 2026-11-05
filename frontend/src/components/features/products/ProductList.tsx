@@ -93,14 +93,14 @@ const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string }[] = [
   { value: 'services', label: 'Usługa' },
 ];
 
-function ColumnSortTh({ label, asc, desc, current, onSort, align = 'left' }: {
-  label: string; asc: string; desc: string; current: string; onSort: (v: string) => void; align?: 'left' | 'right';
+function ColumnSortTh({ label, asc, desc, current, onSort, align = 'left', extraClass }: {
+  label: string; asc: string; desc: string; current: string; onSort: (v: string) => void; align?: 'left' | 'right'; extraClass?: string;
 }) {
   const active = current === asc || current === desc;
   const isAsc = current === asc;
   const isDesc = current === desc;
   return (
-    <th scope="col" className={cn('whitespace-nowrap px-3 py-3', align === 'right' ? 'text-right' : 'text-left')}>
+    <th scope="col" className={cn('whitespace-nowrap px-3 py-3', align === 'right' ? 'text-right' : 'text-left', extraClass)}>
       <div className={cn('flex items-center gap-1', align === 'right' && 'justify-end')}>
         <span className={cn('text-xs font-semibold uppercase tracking-wide', active ? 'text-primary' : 'text-slate-500')}>
           {label}
@@ -368,7 +368,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
               <th scope="col" className={cn(reportThClass, 'text-right')}>Netto</th>
               <th scope="col" className={cn(reportThClass, 'text-right')}>Brutto</th>
               <th scope="col" className={reportThClass}>Status</th>
-              <ColumnSortTh label="Stan" asc="stock_total" desc="-stock_total" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} align="right" />
+              <ColumnSortTh label="Stan" asc="stock_total" desc="-stock_total" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} align="right" extraClass="pr-6" />
               {showActions && (
                 <th scope="col" className={cn(reportThClass, 'text-right')}>Akcje</th>
               )}
@@ -395,7 +395,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                 <td className="whitespace-nowrap px-3 py-3">
                   <span className={statusClass(p.is_active)}>{p.is_active ? 'Aktywny' : 'Nieaktywny'}</span>
                 </td>
-                <td className={cn(reportTdClass, 'text-right tabular-nums')}>{formatTotalStock(p.stock_total)}</td>
+                <td className={cn(reportTdClass, 'pr-6 text-right tabular-nums')}>{formatTotalStock(p.stock_total)}</td>
                 {showActions && (
                   <td className="whitespace-nowrap px-3 py-3 text-right">
                     <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
