@@ -58,11 +58,13 @@ class ProductViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "description", "sku", "barcode"]
     ordering_fields = [
         "name",
+        "sku",
         "unit",
         "price_net",
         "price_gross",
         "vat_rate",
         "min_stock_alert",
+        "stock_total",
         "created_at",
         "updated_at",
         "is_active",

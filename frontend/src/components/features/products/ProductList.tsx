@@ -93,6 +93,35 @@ const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string }[] = [
   { value: 'services', label: 'Usługa' },
 ];
 
+function ColumnSortTh({ label, asc, desc, current, onSort, align = 'left' }: {
+  label: string; asc: string; desc: string; current: string; onSort: (v: string) => void; align?: 'left' | 'right';
+}) {
+  const active = current === asc || current === desc;
+  const isAsc = current === asc;
+  const isDesc = current === desc;
+  return (
+    <th scope="col" className={cn('whitespace-nowrap px-3 py-3', align === 'right' ? 'text-right' : 'text-left')}>
+      <div className={cn('flex items-center gap-1', align === 'right' && 'justify-end')}>
+        <span className={cn('text-xs font-semibold uppercase tracking-wide', active ? 'text-primary' : 'text-slate-500')}>
+          {label}
+        </span>
+        <div className="flex gap-0.5">
+          <button type="button" aria-label={`${label} A→Z`} title="Rosnąco"
+            onClick={() => onSort(isAsc ? '-created_at' : asc)}
+            className={cn('rounded px-0.5 text-[10px] leading-none', isAsc ? 'text-primary' : 'text-slate-400 hover:text-slate-600')}>
+            ↑
+          </button>
+          <button type="button" aria-label={`${label} Z→A`} title="Malejąco"
+            onClick={() => onSort(isDesc ? '-created_at' : desc)}
+            className={cn('rounded px-0.5 text-[10px] leading-none', isDesc ? 'text-primary' : 'text-slate-400 hover:text-slate-600')}>
+            ↓
+          </button>
+        </div>
+      </div>
+    </th>
+  );
+}
+
 function ColumnFilterTh({ label, active, open, onToggle, children }: {
   label: string; active: boolean; open: boolean; onToggle: () => void; children: React.ReactNode;
 }) {
@@ -167,6 +196,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
   const [searchInput, setSearchInput] = useState(initialSearch);
   const [searchFilter, setSearchFilter] = useState(initialSearch);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [ordering, setOrdering] = useState<string>('-created_at');
   const [openColumn, setOpenColumn] = useState<string | null>(null);
 
   useEffect(() => {
@@ -179,7 +209,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
 
   const productTypeParam = typeFilter === 'all' ? undefined : typeFilter === 'services' ? 'service' : typeFilter;
 
-  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, searchFilter, productTypeParam);
+  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, searchFilter, productTypeParam, ordering);
   const items = data?.results ?? [];
   const count = data?.count ?? 0;
 
@@ -313,7 +343,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
         <table className={cn(reportTableClass, 'min-w-full')} aria-label="Lista produktów">
           <thead>
             <tr>
-              <th scope="col" className={reportThClass}>Nazwa</th>
+              <ColumnSortTh label="Nazwa" asc="name" desc="-name" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} />
               <ColumnFilterTh
                 label="Typ"
                 active={typeFilter !== 'all'}
@@ -334,11 +364,11 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                 </ul>
               </ColumnFilterTh>
               <th scope="col" className={reportThClass}>Jednostka</th>
-              <th scope="col" className={reportThClass}>SKU</th>
+              <ColumnSortTh label="SKU" asc="sku" desc="-sku" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} />
               <th scope="col" className={cn(reportThClass, 'text-right')}>Netto</th>
               <th scope="col" className={cn(reportThClass, 'text-right')}>Brutto</th>
               <th scope="col" className={reportThClass}>Status</th>
-              <th scope="col" className={cn(reportThClass, 'text-right')}>Stan</th>
+              <ColumnSortTh label="Stan" asc="stock_total" desc="-stock_total" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} align="right" />
               {showActions && (
                 <th scope="col" className={cn(reportThClass, 'text-right')}>Akcje</th>
               )}
