@@ -108,12 +108,12 @@ function ColumnSortTh({ label, asc, desc, current, onSort, align = 'left' }: {
         <div className="flex gap-0.5">
           <button type="button" aria-label={`${label} A→Z`} title="Rosnąco"
             onClick={() => onSort(isAsc ? '-created_at' : asc)}
-            className={cn('rounded px-0.5 text-[10px] leading-none', isAsc ? 'text-primary' : 'text-slate-400 hover:text-slate-600')}>
+            className={cn('rounded px-0.5 text-[10px] leading-none', isAsc ? 'text-primary' : 'text-slate-600 hover:text-slate-900')}>
             ↑
           </button>
           <button type="button" aria-label={`${label} Z→A`} title="Malejąco"
             onClick={() => onSort(isDesc ? '-created_at' : desc)}
-            className={cn('rounded px-0.5 text-[10px] leading-none', isDesc ? 'text-primary' : 'text-slate-400 hover:text-slate-600')}>
+            className={cn('rounded px-0.5 text-[10px] leading-none', isDesc ? 'text-primary' : 'text-slate-600 hover:text-slate-900')}>
             ↓
           </button>
         </div>
