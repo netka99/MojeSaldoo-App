@@ -30,6 +30,7 @@ export type ProductListParams = {
   is_active?: boolean;
   track_batches?: boolean;
   is_service?: boolean;
+  product_type?: string;
 };
 
 export type StockMovementType =

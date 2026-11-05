@@ -35,7 +35,7 @@ export function ProductsPage() {
           </div>
         )}
       </div>
-      <ProductList onRowClick={canManageProducts ? (p) => navigate(`/products/${p.id}/edit`) : undefined} />
+      <ProductList onRowClick={(p) => navigate(`/products/${p.id}`)} />
       {importOpen && <ProductImportDialog onClose={() => setImportOpen(false)} />}
     </ReportShell>
   );

@@ -3,15 +3,16 @@ import { productService, type StockUpdatePayload, type ImportProductsResult } fr
 import type { ProductWrite } from '@/types';
 import { productKeys, stockMovementKeys, stockSnapshotKeys, warehouseStockKeys, type StockMovementParams } from './keys';
 
-export function useProductListQuery(page: number, search: string, isService?: boolean) {
+export function useProductListQuery(page: number, search: string, productType?: string) {
   return useQuery({
-    queryKey: productKeys.list({ page, search, isService }),
+    queryKey: productKeys.list({ page, search, productType }),
     queryFn: () =>
       productService.fetchList({
         page,
         search: search || undefined,
         ordering: '-created_at',
-        is_service: isService,
+        is_service: productType === 'service' ? true : productType ? false : undefined,
+        product_type: productType && productType !== 'service' ? productType : undefined,
       }),
   });
 }

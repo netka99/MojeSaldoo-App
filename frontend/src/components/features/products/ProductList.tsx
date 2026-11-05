@@ -4,7 +4,6 @@ import { useProductListQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
 import {
   reportButtonClass,
-  reportPresetClass,
   reportRowClass,
   reportSubtitleClass,
   reportTableClass,
@@ -34,7 +33,14 @@ function formatTotalStock(value: string | number | undefined): string {
   return n.toLocaleString('pl-PL', { maximumFractionDigits: 3 });
 }
 
-type TypeFilter = 'all' | 'products' | 'services';
+type TypeFilter = 'all' | 'trade' | 'material' | 'finished' | 'services';
+
+const PRODUCT_TYPE_LABEL: Record<string, string> = {
+  trade: 'Towar handlowy',
+  material: 'Surowiec',
+  finished: 'Wyrób gotowy',
+  service: 'Usługa',
+};
 
 function itemCountLabel(count: number, filter: TypeFilter): string {
   if (filter === 'services') {
@@ -78,11 +84,13 @@ function queryErrorMessage(err: unknown): string {
   return 'Nie udało się wczytać produktów';
 }
 
-const TYPE_FILTER_LABELS: Record<TypeFilter, string> = {
-  all: 'Wszystkie',
-  products: 'Produkty',
-  services: 'Usługi',
-};
+const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string }[] = [
+  { value: 'all', label: 'Wszystkie' },
+  { value: 'trade', label: 'Towar' },
+  { value: 'material', label: 'Surowiec' },
+  { value: 'finished', label: 'Wyrób' },
+  { value: 'services', label: 'Usługa' },
+];
 
 function statusClass(active: boolean): string {
   return active ? 'text-sm font-medium text-emerald-700' : 'text-sm font-medium text-slate-400';
@@ -119,10 +127,9 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
     return () => window.clearTimeout(handle);
   }, [searchInput]);
 
-  const isServiceParam =
-    typeFilter === 'services' ? true : typeFilter === 'products' ? false : undefined;
+  const productTypeParam = typeFilter === 'all' ? undefined : typeFilter === 'services' ? 'service' : typeFilter;
 
-  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, searchFilter, isServiceParam);
+  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, searchFilter, productTypeParam);
   const items = data?.results ?? [];
   const count = data?.count ?? 0;
 
@@ -146,37 +153,17 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
         {isFetching && !data ? 'Ładowanie…' : itemCountLabel(count, typeFilter)}
       </p>
 
-      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 md:rounded-3xl md:px-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Rodzaj">
-            {(['all', 'products', 'services'] as TypeFilter[]).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => handleTypeFilter(f)}
-                className={cn(
-                  reportPresetClass,
-                  typeFilter === f
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-                )}
-                aria-pressed={typeFilter === f}
-              >
-                {TYPE_FILTER_LABELS[f]}
-              </button>
-            ))}
-          </div>
-          <div className="relative w-full sm:max-w-xs">
-            <SearchIcon />
-            <input
-              type="search"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Nazwa, SKU, opis…"
-              aria-label="Szukaj produktów po nazwie lub SKU"
-              className="field-ios w-full pl-9"
-            />
-          </div>
+      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 md:rounded-3xl md:px-5">
+        <div className="relative">
+          <SearchIcon />
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Nazwa, SKU, opis…"
+            aria-label="Szukaj produktów po nazwie lub SKU"
+            className="field-ios w-full pl-9"
+          />
         </div>
       </div>
 
@@ -219,9 +206,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">{p.name}</p>
-                {typeFilter === 'all' && (
-                  <p className="mt-0.5 text-sm font-normal text-slate-500">{p.is_service ? 'Usługa' : 'Produkt'}</p>
-                )}
+                <p className="mt-0.5 text-xs text-slate-500">{PRODUCT_TYPE_LABEL[p.product_type] ?? 'Produkt'}</p>
               </div>
                   <span className={cn('shrink-0', statusClass(p.is_active))}>{p.is_active ? 'Aktywny' : 'Nieaktywny'}</span>
                 </div>
@@ -266,6 +251,29 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
           <thead>
             <tr>
               <th scope="col" className={reportThClass}>Nazwa</th>
+              <th scope="col" className={reportThClass}>
+                <div className="flex items-center gap-1.5">
+                  <span>Typ</span>
+                  <div className="flex gap-1" role="group" aria-label="Filtr typu">
+                    {TYPE_FILTER_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => handleTypeFilter(opt.value)}
+                        className={cn(
+                          'rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors',
+                          typeFilter === opt.value
+                            ? 'bg-primary text-white'
+                            : 'text-slate-500 hover:bg-slate-100',
+                        )}
+                        aria-pressed={typeFilter === opt.value}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </th>
               <th scope="col" className={reportThClass}>Jednostka</th>
               <th scope="col" className={reportThClass}>SKU</th>
               <th scope="col" className={cn(reportThClass, 'text-right')}>Netto</th>
@@ -284,17 +292,13 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
                 className={cn(reportRowClass, onRowClick && 'cursor-pointer')}
                 onClick={() => openRow(p)}
               >
-                <td className="max-w-[280px] px-3 py-3">
+                <td className="max-w-[240px] px-3 py-3">
                   <div className="flex items-center gap-3">
                     <ProductThumb name={p.name} url={p.image_url} />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900">{p.name}</p>
-                      {typeFilter === 'all' && (
-                        <p className="text-sm font-normal text-slate-500">{p.is_service ? 'Usługa' : 'Produkt'}</p>
-                      )}
-                    </div>
+                    <p className="truncate text-sm font-semibold text-slate-900">{p.name}</p>
                   </div>
                 </td>
+                <td className={reportTdMutedClass}>{PRODUCT_TYPE_LABEL[p.product_type] ?? '—'}</td>
                 <td className={reportTdMutedClass}>{p.unit || '—'}</td>
                 <td className={cn(reportTdClass, 'max-w-[140px] truncate tabular-nums')}>{p.sku ?? '—'}</td>
                 <td className={cn(reportTdMutedClass, 'text-right')}>{formatMoney(p.price_net)}</td>

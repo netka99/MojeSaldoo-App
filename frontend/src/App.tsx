@@ -29,6 +29,9 @@ const ProductsPage = lazy(() => import('./pages/ProductsPage').then((m) => ({ de
 const ProductCreatePage = lazy(() =>
   import('./pages/ProductCreatePage').then((m) => ({ default: m.ProductCreatePage })),
 );
+const ProductDetailPage = lazy(() =>
+  import('./pages/ProductDetailPage').then((m) => ({ default: m.ProductDetailPage })),
+);
 const ProductEditPage = lazy(() =>
   import('./pages/ProductEditPage').then((m) => ({ default: m.ProductEditPage })),
 );
@@ -309,6 +312,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="products">
                       <ProductCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/products/:id"
+                  element={
+                    <ModuleRouteGate module="products">
+                      <ProductDetailPage />
                     </ModuleRouteGate>
                   }
                 />
