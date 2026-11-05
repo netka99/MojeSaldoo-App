@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useProductListQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
@@ -86,11 +87,59 @@ function queryErrorMessage(err: unknown): string {
 
 const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string }[] = [
   { value: 'all', label: 'Wszystkie' },
-  { value: 'trade', label: 'Towar' },
+  { value: 'trade', label: 'Towar handlowy' },
   { value: 'material', label: 'Surowiec' },
-  { value: 'finished', label: 'Wyrób' },
+  { value: 'finished', label: 'Wyrób gotowy' },
   { value: 'services', label: 'Usługa' },
 ];
+
+function ColumnFilterTh({ label, active, open, onToggle, children }: {
+  label: string; active: boolean; open: boolean; onToggle: () => void; children: React.ReactNode;
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = 220;
+      const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left));
+      setPos({ top: rect.bottom + 4, left });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+  }, [open]);
+
+  return (
+    <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+      <div data-column-filter="">
+        <button ref={buttonRef} type="button" aria-expanded={open} aria-haspopup="dialog"
+          onClick={onToggle}
+          className={cn('flex items-center gap-1 text-xs font-semibold uppercase tracking-wide',
+            active || open ? 'text-primary' : 'text-slate-500 hover:text-slate-700')}
+        >
+          {label}
+          {active && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />}
+          <svg className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {open && pos && createPortal(
+          <div data-column-filter="" role="dialog" aria-label={`Filtr: ${label}`}
+            className="fixed z-40 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-apple-md"
+            style={{ top: pos.top, left: pos.left }}>
+            {children}
+          </div>,
+          document.body,
+        )}
+      </div>
+    </th>
+  );
+}
 
 function statusClass(active: boolean): string {
   return active ? 'text-sm font-medium text-emerald-700' : 'text-sm font-medium text-slate-400';
@@ -118,6 +167,7 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
   const [searchInput, setSearchInput] = useState(initialSearch);
   const [searchFilter, setSearchFilter] = useState(initialSearch);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [openColumn, setOpenColumn] = useState<string | null>(null);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -138,8 +188,21 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
   const hasNext = page < totalPages;
   const showActions = Boolean(onEdit || onDelete);
 
+  useEffect(() => {
+    if (!openColumn) return;
+    const onDown = (e: MouseEvent) => {
+      if (e.target instanceof Element && e.target.closest('[data-column-filter]')) return;
+      setOpenColumn(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenColumn(null); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [openColumn]);
+
   function handleTypeFilter(f: TypeFilter) {
     setTypeFilter(f);
+    setOpenColumn(null);
     setPage(1);
   }
 
@@ -251,29 +314,25 @@ export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) 
           <thead>
             <tr>
               <th scope="col" className={reportThClass}>Nazwa</th>
-              <th scope="col" className={reportThClass}>
-                <div className="flex items-center gap-1.5">
-                  <span>Typ</span>
-                  <div className="flex gap-1" role="group" aria-label="Filtr typu">
-                    {TYPE_FILTER_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => handleTypeFilter(opt.value)}
-                        className={cn(
-                          'rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors',
-                          typeFilter === opt.value
-                            ? 'bg-primary text-white'
-                            : 'text-slate-500 hover:bg-slate-100',
-                        )}
-                        aria-pressed={typeFilter === opt.value}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </th>
+              <ColumnFilterTh
+                label="Typ"
+                active={typeFilter !== 'all'}
+                open={openColumn === 'type'}
+                onToggle={() => setOpenColumn((c) => (c === 'type' ? null : 'type'))}
+              >
+                <ul className="space-y-0.5">
+                  {TYPE_FILTER_OPTIONS.map((opt) => (
+                    <li key={opt.value}>
+                      <label className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-sm text-slate-800 hover:bg-slate-50">
+                        <input type="radio" name="product-type-filter" className="h-4 w-4 accent-primary"
+                          checked={typeFilter === opt.value}
+                          onChange={() => handleTypeFilter(opt.value)} />
+                        <span>{opt.label}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </ColumnFilterTh>
               <th scope="col" className={reportThClass}>Jednostka</th>
               <th scope="col" className={reportThClass}>SKU</th>
               <th scope="col" className={cn(reportThClass, 'text-right')}>Netto</th>
