@@ -11,6 +11,7 @@ import type {
   PzCompleteItemRow,
   PzCreatePayload,
   PzKorPayload,
+  MmCreatePayload,
   RwCreatePayload,
   StandaloneWzCreate,
   VanLoadingPayload,
@@ -40,6 +41,8 @@ export type DeliveryListParams = {
   from_supplier?: string;
   /** When true, returns only PZ documents with no linked KSeF invoice. */
   ksef_unlinked?: boolean;
+  /** Filter PZ by whether they have a linked purchase document (FZ/KSeF). */
+  has_purchase_document?: boolean;
   /**
    * When true, the list response includes nested `items`, `return_documents`, and `linked_invoices`.
    * Omit for the paginated "Lista" view; pass `true` for "Wg sklepu" and other views that
@@ -141,6 +144,10 @@ export const deliveryService = {
   /** `POST /api/delivery/create-rw/` — create and immediately post a manual RW write-off. */
   createRw: (data: RwCreatePayload) =>
     api.post<DeliveryDocument>(`${basePath}create-rw/`, data),
+
+  /** `POST /api/delivery/create-mm/` — create a manual MM inter-warehouse transfer. */
+  createMm: (data: MmCreatePayload) =>
+    api.post<DeliveryDocument>(`${basePath}create-mm/`, data),
 
   vanLoading: (data: VanLoadingPayload) =>
     api.post<DeliveryDocument>('/delivery/van-loading/', data),

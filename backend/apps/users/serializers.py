@@ -196,8 +196,8 @@ class CompanyMembershipSerializer(UUIDModelSerializer):
 class CompanyModuleSerializer(UUIDModelSerializer):
     class Meta:
         model = CompanyModule
-        fields = ["id", "company", "module", "is_enabled", "enabled_at"]
-        read_only_fields = ["company", "module", "enabled_at"]
+        fields = ["id", "company", "module", "is_enabled", "enabled_at", "disabled_at"]
+        read_only_fields = ["company", "module", "enabled_at", "disabled_at"]
 
 class UserRegistrationSerializer(UUIDModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])

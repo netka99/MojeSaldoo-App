@@ -110,6 +110,8 @@ export interface DeliveryDocument {
   ksef_invoice_refs?: Array<{ id: string; ksef_number: string; invoice_number: string }>;
   /** Writable: link/unlink a KSeF invoice to this PZ after the fact. */
   ksef_invoice_id?: string | null;
+  /** Purchase documents (FZ/KSeF) linked to this PZ via M:M (read-only). */
+  linked_purchase_documents?: Array<{ id: string; invoice_number: string; doc_type: string; issue_date: string | null }>;
   status: DeliveryDocumentStatus;
   has_returns: boolean;
   returns_notes: string;
@@ -243,6 +245,15 @@ export interface RwCreatePayload {
   issue_date?: string;
   notes?: string;
   items: RwCreateItem[];
+}
+
+/** `POST /api/delivery/create-mm/` */
+export interface MmCreatePayload {
+  from_warehouse_id: string;
+  to_warehouse_id: string;
+  issue_date?: string;
+  notes?: string;
+  items: RwCreateItem[]; // same shape: { product_id, quantity }
 }
 
 /** `POST /api/delivery/:id/complete/` body. */
@@ -427,6 +438,8 @@ export interface DeliveryDocumentPreviewPayload {
   document: DeliveryDocumentPreviewDocument;
   company: DeliveryDocumentPreviewCompany;
   customer: DeliveryDocumentPreviewCustomer;
+  /** Populated for PZ documents when a supplier is linked. */
+  supplier?: { name: string; nip: string; address: string } | null;
   from_warehouse: DeliveryDocumentPreviewWarehouse | null;
   to_warehouse: DeliveryDocumentPreviewWarehouse | null;
   items: DeliveryDocumentPreviewItem[];

@@ -11,6 +11,7 @@ import type {
   PzCompleteItemRow,
   PzCreatePayload,
   PzKorPayload,
+  MmCreatePayload,
   RwCreatePayload,
   StandaloneWzCreate,
   VanLoadingPayload,
@@ -443,6 +444,19 @@ export function useCompletePzMutation() {
 }
 
 /** Cancel a PZ and reverse its stock impact. Invalidates delivery + product stock. */
+/** Create a manual MM inter-warehouse transfer (immediately posted, stock moved). */
+export function useCreateMmMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MmCreatePayload) => deliveryService.createMm(body),
+    onSuccess: (doc: DeliveryDocument) => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.detail(doc.id) });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+}
+
 /** Create a manual RW write-off document (immediately posted, stock deducted). */
 export function useCreateRwMutation() {
   const queryClient = useQueryClient();
@@ -483,6 +497,47 @@ export function useUnmatchedPzQuery(supplierId?: string | null, enabled = true) 
       }),
     enabled: Boolean(companyId) && enabled,
     select: (data) => data.results,
+  });
+}
+
+/**
+ * Paginated PZ list for /purchasing/pz — date-range filtered, includes supplier name.
+ * Separate from useDeliveryByRangeQuery so it doesn't pollute the delivery cache.
+ */
+export function usePzListQuery(dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  return useQuery({
+    queryKey: deliveryKeys.list({ page: 1, companyId, document_type: 'PZ', issue_date_after: dateFrom, issue_date_before: dateTo }),
+    queryFn: () =>
+      deliveryService.fetchList({
+        document_type: 'PZ',
+        issue_date_after: dateFrom,
+        issue_date_before: dateTo,
+        page_size: 500,
+        ordering: '-document_number',
+        include_items: true,
+      }),
+    enabled: Boolean(dateFrom) && Boolean(dateTo) && Boolean(companyId),
+    select: (data) => data.results,
+  });
+}
+
+/**
+ * Link an existing PZ (by its UUID) to a purchase document (FZ/KSeF).
+ * Calls POST /purchase-documents/{invoiceId}/link-pz/ with { pz_id }.
+ */
+export function useLinkPzToDocumentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ invoiceId, pzId }: { invoiceId: string; pzId: string }) =>
+      import('@/services/purchase-document.service').then(({ purchaseDocumentService }) =>
+        purchaseDocumentService.linkPz(invoiceId, pzId),
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['purchase-documents'] });
+    },
   });
 }
 

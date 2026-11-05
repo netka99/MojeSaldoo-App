@@ -50,6 +50,17 @@ from .services import (
 )
 
 
+def _get_purchase_doc_pz_link_qs():
+    from apps.purchase_documents.models import PurchaseDocumentPzLink
+    return PurchaseDocumentPzLink.objects.select_related("purchase_document").only(
+        "delivery_document_id",
+        "purchase_document__uuid",
+        "purchase_document__document_number",
+        "purchase_document__doc_type",
+        "purchase_document__issue_date",
+    )
+
+
 # Maps each document type to the permission flag required to read/write it.
 _DOC_TYPE_PERMISSION = {
     DeliveryDocument.DOC_TYPE_WZ: 'can_manage_delivery',
@@ -135,6 +146,11 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             Prefetch(
                 "ksef_links",
                 queryset=DeliveryDocumentKSeFLink.objects.select_related("ksef_invoice"),
+            ),
+            # Prefetch linked purchase documents (FZ/KSeF) for PZ via M:M.
+            Prefetch(
+                "purchase_doc_links",
+                queryset=_get_purchase_doc_pz_link_qs(),
             ),
             Prefetch(
                 "wz_corrections",
@@ -805,6 +821,155 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
         doc.refresh_from_db()
         log_success(
             user=request.user, action="delivery.rw_create",
+            object_type="delivery", object_id=doc.document_number or str(doc.uuid),
+        )
+        return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="create-mm")
+    def create_mm(self, request):
+        """POST /delivery/create-mm/ — create a manual MM (inter-warehouse transfer).
+
+        Body:
+          {
+            "from_warehouse_id": "<uuid>",   # required — source warehouse
+            "to_warehouse_id": "<uuid>",     # required — destination warehouse
+            "issue_date": "2026-06-16",      # optional, defaults to today
+            "notes": "...",                  # optional
+            "items": [
+              {"product_id": "<uuid>", "quantity": "1.000"},
+              ...
+            ]
+          }
+        """
+        from apps.products.models import Product as ProductModel, ProductStock
+
+        company_id = request.user.current_company_id
+
+        from_warehouse_id = request.data.get("from_warehouse_id")
+        to_warehouse_id = request.data.get("to_warehouse_id")
+        issue_date_raw = request.data.get("issue_date")
+        notes = request.data.get("notes", "")
+        items_data = request.data.get("items", [])
+
+        if not from_warehouse_id:
+            return Response({"error": "from_warehouse_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not to_warehouse_id:
+            return Response({"error": "to_warehouse_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if from_warehouse_id == to_warehouse_id:
+            return Response({"error": "Source and destination warehouse must be different."}, status=status.HTTP_400_BAD_REQUEST)
+        if not items_data:
+            return Response({"error": "At least one item is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from_warehouse = Warehouse.objects.get(uuid=from_warehouse_id, company_id=company_id)
+        except Warehouse.DoesNotExist:
+            return Response({"error": "Source warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            to_warehouse = Warehouse.objects.get(uuid=to_warehouse_id, company_id=company_id)
+        except Warehouse.DoesNotExist:
+            return Response({"error": "Destination warehouse not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        issue_date = timezone.localdate()
+        if issue_date_raw:
+            from django.utils.dateparse import parse_date
+            parsed = parse_date(str(issue_date_raw))
+            if parsed:
+                issue_date = parsed
+
+        product_ids = [row.get("product_id") for row in items_data if row.get("product_id")]
+        products_by_id = {
+            str(p.uuid): p
+            for p in ProductModel.objects.filter(uuid__in=product_ids, company_id=company_id)
+        }
+
+        with transaction.atomic():
+            doc = DeliveryDocument.objects.create(
+                company=request.user.current_company,
+                user=request.user,
+                document_type=DeliveryDocument.DOC_TYPE_MM,
+                issue_date=issue_date,
+                from_warehouse=from_warehouse,
+                to_warehouse=to_warehouse,
+                notes=notes,
+                status=DeliveryDocument.STATUS_DELIVERED,
+            )
+
+            allow_negative = bool(from_warehouse.allow_negative_stock)
+            for row in items_data:
+                pid = str(row.get("product_id", ""))
+                product = products_by_id.get(pid)
+                if not product:
+                    continue
+                try:
+                    qty = Decimal(str(row.get("quantity", "0")))
+                except Exception:
+                    qty = Decimal("0")
+                if qty <= 0:
+                    continue
+
+                DeliveryItem.objects.create(
+                    document=doc,
+                    product=product,
+                    quantity_planned=qty,
+                    quantity_actual=qty,
+                )
+
+                # Deduct from source warehouse
+                src_stock, _ = ProductStock.objects.get_or_create(
+                    product=product, warehouse=from_warehouse,
+                    defaults={"quantity_available": Decimal("0")},
+                )
+                qty_before_src = src_stock.quantity_available
+                src_stock.quantity_available -= qty
+                if not allow_negative and src_stock.quantity_available < 0:
+                    raise ValidationError(
+                        {"detail": f"Niewystarczający stan magazynowy dla {product.name} w {from_warehouse.name}."}
+                    )
+                src_stock.save(update_fields=["quantity_available"])
+
+                StockMovement.objects.create(
+                    company_id=company_id,
+                    product=product,
+                    warehouse=from_warehouse,
+                    user=request.user,
+                    movement_type=StockMovement.MovementType.TRANSFER,
+                    quantity=-qty,
+                    quantity_before=qty_before_src,
+                    quantity_after=src_stock.quantity_available,
+                    reference_type="mm_manual",
+                    reference_id=doc.uuid,
+                    notes=f"MM — wydanie z {from_warehouse.name}",
+                    created_by=request.user,
+                )
+
+                # Add to destination warehouse
+                dst_stock, _ = ProductStock.objects.get_or_create(
+                    product=product, warehouse=to_warehouse,
+                    defaults={"quantity_available": Decimal("0")},
+                )
+                qty_before_dst = dst_stock.quantity_available
+                dst_stock.quantity_available += qty
+                dst_stock.save(update_fields=["quantity_available"])
+
+                StockMovement.objects.create(
+                    company_id=company_id,
+                    product=product,
+                    warehouse=to_warehouse,
+                    user=request.user,
+                    movement_type=StockMovement.MovementType.TRANSFER,
+                    quantity=qty,
+                    quantity_before=qty_before_dst,
+                    quantity_after=dst_stock.quantity_available,
+                    reference_type="mm_manual",
+                    reference_id=doc.uuid,
+                    notes=f"MM — przyjęcie do {to_warehouse.name}",
+                    created_by=request.user,
+                )
+
+        doc.refresh_from_db()
+        log_success(
+            user=request.user, action="delivery.mm_create",
             object_type="delivery", object_id=doc.document_number or str(doc.uuid),
         )
         return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)

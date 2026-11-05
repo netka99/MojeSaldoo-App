@@ -29,6 +29,7 @@ describe('company.types', () => {
       module: 'products',
       isEnabled: true,
       enabledAt: null,
+      disabledAt: null,
     };
 
     const membership: CompanyMembership = {

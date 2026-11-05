@@ -431,6 +431,7 @@ class CompanyModule(models.Model):
     module = models.CharField(max_length=50, choices=MODULE_CHOICES)
     is_enabled = models.BooleanField(default=False)
     enabled_at = models.DateTimeField(null=True, blank=True)
+    disabled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("company", "module")

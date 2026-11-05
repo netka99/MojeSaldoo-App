@@ -156,6 +156,7 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
         statusOff: copy.statusOff,
         isEnabled: row?.isEnabled ?? false,
         enabledAt: row?.enabledAt ?? null,
+        disabledAt: row?.disabledAt ?? null,
       };
     });
   }, [modules]);
@@ -247,6 +248,16 @@ function CompanySettingsModules({ companyId, canChangeModules, onRefreshUser, us
                     disabled={switchDisabled}
                     onToggle={() => void onToggle(row.module, !row.isEnabled)}
                   />
+                  {row.isEnabled && row.enabledAt && (
+                    <span className="text-[11px] text-slate-400">
+                      od {new Date(row.enabledAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                  )}
+                  {!row.isEnabled && row.disabledAt && (
+                    <span className="text-[11px] text-slate-400">
+                      wył. {new Date(row.disabledAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                  )}
                 </div>
               </div>
 

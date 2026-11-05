@@ -1234,6 +1234,15 @@ def create_wz_correction(
     orig_items = list(original_wz.items.select_related("product").order_by("created_at"))
     orig_item_map = {str(it.uuid): it for it in orig_items}
 
+    # Sum quantities already returned across all existing WZ-KOR documents for this WZ.
+    already_returned: dict = {}
+    for kor in original_wz.wz_corrections.prefetch_related("items").all():
+        for kor_item in kor.items.all():
+            pid = str(kor_item.product_id)
+            already_returned[pid] = already_returned.get(pid, Decimal("0")) + (
+                kor_item.quantity_actual if kor_item.quantity_actual is not None else kor_item.quantity_planned or Decimal("0")
+            )
+
     changes = []
     for row in correction_items:
         item_id = str(row.get("delivery_item_id", ""))
@@ -1247,9 +1256,18 @@ def create_wz_correction(
 
         orig_item = orig_item_map[item_id]
         delivered = orig_item.quantity_actual if orig_item.quantity_actual is not None else orig_item.quantity_planned
-        if qty_returned > delivered:
+        pid = str(orig_item.product_id)
+        previously_returned = already_returned.get(pid, Decimal("0"))
+        remaining = delivered - previously_returned
+        if qty_returned > remaining:
             raise ValidationError(
-                {"detail": f"Ilość zwrotu ({qty_returned}) przekracza ilość dostarczoną ({delivered}) dla {orig_item.product.name}."}
+                {
+                    "detail": (
+                        f"Ilość zwrotu ({qty_returned}) przekracza pozostałą do zwrotu ilość "
+                        f"({remaining}) dla {orig_item.product.name}. "
+                        f"Wcześniej zwrócono już {previously_returned} z {delivered}."
+                    )
+                }
             )
 
         changes.append({
@@ -1315,7 +1333,7 @@ def create_wz_correction(
             quantity_before=qty_before,
             quantity_after=stock.quantity_available,
             reference_type="wz_correction",
-            reference_id=wz_kor.id,
+            reference_id=wz_kor.uuid,
             notes=f"Korekta WZ {doc_label}" + (f" — {change['return_reason']}" if change["return_reason"] else ""),
             created_by=user,
         )
@@ -1418,10 +1436,22 @@ def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
             }
         )
 
+    # For PZ: include supplier as a separate block
+    supplier_block = None
+    if doc.document_type == "PZ" and doc.from_supplier_id:
+        sup = doc.from_supplier
+        address_parts = [p for p in [sup.street, sup.postal_code, sup.city] if p]
+        supplier_block = {
+            "name": sup.name or "",
+            "nip": sup.nip or "",
+            "address": ", ".join(address_parts),
+        }
+
     return {
         "document": document_block,
         "company": company_block,
         "customer": customer_block,
+        "supplier": supplier_block,
         "from_warehouse": from_warehouse,
         "to_warehouse": to_warehouse,
         "items": items_out,

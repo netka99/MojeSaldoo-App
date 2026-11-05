@@ -56,10 +56,11 @@ export type WZPrintViewProps = {
 };
 
 export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
-  const { document: doc, customer, from_warehouse, to_warehouse, items, return_documents = [] } = preview;
+  const { document: doc, customer, supplier, from_warehouse, to_warehouse, items, return_documents = [] } = preview;
   const typeLabel = DOC_TYPE_LABEL_PL[doc.document_type] ?? doc.document_type;
   const rows = buildRows(items ?? []);
   const isMM = doc.document_type === 'MM';
+  const isPZ = doc.document_type === 'PZ';
 
   const fromWhText = from_warehouse
     ? `${from_warehouse.name} (${from_warehouse.code})`
@@ -74,6 +75,12 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
     customer.nip ? `NIP: ${customer.nip}` : null,
     customer.address ? customer.address : null,
   ].filter(Boolean) as string[];
+
+  const supplierLines = supplier ? [
+    supplier.name ? supplier.name : null,
+    supplier.nip ? `NIP: ${supplier.nip}` : null,
+    supplier.address ? supplier.address : null,
+  ].filter(Boolean) as string[] : [];
 
   const wystawil = (issuedByName ?? '').trim() || '\u00a0';
   const kierowca = doc.driver_name?.trim() || '\u00a0';
@@ -101,11 +108,28 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
 
       <section className="wz-print-parties" aria-label="Magazyn i odbiorca">
         <div className="wz-print-party-box">
-          <h2 className="wz-print-party-title">Z magazynu</h2>
-          <p className="wz-print-party-body">{fromWhText}</p>
+          {isPZ ? (
+            <>
+              <h2 className="wz-print-party-title">Dostawca</h2>
+              {supplierLines.length === 0 ? (
+                <p className="wz-print-party-body">—</p>
+              ) : (
+                <ul className="wz-print-party-lines">
+                  {supplierLines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <>
+              <h2 className="wz-print-party-title">Z magazynu</h2>
+              <p className="wz-print-party-body">{fromWhText}</p>
+            </>
+          )}
         </div>
         <div className="wz-print-party-box">
-          {isMM ? (
+          {isPZ || isMM ? (
             <>
               <h2 className="wz-print-party-title">Do magazynu</h2>
               <p className="wz-print-party-body">{toWhText}</p>
@@ -131,19 +155,11 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
         <table className="wz-print-table" aria-label="Pozycje dokumentu">
           <thead>
             <tr>
-              <th className="narrow center" scope="col">
-                Nr
-              </th>
+              <th className="narrow center" scope="col">Nr</th>
               <th scope="col">Produkt</th>
-              <th className="num" scope="col">
-                Ilość planowana
-              </th>
-              <th className="num" scope="col">
-                Ilość dostarczona
-              </th>
-              <th className="num" scope="col">
-                Zwroty
-              </th>
+              <th className="num" scope="col">Ilość zamówiona</th>
+              <th className="num" scope="col">{isPZ ? 'Przyjęto' : 'Ilość dostarczona'}</th>
+              {!isPZ && <th className="num" scope="col">Zwroty</th>}
               <th scope="col">J.m.</th>
             </tr>
           </thead>
@@ -154,7 +170,7 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
                 <td>{row.product_name}</td>
                 <td className="num">{row.quantity_planned}</td>
                 <td className="num">{row.quantity_actual}</td>
-                <td className="num">{row.quantity_returned}</td>
+                {!isPZ && <td className="num">{row.quantity_returned}</td>}
                 <td>{row.unit}</td>
               </tr>
             ))}
@@ -168,8 +184,8 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
         </section>
       ) : null}
 
-      {/* Return confirmation table — real ZW rows when linked, otherwise blank rows */}
-      <div className="wz-print-table-wrap" aria-label="Potwierdzenie zwrotów">
+      {/* Return confirmation table — WZ only, not shown for PZ */}
+      {!isPZ && <div className="wz-print-table-wrap" aria-label="Potwierdzenie zwrotów">
         <p className="wz-print-returns-heading">
           Potwierdzenie przyjęcia zwrotów / opakowań
         </p>
@@ -208,19 +224,21 @@ export function WZPrintView({ preview, issuedByName }: WZPrintViewProps) {
             Nr dokumentu ZW: {return_documents.map((zw: DeliveryDocumentPreviewReturnDocument) => zw.document_number).join(', ')}
           </p>
         )}
-      </div>
+      </div>}
 
       <section className="wz-print-signatures" aria-label="Podpisy">
         <div className="wz-print-signature">
           <p className="wz-print-sig-label">Wystawił:</p>
           <p className="wz-print-sig-value">{wystawil}</p>
         </div>
+        {!isPZ && (
+          <div className="wz-print-signature">
+            <p className="wz-print-sig-label">Kierowca:</p>
+            <p className="wz-print-sig-value">{kierowca}</p>
+          </div>
+        )}
         <div className="wz-print-signature">
-          <p className="wz-print-sig-label">Kierowca:</p>
-          <p className="wz-print-sig-value">{kierowca}</p>
-        </div>
-        <div className="wz-print-signature">
-          <p className="wz-print-sig-label">Odbiorca:</p>
+          <p className="wz-print-sig-label">{isPZ ? 'Przyjął:' : 'Odbiorca:'}</p>
           <p className="wz-print-sig-value">{odbiorca}</p>
         </div>
       </section>

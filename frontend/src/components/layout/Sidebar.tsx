@@ -311,8 +311,13 @@ function NavSectionMagazyn() {
           </ModuleNavItem>
         )}
         {canRW && (
-          <ModuleNavItem module="warehouses" to="/delivery/new-rw" icon={<NavGlyph name="minus" />}>
-            Odpisy (RW)
+          <ModuleNavItem module="warehouses" to="/warehouse-moves" icon={<NavGlyph name="layers" />}>
+            Ruchy magazynowe
+          </ModuleNavItem>
+        )}
+        {canRW && (
+          <ModuleNavItem module="warehouses" to="/delivery/new-rw" className="pl-7 text-muted-foreground" icon={<NavGlyph name="minus" />}>
+            Nowy odpis (RW)
           </ModuleNavItem>
         )}
       </div>
@@ -367,14 +372,14 @@ function NavSectionZakupy() {
             Dostawcy
           </ModuleNavItem>
         )}
+        {purchasingEnabled && canPurchasing && (
+          <ModuleNavItem module="purchasing" to="/purchasing/pz" icon={<NavGlyph name="inbox" />}>
+            Przyjęcia (PZ)
+          </ModuleNavItem>
+        )}
         {purchaseOrdersEnabled && canPurchaseOrders && (
           <ModuleNavItem module="purchase_orders" to="/purchase-orders" icon={<NavGlyph name="cart" />}>
             Zamówienia ZD
-          </ModuleNavItem>
-        )}
-        {purchasingEnabled && canPurchasing && (
-          <ModuleNavItem module="purchasing" to="/delivery/new-pz" icon={<NavGlyph name="inbox" />}>
-            Nowe PZ
           </ModuleNavItem>
         )}
         {ksefEnabled && canKsefInbox && (

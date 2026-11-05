@@ -7,6 +7,7 @@ type CompanyModuleApi = {
   module: ModuleName;
   is_enabled: boolean;
   enabled_at: string | null;
+  disabled_at: string | null;
 };
 
 function mapCompanyModule(row: CompanyModuleApi): CompanyModule {
@@ -14,6 +15,7 @@ function mapCompanyModule(row: CompanyModuleApi): CompanyModule {
     module: row.module,
     isEnabled: row.is_enabled,
     enabledAt: row.enabled_at,
+    disabledAt: row.disabled_at,
   };
 }
 

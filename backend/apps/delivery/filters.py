@@ -38,6 +38,22 @@ class KsefUnlinkedFilter(django_filters.BooleanFilter):
         return qs
 
 
+class HasPurchaseDocumentFilter(django_filters.BooleanFilter):
+    """
+    ?has_purchase_document=false → PZ documents with no linked FZ/KSeF invoice.
+    ?has_purchase_document=true  → PZ documents that have at least one linked invoice.
+
+    Uses the M:M reverse relation purchase_documents (PurchaseDocumentPzLink).
+    """
+
+    def filter(self, qs, value):
+        if value is True:
+            return qs.filter(purchase_doc_links__isnull=False).distinct()
+        if value is False:
+            return qs.filter(purchase_doc_links__isnull=True).distinct()
+        return qs
+
+
 class DeliveryDocumentFilter(django_filters.FilterSet):
     """List filters: order, status, document type, issue_date range."""
 
@@ -55,6 +71,7 @@ class DeliveryDocumentFilter(django_filters.FilterSet):
     from_supplier = django_filters.UUIDFilter(field_name="from_supplier__uuid")
     order_ids = OrderIdsFilter()
     ksef_unlinked = KsefUnlinkedFilter()
+    has_purchase_document = HasPurchaseDocumentFilter()
 
     class Meta:
         model = DeliveryDocument

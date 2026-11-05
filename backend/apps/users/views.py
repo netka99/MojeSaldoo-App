@@ -215,8 +215,25 @@ class CompanyModuleEnableView(APIView):
         _ensure_company_modules(company)
         row = get_object_or_404(CompanyModule, company=company, module=module_key)
         row.is_enabled = bool(request.data["is_enabled"])
-        row.enabled_at = timezone.now() if row.is_enabled else None
-        row.save(update_fields=["is_enabled", "enabled_at"])
+        now = timezone.now()
+        if row.is_enabled:
+            row.enabled_at = now
+        else:
+            row.disabled_at = now
+        row.save(update_fields=["is_enabled", "enabled_at", "disabled_at"])
+
+        try:
+            from apps.activity.log import log_success
+            log_success(
+                user=request.user,
+                action="module.enabled" if row.is_enabled else "module.disabled",
+                object_type="module",
+                object_id=module_key,
+                request=request,
+            )
+        except Exception:
+            pass
+
         return Response(CompanyModuleSerializer(row).data)
 
 

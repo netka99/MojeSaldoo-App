@@ -20,6 +20,7 @@ import {
   useUpdateDeliveryLinesMutation,
 } from '@/query/use-delivery';
 import { useOrderQuery } from '@/query/use-orders';
+import { useAllSuppliersQuery } from '@/query/use-suppliers';
 import { useWorkflowSettingsQuery } from '@/query/use-companies';
 import { productService } from '@/services/product.service';
 import { customerService } from '@/services/customer.service';
@@ -911,7 +912,7 @@ export function DeliveryDocumentDetailPage() {
 
   /* ── Pending returns (collected before saving WZ) ───────────── */
   const [pendingReturns, setPendingReturns] = useState<PendingReturnItem[]>([]);
-  const [headerDraft, setHeaderDraft] = useState({ driver_name: '', notes: '', issue_date: '', external_document_number: '', from_warehouse_id: '' });
+  const [headerDraft, setHeaderDraft] = useState({ driver_name: '', notes: '', issue_date: '', external_document_number: '', from_warehouse_id: '', from_supplier_id: '' });
   const [headerOpen, setHeaderOpen] = useState(false);
 
   const { data: warehousesData } = useQuery({
@@ -991,14 +992,16 @@ export function DeliveryDocumentDetailPage() {
           })),
         },
       });
-      // For PZ: also save notes + external doc number if changed
+      // For PZ: also save notes, external doc number, and supplier if changed
       if (isPZ && (
         headerDraft.notes !== (doc.notes ?? '') ||
-        headerDraft.external_document_number !== (doc.external_document_number ?? '')
+        headerDraft.external_document_number !== (doc.external_document_number ?? '') ||
+        headerDraft.from_supplier_id !== (doc.from_supplier_id ? String(doc.from_supplier_id) : '')
       )) {
         await patchM.mutateAsync({ id, data: {
           notes: headerDraft.notes.trim() || undefined,
           external_document_number: headerDraft.external_document_number.trim() || undefined,
+          from_supplier_id: headerDraft.from_supplier_id || null,
         }});
       }
       // Also save edits for each linked ZW document
@@ -1029,6 +1032,7 @@ export function DeliveryDocumentDetailPage() {
       issue_date: doc.issue_date ? doc.issue_date.slice(0, 10) : '',
       external_document_number: doc.external_document_number ?? '',
       from_warehouse_id: doc.from_warehouse_id ? String(doc.from_warehouse_id) : '',
+      from_supplier_id: doc.from_supplier_id ? String(doc.from_supplier_id) : '',
     });
   }, [doc]);
 
@@ -1084,6 +1088,7 @@ export function DeliveryDocumentDetailPage() {
   const locked = Boolean(doc?.locked_for_edit);
   const isPZ = doc?.document_type === 'PZ';
   const isRW = doc?.document_type === 'RW';
+  const { data: suppliers } = useAllSuppliersQuery(isPZ && isEditing);
   const workflowBusy = saveM.isPending || startM.isPending || completeM.isPending || completePzM.isPending || cancelPzM.isPending || createKorM.isPending || patchM.isPending || updateLinesM.isPending || addReturnsM.isPending;
 
   /* ── Items to display (filter 0-qty in edit mode) ───────────── */
@@ -1597,6 +1602,29 @@ export function DeliveryDocumentDetailPage() {
               <div className="rounded-2xl bg-card shadow-[0_2px_12px_rgba(26,28,31,0.07)] px-4 py-3 space-y-3">
                 <div>
                   <label className="mb-1 block text-[13px] font-medium text-foreground">
+                    Dostawca
+                  </label>
+                  <select
+                    value={headerDraft.from_supplier_id}
+                    onChange={(e) => setHeaderDraft((s) => ({ ...s, from_supplier_id: e.target.value }))}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">— brak dostawcy —</option>
+                    {(suppliers ?? []).map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <Link
+                    to="/suppliers/new"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-[12px] font-medium text-primary hover:underline"
+                  >
+                    + Dodaj nowego dostawcę
+                  </Link>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[13px] font-medium text-foreground">
                     Nr dokumentu dostawcy
                   </label>
                   <input
@@ -1891,13 +1919,13 @@ export function DeliveryDocumentDetailPage() {
           initial={{ y: 80, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           className={cn(
-            'fixed left-0 right-0 z-40 px-5',
+            'fixed left-0 right-0 z-40 px-5 md:left-64',
             'bottom-[calc(83px+env(safe-area-inset-bottom))] md:bottom-0 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
           )}
         >
           <div className="mx-auto max-w-3xl rounded-2xl bg-card p-5 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
-            <p className="mb-4 text-[13px] text-muted-foreground">
-              Zmień ilości zaplanowane na tym dokumencie WZ.
+            <p className="mb-4 text-center text-[13px] text-muted-foreground">
+              {isPZ ? 'Zmień ilości i dane na tym dokumencie PZ.' : 'Zmień ilości zaplanowane na tym dokumencie WZ.'}
             </p>
             <div className="flex flex-col gap-2">
               <motion.button

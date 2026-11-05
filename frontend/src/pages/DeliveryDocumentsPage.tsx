@@ -114,10 +114,11 @@ export function buildDeliveryListFilters(
 }
 
 type ViewMode = 'list' | 'by-shop';
-type DocGroup = 'all' | 'external' | 'internal';
 
-const EXTERNAL_TYPES = new Set<DeliveryDocumentType>(['WZ', 'ZW', 'PZ', 'WZ-KOR', 'PZ-KOR']);
-const INTERNAL_TYPES = new Set<DeliveryDocumentType>(['RW', 'MM']);
+// PZ and PZ-KOR are managed via /purchase-documents (linked to supplier invoices).
+// RW and MM are warehouse-internal moves managed via /warehouse-moves.
+// This page shows only customer-facing delivery documents.
+const DELIVERY_TYPES = new Set<DeliveryDocumentType>(['WZ', 'ZW', 'WZ-KOR']);
 
 const segmentTrackClass = 'inline-flex w-fit flex-wrap items-center gap-2';
 
@@ -708,11 +709,7 @@ type ListColumn = 'number' | 'type' | 'customer' | 'driver' | 'status' | 'order'
 const DOC_TYPE_FILTER_OPTIONS: { value: DeliveryDocumentType; label: string }[] = [
   { value: 'WZ', label: 'WZ — Wydanie zewnętrzne' },
   { value: 'ZW', label: 'ZW — Zwrot zewnętrzny' },
-  { value: 'MM', label: 'MM — Przesunięcie międzymagazynowe' },
-  { value: 'PZ', label: 'PZ — Przyjęcie zewnętrzne' },
-  { value: 'RW', label: 'RW — Rozchód wewnętrzny' },
   { value: 'WZ-KOR', label: 'WZ-KOR — Korekta wydania' },
-  { value: 'PZ-KOR', label: 'PZ-KOR — Korekta przyjęcia' },
 ];
 
 function toggleInSet<T>(current: Set<T>, value: T): Set<T> {
@@ -1162,9 +1159,6 @@ function DeliveryDocumentsPageContent() {
   const [isPrinting, setIsPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
 
-  const docGroup = (searchParams.get('group') as DocGroup | null) ?? 'all';
-  const setDocGroup = (g: DocGroup) => setSearchParams((p) => { const n = new URLSearchParams(p); n.set('group', g); return n; }, { replace: true });
-
   // --- Lista-tab client-side filters (column headers; empty set = all) ---
   const [listStatuses, setListStatuses] = useState<Set<DeliveryDocumentStatus>>(() => new Set());
   const [listTypes, setListTypes] = useState<Set<DeliveryDocumentType>>(() => new Set());
@@ -1224,8 +1218,7 @@ function DeliveryDocumentsPageContent() {
     const customerQuery = listCustomerQuery.trim();
     const driverQuery = listDriverQuery.trim();
     return docs.filter((doc) => {
-      if (docGroup === 'external' && !EXTERNAL_TYPES.has(doc.document_type)) return false;
-      if (docGroup === 'internal' && !INTERNAL_TYPES.has(doc.document_type)) return false;
+      if (!DELIVERY_TYPES.has(doc.document_type)) return false;
       if (listTypes.size > 0 && !listTypes.has(doc.document_type)) return false;
       if (listStatuses.size > 0 && !listStatuses.has(doc.status)) return false;
       if (numberQuery && !includesFold(doc.document_number?.trim() || '', numberQuery)) return false;
@@ -1245,11 +1238,11 @@ function DeliveryDocumentsPageContent() {
       }
       return true;
     });
-  }, [docs, docGroup, listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery]);
+  }, [docs, listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery]);
 
   useEffect(() => {
     setListPage(1);
-  }, [docGroup, listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery, dateFrom, dateTo]);
+  }, [listTypes, listStatuses, listCustomers, listCustomerQuery, listDrivers, listDriverQuery, listNumberQuery, listOrderQuery, dateFrom, dateTo]);
 
   useEffect(() => {
     if (!openColumn) return;
@@ -1361,27 +1354,16 @@ function DeliveryDocumentsPageContent() {
       <div className="mx-auto w-full max-w-6xl space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-[1.5rem] font-semibold tracking-tight text-foreground">Dokumenty</h1>
-          {canDelivery && (
-            <Link to="/delivery/new">
-              <Button className="w-full sm:w-auto">+ Nowe WZ</Button>
-            </Link>
-          )}
-        </div>
-
-        {/* Pasek 1: CO — widok, potem grupa dokumentów. Drukuj zostaje przy widoku. */}
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 md:rounded-3xl">
-            <ViewToggle mode={viewMode} onChange={setViewMode} />
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             {printMode ? (
               <>
-                <Button type="button" size="sm" className="shrink-0" disabled={printSelectedIds.size === 0 || isPrinting} onClick={() => void handlePrint()}>
+                <Button type="button" className="w-full sm:w-auto" disabled={printSelectedIds.size === 0 || isPrinting} onClick={() => void handlePrint()}>
                   {isPrinting ? 'Pobieranie…' : `Drukuj (${printSelectedIds.size})`}
                 </Button>
-                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={exitPrintMode} disabled={isPrinting}>Anuluj</Button>
+                <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={exitPrintMode} disabled={isPrinting}>Anuluj</Button>
               </>
             ) : (
-              <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={enterPrintMode}>
+              <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={enterPrintMode}>
                 <svg className="mr-1.5 h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                   <path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" strokeLinecap="round" strokeLinejoin="round" />
                   <path d="M6 14h12v8H6z" strokeLinecap="round" strokeLinejoin="round" />
@@ -1389,25 +1371,17 @@ function DeliveryDocumentsPageContent() {
                 Drukuj WZ
               </Button>
             )}
-            </div>
+            {canDelivery && (
+              <Link to="/delivery/new" className="w-full sm:w-auto">
+                <Button className="w-full sm:w-auto">+ Nowe WZ</Button>
+              </Link>
+            )}
           </div>
-          {viewMode === 'list' && (
-            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 md:rounded-3xl">
-            <div className={segmentTrackClass} role="group" aria-label="Grupa dokumentów">
-              {([['all', 'Wszystkie'], ['external', 'Zewnętrzne'], ['internal', 'Wewnętrzne']] as [DocGroup, string][]).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setDocGroup(value)}
-                  aria-pressed={docGroup === value}
-                  className={segmentButtonClass(docGroup === value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            </div>
-          )}
+        </div>
+
+        {/* Pasek 1: przełącznik widoku */}
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 md:rounded-3xl">
+          <ViewToggle mode={viewMode} onChange={setViewMode} />
         </div>
 
         {/* Pasek 2: KIEDY — dropdown skrótów | custom date range | liczniki */}

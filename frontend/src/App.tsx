@@ -179,6 +179,9 @@ const StockPage = lazy(() =>
 const RWCreatePage = lazy(() =>
   import('./pages/RWCreatePage').then((m) => ({ default: m.RWCreatePage })),
 );
+const MMCreatePage = lazy(() =>
+  import('./pages/MMCreatePage').then((m) => ({ default: m.MMCreatePage })),
+);
 const TeamPage = lazy(() =>
   import('./pages/TeamPage').then((m) => ({ default: m.TeamPage })),
 );
@@ -217,6 +220,12 @@ const PurchaseDocumentCreatePage = lazy(() =>
 );
 const PurchaseDocCreatePzPage = lazy(() =>
   import('./pages/PurchaseDocCreatePzPage').then((m) => ({ default: m.PurchaseDocCreatePzPage })),
+);
+const WarehouseMovesPage = lazy(() =>
+  import('./pages/WarehouseMovesPage').then((m) => ({ default: m.WarehouseMovesPage })),
+);
+const PurchasingPzPage = lazy(() =>
+  import('./pages/PurchasingPzPage').then((m) => ({ default: m.PurchasingPzPage })),
 );
 
 function RouteFallback() {
@@ -436,6 +445,14 @@ function App() {
                   element={
                     <ModuleRouteGate module="warehouses">
                       <RWCreatePage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/delivery/new-mm"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <MMCreatePage />
                     </ModuleRouteGate>
                   }
                 />
@@ -660,6 +677,22 @@ function App() {
                   element={
                     <ModuleRouteGate module="warehouses">
                       <InventoryPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/warehouse-moves"
+                  element={
+                    <ModuleRouteGate module="warehouses">
+                      <WarehouseMovesPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
+                  path="/purchasing/pz"
+                  element={
+                    <ModuleRouteGate module="purchasing">
+                      <PurchasingPzPage />
                     </ModuleRouteGate>
                   }
                 />

@@ -17,6 +17,7 @@ import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 import { KSeFInboxContent, OpexTagButton, MatchPzPanel } from './KSeFInboxPage';
 import { useKsefInboxParseQuery, useKsefMarkPaidMutation, useKsefSessionQuery } from '@/query/use-invoices';
 import { ksefService, isKorType } from '@/services/ksef.service';
@@ -523,15 +524,25 @@ function PurchaseDocPzButton({ doc }: { doc: PurchaseDocument }) {
     );
   }
 
-  // No linked PZ — navigate to dedicated creation page (warehouse picker there)
+  // No linked PZ — offer both create and link options
   return (
-    <button
-      type="button"
-      onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
-      className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors"
-    >
-      + Utwórz PZ
-    </button>
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
+        className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap text-left"
+      >
+        + Utwórz PZ
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowMatchPanel((v) => !v)}
+        className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors whitespace-nowrap text-left"
+      >
+        Powiąż istniejące PZ
+      </button>
+      {showMatchPanel && <MatchPzPanelForDoc doc={doc} onClose={() => setShowMatchPanel(false)} />}
+    </div>
   );
 }
 
@@ -898,6 +909,7 @@ function KsefExpandedRow({ ksefNumber, colSpan }: { ksefNumber: string; colSpan:
 function UnifiedPzCell({ doc }: { doc: PurchaseDocument }) {
   const navigate = useNavigate();
   const unlinkPz = useUnlinkPzMutation();
+  const [showMatchPanel, setShowMatchPanel] = useState(false);
   if (doc.doc_type === 'PAR') return <span className="text-[12px] text-gray-400">—</span>;
   const linkedPzs = doc.pz_documents ?? [];
   return (
@@ -919,19 +931,17 @@ function UnifiedPzCell({ doc }: { doc: PurchaseDocument }) {
           >✕</button>
         </div>
       ))}
-      {linkedPzs.length > 0 ? (
-        <button
-          type="button"
-          onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
-          className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors whitespace-nowrap text-left"
-        >+ PZ</button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
-          className="text-[12px] text-gray-400 hover:text-[#5856D6] transition-colors whitespace-nowrap"
-        >+ Utwórz PZ</button>
-      )}
+      <button
+        type="button"
+        onClick={() => navigate(`/purchase-documents/${doc.id}/create-pz`)}
+        className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors whitespace-nowrap text-left"
+      >{linkedPzs.length > 0 ? '+ PZ' : '+ Utwórz PZ'}</button>
+      <button
+        type="button"
+        onClick={() => setShowMatchPanel((v) => !v)}
+        className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors whitespace-nowrap text-left"
+      >Powiąż istniejące PZ</button>
+      {showMatchPanel && <MatchPzPanelForDoc doc={doc} onClose={() => setShowMatchPanel(false)} />}
     </div>
   );
 }
@@ -962,7 +972,7 @@ function UnifiedKsefPzCell({ inv }: { inv: ReceivedInvoiceMeta }) {
   );
 }
 
-function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksefEnabled: boolean; onOpenCatManager: () => void; highlightedId?: string | null }) {
+function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId, initialSearch }: { ksefEnabled: boolean; onOpenCatManager: () => void; highlightedId?: string | null; initialSearch?: string | null }) {
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
   const deleteMutation = useDeletePurchaseDocumentMutation();
@@ -970,7 +980,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
   const [dateFrom, setDateFrom] = useState(monthAgoIso());
   const [dateTo, setDateTo] = useState(todayIso());
   const [exportPending, setExportPending] = useState(false);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch ?? '');
   const [sourceFilter, setSourceFilter] = useState<'' | UnifiedSource>('');
   const [statusFilter, setStatusFilter] = useState<'' | 'paid' | 'unpaid'>('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -1186,19 +1196,21 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
           <div>
             <table className="w-full table-fixed text-sm">
               <colgroup>
-                <col className="w-[80px]" />
-                <col className="w-[90px]" />
-                <col className="w-[150px]" />
-                <col />
-                <col className="w-[90px]" />
-                <col className="w-[130px]" />
-                <col className="w-[100px]" />
-                <col className="w-[100px]" />
-                <col className="w-[56px]" />
+                <col className="w-[32px]" />  {/* expand */}
+                <col className="w-[60px]" />  {/* źródło */}
+                <col className="w-[90px]" />  {/* data */}
+                <col className="w-[160px]" /> {/* numer */}
+                <col />                        {/* dostawca — reszta */}
+                <col className="w-[90px]" />  {/* kwota */}
+                <col className="w-[120px]" /> {/* kategoria */}
+                <col className="w-[110px]" /> {/* status */}
+                <col className="w-[130px]" /> {/* PZ */}
+                <col className="w-[40px]" />  {/* menu */}
               </colgroup>
               <thead>
                 <tr className="border-b border-gray-200 text-xs font-semibold text-gray-600">
-                  <th className="px-3 py-3 text-left">
+                  <th className="px-2 py-3" />
+                  <th className="px-2 py-3 text-left">
                     <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as '' | UnifiedSource)} className={selectCls} style={{ fontWeight: 600 }}>
                       <option value="">Źródło</option>
                       <option value="ksef">KSeF</option>
@@ -1207,7 +1219,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                       <option value="par">Paragon</option>
                     </select>
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th className="px-2 py-3 text-left">
                     <button type="button" onClick={() => toggleSort('issue_date')} className="group inline-flex items-center hover:text-gray-900 transition-colors">
                       Data<SortIcon field="issue_date" />
                     </button>
@@ -1258,7 +1270,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
               <tbody className="divide-y divide-gray-50">
                 {unified.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-5 py-12 text-center text-[13px] text-gray-400">
+                    <td colSpan={10} className="px-5 py-12 text-center text-[13px] text-gray-400">
                       Brak dokumentów spełniających kryteria
                     </td>
                   </tr>
@@ -1274,8 +1286,21 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                         : '',
                     )}
                   >
+                    {/* Expand */}
+                    <td className="w-8 px-2 py-3.5">
+                      {(doc.purchaseDoc?.items?.length || doc.ksefInv) ? (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedKey(expandedKey === doc._key ? null : doc._key)}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                          title="Pokaż pozycje"
+                        >
+                          <ReportExpandIcon open={expandedKey === doc._key} />
+                        </button>
+                      ) : null}
+                    </td>
                     {/* Źródło */}
-                    <td className="px-3 py-3.5 whitespace-nowrap">
+                    <td className="px-2 py-3.5 whitespace-nowrap">
                       <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-semibold', SOURCE_BADGE[doc.source])}>
                         {SOURCE_LABEL[doc.source]}
                       </span>
@@ -1284,10 +1309,27 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                       )}
                     </td>
                     {/* Data */}
-                    <td className="px-3 py-3.5 text-gray-600 whitespace-nowrap text-[12px]">{formatDate(doc.date)}</td>
+                    <td className="px-2 py-3.5 text-gray-600 whitespace-nowrap text-[12px]">{formatDate(doc.date)}</td>
                     {/* Numer */}
                     <td className="px-3 py-3.5 truncate">
-                      <span className="font-medium text-gray-900">{doc.number || '—'}</span>
+                      {doc.source === 'ksef' && doc.ksefNumber ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleKsefPreview(doc.ksefNumber!)}
+                          className="font-semibold text-primary hover:underline text-left"
+                        >
+                          {doc.number || '—'}
+                        </button>
+                      ) : doc.purchaseDoc ? (
+                        <Link
+                          to={`/purchase-documents/${doc.purchaseDoc.id}/edit`}
+                          className="font-semibold text-primary hover:underline"
+                        >
+                          {doc.number || '—'}
+                        </Link>
+                      ) : (
+                        <span className="font-medium text-gray-900">{doc.number || '—'}</span>
+                      )}
                     </td>
                     {/* Dostawca */}
                     <td className="px-3 py-3.5">
@@ -1329,19 +1371,9 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                           : <span className="text-[12px] text-gray-400">—</span>
                       }
                     </td>
-                    {/* Three-dots menu + expand toggle */}
+                    {/* Three-dots menu */}
                     <td className="px-2 py-3.5">
                       <div className="relative flex items-center justify-end gap-1" ref={menuOpenKey === doc._key ? menuRef : undefined}>
-                        {(doc.purchaseDoc?.items?.length || doc.ksefInv) ? (
-                          <button
-                            type="button"
-                            onClick={() => setExpandedKey(expandedKey === doc._key ? null : doc._key)}
-                            className="flex h-7 w-7 items-center justify-center rounded-lg text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                            title="Pokaż pozycje"
-                          >
-                            {expandedKey === doc._key ? '▲' : '▼'}
-                          </button>
-                        ) : null}
                         <button
                           type="button"
                           onClick={() => setMenuOpenKey(menuOpenKey === doc._key ? null : doc._key)}
@@ -1395,13 +1427,6 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                                 {doc.purchaseDoc && <div className="my-1 border-t border-gray-100" />}
                                 <button
                                   type="button"
-                                  onClick={() => { setMenuOpenKey(null); void handleKsefPreview(doc.ksefNumber!); }}
-                                  className="block w-full px-3 py-1.5 text-left text-[13px] text-gray-700 hover:bg-gray-50"
-                                >
-                                  Podgląd faktury
-                                </button>
-                                <button
-                                  type="button"
                                   disabled={downloadingKsef === doc.ksefNumber}
                                   onClick={() => { setMenuOpenKey(null); handleKsefDownload(doc.ksefNumber!); }}
                                   className="block w-full px-3 py-1.5 text-left text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -1426,7 +1451,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                   </tr>
                   {matchPanelKey === doc._key && doc.source === 'ksef' && doc.ksefInv && (
                     <tr className="border-b border-gray-100 bg-gray-50/40">
-                      <td colSpan={9} className="px-5 py-3">
+                      <td colSpan={10} className="px-5 py-3">
                         <MatchPzPanel
                           inv={doc.ksefInv}
                           onClose={() => setMatchPanelKey(null)}
@@ -1437,7 +1462,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                   {/* Expanded items row */}
                   {expandedKey === doc._key && doc.purchaseDoc?.items?.length ? (
                     <tr className="bg-gray-50/60">
-                      <td colSpan={9} className="px-8 py-3">
+                      <td colSpan={10} className="px-8 py-3">
                         <table className="w-full text-[12px]">
                           <thead>
                             <tr className="text-gray-400 font-medium">
@@ -1466,7 +1491,7 @@ function UnifiedDocList({ ksefEnabled, onOpenCatManager, highlightedId }: { ksef
                     </tr>
                   ) : null}
                   {expandedKey === doc._key && doc.ksefInv ? (
-                    <KsefExpandedRow ksefNumber={doc.ksefInv.ksefNumber} colSpan={9} />
+                    <KsefExpandedRow ksefNumber={doc.ksefInv.ksefNumber} colSpan={10} />
                   ) : null}
                 </React.Fragment>
                 ))}
@@ -2377,7 +2402,7 @@ export function PurchaseDocumentsPage() {
 
 
         {/* Wszystkie — all sources merged */}
-        {activeTab === 'all' && <UnifiedDocList ksefEnabled={ksefEnabled} onOpenCatManager={() => setCatManagerOpen(true)} highlightedId={highlightedId} />}
+        {activeTab === 'all' && <UnifiedDocList ksefEnabled={ksefEnabled} onOpenCatManager={() => setCatManagerOpen(true)} highlightedId={highlightedId} initialSearch={searchParams.get('q')} />}
 
         {/* Z KSeF — full KSeF inbox with all original features */}
         {activeTab === 'ksef' && ksefEnabled && <KSeFInboxContent onOpenCatManager={() => setCatManagerOpen(true)} />}

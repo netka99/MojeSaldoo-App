@@ -148,6 +148,7 @@ export interface CompanyModule {
   module: ModuleName
   isEnabled: boolean
   enabledAt: string | null
+  disabledAt: string | null
 }
 
 export interface CompanyWorkflowSettings {

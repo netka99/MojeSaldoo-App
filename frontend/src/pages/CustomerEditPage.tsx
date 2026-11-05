@@ -4,7 +4,10 @@ import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { CustomerForm, type CustomerImageChange } from '@/components/features/CustomerForm';
 import { Button } from '@/components/ui/Button';
 import { customerKeys } from '@/query/keys';
-import { useCustomerQuery, useUpdateCustomerMutation } from '@/query/use-customers';
+import {
+  useCustomerQuery,
+  useUpdateCustomerMutation,
+} from '@/query/use-customers';
 import { authStorage } from '@/services/api';
 import { customerService } from '@/services/customer.service';
 import type { CustomerWrite } from '@/types';
@@ -97,6 +100,7 @@ export function CustomerEditPage() {
           <CustomerForm
             customer={customer}
             onSubmit={async (data: CustomerWrite, image?: CustomerImageChange) => {
+
               setSubmitError(null);
               try {
                 let saved = await update.mutateAsync({ id, body: customerBodyForPut(data) });

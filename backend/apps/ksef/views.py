@@ -71,6 +71,7 @@ def _get_pz_docs_for_invoice(inv: "ReceivedKSeFInvoice") -> list:
     # M:M path (new)
     for link in inv.pz_ksef_links.select_related("delivery_document").only(
         "delivery_document__id",
+        "delivery_document__uuid",
         "delivery_document__document_number",
         "delivery_document__status",
     ):
@@ -80,7 +81,7 @@ def _get_pz_docs_for_invoice(inv: "ReceivedKSeFInvoice") -> list:
             result.append(doc)
 
     # Legacy FK path (backward compat — covers data not yet in M:M table)
-    for doc in inv.pz_documents.only("id", "document_number", "status").all():
+    for doc in inv.pz_documents.only("id", "uuid", "document_number", "status").all():
         if doc.id not in seen_ids:
             seen_ids.add(doc.id)
             result.append(doc)
@@ -98,7 +99,7 @@ def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
         pz_docs = _get_pz_docs_for_invoice(inv)
 
     return {
-        "id": str(inv.id),
+        "id": str(inv.uuid),
         "ksefNumber": inv.ksef_number,
         "invoiceNumber": inv.invoice_number,
         "issueDate": inv.issue_date.isoformat() if inv.issue_date else None,
@@ -120,7 +121,7 @@ def _invoice_to_dict(inv: "ReceivedKSeFInvoice", pz_docs=None) -> dict:
         "isPaid": inv.is_paid,
         "dueDate": inv.due_date.isoformat() if inv.due_date else None,
         "pzDocuments": [
-            {"id": str(d.id), "documentNumber": d.document_number, "status": d.status}
+            {"id": str(d.uuid), "documentNumber": d.document_number, "status": d.status}
             for d in pz_docs
         ],
     }
@@ -657,7 +658,7 @@ def _enrich_result_with_pz(result: dict, db_invoice: "ReceivedKSeFInvoice") -> N
     """Mutates a parsed-invoice result dict to add PZ tracking fields."""
     pz_docs = _get_pz_docs_for_invoice(db_invoice)
     result["pz_documents"] = [
-        {"id": str(d.id), "documentNumber": d.document_number, "status": d.status}
+        {"id": str(d.uuid), "documentNumber": d.document_number, "status": d.status}
         for d in pz_docs
     ]
     if pz_docs:
@@ -688,6 +689,7 @@ def _pz_info_by_line_position(db_invoice: "ReceivedKSeFInvoice") -> dict:
         .only(
             "ksef_invoice_line_position",
             "delivery_document__id",
+            "delivery_document__uuid",
             "delivery_document__document_number",
             "delivery_document__status",
         )
@@ -704,7 +706,7 @@ def _pz_info_by_line_position(db_invoice: "ReceivedKSeFInvoice") -> dict:
             continue
         seen.add(key)
         by_pos.setdefault(pos, []).append(
-            {"id": str(doc.id), "documentNumber": doc.document_number, "status": doc.status}
+            {"id": str(doc.uuid), "documentNumber": doc.document_number, "status": doc.status}
         )
     return by_pos
 
@@ -761,7 +763,7 @@ def _invoice_parsed_from_db(db_invoice: "ReceivedKSeFInvoice", company) -> dict:
         "suggested_supplier_name": suggested_supplier_name,
         "lines": lines,
         "pz_documents": [
-            {"id": str(d.id), "documentNumber": d.document_number, "status": d.status}
+            {"id": str(d.uuid), "documentNumber": d.document_number, "status": d.status}
             for d in _get_pz_docs_for_invoice(db_invoice)
         ],
     }

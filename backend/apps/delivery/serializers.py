@@ -233,6 +233,21 @@ class SaveWithReturnsSerializer(serializers.Serializer):
     return_items = PendingReturnItemSerializer(many=True, required=False, allow_empty=True)
 
 
+def _linked_purchase_docs(obj):
+    return [
+        {
+            "id": str(link.purchase_document.uuid),
+            "invoice_number": link.purchase_document.document_number or "",
+            "doc_type": link.purchase_document.doc_type,
+            "issue_date": (
+                link.purchase_document.issue_date.isoformat()
+                if link.purchase_document.issue_date else None
+            ),
+        }
+        for link in obj.purchase_doc_links.all()
+    ]
+
+
 class DeliveryDocumentListSerializer(UUIDModelSerializer):
     """Slim serializer for list endpoints — no items, return_documents, or invoice data.
 
@@ -257,6 +272,8 @@ class DeliveryDocumentListSerializer(UUIDModelSerializer):
     corrects_wz_number = serializers.SerializerMethodField()
     corrections = serializers.SerializerMethodField()
     corrects_wz_items = serializers.SerializerMethodField()
+    linked_purchase_documents = serializers.SerializerMethodField()
+    ksef_invoice_refs = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryDocument
@@ -294,6 +311,8 @@ class DeliveryDocumentListSerializer(UUIDModelSerializer):
             "corrects_wz_number",
             "corrections",
             "corrects_wz_items",
+            "linked_purchase_documents",
+            "ksef_invoice_refs",
         ]
         read_only_fields = fields
 
@@ -361,6 +380,21 @@ class DeliveryDocumentListSerializer(UUIDModelSerializer):
             for it in obj.corrects_wz.items.select_related("product").all()
         ]
 
+    def get_linked_purchase_documents(self, obj):
+        return _linked_purchase_docs(obj)
+
+    def get_ksef_invoice_refs(self, obj):
+        """All linked KSeF invoices (new M:M API). Requires ksef_links prefetch."""
+        links = obj.ksef_links.all()
+        return [
+            {
+                "id": str(link.ksef_invoice.uuid),
+                "ksef_number": link.ksef_invoice.ksef_number,
+                "invoice_number": link.ksef_invoice.invoice_number,
+            }
+            for link in links
+        ]
+
 
 class DeliveryDocumentSerializer(UUIDModelSerializer):
     order_id = UUIDRelatedField(
@@ -402,6 +436,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
     to_warehouse_name = serializers.SerializerMethodField()
     locked_for_edit = serializers.SerializerMethodField()
     linked_invoices = serializers.SerializerMethodField()
+    linked_purchase_documents = serializers.SerializerMethodField()
     linked_wz_id = UUIDRelatedField(
         source="linked_wz",
         read_only=True,
@@ -472,6 +507,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             "updated_at",
             "locked_for_edit",
             "linked_invoices",
+            "linked_purchase_documents",
             "ksef_invoice_id",
             "ksef_invoice_refs",
             "ksef_invoice_ref",
@@ -484,7 +520,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             "items",
             "return_documents",
         ]
-        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "ksef_invoice_refs", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrects_wz_id", "corrects_wz_number", "corrections", "corrects_wz_items"]
+        read_only_fields = ["document_number", "company", "user", "status", "linked_wz_id", "created_at", "updated_at", "items", "return_documents", "order_number", "customer_name", "supplier_name", "supplier_nip", "from_warehouse_name", "to_warehouse_name", "locked_for_edit", "linked_invoices", "linked_purchase_documents", "ksef_invoice_refs", "ksef_invoice_ref", "corrects_pz_id", "corrects_pz_number", "corrects_wz_id", "corrects_wz_number", "corrections", "corrects_wz_items"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -565,6 +601,9 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
             for inv in obj.invoices.all().order_by("created_at")
         ]
 
+    def get_linked_purchase_documents(self, obj):
+        return _linked_purchase_docs(obj)
+
     def get_supplier_nip(self, obj):
         if obj.from_supplier_id:
             return obj.from_supplier.nip or None
@@ -625,7 +664,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
         links = obj.ksef_links.all()
         return [
             {
-                "id": str(link.ksef_invoice.id),
+                "id": str(link.ksef_invoice.uuid),
                 "ksef_number": link.ksef_invoice.ksef_number,
                 "invoice_number": link.ksef_invoice.invoice_number,
             }
