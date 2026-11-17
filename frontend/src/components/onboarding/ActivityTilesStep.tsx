@@ -13,25 +13,25 @@ const TILES: TileConfig[] = [
     key: 'purchasing',
     icon: '🛒',
     title: 'Kupuję towar',
-    description: 'Przyjmuję faktury od dostawców, tworzę PZ, prowadzę stany zakupowe.',
+    description: 'Kupuję gotowe produkty i je odsprzedaję.',
   },
   {
     key: 'production',
     icon: '🛠️',
     title: 'Produkuję z surowców',
-    description: 'Mam receptury, tworzę zlecenia produkcji, system liczy koszt/szt.',
+    description: 'Wytwarzam produkty z surowców lub składników.',
   },
   {
     key: 'warehouses',
     icon: '🏪',
     title: 'Prowadzę magazyn',
-    description: 'Śledzę stany, przeprowadzam inwentaryzacje, zarządzam kilkoma magazynami.',
+    description: 'Mam towar na stanie i chcę kontrolować ilości.',
   },
   {
     key: 'cost_allocation',
     icon: '💼',
     title: 'Opisuję koszty dla księgowego',
-    description: 'Opisuję faktury zakupowe, eksportuję adnotacje kosztowe do biura rachunkowego.',
+    description: 'Mam faktury kosztowe i wysyłam je do księgowej.',
   },
 ];
 

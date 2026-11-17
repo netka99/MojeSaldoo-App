@@ -66,6 +66,7 @@ const OrdersPage = lazy(() => import('./pages/OrdersPage').then((m) => ({ defaul
 const OrderListPage = lazy(() => import('./pages/OrderListPage').then((m) => ({ default: m.OrderListPage })));
 const ReconciliationReportPage = lazy(() => import('./pages/ReconciliationReportPage').then((m) => ({ default: m.ReconciliationReportPage })));
 const CustomerFlowReportPage = lazy(() => import('./pages/CustomerFlowReportPage').then((m) => ({ default: m.CustomerFlowReportPage })));
+const MaterialConsumptionPage = lazy(() => import('./pages/MaterialConsumptionPage'));
 const OrderCreatePage = lazy(() =>
   import('./pages/OrderCreatePage').then((m) => ({ default: m.OrderCreatePage })),
 );
@@ -172,11 +173,11 @@ const RecipesPage = lazy(() =>
 const ProductionOrdersPage = lazy(() =>
   import('./pages/ProductionOrdersPage').then((m) => ({ default: m.ProductionOrdersPage })),
 );
+const ProductionOrderDetailPage = lazy(() =>
+  import('./pages/ProductionOrderDetailPage').then((m) => ({ default: m.ProductionOrderDetailPage })),
+);
 const InventoryPage = lazy(() =>
   import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage })),
-);
-const StockPage = lazy(() =>
-  import('./pages/StockPage').then((m) => ({ default: m.StockPage })),
 );
 
 const RWCreatePage = lazy(() =>
@@ -223,6 +224,9 @@ const PurchaseDocumentCreatePage = lazy(() =>
 );
 const PurchaseDocCreatePzPage = lazy(() =>
   import('./pages/PurchaseDocCreatePzPage').then((m) => ({ default: m.PurchaseDocCreatePzPage })),
+);
+const StockDocumentsPage = lazy(() =>
+  import('./pages/StockDocumentsPage').then((m) => ({ default: m.StockDocumentsPage })),
 );
 const WarehouseMovesPage = lazy(() =>
   import('./pages/WarehouseMovesPage').then((m) => ({ default: m.WarehouseMovesPage })),
@@ -373,11 +377,7 @@ function App() {
                 />
                 <Route
                   path="/stock"
-                  element={
-                    <ModuleRouteGate module="products">
-                      <StockPage />
-                    </ModuleRouteGate>
-                  }
+                  element={<Navigate to="/reports/inventory" replace />}
                 />
                 <Route
                   path="/orders"
@@ -411,6 +411,7 @@ function App() {
                     </ModuleRouteGate>
                   }
                 />
+                <Route path="/reports/material-consumption" element={<MaterialConsumptionPage />} />
                 <Route
                   path="/orders/new"
                   element={
@@ -427,13 +428,11 @@ function App() {
                     </ModuleRouteGate>
                   }
                 />
+                <Route path="/documents" element={<StockDocumentsPage />} />
+                <Route path="/documents/:section" element={<StockDocumentsPage />} />
                 <Route
                   path="/delivery"
-                  element={
-                    <ModuleRouteGate module="delivery">
-                      <DeliveryDocumentsPage />
-                    </ModuleRouteGate>
-                  }
+                  element={<Navigate to="/documents/wz" replace />}
                 />
                 <Route
                   path="/delivery/new"
@@ -649,13 +648,7 @@ function App() {
                 />
                 <Route
                   path="/reports/inventory"
-                  element={
-                    <ModuleRouteGate module="reporting">
-                      <ModuleRouteGate module="warehouses">
-                        <InventoryReportPage />
-                      </ModuleRouteGate>
-                    </ModuleRouteGate>
-                  }
+                  element={<InventoryReportPage />}
                 />
                 <Route
                   path="/reports/customer-margin"
@@ -684,28 +677,28 @@ function App() {
                   }
                 />
                 <Route
+                  path="/production/orders/:id"
+                  element={
+                    <ModuleRouteGate module="production">
+                      <ProductionOrderDetailPage />
+                    </ModuleRouteGate>
+                  }
+                />
+                <Route
                   path="/inventory"
                   element={
-                    <ModuleRouteGate module="warehouses">
+                    <ModuleRouteGate module="products">
                       <InventoryPage />
                     </ModuleRouteGate>
                   }
                 />
                 <Route
                   path="/warehouse-moves"
-                  element={
-                    <ModuleRouteGate module="warehouses">
-                      <WarehouseMovesPage />
-                    </ModuleRouteGate>
-                  }
+                  element={<Navigate to="/documents/rw" replace />}
                 />
                 <Route
                   path="/purchasing/pz"
-                  element={
-                    <ModuleRouteGate module="purchasing">
-                      <PurchasingPzPage />
-                    </ModuleRouteGate>
-                  }
+                  element={<Navigate to="/documents/pz" replace />}
                 />
                 <Route path="/ksef" element={<Navigate to="/purchase-documents" replace />} />
                 <Route path="/ksef/inbox" element={<Navigate to="/purchase-documents" replace />} />

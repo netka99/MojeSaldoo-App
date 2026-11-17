@@ -134,10 +134,7 @@ export interface AuthResponse {
 }
 
 export interface RegisterPayload {
-  username: string;
   email: string;
-  first_name: string;
-  last_name: string;
   password: string;
   password2: string;
 }
@@ -296,8 +293,8 @@ export const api = {
 };
 
 export const authApi = {
-  login: async (username: string, password: string): Promise<AuthResponse> => {
-    const data = await api.post<AuthResponse>('/auth/login/', { username, password });
+  login: async (email: string, password: string): Promise<AuthResponse> => {
+    const data = await api.post<AuthResponse>('/auth/login/', { email, password });
     authStorage.setTokens(data.access, data.refresh);
     return data;
   },

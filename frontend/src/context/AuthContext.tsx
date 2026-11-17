@@ -18,7 +18,7 @@ import {
 interface AuthContextType {
   user: AuthUser | null;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   /** Reload user from `GET /auth/me/` (e.g. after company switch or onboarding). */
   refreshUser: () => Promise<void>;
@@ -70,9 +70,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, []);
 
-  const login = useCallback(async (username: string, password: string): Promise<void> => {
+  const login = useCallback(async (email: string, password: string): Promise<void> => {
     void queryClient.removeQueries({ queryKey: companyKeys.all });
-    const data = await authApi.login(username, password);
+    const data = await authApi.login(email, password);
     setUser(data.user);
   }, [queryClient]);
 

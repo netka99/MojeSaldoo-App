@@ -301,7 +301,7 @@ def build_customer_flow(company, date_from, date_to):
                 'standalone_wz': [],
                 'invoice_ids': set(),
                 'invoices': [],
-                'manual_invoices': [],
+                'manual_invoices': [],  # kept for compat but no longer populated
             }
         return buckets[cust_id]
 
@@ -332,18 +332,15 @@ def build_customer_flow(company, date_from, date_to):
                 b['invoice_ids'].add(inv.pk)
                 b['invoices'].append(inv)
 
-    for inv in manual_inv_qs:
-        if not inv.customer_id:
-            continue
-        b = _bucket(inv.customer_id, inv.customer.name)
-        b['manual_invoices'].append(inv)
+    # Manual invoices collected globally — shown in separate ad-hoc block, not per-customer
+    all_manual_invoices = list(manual_inv_qs)
 
     results = []
     for b in sorted(buckets.values(), key=lambda x: x['customer_name'].lower()):
         orders   = b['orders']
         stan_wz  = b['standalone_wz']
         invoices = b['invoices']
-        manual_invoices = b['manual_invoices']
+        manual_invoices = []  # manual invoices are now in top-level standalone_invoices
 
         order_total     = len(orders)
         order_open      = sum(1 for o in orders if o.status in _OPEN_ORDER)
@@ -371,14 +368,27 @@ def build_customer_flow(company, date_from, date_to):
             if wz.status in ('delivered', 'in_transit', 'saved') and not getattr(wz, 'active_invoices', []):
                 wz_no_invoice += 1
 
-        all_invoices = invoices + manual_invoices
-        inv_total   = len(all_invoices)
+        # Count only invoices linked to orders in this period (not all historical invoices for customer)
+        order_invoices_seen: set = set()
+        order_invoices: list = []
+        for o in orders:
+            inv_list = (
+                [io.invoice for io in getattr(o, 'active_invoice_orders', [])]
+                + list(getattr(o, 'active_invoices', []))
+            )
+            for inv in inv_list:
+                if inv.pk not in order_invoices_seen:
+                    order_invoices_seen.add(inv.pk)
+                    order_invoices.append(inv)
+        all_invoices = order_invoices + manual_invoices
+        # Header counts only order-linked invoices — manual invoices are shown separately
+        inv_total   = len(order_invoices)
         inv_overdue = sum(
             1 for inv in all_invoices
             if inv.status == 'overdue'
             or (inv.status in ('issued', 'sent') and inv.due_date and inv.due_date < today)
         )
-        inv_gross = sum((inv.total_gross or Decimal('0')) for inv in all_invoices)
+        inv_gross = sum((inv.total_gross or Decimal('0')) for inv in order_invoices)
 
         problems = set()
         if wz_required:
@@ -397,6 +407,15 @@ def build_customer_flow(company, date_from, date_to):
                     break
         if inv_overdue > 0:
             problems.add('invoice_overdue')
+        # WZ in draft status — created but not confirmed yet
+        for o in orders:
+            if any(wz.status == 'draft' for wz in getattr(o, 'wz_docs', [])):
+                problems.add('wz_draft')
+                break
+        for wz in stan_wz:
+            if wz.status == 'draft':
+                problems.add('wz_draft')
+                break
         if track_zw:
             # For order-linked WZs, use the order's invoices; standalone WZs use wz.active_invoices
             order_inv_map = {
@@ -443,6 +462,9 @@ def build_customer_flow(company, date_from, date_to):
             ):
                 row_ok = False
                 row_problem = 'invoice_overdue'
+            elif any(wz.status == 'draft' for wz in wz_list):
+                row_ok = False
+                row_problem = 'wz_draft'
             elif track_zw and any(
                 _wz_has_zw_without_fvkor(w, inv_deduped) for w in wz_list
             ):
@@ -509,19 +531,6 @@ def build_customer_flow(company, date_from, date_to):
                 'problem': row_problem,
             })
 
-        manual_detail = [
-            {
-                'id': str(inv.uuid),
-                'number': inv.invoice_number,
-                'status': inv.status,
-                'issue_date': str(inv.issue_date) if inv.issue_date else None,
-                'due_date': str(inv.due_date) if inv.due_date else None,
-                'total_gross': str(inv.total_gross or 0),
-                'lines': _build_invoiced_map_lines(inv),
-            }
-            for inv in manual_invoices
-        ]
-
         results.append({
             'customer_id':   b['customer_id'],
             'customer_name': b['customer_name'],
@@ -542,12 +551,36 @@ def build_customer_flow(company, date_from, date_to):
             },
             'problems': sorted(problems),
             'orders_detail': orders_detail,
-            'manual_invoices': manual_detail,
+            'manual_invoices': [],  # kept for compat, data moved to top-level standalone_invoices
         })
+
+    today_local = _tz.localdate()
+    standalone_invoices = sorted(
+        [
+            {
+                'id': str(inv.uuid),
+                'number': inv.invoice_number,
+                'customer_name': inv.customer.name if inv.customer_id else '—',
+                'customer_id': str(inv.customer_id) if inv.customer_id else None,
+                'status': inv.status,
+                'issue_date': str(inv.issue_date) if inv.issue_date else None,
+                'due_date': str(inv.due_date) if inv.due_date else None,
+                'total_gross': str(inv.total_gross or 0),
+                'overdue': (
+                    inv.status == 'overdue'
+                    or (inv.status in ('issued', 'sent') and inv.due_date and inv.due_date < today_local)
+                ),
+                'lines': _build_invoiced_map_lines(inv),
+            }
+            for inv in all_manual_invoices
+        ],
+        key=lambda x: (x['issue_date'] or '', x['customer_name']),
+    )
 
     return {
         'period': {'date_from': date_from, 'date_to': date_to},
         'wz_required': wz_required,
         'returns_mode': returns_mode,
         'customers': results,
+        'standalone_invoices': standalone_invoices,
     }

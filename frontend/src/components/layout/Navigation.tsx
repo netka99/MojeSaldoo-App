@@ -7,6 +7,213 @@ import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import type { ModuleName } from '@/types';
 
+type NavGlyphName =
+  | 'grid' | 'user' | 'clipboard' | 'file' | 'filePlus' | 'clock' | 'banknote' | 'truck'
+  | 'box' | 'warehouse' | 'layers' | 'check' | 'minus' | 'building' | 'cart' | 'inbox'
+  | 'files' | 'scan' | 'factory' | 'book' | 'wallet' | 'tag' | 'calendar' | 'chart'
+  | 'trend' | 'percent' | 'users' | 'receipt' | 'history' | 'gear' | 'list';
+
+export function NavGlyph({ name }: { name: NavGlyphName }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0" aria-hidden>
+      {name === 'grid' && (
+        <>
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </>
+      )}
+      {name === 'user' && (
+        <>
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </>
+      )}
+      {name === 'clipboard' && (
+        <>
+          <path d="M9 4H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2" />
+          <rect x="9" y="2" width="6" height="4" rx="1" />
+        </>
+      )}
+      {name === 'file' && (
+        <>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6M8 13h8M8 17h5" />
+        </>
+      )}
+      {name === 'filePlus' && (
+        <>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6M12 11v6M9 14h6" />
+        </>
+      )}
+      {name === 'clock' && (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </>
+      )}
+      {name === 'banknote' && (
+        <>
+          <rect x="2" y="6" width="20" height="12" rx="2" />
+          <circle cx="12" cy="12" r="2.5" />
+          <path d="M6 10v.01M18 14v.01" />
+        </>
+      )}
+      {name === 'truck' && (
+        <>
+          <path d="M1 7h13v10H1z" />
+          <path d="M14 11h4l3 3v3h-7" />
+          <circle cx="5.5" cy="18.5" r="1.5" />
+          <circle cx="18.5" cy="18.5" r="1.5" />
+        </>
+      )}
+      {name === 'box' && (
+        <>
+          <path d="M21 8 12 3 3 8v8l9 5 9-5V8z" />
+          <path d="M3.3 8 12 13l8.7-5M12 13v8" />
+        </>
+      )}
+      {name === 'warehouse' && (
+        <>
+          <path d="M3 21V10l9-6 9 6v11" />
+          <path d="M9 21v-6h6v6" />
+        </>
+      )}
+      {name === 'layers' && (
+        <>
+          <path d="m12 2 9 5-9 5L3 7l9-5z" />
+          <path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
+        </>
+      )}
+      {name === 'check' && (
+        <>
+          <path d="M9 4H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2" />
+          <rect x="9" y="2" width="6" height="4" rx="1" />
+          <path d="m9 14 2 2 4-4" />
+        </>
+      )}
+      {name === 'minus' && (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M8 12h8" />
+        </>
+      )}
+      {name === 'building' && (
+        <>
+          <path d="M3 21h18M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
+          <path d="M15 9h4a1 1 0 0 1 1 1v11M8 8h2M8 12h2M8 16h2" />
+        </>
+      )}
+      {name === 'cart' && (
+        <>
+          <circle cx="8" cy="20" r="1" />
+          <circle cx="18" cy="20" r="1" />
+          <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 8H7" />
+        </>
+      )}
+      {name === 'inbox' && (
+        <>
+          <path d="M22 12h-6l-2 3H10l-2-3H2" />
+          <path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z" />
+        </>
+      )}
+      {name === 'files' && (
+        <>
+          <path d="M15 2H7a2 2 0 0 0-2 2v14" />
+          <path d="M9 6h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+        </>
+      )}
+      {name === 'scan' && (
+        <>
+          <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10" />
+        </>
+      )}
+      {name === 'factory' && (
+        <>
+          <path d="M2 21h20M4 21V10l6 4V10l6 4V6l4 3v12" />
+        </>
+      )}
+      {name === 'book' && (
+        <>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </>
+      )}
+      {name === 'wallet' && (
+        <>
+          <rect x="2" y="6" width="20" height="14" rx="2" />
+          <path d="M2 10h20M16 14h2" />
+        </>
+      )}
+      {name === 'tag' && (
+        <>
+          <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z" />
+          <circle cx="7" cy="7" r="1.5" />
+        </>
+      )}
+      {name === 'calendar' && (
+        <>
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
+        </>
+      )}
+      {name === 'chart' && (
+        <>
+          <path d="M3 3v18h18" />
+          <path d="m7 14 4-4 3 3 5-6" />
+        </>
+      )}
+      {name === 'trend' && (
+        <>
+          <path d="m3 17 6-6 4 4 8-8" />
+          <path d="M14 7h7v7" />
+        </>
+      )}
+      {name === 'percent' && (
+        <>
+          <circle cx="7.5" cy="7.5" r="2.5" />
+          <circle cx="16.5" cy="16.5" r="2.5" />
+          <path d="m19 5-14 14" />
+        </>
+      )}
+      {name === 'users' && (
+        <>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="3" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+        </>
+      )}
+      {name === 'receipt' && (
+        <>
+          <path d="M4 2h16v20l-2-1.5L16 22l-2-1.5L12 22l-2-1.5L8 22l-2-1.5L4 22V2z" />
+          <path d="M8 7h8M8 11h8M8 15h5" />
+        </>
+      )}
+      {name === 'history' && (
+        <>
+          <path d="M3 12a9 9 0 1 0 3-6.7" />
+          <path d="M3 4v5h5M12 7v5l3 2" />
+        </>
+      )}
+      {name === 'gear' && (
+        <>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+        </>
+      )}
+      {name === 'list' && (
+        <>
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+
+
 const itemClass = cn(
   'flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-sm font-medium transition-colors',
   'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
@@ -72,9 +279,19 @@ export interface NavGroupTitleProps {
 
 export function NavGroupTitle({ children }: NavGroupTitleProps) {
   return (
-    <p className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground" role="presentation">
+    <p className="mx-1.5 mb-1 border-b border-slate-200 px-1.5 pb-1.5 pt-1 text-sm font-medium text-slate-800" role="presentation">
       {children}
     </p>
+  );
+}
+
+/** One topic in the side menu: a flat card, so groups do not read as one list. */
+export function NavGroup({ title, children }: { title?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-1.5">
+      {title ? <NavGroupTitle>{title}</NavGroupTitle> : null}
+      <div className="space-y-0.5">{children}</div>
+    </section>
   );
 }
 
@@ -308,7 +525,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
             animate={{ x: 0 }}
             exit={{ x: '-100%' }}
             transition={{ type: 'spring', stiffness: 350, damping: 35 }}
-            className="fixed inset-y-0 left-0 z-[60] flex w-72 flex-col bg-background shadow-xl md:hidden"
+            className="fixed inset-y-0 left-0 z-[60] flex w-72 flex-col overflow-hidden bg-background shadow-xl md:hidden"
           >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <span className="text-base font-semibold">Menu</span>
@@ -317,103 +534,83 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
               </button>
             </div>
 
-            <nav className="flex flex-1 flex-col gap-4 overflow-y-auto p-3 pb-[env(safe-area-inset-bottom)]">
-              <div className="space-y-0.5">
-                <AppNavItemLink to="/" end>Pulpit</AppNavItemLink>
-              </div>
+            <nav className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+              <NavGroup>
+                <AppNavItemLink to="/" end icon={<NavGlyph name="grid" />}>Pulpit</AppNavItemLink>
+              </NavGroup>
 
               {(customersEnabled || ordersEnabled || invoicingEnabled || reportingEnabled) && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Sprzedaż</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    {customersEnabled && <AppNavItemLink to="/customers">Klienci</AppNavItemLink>}
-                    {ordersEnabled && <AppNavItemLink to="/orders">Zamówienia</AppNavItemLink>}
-                    {invoicingEnabled && <AppNavItemLink to="/invoices" end>Lista faktur</AppNavItemLink>}
-                    {invoicingEnabled && <AppNavItemLink to="/invoices/new" className="pl-7 text-muted-foreground">Nowa faktura</AppNavItemLink>}
-                    {reportingEnabled && <AppNavItemLink to="/reports/payment-aging">Niezapłacone faktury</AppNavItemLink>}
-                    <AppNavItemLink to="/sprzedaz">Sprzedaż gotówkowa</AppNavItemLink>
-                  </div>
-                </div>
+                <NavGroup title="Sprzedaż">
+                  {customersEnabled && <AppNavItemLink to="/customers" icon={<NavGlyph name="user" />}>Klienci</AppNavItemLink>}
+                  {ordersEnabled && <AppNavItemLink to="/orders" icon={<NavGlyph name="clipboard" />}>Zamówienia</AppNavItemLink>}
+                  {invoicingEnabled && <AppNavItemLink to="/invoices" end icon={<NavGlyph name="file" />}>Lista faktur</AppNavItemLink>}
+                  {invoicingEnabled && <AppNavItemLink to="/invoices/new" className="pl-7 text-muted-foreground" icon={<NavGlyph name="filePlus" />}>Nowa faktura</AppNavItemLink>}
+                  {reportingEnabled && <AppNavItemLink to="/reports/payment-aging" icon={<NavGlyph name="clock" />}>Niezapłacone faktury</AppNavItemLink>}
+                  <AppNavItemLink to="/cash-flow/sprzedaz" icon={<NavGlyph name="banknote" />}>Sprzedaż gotówkowa</AppNavItemLink>
+                </NavGroup>
               )}
 
               {deliveryEnabled && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Dostawa</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    <AppNavItemLink to="/van-routes">Trasy Vana</AppNavItemLink>
-                    <AppNavItemLink to="/delivery">Dokumenty dostawy</AppNavItemLink>
-                  </div>
-                </div>
+                <NavGroup title="Dostawa">
+                  <AppNavItemLink to="/van-routes" icon={<NavGlyph name="truck" />}>Trasy Vana</AppNavItemLink>
+                  <AppNavItemLink to="/delivery" icon={<NavGlyph name="file" />}>Dokumenty dostawy</AppNavItemLink>
+                </NavGroup>
               )}
 
               {(productsEnabled || warehousesEnabled) && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Magazyn</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    {productsEnabled && <AppNavItemLink to="/products">Produkty</AppNavItemLink>}
-                    {warehousesEnabled && <AppNavItemLink to="/warehouses">Magazyny</AppNavItemLink>}
-                    {!warehousesEnabled && productsEnabled && <AppNavItemLink to="/stock">Stany</AppNavItemLink>}
-                    {warehousesEnabled && <AppNavItemLink to="/inventory">Inwentaryzacja</AppNavItemLink>}
-                    {warehousesEnabled && <AppNavItemLink to="/delivery/new-rw">Odpisy (RW)</AppNavItemLink>}
-                  </div>
-                </div>
+                <NavGroup title="Magazyn">
+                  {productsEnabled && <AppNavItemLink to="/products" icon={<NavGlyph name="box" />}>Produkty</AppNavItemLink>}
+                  {warehousesEnabled && <AppNavItemLink to="/warehouses" icon={<NavGlyph name="warehouse" />}>Magazyny</AppNavItemLink>}
+                  {!warehousesEnabled && productsEnabled && <AppNavItemLink to="/stock" icon={<NavGlyph name="layers" />}>Stany</AppNavItemLink>}
+                  {productsEnabled && <AppNavItemLink to="/inventory" icon={<NavGlyph name="check" />}>Inwentaryzacja</AppNavItemLink>}
+                  {warehousesEnabled && <AppNavItemLink to="/delivery/new-rw" icon={<NavGlyph name="minus" />}>Odpisy (RW)</AppNavItemLink>}
+                </NavGroup>
               )}
 
               {(purchasingEnabled || ksefEnabled) && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Zakupy</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    {purchasingEnabled && <AppNavItemLink to="/suppliers">Dostawcy</AppNavItemLink>}
-                    {purchasingEnabled && <AppNavItemLink to="/delivery/new-pz">Nowe PZ</AppNavItemLink>}
-                    {ksefEnabled && <AppNavItemLink to="/ksef/inbox">Odebrane faktury</AppNavItemLink>}
-                    {ksefEnabled && <AppNavItemLink to="/purchase-documents">Dokumenty zakupowe</AppNavItemLink>}
-                    {ksefEnabled && <AppNavItemLink to="/ksef/scan-paper">Skanuj fakturę papierową</AppNavItemLink>}
-                  </div>
-                </div>
+                <NavGroup title="Zakupy">
+                  {purchasingEnabled && <AppNavItemLink to="/suppliers" icon={<NavGlyph name="building" />}>Dostawcy</AppNavItemLink>}
+                  {purchasingEnabled && <AppNavItemLink to="/delivery/new-pz" icon={<NavGlyph name="inbox" />}>Nowe PZ</AppNavItemLink>}
+                  {ksefEnabled && <AppNavItemLink to="/ksef/inbox" icon={<NavGlyph name="files" />}>Odebrane faktury</AppNavItemLink>}
+                  {ksefEnabled && <AppNavItemLink to="/purchase-documents" icon={<NavGlyph name="files" />}>Dokumenty zakupowe</AppNavItemLink>}
+                  {ksefEnabled && <AppNavItemLink to="/ksef/scan-paper" icon={<NavGlyph name="scan" />}>Skanuj fakturę papierową</AppNavItemLink>}
+                </NavGroup>
               )}
 
               {productionEnabled && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Produkcja</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    <AppNavItemLink to="/production/orders">Zlecenia produkcji</AppNavItemLink>
-                    <AppNavItemLink to="/production/recipes">Receptury</AppNavItemLink>
-                  </div>
-                </div>
+                <NavGroup title="Produkcja">
+                  <AppNavItemLink to="/production/orders" icon={<NavGlyph name="factory" />}>Zlecenia produkcji</AppNavItemLink>
+                  <AppNavItemLink to="/production/recipes" icon={<NavGlyph name="book" />}>Receptury</AppNavItemLink>
+                </NavGroup>
               )}
 
-              <div className="space-y-1">
-                <NavGroupTitle>Finanse</NavGroupTitle>
-                <div className="space-y-0.5">
-                  <AppNavItemLink to="/cash-flow">Saldo i Podatki</AppNavItemLink>
-                  <AppNavItemLink to="/fixed-costs">Koszty Stałe</AppNavItemLink>
-                  {costAllocationEnabled && (
-                    <AppNavItemLink to="/cost-allocation">Adnotacje kosztowe</AppNavItemLink>
-                  )}
-                </div>
-              </div>
+              <NavGroup title="Finanse">
+                <AppNavItemLink to="/cash-flow" icon={<NavGlyph name="wallet" />}>Saldo i Podatki</AppNavItemLink>
+                <AppNavItemLink to="/fixed-costs" icon={<NavGlyph name="calendar" />}>Koszty Stałe</AppNavItemLink>
+                {costAllocationEnabled && (
+                  <AppNavItemLink to="/cost-allocation" icon={<NavGlyph name="tag" />}>Adnotacje kosztowe</AppNavItemLink>
+                )}
+              </NavGroup>
 
               {reportingEnabled && (
-                <div className="space-y-1">
-                  <NavGroupTitle>Raporty</NavGroupTitle>
-                  <div className="space-y-0.5">
-                    <AppNavItemLink to="/reports" end>Przegląd</AppNavItemLink>
-                    <AppNavItemLink to="/reports/profit-loss">Zysk i Koszty (P&amp;L)</AppNavItemLink>
-                    {purchasingEnabled && <AppNavItemLink to="/reports/product-margin">Marże na produktach</AppNavItemLink>}
-                    {purchasingEnabled && <AppNavItemLink to="/reports/customer-margin">Marże na klientach</AppNavItemLink>}
-                    {purchasingEnabled && <AppNavItemLink to="/reports/supplier-costs">Koszty zakupów</AppNavItemLink>}
-                    {warehousesEnabled && <AppNavItemLink to="/reports/inventory">Stan magazynu</AppNavItemLink>}
-                  </div>
-                </div>
+                <NavGroup title="Raporty">
+                  <AppNavItemLink to="/reports" end icon={<NavGlyph name="chart" />}>Przegląd</AppNavItemLink>
+                  <AppNavItemLink to="/reports/profit-loss" icon={<NavGlyph name="trend" />}>Zysk i Koszty (P&amp;L)</AppNavItemLink>
+                  {purchasingEnabled && <AppNavItemLink to="/reports/product-margin" icon={<NavGlyph name="percent" />}>Marże na produktach</AppNavItemLink>}
+                  {purchasingEnabled && <AppNavItemLink to="/reports/customer-margin" icon={<NavGlyph name="users" />}>Marże na klientach</AppNavItemLink>}
+                  {purchasingEnabled && <AppNavItemLink to="/reports/supplier-costs" icon={<NavGlyph name="receipt" />}>Koszty zakupów</AppNavItemLink>}
+                  {warehousesEnabled && <AppNavItemLink to="/reports/inventory" icon={<NavGlyph name="layers" />}>Stan magazynu</AppNavItemLink>}
+                </NavGroup>
               )}
 
+              <NavGroup>
+                <AppNavItemLink to="/activity" icon={<NavGlyph name="history" />}>Historia aktywności</AppNavItemLink>
+                {canTeam && <AppNavItemLink to="/settings/team" end icon={<NavGlyph name="users" />}>Zespół</AppNavItemLink>}
+              </NavGroup>
             </nav>
 
-            {/* Sticky footer — always visible, no scroll needed */}
-            <div className="shrink-0 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] space-y-0.5">
-              <AppNavItemLink to="/activity">Historia aktywności</AppNavItemLink>
-              {canSettings && <AppNavItemLink to="/settings/company" end>Ustawienia</AppNavItemLink>}
-              {canTeam && <AppNavItemLink to="/settings/team" end>Zespół</AppNavItemLink>}
+            <div className="shrink-0 space-y-0.5 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              {canSettings && <AppNavItemLink to="/settings/company" end icon={<NavGlyph name="gear" />}>Ustawienia</AppNavItemLink>}
               <button
                 type="button"
                 onClick={() => {

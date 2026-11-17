@@ -5,8 +5,11 @@ from django.db import models
 
 
 class User(AbstractUser):
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = []
+
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    email = models.EmailField(unique=True, null=True, blank=True)
+    email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -211,6 +214,12 @@ class Company(models.Model):
         blank=True,
         null=True,
         help_text="Logo firmy wyświetlane na fakturach.",
+    )
+
+    # Demo company created automatically on registration — filled with sample data.
+    is_demo = models.BooleanField(
+        default=False,
+        help_text="Firma z danymi przykładowymi — tworzona automatycznie przy rejestracji.",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

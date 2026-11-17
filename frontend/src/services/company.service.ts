@@ -100,4 +100,10 @@ export const companyService = {
 
   leaveCompany: (companyId: string) =>
     api.delete<{ detail: string }>(`/companies/${companyId}/leave/`),
+
+  deleteDemoCompany: () =>
+    api.delete<void>('/companies/demo/'),
+
+  resetDemoCompany: () =>
+    api.post<{ detail: string }>('/companies/demo/reset/'),
 };

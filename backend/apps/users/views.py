@@ -7,6 +7,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.conf import settings as django_settings
 from rest_framework import generics, mixins, permissions, status
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
@@ -34,14 +35,24 @@ class UserRegistrationView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        try:
+            from apps.users.demo import create_demo_company_for_user
+            create_demo_company_for_user(user)
+        except Exception:
+            pass  # demo company is a bonus — never block registration
         return Response(
             {"user": UserSerializer(user).data},
             status=status.HTTP_201_CREATED,
         )
 
 
+class LoginRateThrottle(AnonRateThrottle):
+    scope = 'login'
+
+
 class UserTokenObtainPairView(TokenObtainPairView):
     serializer_class = UserTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
 
 
 class CurrentUserView(APIView):
@@ -218,8 +229,10 @@ class CompanyModuleEnableView(APIView):
         now = timezone.now()
         if row.is_enabled:
             row.enabled_at = now
+            row.disabled_at = None
         else:
             row.disabled_at = now
+            row.enabled_at = None
         row.save(update_fields=["is_enabled", "enabled_at", "disabled_at"])
 
         try:
@@ -713,3 +726,59 @@ class WebPushSubscriptionView(APIView):
             return Response({"detail": "Pole 'endpoint' jest wymagane."}, status=status.HTTP_400_BAD_REQUEST)
         deleted, _ = WebPushSubscription.objects.filter(user=request.user, endpoint=endpoint).delete()
         return Response({"unregistered": deleted > 0})
+
+
+class DemoCompanyDeleteView(APIView):
+    """DELETE /api/companies/demo/ — hard-delete the demo company for the current user."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        from django.db import transaction as db_transaction
+        from apps.users.deletion_views import _hard_delete_demo
+
+        demo = Company.objects.filter(
+            memberships__user=request.user,
+            memberships__is_active=True,
+            is_demo=True,
+        ).first()
+        if not demo:
+            return Response({"detail": "Brak firmy demo."}, status=status.HTTP_404_NOT_FOUND)
+
+        with db_transaction.atomic():
+            _hard_delete_demo(demo, request.user)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DemoCompanyResetView(APIView):
+    """POST /api/companies/demo/reset/ — delete and recreate demo data for the current user."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from django.db import transaction as db_transaction
+        from apps.users.deletion_views import _hard_delete_demo
+        from apps.users.demo import create_demo_company_for_user
+
+        with db_transaction.atomic():
+            demo = Company.objects.filter(
+                memberships__user=request.user,
+                memberships__is_active=True,
+                is_demo=True,
+            ).first()
+            if demo:
+                _hard_delete_demo(demo, request.user)
+            create_demo_company_for_user(request.user)
+
+            # Switch user to freshly created demo company
+            new_demo = Company.objects.filter(
+                memberships__user=request.user,
+                memberships__is_active=True,
+                is_demo=True,
+            ).first()
+            if new_demo:
+                request.user.current_company = new_demo
+                request.user.save(update_fields=["current_company"])
+
+        return Response({"detail": "Dane demo zostały zresetowane."}, status=status.HTTP_200_OK)

@@ -1130,7 +1130,7 @@ export function DeliveryDocumentsPage() {
   return <DeliveryDocumentsPageContent />;
 }
 
-function DeliveryDocumentsPageContent() {
+export function DeliveryDocumentsPageContent() {
   const { user } = useAuth();
   const { data: myCompanies } = useMyCompaniesQuery();
   const currentCompany = (myCompanies ?? []).find((c) => c.id === user?.current_company);

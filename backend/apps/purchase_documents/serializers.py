@@ -217,7 +217,7 @@ class PurchaseDocumentSerializer(UUIDModelSerializer):
         product_id = item_data.pop("product_id", None)
         if product_id:
             try:
-                return Product.objects.get(uuid=product_id)
+                return Product.objects.get(id=product_id)
             except Product.DoesNotExist:
                 pass
         return None

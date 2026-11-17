@@ -44,7 +44,7 @@ class SupplierOrderItemWriteSerializer(serializers.ModelSerializer):
 
     def validate_product_id(self, value):
         try:
-            return Product.objects.get(uuid=value)
+            return Product.objects.get(id=value)
         except Product.DoesNotExist:
             raise serializers.ValidationError("Produkt nie istnieje.")
 
@@ -62,7 +62,7 @@ class CreatePzItemOverrideSerializer(serializers.Serializer):
 
     def validate_product_id(self, value):
         try:
-            return Product.objects.get(uuid=value)
+            return Product.objects.get(id=value)
         except Product.DoesNotExist:
             raise serializers.ValidationError("Produkt nie istnieje.")
 

@@ -101,7 +101,7 @@ def _status_payload(row: KSeFCertificate | None) -> dict:
 
 def _public_metadata_row(row: KSeFCertificate) -> dict:
     return {
-        "id": str(row.id),
+        "id": str(row.uuid),
         "subject_name": row.subject_name,
         "certificate_filename": row.certificate_filename or None,
         "key_filename": row.key_filename or None,

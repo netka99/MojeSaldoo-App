@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { MarkPaidDialog } from '@/components/ui/MarkPaidDialog';
 import { KsefPassphraseModal } from '@/components/features/invoicing/KsefPassphraseModal';
 import { KsefSendPreviewModal } from '@/components/features/invoicing/KsefSendPreviewModal';
 import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
@@ -298,6 +299,7 @@ export function InvoiceDetailPage() {
   const { data: ksefSession } = useKsefSessionQuery(needsKsefCheck);
 
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showMarkPaidDialog, setShowMarkPaidDialog] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
   const [printShowAdditionalInfo, setPrintShowAdditionalInfo] = useState(true);
@@ -347,11 +349,16 @@ export function InvoiceDetailPage() {
     }
   };
 
-  const onMarkPaid = async () => {
+  const onMarkPaid = () => {
+    setShowMarkPaidDialog(true);
+  };
+
+  const onMarkPaidConfirm = async (paidAt: string) => {
     if (!id) return;
     setActionError(null);
     try {
-      await markPaidM.mutateAsync(id);
+      await markPaidM.mutateAsync({ id, paidAt });
+      setShowMarkPaidDialog(false);
       refetchAll();
     } catch (e) {
       setActionError(errMsg(e));
@@ -722,12 +729,19 @@ export function InvoiceDetailPage() {
                   type="button"
                   size="sm"
                   variant="secondary"
-                  onClick={() => void onMarkPaid()}
+                  onClick={onMarkPaid}
                   disabled={markPaidM.isPending || fetching}
                 >
                   {markPaidM.isPending ? 'Zapisywanie…' : 'Oznacz jako opłaconą'}
                 </Button>
               )}
+              <MarkPaidDialog
+                open={showMarkPaidDialog}
+                defaultDate={new Date().toISOString().slice(0, 10)}
+                onConfirm={paidAt => void onMarkPaidConfirm(paidAt)}
+                onCancel={() => setShowMarkPaidDialog(false)}
+                isPending={markPaidM.isPending}
+              />
               {canInvoices && (showSendToKsef || showResendKsef) && (
                 <Button
                   type="button"

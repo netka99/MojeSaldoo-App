@@ -14,7 +14,7 @@ import {
   reportRowClass,
   reportTableClass,
 } from '@/lib/reportSurface';
-import type { CustomerFlowReport, FlowCustomerRow, FlowInvoiceEntry, FlowManualInvoice, FlowOrderDetail, FlowOrderLine, FlowProblem, FlowWzEntry } from '@/types/reporting.types';
+import type { CustomerFlowReport, FlowCustomerRow, FlowInvoiceEntry, FlowManualInvoice, FlowOrderDetail, FlowOrderLine, FlowProblem, FlowStandaloneInvoice, FlowWzEntry } from '@/types/reporting.types';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 
 /* ── Date helpers ──────────────────────────────────────────────── */
@@ -75,6 +75,12 @@ const PROBLEM_CONFIG: Record<FlowProblem, { label: string; short: string; color:
     short: 'Zaległa FV',
     color: 'text-red-600',
     pill: 'bg-red-100 text-red-700',
+  },
+  wz_draft: {
+    label: 'WZ niezatwierdzone',
+    short: 'WZ szkic',
+    color: 'text-amber-600',
+    pill: 'bg-amber-50 text-amber-700 border border-amber-200',
   },
   wz_zw_no_fvkor: {
     label: 'ZW bez korekty FV',
@@ -222,10 +228,12 @@ function OrderDetailRow({ row, striped }: { row: FlowOrderDetail; striped: boole
             <div className="flex flex-col gap-2">
               {row.wz.map((wz: FlowWzEntry) => (
                 <div key={wz.id}>
-                  <Link to={`/delivery/${wz.id}`} className="text-sm font-medium text-emerald-700 hover:underline">
+                  <Link to={`/delivery/${wz.id}`} className={wz.status === 'draft' ? 'text-sm font-medium text-amber-600 hover:underline' : 'text-sm font-medium text-emerald-700 hover:underline'}>
                     {wz.number ?? 'WZ'}
                   </Link>
-                  <p className="text-xs text-slate-500">{WZ_STATUS_PL[wz.status] ?? wz.status}</p>
+                  <p className={wz.status === 'draft' ? 'text-xs font-medium text-amber-500' : 'text-xs text-slate-500'}>
+                    {WZ_STATUS_PL[wz.status] ?? wz.status}{wz.status === 'draft' ? ' ⚠' : ''}
+                  </p>
                   {wz.zw?.map((zw) => (
                     <div key={zw.id} className="mt-1">
                       <Link to={`/delivery/${zw.id}`} className="text-sm font-medium text-amber-700 hover:underline">
@@ -390,28 +398,118 @@ function ProductSummaryBlock({ lines }: { lines: FlowOrderLine[] }) {
   );
 }
 
-/* ── Manual invoices (collapsible) ─────────────────────────────── */
-function ManualInvoicesBlock({ invoices }: { invoices: FlowManualInvoice[] }) {
-  const [open, setOpen] = useState(true);
-
+/* ── Standalone (ad-hoc) invoices block ────────────────────────── */
+function StandaloneInvoiceRow({ inv }: { inv: FlowStandaloneInvoice }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+    <div className="border-t border-slate-100">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-slate-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50/60"
       >
-        <span className="flex min-w-0 items-baseline gap-2">
-          <span className="text-sm font-semibold text-slate-900">Faktury bez zamówienia</span>
-          <span className="text-xs font-normal tabular-nums text-slate-500">{pozycjeCount(invoices.length)}</span>
-        </span>
+        {/* Customer + invoice number */}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to={`/invoices/${inv.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className={cn('text-sm font-medium hover:underline',
+                inv.overdue ? 'text-red-600' :
+                inv.status === 'paid' ? 'text-emerald-700' : 'text-sky-700')}
+            >
+              {inv.number ?? 'FV'}
+            </Link>
+            <span className="text-xs text-slate-500">{INV_STATUS_PL[inv.status] ?? inv.status}</span>
+            {inv.overdue && (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">zaległa</span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500">{inv.customer_name}</p>
+        </div>
+
+        {/* Dates */}
+        <div className="hidden shrink-0 text-right sm:block">
+          {inv.issue_date && <p className="text-xs text-slate-500">wyst. {fmtDate(inv.issue_date)}</p>}
+          {inv.due_date && <p className={cn('text-xs', inv.overdue ? 'text-red-500 font-medium' : 'text-slate-400')}>termin {fmtDate(inv.due_date)}</p>}
+        </div>
+
+        {/* Amount */}
+        <div className="shrink-0 text-right">
+          <p className={cn('text-sm font-semibold tabular-nums', inv.overdue ? 'text-red-600' : 'text-slate-800')}>
+            {plnFmt(inv.total_gross)}
+          </p>
+        </div>
+
         <ChevronDown open={open} />
       </button>
+
+      {open && inv.lines.length > 0 && (
+        <div className="border-t border-slate-100 px-4 pb-3 pt-2">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="py-1.5 pl-4 pr-3 text-left font-semibold uppercase tracking-wide text-slate-500">Produkt</th>
+                  <th className="py-1.5 pr-4 text-right font-semibold uppercase tracking-wide text-slate-500">Ilość</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {inv.lines.map((l, i) => (
+                  <tr key={i} className="hover:bg-slate-50/60">
+                    <td className="py-1.5 pl-4 pr-3 text-slate-700">
+                      {l.product_name}{l.unit && <span className="ml-1 text-slate-400">{l.unit}</span>}
+                    </td>
+                    <td className="py-1.5 pr-4 text-right tabular-nums text-slate-600">{l.quantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StandaloneInvoicesBlock({ invoices }: { invoices: FlowStandaloneInvoice[] }) {
+  const [open, setOpen] = useState(true);
+  const overdueCount = invoices.filter((i) => i.overdue).length;
+  const totalGross = invoices.reduce((s, i) => s + parseFloat(i.total_gross || '0'), 0);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:px-5"
+        aria-expanded={open}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-primary" stroke="currentColor" strokeWidth={2} aria-hidden>
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-slate-900">Faktury bez zamówienia</span>
+            <span className="ml-2 text-xs font-normal tabular-nums text-slate-500">{pozycjeCount(invoices.length)}</span>
+            {overdueCount > 0 && (
+              <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">{overdueCount} zaległa</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold tabular-nums text-slate-700">{plnFmt(totalGross)}</span>
+          <ChevronDown open={open} />
+        </div>
+      </button>
+
       {open && (
-        <div className="divide-y divide-slate-100 border-t border-slate-200">
+        <div className="border-t border-slate-200">
           {invoices.map((inv) => (
-            <ManualInvoiceRow key={inv.id} inv={inv} />
+            <StandaloneInvoiceRow key={inv.id} inv={inv} />
           ))}
         </div>
       )}
@@ -506,11 +604,15 @@ function CustomerRow({ row, wzRequired }: { row: FlowCustomerRow; wzRequired: bo
           {/* WZ */}
           <div className="text-center">
             <p className="text-[11px] text-slate-400 uppercase tracking-wide">WZ</p>
-            <p className={cn('text-base font-bold tabular-nums', row.wz.without_invoice > 0 ? 'text-amber-600' : 'text-slate-900')}>
+            <p className={cn('text-base font-bold tabular-nums',
+              row.wz.without_invoice > 0 ? 'text-amber-600' :
+              row.problems.includes('wz_draft') ? 'text-amber-500' : 'text-slate-900')}>
               {row.wz.total}
             </p>
             {row.wz.without_invoice > 0 ? (
               <p className="text-[11px] tabular-nums text-amber-600">{row.wz.without_invoice} bez FV</p>
+            ) : row.problems.includes('wz_draft') ? (
+              <p className="text-[11px] tabular-nums text-amber-500">szkic ⚠</p>
             ) : (
               <p className="text-[11px] text-slate-400">—</p>
             )}
@@ -522,7 +624,9 @@ function CustomerRow({ row, wzRequired }: { row: FlowCustomerRow; wzRequired: bo
             <p className={cn('text-base font-bold tabular-nums', row.invoices.overdue > 0 ? 'text-red-600' : 'text-slate-900')}>
               {row.invoices.total}
             </p>
-            <p className="text-[11px] tabular-nums text-slate-600">{plnFmt(row.invoices.total_gross)}</p>
+            {row.invoices.total > 0 && (
+              <p className="text-[11px] tabular-nums text-slate-600">{plnFmt(row.invoices.total_gross)}</p>
+            )}
             {row.invoices.overdue > 0 && (
               <p className="text-[11px] tabular-nums text-red-600">{row.invoices.overdue} zaległa</p>
             )}
@@ -546,10 +650,6 @@ function CustomerRow({ row, wzRequired }: { row: FlowCustomerRow; wzRequired: bo
           })()}
 
           <OrdersBlock orders={row.orders_detail} />
-
-          {row.manual_invoices.length > 0 && (
-            <ManualInvoicesBlock invoices={row.manual_invoices} />
-          )}
         </div>
       )}
     </div>
@@ -561,6 +661,7 @@ const FILTER_OPTIONS: { key: ProblemKey; label: string }[] = [
   { key: 'all',                   label: 'Wszyscy' },
   { key: 'delivered_no_invoice',  label: 'Brak faktury' },
   { key: 'wz_no_invoice',         label: 'WZ bez FV' },
+  { key: 'wz_draft',             label: 'WZ szkic' },
   { key: 'invoice_overdue',       label: 'Zaległe FV' },
   { key: 'wz_zw_no_fvkor',        label: 'ZW bez FV-KOR' },
 ];
@@ -571,7 +672,7 @@ function SummaryBar({ data }: { data: CustomerFlowReport }) {
   const withProblems   = data.customers.filter((c) => c.problems.length > 0).length;
   const totalOrders    = data.customers.reduce((s, c) => s + c.orders.total, 0);
   const totalWz        = data.customers.reduce((s, c) => s + c.wz.total, 0);
-  const totalInvoices  = data.customers.reduce((s, c) => s + c.invoices.total, 0);
+  const totalInvoices  = data.customers.reduce((s, c) => s + c.invoices.total, 0) + (data.standalone_invoices?.length ?? 0);
   const wzNoInv        = data.customers.reduce((s, c) => s + c.wz.without_invoice, 0);
   const overdue        = data.customers.reduce((s, c) => s + c.invoices.overdue, 0);
 
@@ -768,6 +869,10 @@ export function CustomerFlowReportPage() {
                 </div>
               )}
             </div>
+          )}
+
+          {data.standalone_invoices?.length > 0 && (
+            <StandaloneInvoicesBlock invoices={data.standalone_invoices} />
           )}
 
           {(data.wz_required || data.returns_mode === 'fv_kor') && (

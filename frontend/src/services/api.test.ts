@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import nock from 'nock';
-import { api, authApi, authStorage, AUTH_SESSION_EXPIRED_EVENT } from './api';
+import { api, authApi, authStorage, AUTH_SESSION_EXPIRED_EVENT, API_BASE_URL } from './api';
 
-const HOST = 'http://localhost:8000';
+// API_BASE_URL is e.g. "http://192.168.1.59:8000/api" — strip the path to get the nock host
+const HOST = API_BASE_URL.replace(/\/api\/?$/, '');
 
 describe('api (axios client)', () => {
   beforeAll(() => {
@@ -27,9 +28,9 @@ describe('api (axios client)', () => {
       },
     };
 
-    nock(HOST).post('/api/auth/login/', { username: 'u1', password: 'secret' }).reply(200, payload);
+    nock(HOST).post('/api/auth/login/', { email: 'u1@test.dev', password: 'secret' }).reply(200, payload);
 
-    const result = await authApi.login('u1', 'secret');
+    const result = await authApi.login('u1@test.dev', 'secret');
 
     expect(result).toEqual(payload);
     expect(localStorage.getItem('access_token')).toBe('access-jwt');
@@ -115,7 +116,7 @@ describe('api (axios client)', () => {
   });
 
   it('does not refresh on 401 for login', async () => {
-    nock(HOST).post('/api/auth/login/', { username: 'bad', password: 'bad' }).reply(401, { detail: 'Bad creds' });
+    nock(HOST).post('/api/auth/login/', { email: 'bad@bad.com', password: 'bad' }).reply(401, { detail: 'Bad creds' });
 
     let refreshCalled = false;
     nock(HOST).post('/api/auth/refresh/').reply(() => {
@@ -123,7 +124,7 @@ describe('api (axios client)', () => {
       return [200, { access: 'x', refresh: 'y' }];
     });
 
-    await expect(authApi.login('bad', 'bad')).rejects.toThrow();
+    await expect(authApi.login('bad@bad.com', 'bad')).rejects.toThrow();
     expect(refreshCalled).toBe(false);
   });
 

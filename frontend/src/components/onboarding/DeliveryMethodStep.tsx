@@ -19,7 +19,7 @@ const METHODS: MethodConfig[] = [
     key: 'delivery',
     icon: '📦',
     title: 'Wysyłam lub klient odbiera',
-    description: 'Klienci zamawiają telefonicznie lub mailowo — wysyłam kurierem albo odbierają osobiście.',
+    description: 'Klient zamawia — wystawiam dokument wydania i wydaję towar z magazynu.',
   },
   {
     key: 'docs_only',

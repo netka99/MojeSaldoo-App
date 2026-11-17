@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { LoginPage } from './LoginPage';
 import { AuthProvider } from '@/context/AuthContext';
@@ -40,18 +41,20 @@ describe('LoginPage', () => {
 
   function renderLogin(initialPath = '/login') {
     return render(
-      <MemoryRouter initialEntries={[initialPath]}>
-        <TestQueryProvider>
-          <AuthProvider>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/" element={<div data-testid="dashboard">Dashboard</div>} />
-              <Route path="/onboarding" element={<div data-testid="onboarding">Onboarding</div>} />
-              <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
-            </Routes>
-          </AuthProvider>
-        </TestQueryProvider>
-      </MemoryRouter>,
+      <GoogleOAuthProvider clientId="test-client-id">
+        <MemoryRouter initialEntries={[initialPath]}>
+          <TestQueryProvider>
+            <AuthProvider>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/" element={<div data-testid="dashboard">Dashboard</div>} />
+                <Route path="/onboarding" element={<div data-testid="onboarding">Onboarding</div>} />
+                <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
+              </Routes>
+            </AuthProvider>
+          </TestQueryProvider>
+        </MemoryRouter>
+      </GoogleOAuthProvider>,
     );
   }
 
@@ -64,13 +67,13 @@ describe('LoginPage', () => {
 
     renderLogin();
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Logowanie' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'MojeSaldoo' })).toBeInTheDocument());
 
-    await userEvent.type(screen.getByLabelText(/nazwa użytkownika/i), 'carol');
+    await userEvent.type(screen.getByLabelText(/e-mail/i), 'carol@test.dev');
     await userEvent.type(screen.getByLabelText(/^hasło$/i), 'secret-pass');
     await userEvent.click(screen.getByRole('button', { name: 'Zaloguj się' }));
 
-    await waitFor(() => expect(authApi.login).toHaveBeenCalledWith('carol', 'secret-pass'));
+    await waitFor(() => expect(authApi.login).toHaveBeenCalledWith('carol@test.dev', 'secret-pass'));
     await waitFor(() => expect(screen.getByTestId('dashboard')).toBeInTheDocument());
   });
 
@@ -82,21 +85,23 @@ describe('LoginPage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/customers' } }]}>
-        <TestQueryProvider>
-          <AuthProvider>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
-            </Routes>
-          </AuthProvider>
-        </TestQueryProvider>
-      </MemoryRouter>,
+      <GoogleOAuthProvider clientId="test-client-id">
+        <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/customers' } }]}>
+          <TestQueryProvider>
+            <AuthProvider>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/customers" element={<div data-testid="customers">Customers</div>} />
+              </Routes>
+            </AuthProvider>
+          </TestQueryProvider>
+        </MemoryRouter>
+      </GoogleOAuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Logowanie' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'MojeSaldoo' })).toBeInTheDocument());
 
-    await userEvent.type(screen.getByLabelText(/nazwa użytkownika/i), 'carol');
+    await userEvent.type(screen.getByLabelText(/e-mail/i), 'carol@test.dev');
     await userEvent.type(screen.getByLabelText(/^hasło$/i), 'x');
     await userEvent.click(screen.getByRole('button', { name: 'Zaloguj się' }));
 
@@ -113,8 +118,8 @@ describe('LoginPage', () => {
 
     renderLogin();
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Logowanie' })).toBeInTheDocument());
-    await userEvent.type(screen.getByLabelText(/nazwa użytkownika/i), 'carol');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'MojeSaldoo' })).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText(/e-mail/i), 'carol@test.dev');
     await userEvent.type(screen.getByLabelText(/^hasło$/i), 'x');
     await userEvent.click(screen.getByRole('button', { name: 'Zaloguj się' }));
 
@@ -129,6 +134,6 @@ describe('LoginPage', () => {
     renderLogin('/login');
 
     await waitFor(() => expect(screen.getByTestId('dashboard')).toBeInTheDocument());
-    expect(screen.queryByRole('heading', { name: 'Logowanie' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'MojeSaldoo' })).not.toBeInTheDocument();
   });
 });

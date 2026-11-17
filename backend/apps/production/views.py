@@ -73,7 +73,15 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
             )
             .order_by("-date", "-created_at")
         )
-        return filter_queryset_for_current_company(qs, self.request.user)
+        qs = filter_queryset_for_current_company(qs, self.request.user)
+        params = self.request.query_params
+        if date_from := _parse_date(params.get("date_from")):
+            qs = qs.filter(date__gte=date_from)
+        if date_to := _parse_date(params.get("date_to")):
+            qs = qs.filter(date__lte=date_to)
+        if status_filter := params.get("status"):
+            qs = qs.filter(status=status_filter)
+        return qs
 
     def get_serializer_class(self):
         if self.action == "create":

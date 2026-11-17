@@ -5,11 +5,11 @@ import type { InventoryCount } from '@/types/inventory.types';
 
 const ROOT_ID = 'inw-print-root';
 
-export function openINWPrintWindow(count: InventoryCount): boolean {
+export function openINWPrintWindow(count: InventoryCount, filledOnly = false): boolean {
   const title = `${count.document_number || 'INW'} — Arkusz inwentaryzacyjny`;
   return openPrintFrame({
     title,
     rootId: ROOT_ID,
-    element: createElement(INWPrintView, { count }),
+    element: createElement(INWPrintView, { count, filledOnly }),
   });
 }

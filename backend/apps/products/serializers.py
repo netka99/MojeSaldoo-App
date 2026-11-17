@@ -4,12 +4,10 @@ from django.apps import apps
 from django.db.models import Sum
 from rest_framework import serializers
 
-from apps.common.serializers import UUIDModelSerializer, UUIDRelatedField
-
-from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
+from .models import CustomerProductPrice, Product, ProductStock, StockMovement, Warehouse
 
 
-class ProductSerializer(UUIDModelSerializer):
+class ProductSerializer(serializers.ModelSerializer):
     """Full Product API shape; money/stock amounts use DecimalField (no floats)."""
 
     price_net = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
@@ -20,8 +18,6 @@ class ProductSerializer(UUIDModelSerializer):
         max_digits=10, decimal_places=4, required=False, allow_null=True,
     )
     stock_total = serializers.SerializerMethodField()
-    stocks_by_warehouse = serializers.SerializerMethodField()
-    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -38,11 +34,11 @@ class ProductSerializer(UUIDModelSerializer):
             "sku",
             "barcode",
             "pkwiu",
+            "product_type",
+            "is_service",
             "track_batches",
             "min_stock_alert",
             "shelf_life_days",
-            "product_type",
-            "is_service",
             "is_resalable",
             "markup_percent",
             "avg_cost",
@@ -50,62 +46,18 @@ class ProductSerializer(UUIDModelSerializer):
             "last_cost",
             "avg_cost_updated_at",
             "is_active",
-            "image_url",
             "stock_total",
-            "stocks_by_warehouse",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["user", "company", "last_cost", "avg_cost_updated_at", "image_url", "stock_total", "stocks_by_warehouse", "created_at", "updated_at"]
-
-    def get_image_url(self, obj: Product):
-        if not obj.image:
-            return None
-        request = self.context.get("request")
-        url = obj.image.url
-        if request is not None:
-            return request.build_absolute_uri(url)
-        return url
+        read_only_fields = ["id", "user", "company", "last_cost", "avg_cost_updated_at", "stock_total", "created_at", "updated_at"]
 
     def validate_avg_cost(self, value):
         if value is not None and value < Decimal("0"):
             raise serializers.ValidationError("Koszt własny nie może być ujemny.")
         return value
 
-    def _apply_service_defaults(self, validated_data: dict) -> dict:
-        """Sync product_type ↔ is_service and enforce type-specific field defaults."""
-        pt = validated_data.get("product_type")
-        is_svc = validated_data.get("is_service", False)
-
-        # product_type wins; fall back to is_service for legacy callers
-        if pt == Product.PRODUCT_TYPE_SERVICE or (pt is None and is_svc):
-            validated_data["product_type"] = Product.PRODUCT_TYPE_SERVICE
-            validated_data["is_service"] = True
-            validated_data["track_batches"] = False
-            validated_data["is_resalable"] = True
-        elif pt is not None:
-            validated_data["is_service"] = False
-        return validated_data
-
-    def create(self, validated_data):
-        self._apply_service_defaults(validated_data)
-        return super().create(validated_data)
-
     def update(self, instance, validated_data):
-        pt = validated_data.get("product_type", instance.product_type)
-        if pt == Product.PRODUCT_TYPE_SERVICE:
-            validated_data["is_service"] = True
-            validated_data["track_batches"] = False
-            validated_data["is_resalable"] = True
-        elif "product_type" in validated_data:
-            validated_data["is_service"] = False
-        else:
-            # Legacy path: product_type not sent, honour is_service
-            if validated_data.get("is_service", instance.is_service):
-                validated_data["product_type"] = Product.PRODUCT_TYPE_SERVICE
-                validated_data["track_batches"] = False
-                validated_data["is_resalable"] = True
-
         # If avg_cost is being manually set, force source = manual
         # unless a higher-priority source is already set (pz or production)
         if "avg_cost" in validated_data:
@@ -124,20 +76,6 @@ class ProductSerializer(UUIDModelSerializer):
         t = obj.stocks.aggregate(total=Sum("quantity_available"))["total"]
         return t if t is not None else Decimal("0")
 
-    def get_stocks_by_warehouse(self, obj: Product) -> list:
-        """Per-warehouse stock breakdown — only included in detail (retrieve) view."""
-        return [
-            {
-                "warehouse_id": str(s.warehouse.uuid),
-                "warehouse_name": s.warehouse.name,
-                "warehouse_code": s.warehouse.code,
-                "quantity_available": str(s.quantity_available),
-                "quantity_reserved": str(s.quantity_reserved),
-                "quantity_total": str(s.quantity_total),
-            }
-            for s in obj.stocks.select_related("warehouse").order_by("warehouse__code")
-        ]
-
     def validate_price_net(self, value: Decimal) -> Decimal:
         if value < 0:
             raise serializers.ValidationError("Price net cannot be negative.")
@@ -154,7 +92,7 @@ class ProductSerializer(UUIDModelSerializer):
         return value
 
 
-class WarehouseSerializer(UUIDModelSerializer):
+class WarehouseSerializer(serializers.ModelSerializer):
     """Full Warehouse API shape (no decimal fields on model)."""
 
     class Meta:
@@ -173,10 +111,10 @@ class WarehouseSerializer(UUIDModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["user", "company", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "company", "created_at", "updated_at"]
 
 
-class StockMovementSerializer(UUIDModelSerializer):
+class StockMovementSerializer(serializers.ModelSerializer):
     """Read/write representation of a stock movement line."""
 
     quantity = serializers.DecimalField(max_digits=10, decimal_places=2)
@@ -203,16 +141,33 @@ class StockMovementSerializer(UUIDModelSerializer):
             "created_at",
             "created_by",
         ]
-        read_only_fields = ["company", "product", "warehouse", "warehouse_code", "user", "movement_type", "quantity", "quantity_before", "quantity_after", "reference_type", "reference_id", "notes", "created_at", "created_by"]
+        read_only_fields = [
+            "id",
+            "company",
+            "product",
+            "warehouse",
+            "warehouse_code",
+            "user",
+            "movement_type",
+            "quantity",
+            "quantity_before",
+            "quantity_after",
+            "reference_type",
+            "reference_id",
+            "notes",
+            "created_at",
+            "created_by",
+        ]
 
 
-class WarehouseStockItemSerializer(UUIDModelSerializer):
+class WarehouseStockItemSerializer(serializers.ModelSerializer):
     """ProductStock row enriched with product details — for GET /warehouses/{id}/stock/."""
 
-    product_id = serializers.UUIDField(source="product.uuid", read_only=True)
+    product_id = serializers.UUIDField(source="product.id", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_sku = serializers.CharField(source="product.sku", read_only=True)
     product_unit = serializers.CharField(source="product.unit", read_only=True)
+    product_type = serializers.CharField(source="product.product_type", read_only=True)
     min_stock_alert = serializers.DecimalField(
         source="product.min_stock_alert",
         max_digits=10,
@@ -220,7 +175,6 @@ class WarehouseStockItemSerializer(UUIDModelSerializer):
         read_only=True,
     )
     is_below_minimum = serializers.SerializerMethodField()
-    nearest_expiry_date = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductStock
@@ -230,12 +184,12 @@ class WarehouseStockItemSerializer(UUIDModelSerializer):
             "product_name",
             "product_sku",
             "product_unit",
+            "product_type",
             "quantity_available",
             "quantity_reserved",
             "quantity_total",
             "min_stock_alert",
             "is_below_minimum",
-            "nearest_expiry_date",
         ]
 
     def get_is_below_minimum(self, obj) -> bool:
@@ -244,23 +198,8 @@ class WarehouseStockItemSerializer(UUIDModelSerializer):
             return False
         return obj.quantity_total < alert
 
-    def get_nearest_expiry_date(self, obj) -> str | None:
-        from apps.products.models import StockBatch
-        batch = (
-            StockBatch.objects.filter(
-                product=obj.product,
-                warehouse=obj.warehouse,
-                quantity_remaining__gt=0,
-                expiry_date__isnull=False,
-            )
-            .order_by("expiry_date")
-            .values_list("expiry_date", flat=True)
-            .first()
-        )
-        return str(batch) if batch else None
 
-
-class StockMovementListSerializer(UUIDModelSerializer):
+class StockMovementListSerializer(serializers.ModelSerializer):
     """Rich read-only view of a StockMovement — for GET /products/stock-movements/."""
 
     product_name = serializers.CharField(source="product.name", read_only=True)
@@ -301,11 +240,11 @@ class StockMovementListSerializer(UUIDModelSerializer):
         try:
             if ref_type in ("delivery", "delivery_document"):
                 DeliveryDocument = apps.get_model("delivery", "DeliveryDocument")
-                doc = DeliveryDocument.objects.filter(uuid=obj.reference_id).only("document_number").first()
+                doc = DeliveryDocument.objects.filter(pk=obj.reference_id).only("document_number").first()
                 return doc.document_number if doc else None
             if ref_type == "order":
                 Order = apps.get_model("orders", "Order")
-                doc = Order.objects.filter(uuid=obj.reference_id).only("order_number").first()
+                doc = Order.objects.filter(pk=obj.reference_id).only("order_number").first()
                 return doc.order_number if doc else None
         except Exception:
             return None
@@ -354,24 +293,24 @@ class StockUpdateSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"warehouse_code": "No warehouse with this code for this product's owner."}
                 )
-            if warehouse_id and str(warehouse_id) != str(wh.uuid):
+            if warehouse_id and str(warehouse_id) != str(wh.id):
                 raise serializers.ValidationError(
                     {"warehouse_id": "Conflicts with warehouse_code for the resolved warehouse."}
                 )
-            data["warehouse_id"] = wh.uuid
-            warehouse_id = wh.uuid
+            data["warehouse_id"] = wh.id
+            warehouse_id = wh.id
 
         if movement_id:
             existing = StockMovement.objects.filter(
-                uuid=movement_id,
+                pk=movement_id,
                 product=product,
-            ).select_related("warehouse").first()
+            ).first()
             if not existing:
                 raise serializers.ValidationError(
                     {"stock_movement_id": "No movement with this id for this product."}
                 )
             self._existing_movement = existing
-            if warehouse_id and str(warehouse_id) != str(existing.warehouse.uuid):
+            if warehouse_id and str(warehouse_id) != str(existing.warehouse_id):
                 raise serializers.ValidationError(
                     {
                         "warehouse_id": (
@@ -379,7 +318,7 @@ class StockUpdateSerializer(serializers.Serializer):
                         )
                     }
                 )
-            data["warehouse_id"] = existing.warehouse.uuid
+            data["warehouse_id"] = existing.warehouse_id
         elif not warehouse_id:
             raise serializers.ValidationError(
                 {
@@ -394,18 +333,12 @@ class StockUpdateSerializer(serializers.Serializer):
 
 
 class CustomerProductPriceSerializer(serializers.ModelSerializer):
-    # customer / product: accept UUID (public id), resolve to int PK internally
-    customer = UUIDRelatedField(queryset=apps.get_model("customers", "Customer").objects.all())
-    product = UUIDRelatedField(queryset=apps.get_model("products", "Product").objects.all())
+    price_net = serializers.DecimalField(max_digits=10, decimal_places=2)
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_price_net = serializers.DecimalField(
-        source="product.price_net", max_digits=10, decimal_places=2, read_only=True
+        source="product.price_net", max_digits=10, decimal_places=2, read_only=True,
     )
-    product_vat_rate = serializers.DecimalField(
-        source="product.vat_rate", max_digits=5, decimal_places=2, read_only=True
-    )
-    price_net = serializers.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
         model = CustomerProductPrice
@@ -416,45 +349,9 @@ class CustomerProductPriceSerializer(serializers.ModelSerializer):
             "product_name",
             "product_unit",
             "product_price_net",
-            "product_vat_rate",
             "price_net",
-            "price_type",
             "note",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
-
-    def validate(self, attrs):
-        request = self.context.get("request")
-        company = getattr(getattr(request, "user", None), "current_company", None)
-        if company and "customer" in attrs and "product" in attrs:
-            qs = CustomerProductPrice.objects.filter(
-                company=company,
-                customer=attrs["customer"],
-                product=attrs["product"],
-            )
-            if self.instance:
-                qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                raise serializers.ValidationError(
-                    "Cena indywidualna dla tego klienta i produktu już istnieje."
-                )
-        return attrs
-
-
-class StockBatchSerializer(UUIDModelSerializer):
-    """Read-only FIFO batch for GET /warehouses/{id}/batches/?product={uuid}."""
-
-    class Meta:
-        model = StockBatch
-        fields = [
-            "id",
-            "batch_number",
-            "received_date",
-            "expiry_date",
-            "quantity_initial",
-            "quantity_remaining",
-            "unit_cost",
-        ]
-        read_only_fields = fields

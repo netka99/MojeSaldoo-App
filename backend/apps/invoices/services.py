@@ -722,7 +722,7 @@ def create_manual_invoice(
         product_unit = str(item.get("product_unit", "")).strip()
         if product_uuid:
             try:
-                product_obj = ProductModel.objects.get(uuid=product_uuid, company=company)
+                product_obj = ProductModel.objects.get(id=product_uuid, company=company)
                 if not product_name:
                     product_name = product_obj.name
                 if not product_unit:

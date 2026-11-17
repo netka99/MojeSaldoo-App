@@ -434,7 +434,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         payment_terms = 14
         if payment_terms_raw:
             try:
-                payment_terms = int(payment_terms_raw)
+                payment_terms = int(float(payment_terms_raw))
                 if payment_terms < 0:
                     raise ValueError
             except ValueError:

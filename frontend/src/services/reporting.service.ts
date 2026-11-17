@@ -6,6 +6,7 @@ import type {
   ExpiryAlertRow,
   InventoryReportRow,
   KsefStatusReport,
+  MaterialConsumptionRow,
   PaginatedReportingInvoices,
   PaymentAgingReport,
   ProfitLossReport,
@@ -100,6 +101,10 @@ export const reportingService = {
   /** Per-customer flow report: order → WZ → invoice with problem flags. */
   fetchCustomerFlow: (params: { date_from: string; date_to: string }) =>
     api.get<CustomerFlowReport>(`${basePath}customer-flow/`, { params }),
+
+  /** Material consumption: stock movements for material products in a period. */
+  fetchMaterialConsumption: (params: { date_from: string; date_to: string }) =>
+    api.get<MaterialConsumptionRow[]>(`${basePath}material-consumption/`, { params }),
 
   /** Download JPK_EWP(3) XML for a ryczałt company. */
   downloadJpkEwp: async (year: number, month: number): Promise<void> => {

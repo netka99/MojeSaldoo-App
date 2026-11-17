@@ -128,4 +128,10 @@ describe('companyService', () => {
       enabledAt: null,
     });
   });
+
+  it('deleteDemoCompany calls DELETE /companies/demo/', async () => {
+    mocks.delete.mockResolvedValue(undefined);
+    await companyService.deleteDemoCompany();
+    expect(mocks.delete).toHaveBeenCalledWith('/companies/demo/');
+  });
 });

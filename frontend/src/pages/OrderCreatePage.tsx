@@ -16,10 +16,7 @@ import {
 import { formatDeliveryDate } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import { useCreateOrderMutation, useConfirmOrderMutation, useOrdersByCustomerQuery } from '@/query/use-orders';
-import { useOfflineOrderCreate, OfflineQueuedError } from '@/query/use-offline-mutations';
 import { useCustomerQuery, useCustomerListQuery, useCustomerPricesQuery } from '@/query/use-customers';
-import { useWorkflowSettingsQuery } from '@/query/use-companies';
-import { useGenerateDeliveryForOrderMutation } from '@/query/use-delivery';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
 import type { Product } from '@/types';
@@ -81,8 +78,6 @@ function pageFromDrfNext(next: string | null): number | undefined {
 
 /* ── Checkout view ───────────────────────────────────────────────── */
 
-const WZ_CHECKBOX_STORAGE_KEY = 'order_create_generate_wz';
-
 interface CheckoutViewProps {
   lines: OrderDraftLine[];
   setLines: React.Dispatch<React.SetStateAction<OrderDraftLine[]>>;
@@ -91,10 +86,6 @@ interface CheckoutViewProps {
   onSubmit: () => Promise<void>;
   isPending: boolean;
   submitError: string | null;
-  generateWz: boolean;
-  onGenerateWzChange: (v: boolean) => void;
-  wzDate: string;
-  onWzDateChange: (v: string) => void;
 }
 
 function TrashIcon() {
@@ -105,7 +96,7 @@ function TrashIcon() {
   );
 }
 
-function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPending, submitError, generateWz, onGenerateWzChange, wzDate, onWzDateChange }: CheckoutViewProps) {
+function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPending, submitError }: CheckoutViewProps) {
   const getLineGross = (l: OrderDraftLine) => {
     const q = parseDecimalInput(l.quantity) ?? 0;
     const netU = parseDecimalInput(l.unitPriceNet);
@@ -120,9 +111,7 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
     const netU = parseDecimalInput(l.unitPriceNet);
     if (netU == null) return 0;
     const vat = parseDecimalInput(String(l.product.vat_rate)) ?? 0;
-    // Round unit gross to 2 decimal places (same as displayed price) before multiplying
-    const unitG = Math.round(unitGrossFromNet(netU, vat) * 100) / 100;
-    return unitG * q;
+    return unitGrossFromNet(netU, vat) * q;
   };
 
   const total = lines.reduce((s, l) => s + getLineGross(l), 0);
@@ -284,12 +273,12 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
               initial={{ y: 80, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               className={cn(
-                'fixed z-40 left-0 right-0 pointer-events-none md:left-64',
+                'fixed z-40 left-0 right-0 pointer-events-none',
                 'bottom-[calc(83px+0.75rem+env(safe-area-inset-bottom))]',
-                'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))]',
+                'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:left-64',
               )}
             >
-              <div className="mx-auto w-full max-w-3xl px-5 pointer-events-auto">
+              <div className="mx-auto w-full max-w-3xl px-4 pointer-events-auto">
                 <div className="rounded-2xl bg-card p-5 shadow-[0_-4px_32px_rgba(0,0,0,0.10)]">
                   <div className="mb-4 space-y-2">
                     <div className="flex justify-between text-[14px]">
@@ -306,29 +295,6 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
                       <span className="text-[17px] font-semibold text-foreground">Do zapłaty</span>
                       <span className="text-[22px] font-bold tabular-nums text-foreground">{formatGrossPln(total)}</span>
                     </div>
-                  </div>
-
-                  <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2.5">
-                    <label className="flex cursor-pointer items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={generateWz}
-                        onChange={(e) => onGenerateWzChange(e.target.checked)}
-                        className="h-4 w-4 rounded border-slate-300 accent-primary"
-                      />
-                      <span className="text-[14px] font-medium text-slate-700">Wygeneruj WZ od razu</span>
-                    </label>
-                    {generateWz && (
-                      <label className="mt-2.5 block rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
-                        <span className="mb-1.5 block text-sm font-medium text-slate-800">Data WZ</span>
-                        <input
-                          type="date"
-                          value={wzDate}
-                          onChange={(e) => onWzDateChange(e.target.value)}
-                          className="date-pill w-full border-solid border-slate-300 bg-white"
-                        />
-                      </label>
-                    )}
                   </div>
 
                   <motion.button
@@ -426,10 +392,15 @@ function ProductCard({ product, quantity, customPriceNet, onTap, onAdd, onRemove
       <div className="min-w-0 flex-1">
         <h4 className="truncate text-[15px] font-medium text-foreground">{product.name}</h4>
         <p className="text-[13px] text-muted-foreground">
-          {customPriceNet
-            ? <>{formatGrossPln(unitGrossFromNet(parseDecimalInput(customPriceNet) ?? 0, parseDecimalInput(String(product.vat_rate)) ?? 0))} <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-semibold text-primary">cena indyw.</span></>
-            : <>{formatGrossPln(grossPerUnit(product))}</>
-          } / {unit}
+          {customPriceNet != null ? (
+            <>
+              <span className="font-semibold text-primary">{pln.format(Number(customPriceNet))} netto</span>
+              {' '}
+              <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-semibold text-primary">indyw.</span>
+            </>
+          ) : (
+            <>{formatGrossPln(grossPerUnit(product))} / {unit}</>
+          )}
         </p>
         {stock && (
           <p className="mt-0.5 text-[11px] text-muted-foreground">{stock}</p>
@@ -492,15 +463,12 @@ interface CustomerDropdownProps {
 function CustomerDropdown({ value, onChange, onSelect, customers, loading, open, onOpenChange, containerRef }: CustomerDropdownProps) {
   return (
     <div ref={containerRef} className="relative">
-      <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-      </svg>
       <input
         type="text"
         autoComplete="off"
         value={value}
-        placeholder="Szukaj klienta…"
-        className={`field-ios w-full pl-9 ${value ? 'border-solid border-slate-300 bg-white' : 'border-dashed border-slate-300 bg-[#F2F2F7] placeholder:text-slate-400'}`}
+        placeholder="Zmień klienta…"
+        className="h-9 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
         onChange={(e) => { onChange(e.target.value); onOpenChange(true); }}
         onFocus={() => onOpenChange(true)}
         aria-label="Wyszukaj klienta"
@@ -614,45 +582,25 @@ type OrderDraft = {
   prevOrderDismissed: boolean;
 };
 
-function draftKey(customerId?: string) {
-  return customerId ? `${DRAFT_KEY}_${customerId}` : DRAFT_KEY;
-}
-
-function loadDraft(customerId?: string): Partial<OrderDraft> {
+function loadDraft(): Partial<OrderDraft> {
   try {
-    const raw = sessionStorage.getItem(draftKey(customerId));
+    const raw = sessionStorage.getItem(DRAFT_KEY);
     return raw ? (JSON.parse(raw) as OrderDraft) : {};
   } catch {
     return {};
   }
 }
 
-/** Gdy nie ma customer_id w URL, znajdź najnowszy draft z klientem zapisany w sessionStorage. */
-function findLatestCustomerDraft(): Partial<OrderDraft> {
+function saveDraft(draft: OrderDraft) {
   try {
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i);
-      if (key?.startsWith(`${DRAFT_KEY}_`)) {
-        const raw = sessionStorage.getItem(key);
-        if (raw) return JSON.parse(raw) as OrderDraft;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return {};
-}
-
-function saveDraft(draft: OrderDraft, customerId?: string) {
-  try {
-    sessionStorage.setItem(draftKey(customerId), JSON.stringify(draft));
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
   } catch {
     // ignore
   }
 }
 
-function clearDraft(customerId?: string) {
-  sessionStorage.removeItem(draftKey(customerId));
+function clearDraft() {
+  sessionStorage.removeItem(DRAFT_KEY);
 }
 
 export function OrderCreatePage() {
@@ -665,21 +613,12 @@ export function OrderCreatePage() {
   const companyId = user?.current_company ?? '';
   const create = useCreateOrderMutation();
   const confirm = useConfirmOrderMutation();
-  const createWithOffline = useOfflineOrderCreate();
-  const generateWzMutation = useGenerateDeliveryForOrderMutation();
-  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId || undefined);
 
-  const draft = urlCustomerId
-    ? loadDraft(urlCustomerId)
-    : (sessionStorage.getItem(DRAFT_KEY) ? loadDraft() : findLatestCustomerDraft());
+  const draft = loadDraft();
 
   const [deliveryDate, setDeliveryDate] = useState(draft.deliveryDate ?? urlDate);
-  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(
-    urlCustomerId ? null : (draft.selectedCustomer ?? null),
-  );
-  const [customerInput, setCustomerInput] = useState(
-    urlCustomerId ? '' : (draft.selectedCustomer?.name ?? ''),
-  );
+  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(draft.selectedCustomer ?? null);
+  const [customerInput, setCustomerInput] = useState(draft.selectedCustomer?.name ?? '');
   const [customerOpen, setCustomerOpen] = useState(false);
   const [showCustomerChange, setShowCustomerChange] = useState(false);
   const customerRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
@@ -687,17 +626,6 @@ export function OrderCreatePage() {
   const customerDebounce = useDebouncedValue(customerInput, DEBOUNCE_MS);
   const { data: customerData, isFetching: customersLoading } = useCustomerListQuery(1, customerDebounce);
   const customers = customerData?.results ?? [];
-
-  // Custom prices for selected customer — used to override default product prices
-  const { data: customerPricesData } = useCustomerPricesQuery(selectedCustomer?.id);
-  // Store effective net price per product (converting gross→net when price_type='gross')
-  const customerPrices: Record<string, string> = {};
-  (customerPricesData ?? []).forEach((cp) => {
-    const val = parseDecimalInput(cp.price_net) ?? 0;
-    const vat = parseDecimalInput(String(cp.product_vat_rate)) ?? 0;
-    const netVal = cp.price_type === 'gross' ? val / (1 + vat / 100) : val;
-    customerPrices[cp.product] = netVal.toFixed(4);
-  });
 
   // Auto-load customer from URL param
   const { data: preloadedCustomer } = useCustomerQuery(urlCustomerId || undefined, Boolean(urlCustomerId));
@@ -747,37 +675,20 @@ export function OrderCreatePage() {
     selectedCustomer?.id,
     Boolean(selectedCustomer) && lines.length === 0 && !prevOrderDismissed,
   );
+
+  // Individual customer prices: map productId → custom price_net string
+  const { data: customerPrices = [] } = useCustomerPricesQuery(selectedCustomer?.id);
+  const customPriceMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const cp of customerPrices) m.set(cp.product, cp.price_net);
+    return m;
+  }, [customerPrices]);
   const prevOrder = prevOrdersData?.[0] ?? null;
 
   // Persist draft to sessionStorage on every relevant change
   useEffect(() => {
-    saveDraft({ deliveryDate, selectedCustomer, lines, prevOrderDismissed }, selectedCustomer?.id || urlCustomerId || undefined);
+    saveDraft({ deliveryDate, selectedCustomer, lines, prevOrderDismissed });
   }, [deliveryDate, selectedCustomer, lines, prevOrderDismissed]);
-
-  // generateWz: sticky via localStorage, seeded from company workflow settings on first visit
-  const [generateWz, setGenerateWz] = useState<boolean>(() => {
-    const stored = localStorage.getItem(WZ_CHECKBOX_STORAGE_KEY);
-    if (stored !== null) return stored === 'true';
-    return false; // will be overridden by useEffect once workflowSettings loads
-  });
-  const wzDefaultApplied = useRef(false);
-  useEffect(() => {
-    if (wzDefaultApplied.current) return;
-    if (workflowSettings === undefined) return;
-    const stored = localStorage.getItem(WZ_CHECKBOX_STORAGE_KEY);
-    if (stored === null) {
-      setGenerateWz(workflowSettings.auto_wz_on_order);
-    }
-    wzDefaultApplied.current = true;
-  }, [workflowSettings]);
-
-  const handleGenerateWzChange = (v: boolean) => {
-    setGenerateWz(v);
-    localStorage.setItem(WZ_CHECKBOX_STORAGE_KEY, String(v));
-  };
-
-  const [wzDate, setWzDate] = useState<string>(() => deliveryDate || new Date().toISOString().slice(0, 10));
-  useEffect(() => { if (deliveryDate) setWzDate(deliveryDate); }, [deliveryDate]);
 
   const [numPadValue, setNumPadValue] = useState('0');
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -889,8 +800,8 @@ export function OrderCreatePage() {
         next[idx] = { ...next[idx]!, quantity: String(cur + 1) };
         return next;
       }
-      const customPrice = customerPrices[product.id];
-      return [...prev, { key: product.id, product, quantity: '1', unitPriceNet: customPrice ?? String(product.price_net), discountPercent: '0' }];
+      const priceNet = customPriceMap.get(product.id) ?? String(product.price_net);
+      return [...prev, { key: product.id, product, quantity: '1', unitPriceNet: priceNet, discountPercent: '0' }];
     });
   };
 
@@ -936,7 +847,8 @@ export function OrderCreatePage() {
             next[idx] = { ...next[idx]!, quantity: qtyStr };
             return next;
           }
-          return [...prev, { key: product.id, product, quantity: qtyStr, unitPriceNet: String(product.price_net), discountPercent: '0' }];
+          const priceNet = customPriceMap.get(product.id) ?? String(product.price_net);
+          return [...prev, { key: product.id, product, quantity: qtyStr, unitPriceNet: priceNet, discountPercent: '0' }];
         });
       }
     }
@@ -964,86 +876,20 @@ export function OrderCreatePage() {
         };
       });
       const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items };
-      let createdOrderId: string | null = null;
-      await createWithOffline(body, async (b) => {
-        const order = await create.mutateAsync(b);
-        createdOrderId = order.id;
-        await confirm.mutateAsync(order.id);
-      });
-      if (generateWz && createdOrderId) {
-        try {
-          const wz = await generateWzMutation.mutateAsync({ orderId: createdOrderId, issueDate: wzDate });
-          clearDraft(selectedCustomer.id);
-          const wzNumber = wz.document_number ?? 'WZ';
-          setSubmitError(null);
-          // Pokaż sukces i wróć na listę zamówień
-          const d = deliveryDate.trim();
-          const backTo = d ? `/orders?date=${encodeURIComponent(d)}` : '/orders';
-          navigate(backTo, { state: { wzSuccess: `Zamówienie i ${wzNumber} zostały utworzone` } });
-          return;
-        } catch {
-          setSubmitError('Zamówienie utworzone, ale nie udało się wygenerować WZ. Możesz to zrobić ręcznie.');
-          clearDraft(selectedCustomer.id);
-          const d = deliveryDate.trim();
-          navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
-          return;
-        }
-      }
-      clearDraft(selectedCustomer.id);
+      const order = await create.mutateAsync(body);
+      await confirm.mutateAsync(order.id);
+      clearDraft();
       const d = deliveryDate.trim();
       navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
     } catch (e) {
-      if (e instanceof OfflineQueuedError) {
-        clearDraft(selectedCustomer.id);
-        const d = deliveryDate.trim();
-        navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
-        return;
-      }
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się utworzyć zamówienia');
     }
   };
 
-  const doNavigateBack = () => {
-    clearDraft(selectedCustomer?.id || urlCustomerId || undefined);
+  const backToOrders = () => {
+    clearDraft();
     const d = deliveryDate.trim();
     navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
-  };
-
-  const backToOrders = () => {
-    if (canSaveDraft) {
-      setShowDraftDialog(true);
-    } else {
-      doNavigateBack();
-    }
-  };
-
-  const [savingDraft, setSavingDraft] = useState(false);
-  const [showDraftDialog, setShowDraftDialog] = useState(false);
-
-  const canSaveDraft = Boolean(selectedCustomer) && Boolean(deliveryDate.trim()) && lines.length > 0;
-
-  const saveDraftToServer = async () => {
-    if (!canSaveDraft) return;
-    setSavingDraft(true);
-    try {
-      const items: OrderItemWrite[] = lines.map((l) => {
-        const netU = parseDecimalInput(l.unitPriceNet)!;
-        const vat = parseDecimalInput(String(l.product.vat_rate)) ?? 0;
-        return {
-          product_id: l.product.id,
-          quantity: toApiDecimalString(parseDecimalInput(l.quantity) ?? 0),
-          unit_price_net: toApiDecimalString(netU),
-          unit_price_gross: toApiDecimalString(unitGrossFromNet(netU, vat)),
-          vat_rate: toApiDecimalString(vat),
-          discount_percent: toApiDecimalString(parseDecimalInput(l.discountPercent) ?? 0),
-        };
-      });
-      const body: OrderCreate = { customer_id: selectedCustomer!.id, delivery_date: deliveryDate, items };
-      await create.mutateAsync(body);
-      // brak confirm — zostaje jako draft
-    } finally {
-      setSavingDraft(false);
-    }
   };
 
   const numpadOpen = Boolean(activeProductId);
@@ -1058,12 +904,8 @@ export function OrderCreatePage() {
         customerName={selectedCustomer?.name ?? ''}
         onBack={() => setView('products')}
         onSubmit={onSubmit}
-        isPending={create.isPending || generateWzMutation.isPending}
+        isPending={create.isPending}
         submitError={submitError}
-        generateWz={generateWz}
-        onGenerateWzChange={handleGenerateWzChange}
-        wzDate={wzDate}
-        onWzDateChange={setWzDate}
       />
     );
   }
@@ -1120,12 +962,7 @@ export function OrderCreatePage() {
 
           {/* Customer dropdown (only when no customer or changing) */}
           {(!selectedCustomer || showCustomerChange) && (
-            <div>
-              {!selectedCustomer && (
-                <p className="mb-1.5 text-sm font-medium text-slate-800">
-                  Klient <span className="text-destructive">*</span>
-                </p>
-              )}
+            <div className="mb-3">
               <CustomerDropdown
                 value={customerInput}
                 onChange={(v) => { setCustomerInput(v); setSelectedCustomer(null); }}
@@ -1138,6 +975,21 @@ export function OrderCreatePage() {
               />
             </div>
           )}
+
+          {/* Search bar */}
+          <div className="relative">
+            <svg className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-4-4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <input
+              type="search"
+              placeholder="Szukaj produktu..."
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              aria-label="Szukaj produktu"
+              className="h-12 w-full rounded-2xl border border-border bg-card pl-12 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+            />
+          </div>
         </div>
       </header>
 
@@ -1162,30 +1014,8 @@ export function OrderCreatePage() {
           />
         )}
 
-        <div className="mb-3 flex items-center gap-2.5">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary" aria-hidden>
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth={1.8}>
-              <path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" strokeLinejoin="round" />
-              <path d="M3.3 8.2L12 13l8.7-4.8M12 13v8.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <h2 className="text-sm font-semibold text-slate-900">Produkty</h2>
-        </div>
-
-        <div className="relative mb-3">
-          <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-            <circle cx="11" cy="11" r="7" />
-            <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
-          </svg>
-          <input
-            type="search"
-            placeholder="Szukaj produktu…"
-            value={productSearch}
-            onChange={(e) => setProductSearch(e.target.value)}
-            aria-label="Szukaj produktu"
-            className={`field-ios w-full pl-9 ${productSearch ? 'border-solid border-slate-300 bg-white' : 'border-dashed border-slate-300 bg-[#F2F2F7] placeholder:text-slate-400'}`}
-          />
-        </div>
+        {/* Section heading */}
+        <h2 className="mb-3 text-[17px] font-semibold text-foreground">Produkty</h2>
 
         {/* Skeleton */}
         {productsLoading && products.length === 0 && (
@@ -1222,7 +1052,7 @@ export function OrderCreatePage() {
                 <ProductCard
                   product={product}
                   quantity={qty}
-                  customPriceNet={customerPrices[product.id]}
+                  customPriceNet={customPriceMap.get(product.id)}
                   onTap={() => openNumpad(product)}
                   onAdd={() => quickAdd(product)}
                   onRemove={() => quickRemove(product)}
@@ -1246,9 +1076,9 @@ export function OrderCreatePage() {
                   initial={{ y: 60, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   className={cn(
-                    'fixed z-40 left-0 right-0 pointer-events-none md:left-64',
+                    'fixed z-40 left-0 right-0 pointer-events-none',
                     'bottom-[calc(83px+0.75rem+env(safe-area-inset-bottom))]',
-                    'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))]',
+                    'md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] md:left-64',
                   )}
                 >
                   <div className="mx-auto w-full max-w-3xl px-4 pointer-events-auto">
@@ -1375,50 +1205,6 @@ export function OrderCreatePage() {
             document.body,
           )
         : null}
-
-      {/* Dialog zapisu szkicu — przy wyjściu przyciskiem wstecz */}
-      {showDraftDialog && (
-        <div
-          className="fixed inset-0 z-[200] flex items-end justify-center bg-foreground/30 backdrop-blur-sm sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Zapisz szkic zamówienia"
-          onClick={() => setShowDraftDialog(false)}
-        >
-          <div
-            className="w-full max-w-sm rounded-t-3xl bg-card p-6 shadow-[0_-8px_32px_rgba(0,0,0,0.14)] sm:rounded-2xl sm:mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-[17px] font-semibold text-foreground">Zapisać szkic?</h2>
-            <p className="mt-1.5 text-[14px] text-muted-foreground">
-              Zamówienie dla <span className="font-medium text-foreground">{selectedCustomer?.name}</span> zostanie zapisane jako szkic i będzie widoczne na liście zamówień.
-            </p>
-            <div className="mt-5 flex flex-col gap-2.5">
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                type="button"
-                disabled={savingDraft}
-                onClick={async () => {
-                  try { await saveDraftToServer(); } catch { /* zapis nie powiódł się — i tak wychodzimy */ }
-                  doNavigateBack();
-                }}
-                className="w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground disabled:opacity-60"
-              >
-                {savingDraft ? 'Zapisywanie…' : 'Zapisz szkic'}
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                type="button"
-                disabled={savingDraft}
-                onClick={doNavigateBack}
-                className="w-full rounded-xl bg-destructive/10 py-3.5 text-[15px] font-semibold text-destructive disabled:opacity-60"
-              >
-                Anuluj zamówienie
-              </motion.button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

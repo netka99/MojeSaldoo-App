@@ -1,31 +1,22 @@
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { usePermission } from '@/hooks/usePermission';
-import { useModuleGuard } from '@/hooks/useModuleGuard';
-import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
+  useCustomerQuery,
   useCustomerPricesQuery,
   useCreateCustomerPriceMutation,
   useUpdateCustomerPriceMutation,
   useDeleteCustomerPriceMutation,
-  useCustomerQuery,
-  useUpdateCustomerMutation,
 } from '@/query/use-customers';
 import { useOrdersByDateQuery } from '@/query/use-orders';
 import { useDeliveryByCustomerQuery } from '@/query/use-delivery';
-import { useInvoiceListQuery } from '@/query/use-invoices';
-import { useAllProductsQuery } from '@/query/use-products';
-import { CustomerForm, type CustomerImageChange } from '@/components/features/CustomerForm';
 import { authStorage } from '@/services/api';
-import { customerService } from '@/services/customer.service';
-import { customerKeys } from '@/query/keys';
+import { productService } from '@/services/product.service';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { orderStatusBadgeClassName } from '@/lib/order-utils';
-import { Link } from 'react-router-dom';
-import type { Order, DeliveryDocument, CustomerWrite } from '@/types';
-import type { PriceType } from '@/types/customer.types';
+import type { Order, DeliveryDocument } from '@/types';
+import type { CustomerProductPrice } from '@/types/product.types';
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 const plnFmt = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
@@ -84,8 +75,6 @@ function OrderRow({
   deliveryDocs: DeliveryDocument[];
   onClick: () => void;
 }) {
-  const deliveryEnabled = useModuleGuard('delivery');
-  const canManageDelivery = usePermission('can_manage_delivery');
   const { wzDocs, zwCount } = getOrderDocs(deliveryDocs, order.id);
   const hasWz = wzDocs.length > 0;
   const showMissingWz = !hasWz && order.status !== 'draft' && order.status !== 'cancelled';
@@ -117,41 +106,26 @@ function OrderRow({
             </span>
           </div>
           {/* WZ status line */}
-          {deliveryEnabled && canManageDelivery && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              {showMissingWz && (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                  Brak WZ
-                </span>
-              )}
-              {wzDocs.map((wz) => (
-                <span key={wz.id} className="contents">
-                  <Link
-                    to={`/delivery/${wz.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100"
-                  >
-                    {wz.document_number ?? 'WZ'}
-                  </Link>
-                  {(wz.corrections ?? []).map((kor) => (
-                    <Link
-                      key={kor.id}
-                      to={`/delivery/${kor.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200"
-                    >
-                      {kor.document_number ?? 'WZ-KOR'}
-                    </Link>
-                  ))}
-                </span>
-              ))}
-              {zwCount > 0 && (
-                <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-700">
-                  {zwCount} ZW
-                </span>
-              )}
-            </div>
-          )}
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {showMissingWz && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                Brak WZ
+              </span>
+            )}
+            {wzDocs.map((wz) => (
+              <span
+                key={wz.id}
+                className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+              >
+                {wz.document_number ?? 'WZ'}
+              </span>
+            ))}
+            {zwCount > 0 && (
+              <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-700">
+                {zwCount} ZW
+              </span>
+            )}
+          </div>
         </div>
         <div className="shrink-0 text-right">
           <p className="text-[15px] font-bold tabular-nums text-foreground">{money(order.total_gross)}</p>
@@ -212,332 +186,280 @@ function orderStatusLeftBorderClass(status: Order['status']): string {
 }
 
 
-/* ── Summary cards ──────────────────────────────────────────────── */
-function StatCard({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
-  return (
-    <div
-      className={cn(
-        'flex-1 rounded-2xl bg-surface-card px-4 py-3 shadow-soft',
-        onClick && 'cursor-pointer active:scale-95 transition-transform',
-      )}
-      onClick={onClick}
-    >
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-[18px] font-bold tabular-nums text-foreground">{value}</p>
-    </div>
-  );
-}
+/* ── Customer prices panel ──────────────────────────────────────── */
+const plnNet = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
-/* ── Custom prices section ──────────────────────────────────────── */
-
-function PriceTypeToggle({ value, onChange }: { value: PriceType; onChange: (v: PriceType) => void }) {
-  return (
-    <div className="flex rounded-lg border border-border overflow-hidden text-[12px] font-medium">
-      <button
-        type="button"
-        onClick={() => onChange('net')}
-        className={cn('flex-1 py-1.5 px-3 transition-colors', value === 'net' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-surface-low')}
-      >
-        Netto
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('gross')}
-        className={cn('flex-1 py-1.5 px-3 transition-colors', value === 'gross' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-surface-low')}
-      >
-        Brutto
-      </button>
-    </div>
-  );
-}
-
-function CustomerPricesSection({ customerId }: { customerId: string }) {
+function CustomerPricesPanel({ customerId }: { customerId: string }) {
   const { data: prices = [], isLoading } = useCustomerPricesQuery(customerId);
-  const { data: productsResp } = useAllProductsQuery();
-  const products = productsResp?.results ?? [];
-  const canManageCustomers = usePermission('can_manage_customers');
-
   const createMutation = useCreateCustomerPriceMutation(customerId);
   const updateMutation = useUpdateCustomerPriceMutation(customerId);
   const deleteMutation = useDeleteCustomerPriceMutation(customerId);
 
-  const [showForm, setShowForm] = useState(false);
-  const [newProductId, setNewProductId] = useState('');
-  const [newPriceNet, setNewPriceNet] = useState('');
-  const [newPriceType, setNewPriceType] = useState<PriceType>('net');
+  // Search state for adding new price
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ id: string; name: string; unit: string; price_net: string | number }>>([]);
+  const [selectedProduct, setSelectedProduct] = useState<{ id: string; name: string; unit: string; price_net: string | number } | null>(null);
+  const [newPrice, setNewPrice] = useState('');
   const [newNote, setNewNote] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
 
+  // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editPriceNet, setEditPriceNet] = useState('');
-  const [editPriceType, setEditPriceType] = useState<PriceType>('net');
+  const [editPrice, setEditPrice] = useState('');
   const [editNote, setEditNote] = useState('');
-  const [editError, setEditError] = useState<string | null>(null);
 
-  function startEdit(cp: { id: string; price_net: string; price_type: PriceType; note: string }) {
-    setEditingId(cp.id);
-    setEditPriceNet(cp.price_net);
-    setEditPriceType(cp.price_type);
-    setEditNote(cp.note);
-    setEditError(null);
-  }
-
-  async function handleSaveEdit() {
-    const parsed = parseFloat(editPriceNet.replace(',', '.'));
-    if (!isFinite(parsed) || parsed < 0) { setEditError('Nieprawidłowa cena.'); return; }
+  async function handleSearch(q: string) {
+    setSearch(q);
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    setIsSearching(true);
     try {
-      await updateMutation.mutateAsync({ id: editingId!, price_net: parsed.toFixed(2), price_type: editPriceType, note: editNote });
-      setEditingId(null);
-    } catch {
-      setEditError('Nie udało się zapisać.');
+      const data = await productService.fetchList({ search: q.trim(), page_size: 10, is_active: true });
+      setSearchResults((data.results ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        unit: p.unit,
+        price_net: p.price_net,
+      })));
+    } finally {
+      setIsSearching(false);
     }
   }
 
-  const existingProductIds = new Set(prices.map((p) => p.product));
-  const availableProducts = products.filter((p) => !existingProductIds.has(p.id));
+  function selectProduct(p: { id: string; name: string; unit: string; price_net: string | number }) {
+    setSelectedProduct(p);
+    setSearch(p.name);
+    setSearchResults([]);
+    setNewPrice(String(p.price_net));
+  }
 
-  const plnFmtLocal = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+  function handleAdd() {
+    if (!selectedProduct || !newPrice) return;
+    createMutation.mutate(
+      { customer: customerId, product: selectedProduct.id, price_net: newPrice, note: newNote },
+      {
+        onSuccess: () => {
+          setShowAddForm(false);
+          setSearch('');
+          setSelectedProduct(null);
+          setNewPrice('');
+          setNewNote('');
+          setSearchResults([]);
+        },
+      },
+    );
+  }
 
-  async function handleAddPrice() {
-    if (!newProductId || !newPriceNet) {
-      setFormError('Wybierz produkt i podaj cenę.');
-      return;
-    }
-    const parsed = parseFloat(newPriceNet.replace(',', '.'));
-    if (!isFinite(parsed) || parsed < 0) {
-      setFormError('Nieprawidłowa cena.');
-      return;
-    }
-    try {
-      await createMutation.mutateAsync({
-        customer: customerId,
-        product: newProductId,
-        price_net: parsed.toFixed(2),
-        price_type: newPriceType,
-        note: newNote,
-      });
-      setShowForm(false);
-      setNewProductId('');
-      setNewPriceNet('');
-      setNewPriceType('net');
-      setNewNote('');
-      setFormError(null);
-    } catch {
-      setFormError('Nie udało się zapisać ceny.');
-    }
+  function startEdit(p: CustomerProductPrice) {
+    setEditingId(p.id);
+    setEditPrice(p.price_net);
+    setEditNote(p.note);
+  }
+
+  function handleUpdate() {
+    if (!editingId) return;
+    updateMutation.mutate(
+      { id: editingId, price_net: editPrice, note: editNote },
+      { onSuccess: () => setEditingId(null) },
+    );
   }
 
   return (
-    <section aria-label="Cenniki indywidualne">
+    <section aria-label="Indywidualny cennik">
       <div className="mb-2 flex items-center justify-between px-1">
         <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Cenniki indywidualne
+          Indywidualny cennik ({prices.length})
         </h2>
-        {!showForm && canManageCustomers && (
+        {!showAddForm && (
           <button
             type="button"
-            onClick={() => setShowForm(true)}
-            className="text-[12px] font-medium text-primary"
+            onClick={() => setShowAddForm(true)}
+            className="rounded-lg bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground"
           >
             + Dodaj cenę
           </button>
         )}
       </div>
 
-      {isLoading && (
-        <div className="rounded-2xl bg-surface-card px-4 py-3 text-[13px] text-muted-foreground">
-          Ładowanie…
-        </div>
-      )}
-
-      {!isLoading && prices.length === 0 && !showForm && (
-        <p className="rounded-2xl bg-surface-card px-4 py-4 text-[13px] text-muted-foreground">
-          Brak indywidualnych cen — kliknij Dodaj, aby ustawić.
-        </p>
-      )}
-
-      {prices.length > 0 && (
-        <div className="overflow-hidden rounded-2xl bg-surface-card shadow-soft">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-border/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-2.5">Produkt</th>
-                <th className="px-3 py-2.5 text-right">Std. brutto</th>
-                <th className="px-3 py-2.5 text-right">Cena indyw. brutto</th>
-                <th className="px-3 py-2.5">Uwaga</th>
-                <th className="px-3 py-2.5 text-right"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {prices.map((cp) =>
-                editingId === cp.id ? (
-                  <tr key={cp.id} className="border-b border-border/20 last:border-0 bg-surface-low/40">
-                    <td className="px-4 py-2">
-                      <span className="text-[13px] font-medium text-foreground">{cp.product_name}</span>
-                      {editError && <p className="text-[11px] text-destructive mt-0.5">{editError}</p>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <PriceTypeToggle value={editPriceType} onChange={setEditPriceType} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={editPriceNet}
-                        onChange={(e) => setEditPriceNet(e.target.value)}
-                        className="w-full rounded-lg border border-border bg-background px-2 py-1 text-[13px] text-right focus:outline-none focus:ring-2 focus:ring-primary"
-                        autoFocus
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="text"
-                        value={editNote}
-                        onChange={(e) => setEditNote(e.target.value)}
-                        placeholder="uwaga"
-                        className="w-full rounded-lg border border-border bg-background px-2 py-1 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={handleSaveEdit}
-                        disabled={updateMutation.isPending}
-                        className="text-[11px] font-semibold text-primary hover:underline disabled:opacity-50 mr-2"
-                      >
-                        {updateMutation.isPending ? '…' : 'Zapisz'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingId(null)}
-                        className="text-[11px] text-muted-foreground hover:underline"
-                      >
-                        Anuluj
-                      </button>
-                    </td>
-                  </tr>
-                ) : (
-                <tr key={cp.id} className="border-b border-border/20 last:border-0">
-                  <td className="px-4 py-2.5">
-                    <span className="font-medium text-foreground">{cp.product_name}</span>
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
-                    {plnFmtLocal.format(parseFloat(cp.product_price_net) * (1 + parseFloat(cp.product_vat_rate) / 100))}
-                  </td>
-                  <td className="px-3 py-2.5 text-right">
-                    <span className="tabular-nums font-semibold text-primary">
-                      {(() => {
-                        const val = parseFloat(cp.price_net);
-                        const vat = parseFloat(cp.product_vat_rate) / 100;
-                        const gross = cp.price_type === 'gross' ? val : val * (1 + vat);
-                        return plnFmtLocal.format(gross);
-                      })()}
-                    </span>
-                    <span className={cn('ml-1 rounded px-1 py-0.5 text-[10px] font-medium', cp.price_type === 'gross' ? 'bg-amber-100 text-amber-800' : 'bg-surface-low text-muted-foreground')}>
-                      {cp.price_type === 'gross' ? 'wpr. brutto' : 'wpr. netto'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-[12px] text-muted-foreground">
-                    {cp.note || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    {canManageCustomers && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => startEdit(cp)}
-                          className="text-[11px] text-primary hover:underline mr-2"
-                        >
-                          Edytuj
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteMutation.mutate(cp.id)}
-                          disabled={deleteMutation.isPending}
-                          className="text-[11px] text-destructive hover:underline disabled:opacity-50"
-                        >
-                          Usuń
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-                )
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {showForm && (
-        <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft space-y-3">
-          {formError && (
-            <p className="text-[12px] text-destructive">{formError}</p>
+      {/* Add form */}
+      {showAddForm && (
+        <div className="mb-3 rounded-2xl bg-surface-card p-4 space-y-3">
+          <p className="text-[13px] font-medium">Dodaj cenę indywidualną</p>
+          {/* Product search */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Szukaj produktu…"
+              value={search}
+              onChange={(e) => void handleSearch(e.target.value)}
+              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {isSearching && (
+              <span className="absolute right-3 top-2.5 text-xs text-muted-foreground">Szukam…</span>
+            )}
+            {searchResults.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-background shadow-lg">
+                {searchResults.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                    onClick={() => selectProduct(p)}
+                  >
+                    {p.name}
+                    <span className="ml-2 text-xs text-muted-foreground">{p.unit}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {selectedProduct && (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Domyślna cena netto: <span className="font-medium">{plnNet.format(Number(selectedProduct.price_net))}</span>
+              </p>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground">Cena netto (PLN)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={newPrice}
+                    onChange={(e) => setNewPrice(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground">Notatka (opcjonalnie)</label>
+                  <input
+                    type="text"
+                    value={newNote}
+                    onChange={(e) => setNewNote(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+            </>
           )}
-          <div>
-            <label className="mb-1 block text-[12px] text-muted-foreground">Produkt</label>
-            <select
-              value={newProductId}
-              onChange={(e) => setNewProductId(e.target.value)}
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value="">— wybierz produkt —</option>
-              {availableProducts.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.unit})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-[12px] text-muted-foreground">Typ ceny</label>
-            <PriceTypeToggle value={newPriceType} onChange={setNewPriceType} />
-          </div>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="mb-1 block text-[12px] text-muted-foreground">
-                Cena {newPriceType === 'gross' ? 'brutto' : 'netto'} (zł)
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={newPriceNet}
-                onChange={(e) => setNewPriceNet(e.target.value)}
-                placeholder="np. 2.80"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="mb-1 block text-[12px] text-muted-foreground">Uwaga (opcjonalnie)</label>
-              <input
-                type="text"
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                placeholder="np. stały klient"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-          </div>
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={handleAddPrice}
-              disabled={createMutation.isPending}
-              className="flex-1 rounded-xl bg-primary py-2.5 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+              onClick={handleAdd}
+              disabled={!selectedProduct || !newPrice || createMutation.isPending}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
               {createMutation.isPending ? 'Zapisywanie…' : 'Zapisz'}
             </button>
             <button
               type="button"
-              onClick={() => { setShowForm(false); setFormError(null); }}
-              className="flex-1 rounded-xl border border-border bg-background py-2.5 text-[13px] font-semibold"
+              onClick={() => { setShowAddForm(false); setSearch(''); setSelectedProduct(null); setNewPrice(''); setSearchResults([]); }}
+              className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
             >
               Anuluj
             </button>
           </div>
         </div>
       )}
+
+      {/* Price list */}
+      {isLoading ? (
+        <p className="rounded-2xl bg-surface-card px-4 py-4 text-[13px] text-muted-foreground">Ładowanie…</p>
+      ) : prices.length === 0 ? (
+        <p className="rounded-2xl bg-surface-card px-4 py-4 text-[13px] text-muted-foreground">
+          Brak indywidualnych cen. Dodaj, aby nadpisać ceny katalogowe dla tego klienta.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {prices.map((p) =>
+            editingId === p.id ? (
+              <div key={p.id} className="rounded-2xl bg-surface-card px-4 py-3 space-y-2">
+                <p className="text-[13px] font-medium">{p.product_name}</p>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-xs text-muted-foreground">Cena netto (PLN)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={editPrice}
+                      onChange={(e) => setEditPrice(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-xs text-muted-foreground">Notatka</label>
+                    <input
+                      type="text"
+                      value={editNote}
+                      onChange={(e) => setEditNote(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleUpdate}
+                    disabled={updateMutation.isPending}
+                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                  >
+                    {updateMutation.isPending ? 'Zapisywanie…' : 'Zapisz'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    Anuluj
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div key={p.id} className="flex items-center justify-between rounded-2xl bg-surface-card px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-medium">{p.product_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Katalog: {plnNet.format(Number(p.product_price_net))} → Indyw:{' '}
+                    <span className="font-semibold text-primary">{plnNet.format(Number(p.price_net))}</span>
+                    {p.note && <span className="ml-1">· {p.note}</span>}
+                  </p>
+                </div>
+                <div className="ml-3 flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => startEdit(p)}
+                    className="rounded-lg border border-border px-2.5 py-1 text-xs hover:bg-muted"
+                    aria-label="Edytuj"
+                  >
+                    Edytuj
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteMutation.mutate(p.id)}
+                    disabled={deleteMutation.isPending && deleteMutation.variables === p.id}
+                    className="rounded-lg border border-destructive/40 px-2.5 py-1 text-xs text-destructive hover:bg-destructive/5 disabled:opacity-50"
+                    aria-label="Usuń"
+                  >
+                    Usuń
+                  </button>
+                </div>
+              </div>
+            ),
+          )}
+        </div>
+      )}
     </section>
+  );
+}
+
+/* ── Summary cards ──────────────────────────────────────────────── */
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex-1 rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-[18px] font-bold tabular-nums text-foreground">{value}</p>
+    </div>
   );
 }
 
@@ -558,11 +480,6 @@ export function CustomerDetailPage() {
 
 function CustomerDetailContent({ customerId, date }: { customerId: string; date: string }) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const canManageCustomers = usePermission('can_manage_customers');
-  const [showEditForm, setShowEditForm] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
-  const updateMutation = useUpdateCustomerMutation();
 
   const {
     data: customer,
@@ -579,10 +496,6 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
 
   // Delivery docs for this customer (for WZ/ZW counts per order row)
   const { data: deliveryDocs = [] } = useDeliveryByCustomerQuery(customerId);
-
-  // Invoices for this customer
-  const { data: customerInvoicesData } = useInvoiceListQuery(1, { customer: customerId });
-  const customerInvoiceCount = customerInvoicesData?.count ?? 0;
 
   /* ── Derived stats ── */
   const dayTotal = orders.reduce(
@@ -616,28 +529,19 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
             >
               <ChevronLeftIcon />
             </motion.button>
-            {customer?.image_url && (
-              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl">
-                <img src={customer.image_url} alt="" className="h-full w-full object-cover" />
-              </div>
-            )}
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-[17px] font-semibold text-foreground">
                 {custLoading ? 'Ładowanie…' : (customer?.name ?? 'Klient')}
               </h1>
               <p className="text-[13px] text-muted-foreground">{dateLabel}</p>
             </div>
-            {customer && canManageCustomers && (
+            {customer && (
               <motion.button
                 whileTap={{ scale: 0.94 }}
                 type="button"
-                onClick={() => { setShowEditForm((v) => !v); setEditError(null); }}
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-full shadow-[0_2px_8px_rgba(0,0,0,0.08)]",
-                  showEditForm ? "bg-primary text-primary-foreground" : "bg-card text-foreground",
-                )}
-                aria-label={showEditForm ? "Zamknij edycję" : "Edytuj klienta"}
-                aria-expanded={showEditForm}
+                onClick={() => navigate(`/customers/${customerId}/edit`)}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-card shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
+                aria-label="Edytuj klienta"
               >
                 <PencilIcon />
               </motion.button>
@@ -668,124 +572,12 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               <StatCard
                 label="Zamówienia"
                 value={orders.length > 0 ? `${orders.length} (${money(dayTotal)})` : '—'}
-                onClick={() => document.getElementById('orders-section')?.scrollIntoView({ behavior: 'smooth' })}
               />
               <StatCard
                 label="WZ bez faktury"
                 value={uninvoicedWz.length > 0 ? String(uninvoicedWz.length) : '—'}
-                onClick={() => navigate(`/delivery?customer_id=${customerId}`)}
-              />
-              <StatCard
-                label="Faktury"
-                value={customerInvoiceCount > 0 ? String(customerInvoiceCount) : '—'}
-                onClick={() => navigate(`/invoices?customer=${customerId}`)}
               />
             </div>
-
-            {/* Customer info card */}
-            {!showEditForm && (
-              <div className="rounded-2xl bg-surface-card shadow-soft px-4 py-3 space-y-2 text-[13px]">
-                {customer.company_name && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Firma</span>
-                    <span className="font-medium text-foreground text-right">{customer.company_name}</span>
-                  </div>
-                )}
-                {customer.nip && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">NIP</span>
-                    <span className="font-medium text-foreground tabular-nums">{customer.nip}</span>
-                  </div>
-                )}
-                {customer.phone && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Telefon</span>
-                    <a href={`tel:${customer.phone}`} className="font-medium text-primary">{customer.phone}</a>
-                  </div>
-                )}
-                {customer.email && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Email</span>
-                    <a href={`mailto:${customer.email}`} className="font-medium text-primary truncate max-w-[60%]">{customer.email}</a>
-                  </div>
-                )}
-                {(customer.street || customer.city) && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Adres</span>
-                    <span className="font-medium text-foreground text-right">
-                      {[customer.street, customer.postal_code && customer.city ? `${customer.postal_code} ${customer.city}` : customer.city].filter(Boolean).join(', ')}
-                    </span>
-                  </div>
-                )}
-                {customer.delivery_days && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Dni dostawy</span>
-                    <span className="font-medium text-foreground">{customer.delivery_days}</span>
-                  </div>
-                )}
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Termin płatności</span>
-                  <span className="font-medium text-foreground">{customer.payment_terms} dni</span>
-                </div>
-                {parseFloat(String(customer.credit_limit)) > 0 && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Limit kredytowy</span>
-                    <span className="font-medium text-foreground tabular-nums">{money(customer.credit_limit)}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Inline edit form */}
-            {showEditForm && (
-              <div className="rounded-2xl bg-surface-card shadow-soft overflow-hidden">
-                <div className="px-4 pt-4 pb-0">
-                  <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                    Dane kontrahenta
-                  </h2>
-                  {editError && (
-                    <p className="mb-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
-                      {editError}
-                    </p>
-                  )}
-                </div>
-                <div className="px-2">
-                  <CustomerForm
-                    customer={customer}
-                    isLoading={updateMutation.isPending}
-                    submitLabel="Zapisz zmiany"
-                    onSubmit={async (data: CustomerWrite, image?: CustomerImageChange) => {
-                      setEditError(null);
-                      try {
-                        let saved = await updateMutation.mutateAsync({ id: customerId, body: data });
-                        if (image?.file) {
-                          saved = await customerService.uploadImage(customerId, image.file);
-                        } else if (image?.remove) {
-                          saved = await customerService.deleteImage(customerId);
-                        }
-                        if (image?.file || image?.remove) {
-                          queryClient.setQueryData(customerKeys.detail(customerId), saved);
-                          queryClient.setQueriesData<{ results: typeof saved[] }>(
-                            { queryKey: customerKeys.all },
-                            (old) => {
-                              if (!old?.results) return old;
-                              return {
-                                ...old,
-                                results: old.results.map((c) => (c.id === customerId ? saved : c)),
-                              };
-                            },
-                          );
-                        }
-                        setShowEditForm(false);
-                      } catch (e) {
-                        setEditError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');
-                      }
-                    }}
-                    onCancel={() => { setShowEditForm(false); setEditError(null); }}
-                  />
-                </div>
-              </div>
-            )}
 
             {/* Action buttons */}
             <div className="flex gap-3">
@@ -805,11 +597,11 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               </button>
             </div>
 
-            {/* Custom prices */}
-            <CustomerPricesSection customerId={customerId} />
+            {/* Individual pricing */}
+            <CustomerPricesPanel customerId={customerId} />
 
             {/* Orders list for this date */}
-            <section id="orders-section" aria-label="Zamówienia klienta">
+            <section aria-label="Zamówienia klienta">
               <h2 className="mb-2 px-1 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Zamówienia tego dnia ({orders.length})
               </h2>

@@ -59,3 +59,47 @@ export function useCancelInventoryMutation() {
     },
   });
 }
+
+export function useDeleteInventoryMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => inventoryService.delete(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: inventoryKeys.all }),
+  });
+}
+
+export function useRemoveInventoryItemMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, itemId }: { id: string; itemId: string }) =>
+      inventoryService.removeItem(id, itemId),
+    onSuccess: (doc) => {
+      void qc.invalidateQueries({ queryKey: inventoryKeys.all });
+      void qc.setQueryData(inventoryKeys.detail(doc.id), doc);
+    },
+  });
+}
+
+export function useAddInventoryItemMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, productId }: { id: string; productId: string }) =>
+      inventoryService.addItem(id, productId),
+    onSuccess: (doc) => {
+      void qc.invalidateQueries({ queryKey: inventoryKeys.all });
+      void qc.setQueryData(inventoryKeys.detail(doc.id), doc);
+    },
+  });
+}
+
+export function useAddManualInventoryItemMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name, unit }: { id: string; name: string; unit: string }) =>
+      inventoryService.addManualItem(id, name, unit),
+    onSuccess: (doc) => {
+      void qc.invalidateQueries({ queryKey: inventoryKeys.all });
+      void qc.setQueryData(inventoryKeys.detail(doc.id), doc);
+    },
+  });
+}

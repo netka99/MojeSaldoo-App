@@ -464,7 +464,7 @@ def get_production_planning(company, date_from=None, date_to=None):
     recipes = (
         Recipe.objects.filter(
             company=company,
-            product__uuid__in=product_demand.keys(),
+            product__id__in=product_demand.keys(),
             is_active=True,
         )
         .select_related("product")
@@ -495,10 +495,7 @@ def get_production_planning(company, date_from=None, date_to=None):
         # For finished-type products without batch tracking, stock is not maintained —
         # they are produced to order. In this case we skip the shortfall calculation.
         finished_product = recipe.product
-        tracks = (
-            finished_product.product_type != "finished"
-            or finished_product.track_batches
-        )
+        tracks = finished_product.track_batches
         if tracks:
             stock_available = Decimal(
                 sum(s.quantity_available or 0 for s in finished_product.stocks.all())

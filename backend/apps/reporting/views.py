@@ -30,7 +30,7 @@ from apps.delivery.models import DeliveryDocument, DeliveryItem
 from apps.invoices.models import Invoice, InvoiceItem
 from apps.orders.models import Order, OrderItem
 from apps.production.models import ProductionOrder, Recipe
-from apps.products.models import Product, ProductStock, StockBatch
+from apps.products.models import Product, ProductStock, StockBatch, StockMovement
 from apps.users.permissions import IsCompanyMember, ModuleRequired
 from apps.van_routes.models import VanRoute
 from apps.activity.log import log_error
@@ -268,7 +268,9 @@ class TopCustomersView(ReportingModuleMixin, APIView):
         return Response(out)
 
 
-class InventoryReportView(ReportingModuleMixin, APIView):
+class InventoryReportView(APIView):
+    """Stock levels report — available without the reporting module (products module suffices)."""
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     """
     GET /api/reports/inventory/
 
@@ -303,6 +305,7 @@ class InventoryReportView(ReportingModuleMixin, APIView):
             .values(
                 "product_id",
                 "product__name",
+                "product__product_type",
                 "warehouse__code",
                 "quantity_available",
                 "product__min_stock_alert",
@@ -347,6 +350,7 @@ class InventoryReportView(ReportingModuleMixin, APIView):
         out = [
             {
                 "productName": r["product__name"],
+                "productType": r["product__product_type"],
                 "warehouseCode": r["warehouse__code"],
                 "quantityAvailable": r["quantity_available"],
                 "minStockAlert": r["product__min_stock_alert"],
@@ -825,7 +829,7 @@ class ProfitLossMonthDetailView(ReportingModuleMixin, APIView):
 
         invoices_out = [
             {
-                "id": str(inv.id),
+                "id": str(inv.uuid),
                 "invoice_number": inv.invoice_number or "",
                 "issue_date": inv.issue_date.isoformat(),
                 "customer_name": inv.customer.name if inv.customer_id else "",
@@ -844,7 +848,7 @@ class ProfitLossMonthDetailView(ReportingModuleMixin, APIView):
             )
             pz_out.append(
                 {
-                    "id": str(doc.id),
+                    "id": str(doc.uuid),
                     "document_number": doc.document_number or "",
                     "issue_date": doc.issue_date.isoformat(),
                     "supplier_name": doc.from_supplier.name if doc.from_supplier_id else "",
@@ -865,7 +869,7 @@ class ProfitLossMonthDetailView(ReportingModuleMixin, APIView):
         )
         opex_out = [
             {
-                "id": str(inv.id),
+                "id": str(inv.uuid),
                 "ksef_number": inv.ksef_number,
                 "invoice_number": inv.invoice_number or "",
                 "issue_date": inv.issue_date.isoformat() if inv.issue_date else "",
@@ -951,7 +955,7 @@ class ProductMarginDetailView(ReportingModuleMixin, APIView):
 
         # Current product avg/last cost
         try:
-            product = Product.objects.get(uuid=product_id, company=company)
+            product = Product.objects.get(id=product_id, company=company)
             current_avg_cost = product.avg_cost
             current_last_cost = product.last_cost
             avg_cost_updated_at = product.avg_cost_updated_at.isoformat() if product.avg_cost_updated_at else None
@@ -962,7 +966,7 @@ class ProductMarginDetailView(ReportingModuleMixin, APIView):
 
         invoices_out = [
             {
-                "invoice_id": str(line.invoice_id),
+                "invoice_id": str(line.invoice.uuid),
                 "invoice_number": line.invoice.invoice_number or "",
                 "issue_date": line.invoice.issue_date.isoformat(),
                 "customer_name": line.invoice.customer.name if line.invoice.customer_id else "",
@@ -976,7 +980,7 @@ class ProductMarginDetailView(ReportingModuleMixin, APIView):
 
         def _pz_line_dict(line):
             return {
-                "pz_id": str(line.delivery_document_id),
+                "pz_id": str(line.delivery_document.uuid),
                 "document_number": line.delivery_document.document_number or "",
                 "issue_date": line.delivery_document.issue_date.isoformat(),
                 "supplier_name": line.delivery_document.from_supplier.name if line.delivery_document.from_supplier_id else "",
@@ -1196,7 +1200,7 @@ class PaymentAgingView(ReportingModuleMixin, APIView):
             buckets[bucket] += amount
             rows.append(
                 {
-                    "invoice_id": str(inv.id),
+                    "invoice_id": str(inv.uuid),
                     "invoice_number": inv.invoice_number or "",
                     "issue_date": inv.issue_date.isoformat() if inv.issue_date else None,
                     "due_date": due.isoformat() if due else None,
@@ -1271,7 +1275,7 @@ class SupplierCostsView(ReportingModuleMixin, APIView):
         supplier_map: dict = {}
         for item in base:
             doc = item.delivery_document
-            sid = str(doc.from_supplier_id) if doc.from_supplier_id else "__unknown__"
+            sid = str(doc.from_supplier.uuid) if doc.from_supplier_id else "__unknown__"
             supplier_name = (doc.from_supplier.name if doc.from_supplier_id else None) or "Nieznany dostawca"
             qty = item.quantity_actual if item.quantity_actual is not None else item.quantity_planned
             line_cost = (item.unit_cost * qty).quantize(Decimal("0.01"))
@@ -1362,7 +1366,7 @@ class SupplierCostsDetailView(ReportingModuleMixin, APIView):
             )
             out.append(
                 {
-                    "pz_id": str(doc.id),
+                    "pz_id": str(doc.uuid),
                     "document_number": doc.document_number or "",
                     "issue_date": doc.issue_date.isoformat() if doc.issue_date else None,
                     "total_cost": total_cost.quantize(Decimal("0.01")),
@@ -1373,7 +1377,9 @@ class SupplierCostsDetailView(ReportingModuleMixin, APIView):
         return Response({"documents": out})
 
 
-class ExpiryAlertsView(ReportingModuleMixin, APIView):
+class ExpiryAlertsView(APIView):
+    """Expiry alerts — available without the reporting module (products module suffices)."""
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     """
     GET /api/reports/expiry-alerts/
         ?days=90  (default 90, max 365)
@@ -1768,3 +1774,177 @@ class CustomerFlowReportView(ReportingModuleMixin, APIView):
         company = request.user.current_company
         data = build_customer_flow(company, date_from, date_to)
         return Response(data)
+
+
+class MaterialConsumptionView(APIView):
+    """
+    GET /api/reports/material-consumption/
+        ?date_from=YYYY-MM-DD  (required)
+        ?date_to=YYYY-MM-DD    (required)
+
+    Aggregates StockMovement for products of type 'material':
+      - purchased:  sum of movements with positive quantity (PURCHASE)
+      - consumed:   sum of movements with negative quantity (SALE, ADJUSTMENT, DAMAGE)
+      - stock_before: stock at start of period
+      - stock_after:  stock at end of period (stock_before + purchased - consumed)
+    Only returns products that had at least one movement in the period.
+    """
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get(self, request):
+        from datetime import date as _date
+        company = request.user.current_company
+
+        def _parse(val):
+            if not val:
+                return None
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").date()
+            except ValueError:
+                return None
+
+        date_from = _parse(request.query_params.get("date_from"))
+        date_to = _parse(request.query_params.get("date_to"))
+        if not date_from or not date_to:
+            raise ValidationError({"detail": "Parametry date_from i date_to są wymagane."})
+
+        # All material products for this company
+        material_products = {
+            str(p.id): p
+            for p in Product.objects.filter(
+                company=company,
+                product_type=Product.PRODUCT_TYPE_MATERIAL,
+                is_active=True,
+            )
+        }
+
+        if not material_products:
+            return Response([])
+
+        # Movements in period for material products
+        movements = list(StockMovement.objects.filter(
+            company=company,
+            product_id__in=material_products.keys(),
+            created_at__date__gte=date_from,
+            created_at__date__lte=date_to,
+        ).order_by("created_at"))
+
+        # Resolve document numbers for reference_ids in bulk
+        from apps.delivery.models import DeliveryDocument
+        from apps.production.models import ProductionOrder as ProdOrder
+
+        delivery_ids = {m.reference_id for m in movements if m.reference_type in (
+            "delivery_document", "delivery", "pz_cancellation", "pz_correction",
+            "rw_writeoff", "wz_correction", "delivery_return", "delivery_correction",
+        ) and m.reference_id}
+        prod_ids = {m.reference_id for m in movements if m.reference_type == "production_order" and m.reference_id}
+
+        # delivery: number + supplier name (reference_id stores d.uuid, not d.id)
+        delivery_info = {}
+        if delivery_ids:
+            for d in DeliveryDocument.objects.filter(uuid__in=delivery_ids).select_related("from_supplier"):
+                delivery_info[str(d.uuid)] = {
+                    "number": d.document_number,
+                    "counterparty": d.from_supplier.name if d.from_supplier else None,
+                }
+        # production: order_number + recipe product name (reference_id stores o.uuid, not o.id)
+        prod_info = {}
+        if prod_ids:
+            for o in ProdOrder.objects.filter(uuid__in=prod_ids).select_related("recipe__product"):
+                prod_info[str(o.uuid)] = {
+                    "number": o.order_number,
+                    "counterparty": o.recipe.product.name if o.recipe and o.recipe.product else None,
+                }
+
+        def _doc_info(m):
+            """Returns (doc_number, counterparty) for a movement."""
+            if not m.reference_id:
+                return None, None
+            rid = str(m.reference_id)
+            if m.reference_type in ("delivery_document", "delivery", "pz_cancellation",
+                                     "pz_correction", "rw_writeoff", "wz_correction",
+                                     "delivery_return", "delivery_correction"):
+                info = delivery_info.get(rid, {})
+                return info.get("number"), info.get("counterparty")
+            if m.reference_type == "production_order":
+                info = prod_info.get(rid, {})
+                return info.get("number"), info.get("counterparty")
+            return None, None
+
+        REF_LABEL = {
+            "delivery_document": "PZ",
+            "delivery": "PZ",
+            "production_order": "ZP",
+            "rw_writeoff": "RW",
+            "pz_cancellation": "Anulowanie PZ",
+            "pz_correction": "Korekta PZ",
+            "wz_correction": "Korekta WZ",
+            "delivery_return": "Zwrot",
+            "delivery_correction": "Korekta dostawy",
+            "adjustment": "Korekta ręczna",
+            "mm_return": "Zwrot MM",
+            "van_reconciliation": "Rozliczenie vana",
+        }
+
+        # Aggregate per product + collect movement details
+        purchased: dict = {}
+        consumed: dict = {}
+        mov_details: dict = {}  # pid → list of movement dicts
+
+        for m in movements:
+            pid = str(m.product_id)
+            qty = m.quantity or Decimal("0")
+            if qty > 0:
+                purchased[pid] = purchased.get(pid, Decimal("0")) + qty
+            else:
+                consumed[pid] = consumed.get(pid, Decimal("0")) + abs(qty)
+
+            doc_number, counterparty = _doc_info(m)
+            ref_label = REF_LABEL.get(m.reference_type or "", m.reference_type or "Ruch")
+            mov_details.setdefault(pid, []).append({
+                "date": m.created_at.date().isoformat(),
+                "qty": str(qty),
+                "movement_type": m.movement_type,
+                "reference_type": m.reference_type,
+                "reference_id": str(m.reference_id) if m.reference_id else None,
+                "doc_number": doc_number,
+                "doc_label": ref_label,
+                "counterparty": counterparty,
+                "notes": m.notes or "",
+            })
+
+        # Current stock per product
+        current_stock = {
+            str(s.product_id): s.quantity_available or Decimal("0")
+            for s in ProductStock.objects.filter(
+                company=company,
+                product_id__in=material_products.keys(),
+            )
+        }
+
+        # Only products with movements in period
+        active_pids = set(purchased.keys()) | set(consumed.keys())
+
+        result = []
+        for pid in active_pids:
+            product = material_products.get(pid)
+            if not product:
+                continue
+            p = purchased.get(pid, Decimal("0"))
+            c = consumed.get(pid, Decimal("0"))
+            stock_now = current_stock.get(pid, Decimal("0"))
+            stock_before = stock_now - p + c
+
+            result.append({
+                "product_id": pid,
+                "product_name": product.name,
+                "unit": product.unit,
+                "stock_before": stock_before,
+                "purchased": p,
+                "consumed": c,
+                "stock_after": stock_now,
+                "movements": mov_details.get(pid, []),
+            })
+
+        result.sort(key=lambda r: r["product_name"])
+        return Response(result)

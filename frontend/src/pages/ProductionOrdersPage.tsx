@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
   useProductionOrdersQuery,
+  useProductionOrdersListQuery,
   useCreateProductionOrderMutation,
   useCompleteProductionOrderMutation,
   useDeleteProductionOrderMutation,
@@ -567,7 +568,12 @@ function OrderCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium">{order.order_number}</span>
+            <Link
+              to={`/production/orders/${order.id}`}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              {order.order_number}
+            </Link>
             <span className={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium',
               isCompleted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
@@ -1379,6 +1385,220 @@ export function ProductionOrdersPage() {
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ── ProductionOrdersListContent — lightweight list for /documents tab ─────────
+
+function currentMonthRange() {
+  const today = new Date();
+  const from = new Date(today.getFullYear(), today.getMonth(), 1);
+  return { from: from.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) };
+}
+
+function thisWeekRange() {
+  const today = new Date();
+  const day = today.getDay();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((day + 6) % 7));
+  return { from: monday.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) };
+}
+
+function prevMonthRange() {
+  const today = new Date();
+  const from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const to = new Date(today.getFullYear(), today.getMonth(), 0);
+  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+}
+
+const plDateFmt = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return '—';
+  const d = new Date(`${iso}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? iso : plDateFmt.format(d);
+}
+
+const PRESET_OPTIONS = [
+  { label: 'Ten tydzień', value: 'week' },
+  { label: 'Ten miesiąc', value: 'month' },
+  { label: 'Poprzedni miesiąc', value: 'prev' },
+  { label: 'Własny zakres', value: 'custom' },
+] as const;
+
+export function ProductionOrdersListContent() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const canProduction = usePermission('can_manage_production');
+
+  const defaultFrom = currentMonthRange().from;
+  const defaultTo = currentMonthRange().to;
+  const dateFrom = searchParams.get('zp_from') ?? defaultFrom;
+  const dateTo = searchParams.get('zp_to') ?? defaultTo;
+  const statusFilter = searchParams.get('zp_status') ?? '';
+  const preset = searchParams.get('zp_preset') ?? 'month';
+
+  function set(key: string, val: string) {
+    setSearchParams((p) => { const n = new URLSearchParams(p); n.set(key, val); return n; }, { replace: true });
+  }
+
+  function applyPreset(value: string) {
+    setSearchParams((p) => {
+      const n = new URLSearchParams(p);
+      n.set('zp_preset', value);
+      if (value === 'week') { const r = thisWeekRange(); n.set('zp_from', r.from); n.set('zp_to', r.to); }
+      if (value === 'month') { const r = currentMonthRange(); n.set('zp_from', r.from); n.set('zp_to', r.to); }
+      if (value === 'prev') { const r = prevMonthRange(); n.set('zp_from', r.from); n.set('zp_to', r.to); }
+      return n;
+    }, { replace: true });
+  }
+
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useProductionOrdersListQuery({
+    page,
+    date_from: dateFrom,
+    date_to: dateTo,
+    ...(statusFilter ? { status: statusFilter } : {}),
+  });
+
+  const orders = data?.results ?? [];
+  const total = data?.count ?? 0;
+  const pageCount = Math.ceil(total / 20);
+
+  return (
+    <div className="space-y-3 p-4">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-900 md:text-xl">Zlecenia produkcji (ZP)</h2>
+          {total > 0 && <p className="text-xs text-slate-400">Znaleziono: {total}</p>}
+        </div>
+        {canProduction && (
+          <Link
+            to="/production/orders"
+            className="rounded-2xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
+          >
+            Otwórz produkcję →
+          </Link>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+        <select
+          value={preset}
+          onChange={(e) => applyPreset(e.target.value)}
+          className="h-8 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900"
+        >
+          {PRESET_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => { set('zp_from', e.target.value); set('zp_preset', 'custom'); }}
+          className="h-8 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900"
+        />
+        <span className="text-xs text-slate-400">—</span>
+        <input
+          type="date"
+          value={dateTo}
+          onChange={(e) => { set('zp_to', e.target.value); set('zp_preset', 'custom'); }}
+          className="h-8 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => { set('zp_status', e.target.value); setPage(1); }}
+          className="h-8 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900"
+        >
+          <option value="">Wszystkie statusy</option>
+          <option value="draft">W produkcji</option>
+          <option value="completed">Zakończone</option>
+        </select>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        {isLoading && (
+          <div className="px-4 py-8 text-center text-sm text-slate-400">Ładowanie…</div>
+        )}
+        {!isLoading && orders.length === 0 && (
+          <div className="px-4 py-8 text-center text-sm text-slate-400">
+            Brak zleceń produkcji w tym okresie.
+          </div>
+        )}
+        {!isLoading && orders.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">Numer ZP</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">Data</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">Produkt</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-400">Ilość</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">RW / PW</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {orders.map((o) => (
+                  <tr key={o.id} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-2.5">
+                      <Link
+                        to={`/production/orders/${o.id}`}
+                        className="font-semibold text-primary hover:underline"
+                      >
+                        {o.order_number}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-500">{fmtDate(o.date)}</td>
+                    <td className="px-4 py-2.5 font-medium text-slate-900">{o.finished_product_name}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">
+                      {Number(o.quantity_produced).toLocaleString('pl-PL')} {o.finished_product_unit}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {o.status === 'completed' ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Zakończone</span>
+                      ) : (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">W produkcji</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-400">
+                      {o.rw_document_number && <span>RW: {o.rw_document_number}</span>}
+                      {o.rw_document_number && o.pw_document_number && <span className="mx-1">·</span>}
+                      {o.pw_document_number && <span>PW: {o.pw_document_number}</span>}
+                      {!o.rw_document_number && !o.pw_document_number && '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Pagination */}
+      {pageCount > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <button
+            type="button"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            ← Poprzednia
+          </button>
+          <span className="text-sm text-slate-500">{page} / {pageCount}</span>
+          <button
+            type="button"
+            disabled={page >= pageCount}
+            onClick={() => setPage((p) => p + 1)}
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            Następna →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

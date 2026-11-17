@@ -48,7 +48,7 @@ export function LoginPage() {
   const { login, isAuthenticated, isLoading } = useAuth();
   const from = (location.state as { from?: string } | null)?.from ?? '/';
 
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,7 +70,7 @@ export function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      await login(username.trim(), password);
+      await login(email.trim(), password);
       const companies = await queryClient.fetchQuery({
         queryKey: companyKeys.me(),
         queryFn: () => companyService.getMyCompanies(),
@@ -115,12 +115,13 @@ export function LoginPage() {
                 </p>
               )}
               <Input
-                label="Nazwa użytkownika lub e-mail"
-                name="username"
-                autoComplete="username"
+                label="E-mail"
+                name="email"
+                type="email"
+                autoComplete="email"
                 autoFocus
-                value={username}
-                onChange={(ev) => setUsername(ev.target.value)}
+                value={email}
+                onChange={(ev) => setEmail(ev.target.value)}
                 required
               />
               <Input

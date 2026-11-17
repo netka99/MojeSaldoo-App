@@ -25,7 +25,7 @@ function TestConsumer() {
       <span data-testid="loading">{isLoading ? 'loading' : 'ready'}</span>
       <span data-testid="auth">{isAuthenticated ? 'yes' : 'no'}</span>
       <span data-testid="username">{user?.username ?? 'none'}</span>
-      <button type="button" onClick={() => void login('alice', 'secret')}>
+      <button type="button" onClick={() => void login('alice@test.dev', 'secret')}>
         login
       </button>
       <button type="button" onClick={logout}>
@@ -102,7 +102,7 @@ describe('AuthContext', () => {
     await userEvent.click(screen.getByRole('button', { name: 'login' }));
 
     await waitFor(() => expect(screen.getByTestId('auth')).toHaveTextContent('yes'));
-    expect(authApi.login).toHaveBeenCalledWith('alice', 'secret');
+    expect(authApi.login).toHaveBeenCalledWith('alice@test.dev', 'secret');
     expect(screen.getByTestId('username')).toHaveTextContent('alice');
   });
 

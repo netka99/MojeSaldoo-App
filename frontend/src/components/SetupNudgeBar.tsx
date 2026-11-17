@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useMyCompaniesQuery } from '@/query/use-companies';
+import { useProductListQuery } from '@/query/use-products';
+import { useCustomerListQuery } from '@/query/use-customers';
 import { cn } from '@/lib/utils';
 
 const STORAGE_KEY_PREFIX = 'setup_nudge_dismissed_';
@@ -41,18 +43,23 @@ export function SetupNudgeBar() {
   const currentCompany = companies?.find((c) => c.id === companyId);
   const hasNip = Boolean(currentCompany?.nip?.trim());
 
+  const { data: productsData } = useProductListQuery(1, '');
+  const { data: customersData } = useCustomerListQuery(1, '');
+  const hasProducts = (productsData?.count ?? 0) > 0;
+  const hasCustomers = (customersData?.count ?? 0) > 0;
+
   const items: NudgeItem[] = [
     {
       label: 'Dodaj produkty',
       description: 'Skonfiguruj swój katalog produktów',
       to: '/products/new',
-      done: false,
+      done: hasProducts,
     },
     {
       label: 'Dodaj klientów',
       description: 'Zaimportuj lub wpisz pierwszych klientów',
       to: '/customers/new',
-      done: false,
+      done: hasCustomers,
     },
     {
       label: 'Uzupełnij dane firmy',

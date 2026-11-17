@@ -100,6 +100,7 @@ export type DashboardSummary = {
 /** Row from `GET /api/reports/inventory/`. */
 export type InventoryReportRow = {
   productName: string;
+  productType: 'material' | 'finished' | 'trade' | 'service' | null;
   warehouseCode: string;
   quantityAvailable: string | number;
   minStockAlert: string | number;
@@ -380,6 +381,7 @@ export type FlowProblem =
   | 'delivered_no_invoice'
   | 'delivered_no_wz'
   | 'wz_no_invoice'
+  | 'wz_draft'
   | 'invoice_overdue'
   | 'wz_zw_no_fvkor';
 
@@ -445,6 +447,19 @@ export type FlowManualInvoice = {
   lines: { product_name: string; unit: string; quantity: string }[];
 };
 
+export type FlowStandaloneInvoice = {
+  id: string;
+  number: string | null;
+  customer_name: string;
+  customer_id: string | null;
+  status: string;
+  issue_date: string | null;
+  due_date: string | null;
+  total_gross: string;
+  overdue: boolean;
+  lines: { product_name: string; unit: string; quantity: string }[];
+};
+
 export type FlowCustomerRow = {
   customer_id: string;
   customer_name: string;
@@ -456,9 +471,35 @@ export type FlowCustomerRow = {
   manual_invoices: FlowManualInvoice[];
 };
 
+/** Single stock movement detail inside a material consumption row. */
+export type MaterialMovementDetail = {
+  date: string;
+  qty: string;
+  movement_type: string;
+  reference_type: string | null;
+  reference_id: string | null;
+  doc_number: string | null;
+  doc_label: string;
+  counterparty: string | null;
+  notes: string;
+};
+
+/** Row from `GET /api/reports/material-consumption/`. */
+export type MaterialConsumptionRow = {
+  product_id: string;
+  product_name: string;
+  unit: string;
+  stock_before: string | number;
+  purchased: string | number;
+  consumed: string | number;
+  stock_after: string | number;
+  movements: MaterialMovementDetail[];
+};
+
 export type CustomerFlowReport = {
   period: { date_from: string; date_to: string };
   wz_required: boolean;
   returns_mode: string;
   customers: FlowCustomerRow[];
+  standalone_invoices: FlowStandaloneInvoice[];
 };

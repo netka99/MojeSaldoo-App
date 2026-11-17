@@ -41,8 +41,8 @@ class InvoiceAnnotationSerializer(UUIDModelSerializer):
                 ann = line.annotation
                 splits = [
                     {
-                        "id": str(s.id),
-                        "project": str(s.project_id) if s.project_id else None,
+                        "id": str(s.uuid),
+                        "project": str(s.project.uuid) if s.project_id else None,
                         "projectName": s.project.name if s.project else None,
                         "percentage": str(s.percentage),
                         "quantity": str(s.quantity) if s.quantity is not None else None,
@@ -54,7 +54,7 @@ class InvoiceAnnotationSerializer(UUIDModelSerializer):
                 if not splits and ann.project_id:
                     splits = [{
                         "id": None,
-                        "project": str(ann.project_id),
+                        "project": str(ann.project.uuid),
                         "projectName": ann.project.name if ann.project else None,
                         "percentage": "100",
                         "quantity": None,

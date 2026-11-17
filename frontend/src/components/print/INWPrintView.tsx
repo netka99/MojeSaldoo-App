@@ -1,14 +1,17 @@
 import type { InventoryCount, InventoryCountItem } from '@/types/inventory.types';
 
-const n3 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 3, minimumFractionDigits: 0 });
+const n3 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 const signed = (v: number) => (v > 0 ? '+' : '') + n3.format(v);
 
 interface INWPrintViewProps {
   count: InventoryCount;
+  filledOnly?: boolean;
 }
 
-export function INWPrintView({ count }: INWPrintViewProps) {
-  const items = count.items;
+export function INWPrintView({ count, filledOnly = false }: INWPrintViewProps) {
+  const items = filledOnly
+    ? count.items.filter((it) => it.quantity_actual !== null && it.quantity_actual !== undefined)
+    : count.items;
   const changed = items.filter((it) => it.difference !== null && it.difference !== 0);
   const unchanged = items.filter((it) => it.difference === null || it.difference === 0);
 
@@ -40,7 +43,7 @@ export function INWPrintView({ count }: INWPrintViewProps) {
             <th style={thStyle('left')}>Lp.</th>
             <th style={thStyle('left')}>Produkt</th>
             <th style={thStyle('center')}>J.m.</th>
-            <th style={thStyle('right')}>Wg systemu</th>
+            {!filledOnly && <th style={thStyle('right')}>Wg systemu</th>}
             <th style={thStyle('right')}>Zliczono</th>
             <th style={thStyle('right')}>Różnica</th>
           </tr>
@@ -49,27 +52,28 @@ export function INWPrintView({ count }: INWPrintViewProps) {
           {items.map((item: InventoryCountItem, i: number) => {
             const diff = item.difference;
             const hasChange = diff !== null && diff !== 0;
+            const isDraft = count.status !== 'completed';
             return (
               <tr
                 key={item.id}
                 style={{
                   borderBottom: '1px solid #e5e7eb',
-                  background: hasChange ? (diff! > 0 ? '#f0fdf4' : '#fef2f2') : 'transparent',
+                  background: !isDraft && hasChange ? (diff! > 0 ? '#f0fdf4' : '#fef2f2') : 'transparent',
                 }}
               >
                 <td style={tdStyle('left')}>{i + 1}</td>
-                <td style={{ ...tdStyle('left'), fontWeight: hasChange ? 'bold' : 'normal' }}>{item.product_name}</td>
+                <td style={{ ...tdStyle('left'), fontWeight: !isDraft && hasChange ? 'bold' : 'normal' }}>{item.product_name}</td>
                 <td style={tdStyle('center')}>{item.product_unit}</td>
-                <td style={tdStyle('right')}>{n3.format(Number(item.quantity_system))}</td>
+                {!filledOnly && <td style={tdStyle('right')}>{n3.format(Number(item.quantity_system))}</td>}
                 <td style={tdStyle('right')}>
-                  {item.quantity_actual !== null ? n3.format(Number(item.quantity_actual)) : '—'}
+                  {item.quantity_actual !== null ? n3.format(Number(item.quantity_actual)) : ''}
                 </td>
                 <td style={{
                   ...tdStyle('right'),
                   fontWeight: 'bold',
                   color: diff === null ? '#6b7280' : diff > 0 ? '#15803d' : diff < 0 ? '#dc2626' : '#6b7280',
                 }}>
-                  {diff !== null ? (diff === 0 ? '=' : signed(diff)) : '—'}
+                  {diff !== null ? (diff === 0 ? '=' : signed(diff)) : ''}
                 </td>
               </tr>
             );

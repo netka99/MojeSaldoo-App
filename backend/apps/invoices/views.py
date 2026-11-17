@@ -570,7 +570,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 {"detail": "Tylko wystawione, wysłane, przeterminowane lub do zwrotu faktury mogą być oznaczone jako zapłacone."}
             )
         invoice.status = Invoice.STATUS_PAID
-        invoice.paid_at = timezone.now()
+        from datetime import time as dt_time
+        from django.utils.dateparse import parse_date
+        paid_at_raw = (request.data or {}).get("paid_at")
+        parsed_date = parse_date(str(paid_at_raw)) if paid_at_raw else None
+        invoice.paid_at = (
+            timezone.make_aware(datetime.combine(parsed_date, dt_time()))
+            if parsed_date else timezone.now()
+        )
         invoice.user = request.user
         invoice.save(
             update_fields=["status", "paid_at", "user", "updated_at"],

@@ -5,7 +5,7 @@ from django.db import models, transaction
 
 
 class Product(models.Model):
-    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -27,10 +27,6 @@ class Product(models.Model):
         blank=True,
         help_text="Polish product classification code",
     )
-    track_batches = models.BooleanField(default=True)
-    min_stock_alert = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    shelf_life_days = models.IntegerField(blank=True, null=True)
-    # Purchase cost tracking — updated automatically on each PZ receipt or production order
     PRODUCT_TYPE_MATERIAL = "material"
     PRODUCT_TYPE_FINISHED = "finished"
     PRODUCT_TYPE_TRADE = "trade"
@@ -41,7 +37,17 @@ class Product(models.Model):
         (PRODUCT_TYPE_TRADE, "Towar handlowy"),
         (PRODUCT_TYPE_SERVICE, "Usługa"),
     ]
-
+    product_type = models.CharField(
+        max_length=20,
+        choices=PRODUCT_TYPE_CHOICES,
+        default=PRODUCT_TYPE_TRADE,
+        help_text="Classification: material | finished | trade | service",
+    )
+    is_service = models.BooleanField(default=False)
+    track_batches = models.BooleanField(default=True)
+    min_stock_alert = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    shelf_life_days = models.IntegerField(blank=True, null=True)
+    # Purchase cost tracking — updated automatically on each PZ receipt or production order
     COST_SOURCE_PZ = "pz"
     COST_SOURCE_PRODUCTION = "production"
     COST_SOURCE_RECIPE = "recipe"
@@ -75,19 +81,6 @@ class Product(models.Model):
         help_text="Unit cost from the most recent PZ receipt.",
     )
     avg_cost_updated_at = models.DateTimeField(null=True, blank=True)
-    product_type = models.CharField(
-        max_length=20,
-        choices=PRODUCT_TYPE_CHOICES,
-        default=PRODUCT_TYPE_TRADE,
-        help_text="Classification: material | finished | trade | service",
-    )
-    is_service = models.BooleanField(
-        default=False,
-        help_text=(
-            "If True, this is a service (not a physical product). "
-            "Services skip warehouse/batch/stock tracking."
-        ),
-    )
     is_resalable = models.BooleanField(
         default=True,
         help_text="If True, the product can be sold to customers (appears in invoice/order pickers).",
@@ -100,12 +93,6 @@ class Product(models.Model):
         help_text="Target gross margin %. price_net is auto-suggested as avg_cost × (1 + markup/100).",
     )
     is_active = models.BooleanField(default=True)
-    image = models.ImageField(
-        upload_to="product_thumbs/",
-        blank=True,
-        null=True,
-        help_text="Square JPEG thumbnail. The original upload is not stored.",
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -122,19 +109,9 @@ class Product(models.Model):
         return self.name
 
     @property
-    def tracks_stock(self) -> bool:
-        """True when stock movements should be written for this product."""
-        if self.product_type == self.PRODUCT_TYPE_SERVICE:
-            return False
-        if self.product_type in (self.PRODUCT_TYPE_MATERIAL, self.PRODUCT_TYPE_TRADE):
-            return True
-        # FINISHED: tracked only when track_batches is enabled
-        return bool(self.track_batches)
-
-    def delete(self, *args, **kwargs):
-        if self.image:
-            self.image.delete(save=False)
-        return super().delete(*args, **kwargs)
+    def uuid(self):
+        """Compatibility alias — Product uses id as UUID primary key."""
+        return self.id
 
 
 class Warehouse(models.Model):
@@ -146,7 +123,7 @@ class Warehouse(models.Model):
         CUSTOMER = "customer", "Customer"
         EXTERNAL = "external", "External"
 
-    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -155,7 +132,6 @@ class Warehouse(models.Model):
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     code = models.CharField(
         max_length=10,
-        unique=True,
         help_text="Short code, e.g. MG, MV.",
     )
     name = models.CharField(max_length=255)
@@ -173,6 +149,7 @@ class Warehouse(models.Model):
 
     class Meta:
         ordering = ["code"]
+        unique_together = [("company", "code")]
         indexes = [
             models.Index(fields=["user"], name="idx_warehouses_user"),
             models.Index(fields=["company"], name="idx_warehouses_company"),
@@ -183,11 +160,16 @@ class Warehouse(models.Model):
     def __str__(self):
         return f"{self.code} - {self.name}"
 
+    @property
+    def uuid(self):
+        """Compatibility alias — Warehouse uses id as UUID primary key."""
+        return self.id
+
 
 class ProductStock(models.Model):
     """Per-warehouse inventory quantities for a product."""
 
-    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
@@ -255,11 +237,15 @@ class ProductStock(models.Model):
     def __str__(self):
         return f"{self.product_id} @ {self.warehouse_id}"
 
+    @property
+    def uuid(self):
+        return self.id
+
 
 class StockBatch(models.Model):
     """FIFO lot / batch line for a product in a warehouse."""
 
-    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
@@ -296,6 +282,10 @@ class StockBatch(models.Model):
     def __str__(self):
         return f"{self.product_id} {self.received_date} ({self.quantity_remaining})"
 
+    @property
+    def uuid(self):
+        return self.id
+
 
 class StockMovement(models.Model):
     """Audit line for inventory changes (per product and warehouse)."""
@@ -310,7 +300,7 @@ class StockMovement(models.Model):
         RESERVATION = "reservation", "Reservation"
         UNRESERVATION = "unreservation", "Unreservation"
 
-    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
     product = models.ForeignKey(
         Product,
@@ -364,16 +354,13 @@ class StockMovement(models.Model):
     def __str__(self):
         return f"{self.movement_type} {self.quantity} @ {self.warehouse_id}"
 
+    @property
+    def uuid(self):
+        return self.id
+
 
 class CustomerProductPrice(models.Model):
-    """Custom price for a specific customer–product pair within a company."""
-
-    PRICE_TYPE_NET = "net"
-    PRICE_TYPE_GROSS = "gross"
-    PRICE_TYPE_CHOICES = [
-        (PRICE_TYPE_NET, "Netto"),
-        (PRICE_TYPE_GROSS, "Brutto"),
-    ]
+    """Individual price override for a specific product and customer."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey("users.Company", on_delete=models.CASCADE)
@@ -383,20 +370,14 @@ class CustomerProductPrice(models.Model):
         related_name="custom_prices",
     )
     product = models.ForeignKey(
-        "products.Product",
+        Product,
         on_delete=models.CASCADE,
         related_name="customer_prices",
     )
     price_net = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        help_text="Custom price value (interpretation depends on price_type).",
-    )
-    price_type = models.CharField(
-        max_length=5,
-        choices=PRICE_TYPE_CHOICES,
-        default=PRICE_TYPE_NET,
-        help_text="Whether price_net stores a net or gross value.",
+        help_text="Custom net price for this customer. Overrides product default.",
     )
     note = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -410,4 +391,8 @@ class CustomerProductPrice(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.customer_id} / {self.product_id} → {self.price_net}"
+        return f"{self.customer} — {self.product}: {self.price_net}"
+
+    @property
+    def uuid(self):
+        return self.id

@@ -194,7 +194,7 @@ class SupplierOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            warehouse = Warehouse.objects.get(uuid=to_warehouse_id, company_id=company_id)
+            warehouse = Warehouse.objects.get(id=to_warehouse_id, company_id=company_id)
         except Warehouse.DoesNotExist:
             return Response({"error": "Magazyn nie znaleziony."}, status=status.HTTP_400_BAD_REQUEST)
 

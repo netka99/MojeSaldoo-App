@@ -143,6 +143,8 @@ export const reportKeys = {
     [...reportKeys.all, 'expiry-alerts', companyId, days] as const,
   customerMargin: (p: ReportRangeKeyParams & { limit: number }) =>
     [...reportKeys.all, 'customer-margin', p] as const,
+  materialConsumption: (p: ReportRangeKeyParams) =>
+    [...reportKeys.all, 'material-consumption', p] as const,
 };
 
 export const vanRouteKeys = {

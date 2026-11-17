@@ -205,7 +205,7 @@ function CustomerMarginPageContent() {
                         <td className={cn(tdClass, 'text-right tabular-nums')}>
                           <span className={Number(displayProfit) >= 0 ? 'text-green-600' : 'text-red-600'}>
                             {formatMoney(displayProfit)}
-                            {isEstimated && <span className="ml-1 text-xs text-slate-500">~</span>
+                            {isEstimated && <span className="ml-1 text-xs text-slate-500">~</span>}
                           </span>
                         </td>
                         <td className={cn(tdClass, 'text-right tabular-nums', marginClass(displayMargin))}>

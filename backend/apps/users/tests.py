@@ -1504,3 +1504,266 @@ class KSeFCertificateFilenameTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["certificate_filename"], "firma.pem")
         self.assertEqual(response.data["key_filename"], "klucz.key")
+
+
+# ---------------------------------------------------------------------------
+# Registration & login via email
+# ---------------------------------------------------------------------------
+
+class RegistrationAPITests(TestCase):
+    """POST /api/auth/register/ — only email + password required."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("user_register")
+
+    def test_register_with_email_and_password_creates_user(self):
+        response = self.client.post(
+            self.url,
+            {"email": "new@example.com", "password": "StrongPass99!", "password2": "StrongPass99!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        u = get_user_model().objects.get(email="new@example.com")
+        self.assertEqual(u.username, "new@example.com")
+
+    def test_register_sets_username_to_email(self):
+        self.client.post(
+            self.url,
+            {"email": "user@firma.pl", "password": "StrongPass99!", "password2": "StrongPass99!"},
+            format="json",
+        )
+        u = get_user_model().objects.get(email="user@firma.pl")
+        self.assertEqual(u.username, "user@firma.pl")
+
+    def test_register_mismatched_passwords_rejected(self):
+        response = self.client.post(
+            self.url,
+            {"email": "x@x.com", "password": "StrongPass99!", "password2": "Different1!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_register_common_password_rejected(self):
+        # 'password1' is on Django's CommonPasswordValidator list
+        response = self.client.post(
+            self.url,
+            {"email": "y@y.com", "password": "password1", "password2": "password1"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_register_duplicate_email_rejected(self):
+        self.client.post(
+            self.url,
+            {"email": "dup@dup.com", "password": "StrongPass99!", "password2": "StrongPass99!"},
+            format="json",
+        )
+        response = self.client.post(
+            self.url,
+            {"email": "dup@dup.com", "password": "StrongPass99!", "password2": "StrongPass99!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_register_missing_email_rejected(self):
+        response = self.client.post(
+            self.url,
+            {"password": "StrongPass99!", "password2": "StrongPass99!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class LoginByEmailTests(TestCase):
+    """POST /api/auth/token/ — login with email field."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.login_url = reverse("token_obtain_pair")
+        self.user = get_user_model().objects.create_user(
+            username="login@example.com",
+            email="login@example.com",
+            password="StrongPass99!",
+        )
+
+    def test_login_with_email_returns_tokens(self):
+        response = self.client.post(
+            self.login_url,
+            {"email": "login@example.com", "password": "StrongPass99!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+
+    def test_login_wrong_password_rejected(self):
+        response = self.client.post(
+            self.login_url,
+            {"email": "login@example.com", "password": "WrongPass99!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class RateLimitingTests(TestCase):
+    """Rate limiting — login endpoint throttled to 5/minute for anonymous users."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.login_url = reverse("token_obtain_pair")
+        # Reset throttle cache between tests
+        from django.core.cache import cache
+        cache.clear()
+
+    def tearDown(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def test_login_throttle_blocks_after_5_attempts(self):
+        """6th login attempt from same IP returns 429 Too Many Requests."""
+        for _ in range(5):
+            self.client.post(
+                self.login_url,
+                {"email": "noone@test.com", "password": "wrong"},
+                format="json",
+                REMOTE_ADDR="1.2.3.4",
+            )
+        response = self.client.post(
+            self.login_url,
+            {"email": "noone@test.com", "password": "wrong"},
+            format="json",
+            REMOTE_ADDR="1.2.3.4",
+        )
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_login_throttle_different_ips_independent(self):
+        """Throttle is per IP — different IP is not affected."""
+        for _ in range(5):
+            self.client.post(
+                self.login_url,
+                {"email": "noone@test.com", "password": "wrong"},
+                format="json",
+                REMOTE_ADDR="1.2.3.4",
+            )
+        # Different IP should still work (get 401, not 429)
+        response = self.client.post(
+            self.login_url,
+            {"email": "noone@test.com", "password": "wrong"},
+            format="json",
+            REMOTE_ADDR="9.9.9.9",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class DemoCompanyTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="demo-user",
+            email="demo-user@test.com",
+            password="TestPass123!",
+        )
+
+    def test_registration_creates_demo_company(self):
+        """POST /auth/register/ creates a demo company automatically."""
+        response = self.client.post(
+            reverse("user_register"),
+            {"email": "newuser@test.com", "password": "TestPass123!", "password2": "TestPass123!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        User = get_user_model()
+        user = User.objects.get(email="newuser@test.com")
+        demo_companies = Company.objects.filter(memberships__user=user, is_demo=True)
+        self.assertEqual(demo_companies.count(), 1)
+
+    def test_demo_company_has_all_modules_enabled(self):
+        """Demo company has every module enabled."""
+        from apps.users.demo import create_demo_company_for_user
+        create_demo_company_for_user(self.user)
+        demo = Company.objects.get(memberships__user=self.user, is_demo=True)
+        disabled = CompanyModule.objects.filter(company=demo, is_enabled=False)
+        self.assertEqual(disabled.count(), 0)
+
+    def test_demo_company_has_data(self):
+        """Demo company contains customers and products."""
+        from apps.customers.models import Customer
+        from apps.products.models import Product
+        from apps.users.demo import create_demo_company_for_user
+        create_demo_company_for_user(self.user)
+        demo = Company.objects.get(memberships__user=self.user, is_demo=True)
+        self.assertGreater(Customer.objects.filter(company=demo).count(), 0)
+        self.assertGreater(Product.objects.filter(company=demo).count(), 0)
+
+    def test_demo_company_delete_endpoint(self):
+        """DELETE /api/companies/demo/ removes the demo company."""
+        from apps.users.demo import create_demo_company_for_user
+        create_demo_company_for_user(self.user)
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(reverse("company-demo-delete"))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Company.objects.filter(memberships__user=self.user, is_demo=True).exists())
+
+    def test_demo_company_delete_returns_404_when_none(self):
+        """DELETE /api/companies/demo/ returns 404 if no demo company exists."""
+        self.client.force_authenticate(user=self.user)
+        response = self.client.delete(reverse("company-demo-delete"))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_delete_last_real_company_also_deletes_demo(self):
+        """Deleting the user's last real company auto-deletes the demo company."""
+        from apps.users.demo import create_demo_company_for_user
+        create_demo_company_for_user(self.user)
+
+        # Give the user an admin role on a real company
+        real, real_company, _ = _make_company_with_admin(
+            "demo-real-user2", "demo-real2@test.com", "Real Corp", "1234567890"
+        )
+        # Transfer ownership to self.user (add admin membership)
+        admin_role = CompanyRole.objects.get(company=real_company, is_admin=True)
+        CompanyMembership.objects.create(
+            user=self.user, company=real_company, role="admin",
+            company_role=admin_role, is_active=True,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        url = reverse("company-delete", kwargs={"company_id": real_company.uuid})
+        response = self.client.delete(url, {"confirm_name": "Real Corp"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Real company soft-deleted
+        real_company.refresh_from_db()
+        self.assertIsNotNone(real_company.deleted_at)
+
+        # Demo company should be gone
+        self.assertFalse(Company.objects.filter(memberships__user=self.user, is_demo=True).exists())
+
+    def test_delete_one_of_many_real_companies_keeps_demo(self):
+        """Deleting one real company when others remain leaves the demo company intact."""
+        from apps.users.demo import create_demo_company_for_user
+        create_demo_company_for_user(self.user)
+
+        # Create two real companies for self.user
+        company_a = Company.objects.create(name="Company A", nip="1111111111")
+        admin_role_a = CompanyRole.objects.create(company=company_a, name="Admin", is_admin=True)
+        CompanyMembership.objects.create(
+            user=self.user, company=company_a, role="admin",
+            company_role=admin_role_a, is_active=True,
+        )
+
+        company_b = Company.objects.create(name="Company B", nip="2222222222")
+        admin_role_b = CompanyRole.objects.create(company=company_b, name="Admin", is_admin=True)
+        CompanyMembership.objects.create(
+            user=self.user, company=company_b, role="admin",
+            company_role=admin_role_b, is_active=True,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        url = reverse("company-delete", kwargs={"company_id": company_a.uuid})
+        response = self.client.delete(url, {"confirm_name": "Company A"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Demo company should still exist
+        self.assertTrue(Company.objects.filter(memberships__user=self.user, is_demo=True).exists())

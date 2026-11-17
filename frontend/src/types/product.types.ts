@@ -51,6 +51,29 @@ export interface Product {
 export type ProductWrite = Omit<Product, 'id' | 'created_at' | 'updated_at' | 'user' | 'image_url'> &
   Partial<Pick<Product, 'id'>>;
 
+/** Individual net price override for a specific customer+product pair. */
+export interface CustomerProductPrice {
+  id: string;
+  customer: string;
+  product: string;
+  product_name: string;
+  product_unit: string;
+  /** Default product net price (string from DRF). */
+  product_price_net: string;
+  /** Override net price for this customer. */
+  price_net: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CustomerProductPriceWrite = {
+  customer: string;
+  product: string;
+  price_net: string;
+  note?: string;
+};
+
 // Stock snapshot for a single warehouse (used by van reconciliation)
 
 export interface StockSnapshotItem {

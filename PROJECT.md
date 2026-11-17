@@ -155,7 +155,7 @@ MojeSaldoo celuje w **małe firmy (1–10 pracowników)** z polskiego rynku MSP,
 | 5 | **Planowanie produkcji z zamówień** — zestawienie "co upiec jutro na podstawie otwartych zamówień" — ile szt. danego wyrobu potrzeba → jaka ilość surowców do przygotowania | Piekarnia | ✅ Naprawione — `GET /api/production/orders/planning/` zintegrowane na jednej stronie `/production/orders`: planowanie + inline formularz zlecenia + lista zleceń. Widoczne numery zamówień na każdym wierszu, badge "w produkcji" gdy zlecenie już istnieje, wiersz znika gdy niedobór pokryty |
 | 6 | **Szybkie zamówienia (szablony)** — stały klient zawsze bierze te same produkty; jedno kliknięcie zamiast wybierania od zera | Van Selling | ✅ Naprawione — baner "Poprzednie zamówienie" z rozwijaną listą produktów i ilości; "Użyj" wypełnia koszyk z ostatniego zamówienia klienta; stan koszyka persystowany w `sessionStorage` (przeżywa nawigację) |
 | 7 | **Indywidualne cenniki per klient** — hurtownik ma inne ceny dla sieci A vs sklepu B | Van Selling | ❌ Brakuje |
-| 8 | **Powiadomienia o przeterminowanych należnościach** — klient zalega 30+ dni — alert dla właściciela | Wszyscy | ❌ Brakuje |
+| 8 | **Powiadomienia o przeterminowanych należnościach** — klient zalega 30+ dni — alert dla właściciela | Wszyscy | ✅ Naprawione (pasywne) |
 
 #### Miło mieć (wyróżniki na rynku)
 
@@ -163,7 +163,7 @@ MojeSaldoo celuje w **małe firmy (1–10 pracowników)** z polskiego rynku MSP,
 |---|------|---------|
 | 9 | Offline mode (Capacitor storage + sync) — handlowiec bez zasięgu | Van Selling |
 | 10 | Etykiety z kodem QR/EAN do druku na wyrobach | Producent |
-| 11 | Eksport raportu kosztów do PDF/Excel dla biura rachunkowego | Producent, KPiR |
+| 11 | Eksport raportu kosztów do PDF/Excel dla biura rachunkowego | Producent, KPiR | ✅ Zaimplementowane (CSV) |
 | 12 | Inwentaryzacja (spis z natury) — korekta stanów po liczeniu fizycznym | Wszyscy z magazynem | ✅ Zaimplementowane |
 
 ---
@@ -264,94 +264,41 @@ User → Frontend → API Request → Backend → Database
 ## Moduły Aplikacji
 
 ### 1. ONBOARDING (Moduł 1)
-**Cel**: Zero-friction rejestracja + personalizacja profilu firmy bez zbędnej biurokracji
+**Cel**: Rejestracja firmy i dobór modułów do profilu działalności
 
-#### Filozofia
-- Użytkownik wchodzi do aplikacji w **< 60 sekund** bez podawania NIP, adresu ani żadnych danych firmy
-- Dane firmy (NIP, adres) są zbierane **just-in-time** — dopiero gdy użytkownik chce wysłać pierwszą fakturę przez KSeF
-- Wybór profilu firmy **aktywuje moduły** — użytkownik widzi tylko to, czego potrzebuje
-- Każdy moduł można później włączyć/wyłączyć w Ustawienia → Moduły
+#### Kroki (3 lub 5, dynamicznie):
 
-#### Przepływ (6 ekranów)
+1. **Nazwa firmy** — zawsze wyświetlany; tworzy obiekt Company, przypisuje użytkownika
+2. **Forma opodatkowania** — wybór KPiR lub Ryczałt; przy ryczałcie wybór kategorii (2%–17%) i opcja śledzenia kosztów
+3. **Co robi firma** (Activity Tiles) — wielokrotny wybór; pomijany jeśli ryczałt z kategorii usługowej (IT, medyczne, finansowe, wolne zawody, usługi, budownictwo)
+4. **Jak docierasz do klientów** (Delivery Method) — jeden wybór; wyświetlany tylko jeśli wybrano kafelek `purchasing`, `production` lub `warehouses`
+5. **Podsumowanie modułów** — podgląd co zostanie włączone, przycisk "Zacznij korzystać"
 
-```
-[Ekran 0] Landing / Splash
-    ↓ "Zacznij za darmo"
-[Ekran 1] Rejestracja
-    Google OAuth  lub  Email + Hasło  (nic więcej)
-    ↓
-[Ekran 2] "Co robi Twoja firma?" — multi-select kafelki
-    🛒 Kupuję gotowy towar
-    🛠️ Produkuję z surowców i receptur
-    🏪 Prowadzę magazyn
-    💼 Opisuję koszty dla księgowego
-    📋 Wystawiam faktury (zawsze aktywne, nie można odznaczyć)
-    ↓ (skip Ekran 3 jeśli wybrano tylko 📋 / 💼)
-[Ekran 3] "Jak docierasz do klientów?" — single-select (tap = auto-advance)
-    🚐 Jeżdżę w trasie (pełny van workflow: MM, trasa, rozliczenie)
-    📦 Wysyłam / klient odbiera (WZ + ZW, bez trasy)
-    📋 Tylko dokumenty i faktury
-    ↓
-[Ekran 4] Potwierdzenie modułów
-    Lista aktywowanych modułów z możliwością korekty inline
-    "Możesz zmienić to zawsze w Ustawienia → Moduły"
-    ↓ "Zacznij korzystać →"
-[Ekran 5] Dashboard (pierwsze wejście)
-    Pasek SetupNudge: ○ Dodaj produkty  ○ Dodaj klientów  ○ Uzupełnij dane firmy
-    Znika automatycznie po wykonaniu wszystkich 3 kroków
-```
+#### Kafelki Activity i ich moduły:
 
-#### Mapowanie kafelków → moduły
+| Kafelek | Klucz | Moduły |
+|---|---|---|
+| Kupuję towar | `purchasing` | `purchasing` + `ksef_inbox` |
+| Produkuję z surowców | `production` | `production` + `products` |
+| Prowadzę magazyn | `warehouses` | `warehouses` + `products` |
+| Opisuję koszty dla księgowego | `cost_allocation` | `cost_allocation` + `ksef_inbox` |
+| *(zawsze włączone)* | — | `invoicing`, `ksef`, `customers`, `orders`, `reporting` |
 
-| Kafelek | Aktywowane moduły |
-|---|---|
-| 🛒 Kupuję towar | PZ, Dostawcy, KSeF Inbox, stany magazynowe, FIFO koszty zakupu, Raporty Marże |
-| 🛠️ Produkuję | Receptury, Zlecenia produkcji, koszt/szt. FIFO, daty ważności, Etykiety QR, Raport produkcji |
-| 🏪 Magazyn | Multi-warehouse, stany per magazyn, inwentaryzacja (spis z natury), Raporty Magazyn |
-| 💼 Koszty księgowego | Adnotacje kosztowe, KSeF Inbox (faktury zakupowe), eksport CSV dla biura, Raporty Koszty |
-| 📋 Faktury (zawsze) | Fakturowanie, KSeF send, Klienci, Zamówienia, Raporty P&L, Raporty Sprzedaż |
-| 🚐 Trasa | Van warehouse (MG→van MM), załadunek, rozliczenie trasy, ZW zwroty, Raporty Dostawa |
-| 📦 Wysyłam/odbiera | WZ dokumenty, ZW zwroty, Raporty Dostawa (basic) |
-| 📋 Tylko dokumenty | WZ tylko, bez van routing |
+#### Metody dostawy i ich moduły:
 
-#### Typy firm (company_type) zapisywane w DB
+| Opcja | Klucz | Moduły |
+|---|---|---|
+| Jeżdżę w trasie | `van_routes` | `delivery` + `van_routes` |
+| Wysyłam lub klient odbiera | `delivery` | `delivery` |
+| Dostarczam sam / bez stałej trasy | `docs_only` | `delivery` |
 
-Automatycznie wnioskowane z kombinacji kafelków:
+#### Jak wybory wpływają na aplikację:
 
-| Kombinacja | company_type |
-|---|---|
-| Tylko 📋 i/lub 💼 | `invoicing` |
-| 🛒 + 🚐 (bez 🛠️) | `van_selling` |
-| 🛒 + 🏪 + 📦/📋 (bez 🛠️) | `warehouse` |
-| 🛠️ (cokolwiek) | `production` |
-| Mieszane | `mixed` |
-
-#### Dane zawsze aktywne (niezależnie od wyboru)
-- Faktury VAT + KSeF wysyłanie
-- Klienci (baza kontrahentów)
-- Zamówienia (podstawowe)
-- Raporty P&L (miesięczny wynik)
-- Cenniki indywidualne per klient (aktywne gdy klienci + faktury)
-
-#### Dane firmy — progressive disclosure
-- **NIP** → wymagany dopiero przy pierwszym wysłaniu faktury przez KSeF
-- **Adres firmy** → wymagany dopiero przy generowaniu faktury
-- **Certyfikat KSeF** → wymagany dopiero przy połączeniu z KSeF
-- **Logo** → opcjonalne, zawsze później w Ustawienia
-
----
-
-### 2. INITIAL TENANCY CONFIGURATION
-**Cel**: Konfiguracja podstawowych danych biznesowych (stopniowa, nie blokująca)
-
-#### Funkcjonalności:
-- Opcjonalne uzupełnienie danych firmy (NIP, adres) — wymagane tylko przy KSeF
-- Dodanie pierwszych produktów (sugerowane przez SetupNudge na dashboardzie)
-- Dodanie pierwszych klientów (sugerowane przez SetupNudge)
-- Konfiguracja magazynów (domyślny MG tworzony automatycznie)
-
-#### Ekrany Figma:
-- a
+- Po zakończeniu onboardingu backend zapisuje wybory na modelu `Company` i zwraca słownik `modules: Record<string, boolean>`
+- Frontend pobiera go przez `GET /auth/me/` → `AuthContext`
+- Każda strona jest chroniona przez `ModuleRouteGate` — sprawdza `user.modules[nazwaModułu]`
+- Menu boczne pokazuje/ukrywa pozycje na tej samej zasadzie
+- Pliki: `frontend/src/components/onboarding/`, `frontend/src/pages/OnboardingPage.tsx`, `frontend/src/types/onboarding.types.ts`
 
 ---
 
@@ -531,12 +478,10 @@ Moduł Raporty → Wybierz kategorię (Sprzedaż / Marże / Magazyn / ...) →
 ## Przepływy Biznesowe
 
 ### Przepływ 1: Rejestracja i Onboarding
-1. Użytkownik klika "Zacznij za darmo" → rejestruje się Google OAuth lub email/hasło
-2. Wybiera kafelki aktywności firmy (multi-select: kupuję / produkuję / magazyn / koszty)
-3. Wybiera metodę dostawy (opcjonalnie: trasa / wysyłam / tylko dokumenty)
-4. System aktywuje moduły wg kombinacji kafelków, zapisuje `company_type`
-5. Użytkownik trafia na dashboard z paskiem SetupNudge (produkty / klienci / dane firmy)
-6. Dane firmy (NIP, adres, certyfikat KSeF) uzupełniane jest dopiero gdy użytkownik chce wysłać fakturę
+1. Użytkownik tworzy konto
+2. Dodaje certyfikat + klucz (lub pomija)
+3. System zapisuje zaszyfrowane dane certyfikatu
+4. Użytkownik może rozpocząć pracę
 
 ### Przepływ 2: Przyjęcie Zamówienia
 1. Użytkownik wybiera datę i klienta
@@ -1664,6 +1609,9 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - [x] Strona aging należności
 - [x] Strona koszty zakupów per dostawca
 - [x] Eksport CSV (aging należności + koszty zakupów)
+- [x] **Pasywne powiadomienia o przeterminowanych fakturach** — bez alertów push; dwa punkty styku:
+  - Dashboard (`Home.tsx`): kafelek "Przeterminowane faktury" z czerwonym akcentem gdy count > 0, klikalny → `/invoices`
+  - Lista faktur (`InvoicesPage.tsx`): wiersze ze statusem `overdue` wyróżnione bursztynową lewą obwódką (`border-l-4 border-amber-400`) + tłem (`bg-amber-50/60`) — zarówno desktop (tabela) jak i mobile (karty)
 
 #### Krok 4: Moduł produkcji (firmy wytwarzające)
 - [x] Model `Recipe` + `RecipeItem` — receptury/BOM (składniki na partię)
@@ -1708,6 +1656,9 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - **Hasła**: Hasło do certyfikatu nigdy nie jest zapisywane, tylko używane runtime
 - **API**: HTTPS only, JWT tokens z expiracją
 - **KSeF**: Wszystkie zapytania przez backend (nie bezpośrednio z frontu)
+- **Rate limiting** ✅: DRF throttling (`AnonRateThrottle` 20/min, `UserRateThrottle` 200/min). Endpoint logowania ma dodatkowy `LoginRateThrottle` 5 prób/min per IP — ochrona przed brute force. Konfiguracja w `backend/config/settings.py` (`DEFAULT_THROTTLE_RATES`), klasa w `backend/apps/users/views.py`.
+- **Walidacja haseł** ✅: `AUTH_PASSWORD_VALIDATORS` — min. 8 znaków, 20 000 popularnych haseł zablokowanych, hasło nie może być podobne do emaila, nie może być wyłącznie cyfrowe.
+- **Logi audytu** ✅: Model `AuditLog` (`backend/apps/activity/models.py`) — kto zmienił co i kiedy (before/after JSON). Automatyczne sygnały Django dla faktur (created/updated/deleted), produktów (zmiana ceny) i ruchów magazynowych. Ręczne logowanie przez `log_audit()` z `backend/apps/activity/audit.py`.
 
 ### Performance
 - Lazy loading komponentów (React.lazy)
@@ -1716,18 +1667,12 @@ GET    /api/reports/inventory/      # Raport magazynowy
 - Optymalizacja obrazów (Capacitor Asset optimization)
 
 ### Możliwości rozwoju (przyszłość)
-- [ ] **Korekty do faktur i PZ i WZ** — (#12 Steps.md)
-  - [ ] FV-KOR: Invoice.is_correction + corrects_invoice FK, endpoint create-correction, CorrectionInvoiceCreatePage
-  - [ ] WZ-KOR: DOC_TYPE_WZ_KOR + corrects_wz FK, endpoint create-wz-correction
-  - [x] PZ-KOR model (DOC_TYPE_PZ_KOR + corrects_pz FK — struktura gotowa w DeliveryDocument)
-  - [ ] PZ-KOR z KSeF KOR invoice — parsowanie FakturaRef, przycisk "Utwórz PZ-KOR" w inbox (zablokowane: brak testu z prawdziwą fakturą KOR)
-- [ ] **Eksport raportów do PDF** — (#13 Steps.md) browser print + @media print CSS, PrintReportHeader, przycisk "Drukuj PDF" na każdym raporcie
-- [ ] **Powiadomienia push (statusy KSeF)** — (#14 Steps.md) Dwa kanały w zależności od platformy:
-  - **Web Push VAPID** (przeglądarka + PWA + iOS Safari home screen) — ✅ zaimplementowane. Backend: `pywebpush` + `WebPushSubscription` model + endpoint `/api/auth/push-subscription/` + trigger na KSeF accepted/rejected. Frontend: `sw.js` service worker + `useWebPushSubscription` hook + `PushManager.subscribe()`. ⚠️ Do zrobienia z backendowcem: wygenerować klucze VAPID (`pywebpush` CLI) i ustawić env vars `VAPID_PRIVATE_KEY` + `VAPID_PUBLIC_KEY` na Hetznerze.
-  - **FCM / Firebase Cloud Messaging** (natywny APK Android via Capacitor) — ✅ hook `usePushNotifications.ts` napisany, czeka na konfigurację Firebase. ⚠️ Do zrobienia z backendowcem: (1) założyć projekt Firebase (bezpłatny tier, nieograniczone powiadomienia), (2) pobrać `google-services.json` i wrzucić do `android/app/`, (3) dodać `firebase-admin` do backendu i podpiąć `push_service.py` pod triggery KSeF. **GDPR**: FCM jest legalny w Polsce — Google certyfikowany pod EU–US Data Privacy Framework (lipiec 2023) + DPA dostępne w konsoli Firebase do podpisania jednym kliknięciem. Wystarczy dodać "Firebase Cloud Messaging (Google LLC, USA)" do polityki prywatności. Nie wkładać danych osobowych (NIP, nazwiska) w treść powiadomienia.
+- [ ] Korekty do faktur i PZ i Wz
 - [ ] Synchronizacja offline
+- [ ] Powiadomienia push (statusy KSeF)
+- [ ] Eksport raportów do PDF/Excel
 - [ ] Możliwośc zrobienia backup dokumentów na dysk
-- [ ] Integracja z drukarkami fiskalnymi
+- [ ] Integracja z drukarkami fiskalny
 - [ ] Multi-tenancy (wiele firm na jednym koncie)
 - [ ] OCR do skanowania dokumentów
 - [ ] API webhooks (powiadomienia o statusach)
@@ -1772,107 +1717,5 @@ GET    /api/reports/inventory/      # Raport magazynowy
 
 ---
 
-**Ostatnia aktualizacja**: 2026-07-05
+**Ostatnia aktualizacja**: 2026-06-20 (sesja: overdue visibility, production UX, quick orders)
 **Wersja dokumentu**: 1.0
-
-
-Full coverage summary
-App module	Tile that unlocks it
-Produkty
-🛒 or 🛠️ or 🏪
-
-Magazyn (multi)
-🏪
-
-Klienci
-Always ON
-
-Zamówienia
-Always ON
-
-WZ dokumenty
-Screen 2 any option
-
-ZW zwroty
-Screen 2 (🚐 or 📦)
-
-MM + Van routing
-Screen 2 🚐
-Rozliczenie trasy
-Screen 2 🚐
-Fakturowanie
-Always ON
-KSeF send
-Always ON
-KSeF Inbox
-🛒 OR 💼
-PZ zakupy
-🛒
-Receptury
-🛠️
-Zlecenia produkcji
-🛠️
-FIFO koszt produkcji
-🛠️
-Daty ważności
-🛠️ or 🛒 (surowce)
-Adnotacje kosztowe
-💼
-Inwentaryzacja
-🏪
-Etykiety QR/EAN
-🛠️ or 🏪
-Cenniki per klient
-Auto (📋 + delivery)
-Raporty Sprzedaż
-Always ON
-Raporty Marże
-🛒 + 📋
-Raporty Dostawa
-Screen 2
-Raporty Magazyn
-🏪
-Raporty Koszty
-💼
-Raporty P&L
-Always ON
-Raporty Produkcja
-🛠️
-
-
-========================================
-##### Stałe systemowe (Ustawowe — aktualizacja co rok w styczniu)
-
-Wartości są hardcoded w `backend/apps/cash_flow/services.py` (linia ~23).
-Żeby sprawdzić aktualne wartości i instrukcję aktualizacji, uruchom:
-
-```bash
-python manage.py check_zus_constants
-```
-
-**Rok 2026 — wartości źródłowe:**
-
-| Stała | Wartość | Źródło |
-|---|---|---|
-| Minimalne wynagrodzenie | 4 806,00 zł | Rozporządzenie RM |
-| Prognozowane śr. wynagrodzenie (duży ZUS) | 9 420,00 zł | GUS/ZUS |
-| Śr. wynagrodzenie Q4 2025 (ryczałt zdrowotna) | 9 228,64 zł | GUS |
-
-**Wyliczone składki miesięczne:**
-
-| Stała w kodzie | Wartość | Wzór |
-|---|---|---|
-| `_ZUS_FULL_SOCIAL_SICK` | 1 926,76 zł | 0,2093 × 9 420 |
-| `_ZUS_FULL_SOCIAL_NO_SICK` | 1 788,27 zł | 0,1953 × 9 420 |
-| `_ZUS_PREF_SOCIAL_SICK` | 456,18 zł | preferencyjny z chorobowym |
-| `_ZUS_PREF_SOCIAL_NO_SICK` | 420,86 zł | preferencyjny bez chorobowego |
-| `_MIN_HEALTH_2026` | 432,54 zł | 4 806 × 9% |
-| `_RYCZALT_HEALTH_TIER1` | 498,35 zł | ~5,4% × 9 228,64 (przychód <60k) |
-| `_RYCZALT_HEALTH_TIER2` | 830,58 zł | ~9,0% × 9 228,64 (60–300k) |
-| `_RYCZALT_HEALTH_TIER3` | 1 495,04 zł | ~16,2% × 9 228,64 (>300k) |
-| `_HEALTH_LINIOWY_MAX_MONTHLY` | 1 175,00 zł | 14 100 / 12 (roczny limit liniowy) |
-| `_PIT_FREE_MONTHLY` | 300,00 zł | 12% × 30 000 / 12 (kwota wolna) |
-
-**Gdzie sprawdzić nowe stawki:**
-- [zus.pl → składki → wysokość składek](https://www.zus.pl/baza-wiedzy/skladki-wskazniki-odsetki/skladki/wysokosc-skladek-na-ubezpieczenia-spoleczne)
-- [stat.gov.pl](https://stat.gov.pl) → średnie wynagrodzenie Q4 poprzedniego roku

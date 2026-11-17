@@ -1,39 +1,28 @@
-import csv
-import io
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import DecimalField, QuerySet, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import PatternFill, Font, Alignment
-from openpyxl.comments import Comment
+from django.db import IntegrityError
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.activity.log import log_activity, log_error
-from apps.activity.models import ActivityLog
 from .filters import ProductFilter
-from .images import ProductImageError, build_product_thumbnail
-from .models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
+from .models import CustomerProductPrice, Product, ProductStock, StockMovement, Warehouse
 from .serializers import (
     CustomerProductPriceSerializer,
     ProductSerializer,
-    StockBatchSerializer,
     StockMovementListSerializer,
     StockMovementSerializer,
     StockUpdateSerializer,
     WarehouseSerializer,
     WarehouseStockItemSerializer,
 )
-from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
 
 
@@ -43,12 +32,9 @@ def _stock_owner_user(product, request_user):
 
 class ProductViewSet(viewsets.ModelViewSet):
     """Full CRUD for products in the user's active company."""
-    lookup_field = "uuid"
 
     serializer_class = ProductSerializer
-    required_permission = 'can_manage_products'
-    read_permission = None  # any company member may list/read products (needed for orders, WZ, production)
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+    permission_classes = [IsAuthenticated]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -58,13 +44,11 @@ class ProductViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "description", "sku", "barcode"]
     ordering_fields = [
         "name",
-        "sku",
         "unit",
         "price_net",
         "price_gross",
         "vat_rate",
         "min_stock_alert",
-        "stock_total",
         "created_at",
         "updated_at",
         "is_active",
@@ -94,38 +78,8 @@ class ProductViewSet(viewsets.ModelViewSet):
             user=self.request.user,
         )
 
-    @action(
-        detail=True,
-        methods=["post", "delete"],
-        url_path="image",
-        parser_classes=[MultiPartParser, FormParser, JSONParser],
-    )
-    def image(self, request, uuid=None):
-        """Store only a 128px JPEG thumbnail. The original upload is discarded."""
-        product = self.get_object()
-        if request.method == "DELETE":
-            if product.image:
-                product.image.delete(save=False)
-                product.image = None
-                product.save(update_fields=["image"])
-            return Response(ProductSerializer(product, context={"request": request}).data)
-
-        uploaded = request.FILES.get("image")
-        if not uploaded:
-            return Response({"detail": "Brak pliku zdjęcia."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            thumb = build_product_thumbnail(uploaded)
-        except ProductImageError as exc:
-            return Response({"detail": exc.message}, status=status.HTTP_400_BAD_REQUEST)
-
-        old_name = product.image.name if product.image else None
-        product.image.save(thumb.name, thumb, save=True)
-        if old_name and old_name != product.image.name:
-            product.image.storage.delete(old_name)
-        return Response(ProductSerializer(product, context={"request": request}).data)
-
     @action(detail=True, methods=["post"], url_path="update-stock")
-    def update_stock(self, request, uuid=None):
+    def update_stock(self, request, pk=None):
         product = self.get_object()
         input_serializer = StockUpdateSerializer(
             data=request.data,
@@ -137,7 +91,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         warehouse = get_object_or_404(
             Warehouse.objects.filter(company_id=product.company_id),
-            uuid=data["warehouse_id"],
+            pk=data["warehouse_id"],
         )
         qty_change: Decimal = data["quantity_change"]
         movement_type = data.get("movement_type", StockMovement.MovementType.ADJUSTMENT)
@@ -237,531 +191,6 @@ class ProductViewSet(viewsets.ModelViewSet):
             status=http_status,
         )
 
-    # ── Import ────────────────────────────────────────────────────────────────
-
-    _IMPORT_HEADERS = [
-        "Nazwa", "Jednostka", "Cena netto", "Cena brutto", "VAT (%)", "SKU", "Kod kreskowy", "Opis", "Alert minimalny",
-        "Typ (produkt/usługa)", "PKWiU", "Termin przydatności (dni)", "Koszt własny",
-        "Narzut %", "Do sprzedaży (tak/nie)", "Śledzenie partii (tak/nie)", "Aktywny (tak/nie)",
-    ]
-    _VALID_VAT_RATES = {Decimal("0"), Decimal("5"), Decimal("8"), Decimal("23")}
-
-    @action(detail=False, methods=["get"], url_path="import-template")
-    def import_template(self, request):
-        """GET /api/products/import-template/ — download a blank XLSX template."""
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Produkty"
-        ws.append(self._IMPORT_HEADERS)
-
-        # Example rows — grey background + italic to signal "delete before import"
-        _EXAMPLE_ROWS = [
-            ["Chleb pszenny", "szt", "", 2.50, 5, "SKU-001", "", "Chleb na co dzień", "", "produkt", "10.71.11", 3, "", "", "tak", "tak", "tak"],
-            ["Doradztwo", "godz", 162.60, 200.00, 23, "USL-001", "", "", "", "usługa", "", "", "", 30, "tak", "nie", "tak"],
-        ]
-        example_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-        example_font = Font(italic=True, color="555555")
-        for row_data in _EXAMPLE_ROWS:
-            ws.append(row_data)
-            for cell in ws[ws.max_row]:
-                cell.fill = example_fill
-                cell.font = example_font
-
-        # Comment on A2 to make the intent obvious
-        comment = Comment("To jest wiersz przykładowy — usuń go przed importem.", "MojeSaldoo")
-        comment.width = 260
-        comment.height = 50
-        ws["A2"].comment = comment
-
-        # Column widths
-        for col, width in zip("ABCDEFGHIJKLMNOPQ", [30, 12, 12, 14, 10, 15, 16, 30, 16, 20, 14, 26, 14, 10, 20, 24, 18]):
-            ws.column_dimensions[col].width = width
-
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-
-        resp = HttpResponse(
-            buf.read(),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        resp["Content-Disposition"] = 'attachment; filename="szablon_produkty.xlsx"'
-        return resp
-
-    @action(detail=False, methods=["post"], url_path="import", parser_classes=[MultiPartParser])
-    def import_products(self, request):
-        """POST /api/products/import/ — import products from CSV or XLSX.
-
-        Form fields:
-          file     — CSV (semicolon-delimited, UTF-8) or XLSX
-          dry_run  — "true" (default) to validate only; "false" to commit
-
-        Dedup logic:
-          - SKU present → match existing product by SKU; update if found
-          - No SKU → match by name; skip if found (don't overwrite)
-        """
-        file_obj = request.FILES.get("file")
-        if not file_obj:
-            log_error(
-                user=request.user, action="product.import", error_code="IMPORT_ROW_ERRORS",
-                error_detail="Brak pliku.", request=request,
-            )
-            return Response({"detail": "Brak pliku."}, status=status.HTTP_400_BAD_REQUEST)
-
-        dry_run = request.data.get("dry_run", "true").lower() != "false"
-        filename = file_obj.name.lower()
-
-        try:
-            rows = self._parse_import_file(file_obj, filename)
-        except Exception as exc:
-            return Response({"detail": f"Nie udało się odczytać pliku: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        errors = []
-        valid_products = []
-
-        for i, raw in enumerate(rows, start=2):  # row 1 = header
-            row_errors, product_data = self._validate_import_row(raw, i)
-            if row_errors:
-                errors.extend(row_errors)
-            else:
-                valid_products.append(product_data)
-
-        if dry_run or errors:
-            # Preview: resolve what would happen per row
-            company = request.user.current_company
-            sku_index = {
-                p.sku.lower(): p
-                for p in Product.objects.filter(company=company)
-                if p.sku
-            }
-            name_index = {
-                p.name.lower(): p
-                for p in Product.objects.filter(company=company)
-            }
-            to_create, to_update = [], []
-            for data in valid_products:
-                sku = data.get("sku", "").lower()
-                name = data.get("name", "").lower()
-                if (sku and sku in sku_index) or (name in name_index):
-                    to_update.append(data)
-                else:
-                    to_create.append(data)
-
-            if errors:
-                log_activity(
-                    user=request.user, action="product.import",
-                    status=ActivityLog.STATUS_WARNING, error_code="IMPORT_ROW_ERRORS",
-                    error_detail="; ".join(str(e) for e in errors[:20]),
-                    request=request,
-                )
-            return Response({
-                "dry_run": True,
-                "to_create": len(to_create),
-                "to_update": len(to_update),
-                "to_skip": 0,
-                "valid_count": len(valid_products),
-                "error_count": len(errors),
-                "errors": errors,
-            })
-
-        # Commit
-        company = request.user.current_company
-        sku_index = {
-            p.sku.lower(): p
-            for p in Product.objects.filter(company=company)
-            if p.sku
-        }
-        name_index = {
-            p.name.lower(): p
-            for p in Product.objects.filter(company=company)
-        }
-
-        created = updated = 0
-        _UPDATE_FIELDS = [
-            "name", "unit", "price_gross", "price_net", "vat_rate",
-            "sku", "barcode", "description", "min_stock_alert",
-            "is_service", "pkwiu", "is_resalable", "track_batches", "is_active",
-        ]
-        _OPTIONAL_UPDATE_FIELDS = ["shelf_life_days", "avg_cost", "avg_cost_source", "markup_percent"]
-
-        with transaction.atomic():
-            for data in valid_products:
-                sku = data.get("sku", "").lower()
-                name = data.get("name", "").lower()
-
-                existing = None
-                if sku and sku in sku_index:
-                    existing = sku_index[sku]
-                elif name in name_index:
-                    existing = name_index[name]
-
-                if existing:
-                    fields_to_save = list(_UPDATE_FIELDS)
-                    for field in _UPDATE_FIELDS:
-                        setattr(existing, field, data[field])
-                    for field in _OPTIONAL_UPDATE_FIELDS:
-                        if field in data:
-                            setattr(existing, field, data[field])
-                            fields_to_save.append(field)
-                    existing.save(update_fields=fields_to_save)
-                    updated += 1
-                else:
-                    Product.objects.create(company=company, user=request.user, **data)
-                    created += 1
-
-        log_activity(
-            user=request.user,
-            action="product.import",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="product",
-            object_id=f"created={created} updated={updated}",
-        )
-        return Response({
-            "dry_run": False,
-            "created": created,
-            "updated": updated,
-            "skipped": 0,
-            "error_count": 0,
-            "errors": [],
-        }, status=status.HTTP_201_CREATED)
-
-    def _parse_import_file(self, file_obj, filename: str) -> list[dict]:
-        """Return a list of raw dicts (header → value) from a CSV or XLSX file."""
-        if filename.endswith(".xlsx") or filename.endswith(".xls"):
-            wb = load_workbook(file_obj, read_only=True, data_only=True)
-            ws = wb.active
-            rows_iter = ws.iter_rows(values_only=True)
-            headers = [str(h).strip() if h is not None else "" for h in next(rows_iter)]
-            result = []
-            for row in rows_iter:
-                if all(v is None or str(v).strip() == "" for v in row):
-                    continue
-                result.append({headers[j]: (str(row[j]).strip() if row[j] is not None else "") for j in range(len(headers))})
-            return result
-        else:
-            # CSV — try semicolon first (Polish Excel), then comma
-            raw_bytes = file_obj.read()
-            text = raw_bytes.decode("utf-8-sig")  # strips BOM
-            dialect = "excel" if "," in text.splitlines()[0] and ";" not in text.splitlines()[0] else None
-            reader = csv.DictReader(io.StringIO(text), delimiter=";" if dialect is None else ",")
-            return [{k.strip(): (v or "").strip() for k, v in row.items() if k is not None} for row in reader]
-
-    def _validate_import_row(self, raw: dict, row_num: int) -> tuple[list[dict], dict | None]:
-        """Validate one row. Returns (errors, product_data_or_None)."""
-        # Normalise keys — case-insensitive, strip whitespace
-        norm = {k.strip().lower(): v.strip() for k, v in raw.items() if k}
-
-        def get(*keys):
-            for k in keys:
-                if k.lower() in norm:
-                    return norm[k.lower()]
-            return ""
-
-        errors = []
-
-        name = get("nazwa")
-        if not name:
-            errors.append({"row": row_num, "field": "Nazwa", "message": "Pole wymagane."})
-
-        unit = get("jednostka")
-        if not unit:
-            errors.append({"row": row_num, "field": "Jednostka", "message": "Pole wymagane."})
-
-        price_gross_raw = get("cena brutto")
-        price_gross = None
-        if not price_gross_raw:
-            errors.append({"row": row_num, "field": "Cena brutto", "message": "Pole wymagane."})
-        else:
-            try:
-                price_gross = Decimal(price_gross_raw.replace(",", "."))
-                if price_gross < 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "Cena brutto", "message": f"Nieprawidłowa wartość: '{price_gross_raw}'."})
-
-        vat_raw = get("vat (%)", "vat")
-        vat_rate = None
-        if not vat_raw:
-            errors.append({"row": row_num, "field": "VAT (%)", "message": "Pole wymagane."})
-        else:
-            try:
-                vat_rate = Decimal(vat_raw.replace(",", ".").replace("%", ""))
-                if vat_rate not in self._VALID_VAT_RATES:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "VAT (%)", "message": f"Dozwolone wartości: 0, 5, 8, 23. Podano: '{vat_raw}'."})
-
-        # Cena netto — optional; if provided, use directly; otherwise derive from brutto
-        price_net_raw = get("cena netto")
-        price_net_override = None
-        if price_net_raw:
-            try:
-                price_net_override = Decimal(price_net_raw.replace(",", "."))
-                if price_net_override < 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "Cena netto", "message": f"Nieprawidłowa wartość: '{price_net_raw}'."})
-
-        if errors:
-            return errors, None
-
-        price_net = price_net_override if price_net_override is not None else (price_gross / (1 + vat_rate / 100)).quantize(Decimal("0.01"))
-
-        min_stock_raw = get("alert minimalny")
-        min_stock = None
-        if min_stock_raw:
-            try:
-                min_stock = Decimal(min_stock_raw.replace(",", "."))
-                if min_stock < 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "Alert minimalny", "message": f"Nieprawidłowa wartość: '{min_stock_raw}'."})
-                return errors, None
-
-        typ_raw = get("typ (produkt/usługa)", "typ").lower()
-        is_service = typ_raw in ("usługa", "usluga", "usługi", "uslugi", "service", "tak", "true", "1")
-
-        shelf_life = None
-        shelf_life_raw = get("termin przydatności (dni)", "termin przydatnosci (dni)", "termin przydatności", "termin przydatnosci")
-        if shelf_life_raw:
-            try:
-                shelf_life = int(shelf_life_raw.replace(",", ".").split(".")[0])
-                if shelf_life < 0:
-                    raise ValueError
-            except (ValueError, TypeError):
-                errors.append({"row": row_num, "field": "Termin przydatności (dni)", "message": f"Musi być liczbą całkowitą. Podano: '{shelf_life_raw}'."})
-                return errors, None
-
-        avg_cost = None
-        avg_cost_raw = get("koszt własny", "koszt wlasny")
-        if avg_cost_raw:
-            try:
-                avg_cost = Decimal(avg_cost_raw.replace(",", "."))
-                if avg_cost < 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "Koszt własny", "message": f"Nieprawidłowa wartość: '{avg_cost_raw}'."})
-                return errors, None
-
-        markup_raw = get("narzut %", "narzut")
-        markup_percent = None
-        if markup_raw:
-            try:
-                markup_percent = Decimal(markup_raw.replace(",", ".").replace("%", ""))
-                if markup_percent < 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "Narzut %", "message": f"Nieprawidłowa wartość: '{markup_raw}'."})
-                return errors, None
-
-        def parse_bool(raw: str, default: bool) -> bool:
-            if raw.lower() in ("tak", "yes", "true", "1"):
-                return True
-            if raw.lower() in ("nie", "no", "false", "0"):
-                return False
-            return default
-
-        is_resalable_raw = get("do sprzedaży (tak/nie)", "do sprzedazy (tak/nie)", "do sprzedaży", "do sprzedazy")
-        is_resalable = parse_bool(is_resalable_raw, True) if is_resalable_raw else True
-
-        track_batches_raw = get("śledzenie partii (tak/nie)", "sledzenie partii (tak/nie)", "śledzenie partii", "sledzenie partii")
-        track_batches = parse_bool(track_batches_raw, True) if track_batches_raw else True
-
-        is_active_raw = get("aktywny (tak/nie)", "aktywny")
-        is_active = parse_bool(is_active_raw, True) if is_active_raw else True
-
-        product_data: dict = {
-            "name": name,
-            "unit": unit,
-            "price_gross": price_gross,
-            "price_net": price_net,
-            "vat_rate": vat_rate,
-            "sku": get("sku") or "",
-            "barcode": get("kod kreskowy") or "",
-            "description": get("opis") or "",
-            "min_stock_alert": min_stock if min_stock is not None else Decimal("0"),
-            "is_service": is_service,
-            "pkwiu": get("pkwiu") or "",
-            "is_resalable": is_resalable,
-            "track_batches": track_batches,
-            "is_active": is_active,
-        }
-        if shelf_life is not None:
-            product_data["shelf_life_days"] = shelf_life
-        if avg_cost is not None:
-            product_data["avg_cost"] = avg_cost
-            product_data["avg_cost_source"] = "manual"
-        if markup_percent is not None:
-            product_data["markup_percent"] = markup_percent
-        return [], product_data
-
-    def destroy(self, request, *args, **kwargs):
-        """DELETE /api/products/{uuid}/ — only allowed when product has no history."""
-        product = self.get_object()
-        blockers = self._get_delete_blockers(product)
-        if blockers:
-            return Response(
-                {"detail": "Nie można usunąć produktu z historią.", "blockers": blockers},
-                status=status.HTTP_409_CONFLICT,
-            )
-        product_name = product.name
-        product.delete()
-        log_activity(
-            user=request.user,
-            action="product.delete",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="product",
-            object_id=product_name,
-        )
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    @staticmethod
-    def _get_delete_blockers(product: Product) -> list[str]:
-        """Return human-readable reasons why this product cannot be deleted."""
-        blockers = []
-        if StockMovement.objects.filter(product=product).exists():
-            blockers.append("Produkt ma ruchy magazynowe.")
-        from apps.orders.models import OrderItem
-        if OrderItem.objects.filter(product=product).exists():
-            blockers.append("Produkt jest użyty w zamówieniach.")
-        from apps.delivery.models import DeliveryItem
-        if DeliveryItem.objects.filter(product=product).exists():
-            blockers.append("Produkt jest użyty w dokumentach WZ/PZ.")
-        from apps.invoices.models import InvoiceItem
-        if InvoiceItem.objects.filter(product=product).exists():
-            blockers.append("Produkt jest użyty na fakturach.")
-        from apps.production.models import RecipeItem
-        if RecipeItem.objects.filter(ingredient=product).exists():
-            blockers.append("Produkt jest użyty w recepturach.")
-        if ProductStock.objects.filter(product=product, quantity_available__gt=0).exists():
-            blockers.append("Produkt ma stan magazynowy > 0.")
-        return blockers
-
-    @action(detail=True, methods=["get"], url_path="reservations")
-    def reservations(self, request, uuid=None):
-        """GET /api/products/{uuid}/reservations/ — which orders are blocking stock for this product.
-
-        Returns active RESERVATION movements grouped by order, with order details.
-        Only orders in statuses that hold a reservation are included.
-        """
-        from apps.orders.models import Order
-
-        product = self.get_object()
-        company = request.user.current_company
-
-        # Find active reservation movements for this product (negative quantity = stock blocked)
-        # Each RESERVATION movement has reference_type="order" and reference_id=order.uuid
-        reservation_movements = (
-            StockMovement.objects.filter(
-                company=company,
-                product=product,
-                movement_type=StockMovement.MovementType.RESERVATION,
-            )
-            .select_related("warehouse")
-            .values("reference_id", "warehouse__uuid", "warehouse__name", "quantity")
-        )
-
-        if not reservation_movements:
-            return Response([])
-
-        # Collect order UUIDs from reservation movements
-        order_uuid_to_qty: dict = {}
-        order_uuid_to_warehouse: dict = {}
-        for mov in reservation_movements:
-            oid = mov["reference_id"]
-            if oid is None:
-                continue
-            # quantity is negative for reservations; abs() = reserved qty
-            order_uuid_to_qty[oid] = order_uuid_to_qty.get(oid, 0) + abs(mov["quantity"])
-            order_uuid_to_warehouse[oid] = {
-                "warehouse_id": str(mov["warehouse__uuid"]),
-                "warehouse_name": mov["warehouse__name"],
-            }
-
-        if not order_uuid_to_qty:
-            return Response([])
-
-        # Fetch orders that are still in reservation-holding statuses
-        orders = Order.objects.filter(
-            company=company,
-            uuid__in=order_uuid_to_qty.keys(),
-            status__in=[
-                Order.STATUS_CONFIRMED,
-                Order.STATUS_IN_PREPARATION,
-                Order.STATUS_LOADED,
-                Order.STATUS_IN_DELIVERY,
-                Order.STATUS_PARTIALLY_DELIVERED,
-            ],
-        ).select_related("customer")
-
-        result = []
-        for order in orders:
-            oid = order.uuid
-            result.append({
-                "order_uuid": str(order.uuid),
-                "order_number": order.order_number,
-                "customer_name": order.customer.name if order.customer else None,
-                "status": order.status,
-                "delivery_date": order.delivery_date.isoformat() if order.delivery_date else None,
-                "quantity_reserved": str(order_uuid_to_qty.get(oid, 0)),
-                **order_uuid_to_warehouse.get(oid, {}),
-            })
-
-        # Sort by delivery_date ascending (soonest first)
-        result.sort(key=lambda x: x["delivery_date"] or "")
-        return Response(result)
-
-    @action(detail=False, methods=["get"], url_path="low-stock")
-    def low_stock(self, request):
-        """
-        GET /api/products/low-stock/
-
-        Products where total available stock (across all warehouses) is below
-        the product's ``min_stock_alert`` threshold.
-
-        Returns:
-          [
-            {
-              "product_id": "<uuid>",
-              "product_name": "Mąka T500",
-              "unit": "kg",
-              "quantity_available": "45.00",
-              "min_stock_alert": "200.00",
-              "shortage": "155.00"   // how much to order to reach minimum
-            },
-            ...
-          ]
-        """
-        company = request.user.current_company
-        rows = (
-            ProductStock.objects.filter(
-                company=company,
-                product__is_active=True,
-                product__min_stock_alert__gt=0,
-            )
-            .values("product__uuid", "product__name", "product__unit", "product__min_stock_alert")
-            .annotate(
-                quantity_available=Coalesce(
-                    Sum("quantity_available"), Value(Decimal("0")), output_field=DecimalField()
-                )
-            )
-        )
-        result = []
-        for row in rows:
-            avail = row["quantity_available"]
-            minimum = row["product__min_stock_alert"]
-            if avail < minimum:
-                result.append({
-                    "product_id": str(row["product__uuid"]),
-                    "product_name": row["product__name"],
-                    "unit": row["product__unit"] or "",
-                    "quantity_available": f"{avail:.2f}",
-                    "min_stock_alert": f"{minimum:.2f}",
-                    "shortage": f"{minimum - avail:.2f}",
-                })
-        result.sort(key=lambda x: x["product_name"])
-        return Response(result)
-
     @action(detail=False, methods=["get"], url_path="stock-snapshot")
     def stock_snapshot(self, request):
         """Current stock in one warehouse (only lines with ``quantity_available`` > 0)."""
@@ -769,7 +198,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         if not warehouse_id:
             raise ValidationError({"warehouse_id": "This field is required."})
         wh_qs = filter_queryset_for_current_company(
-            Warehouse.objects.filter(uuid=warehouse_id),
+            Warehouse.objects.filter(pk=warehouse_id),
             request.user,
         )
         warehouse = get_object_or_404(wh_qs)
@@ -786,7 +215,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             p = ps.product
             items.append(
                 {
-                    "product_id": str(p.uuid),
+                    "product_id": str(p.id),
                     "product_name": p.name,
                     "sku": p.sku,
                     "unit": p.unit,
@@ -795,7 +224,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
         return Response(
             {
-                "warehouse_id": str(warehouse.uuid),
+                "warehouse_id": str(warehouse.id),
                 "warehouse_name": warehouse.name,
                 "items": items,
             }
@@ -804,12 +233,9 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 class WarehouseViewSet(viewsets.ModelViewSet):
     """Full CRUD for warehouses in the user's active company."""
-    lookup_field = "uuid"
 
     serializer_class = WarehouseSerializer
-    required_permission = 'can_manage_warehouses'
-    read_permission = None  # any company member may list/read warehouses
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
+    permission_classes = [IsAuthenticated]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -835,418 +261,29 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     ordering = ["code"]
 
     def get_queryset(self) -> QuerySet:
-        company = getattr(self.request.user, "current_company", None)
-        if company:
-            from .default_warehouse import ensure_silent_default_warehouse
-
-            ensure_silent_default_warehouse(company, self.request.user)
         qs = Warehouse.objects.all().order_by("code")
         return filter_queryset_for_current_company(qs, self.request.user)
 
     def perform_create(self, serializer):
-        instance = serializer.save(
+        serializer.save(
             company=self.request.user.current_company,
             user=self.request.user,
-        )
-        log_activity(
-            user=self.request.user,
-            action="warehouse.create",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="warehouse",
-            object_id=instance.name,
         )
 
     def perform_update(self, serializer):
-        instance = serializer.save(
+        serializer.save(
             company=self.request.user.current_company,
             user=self.request.user,
         )
-        log_activity(
-            user=self.request.user,
-            action="warehouse.update",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="warehouse",
-            object_id=instance.name,
-        )
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        name = instance.name
-        instance.delete()
-        log_activity(
-            user=request.user,
-            action="warehouse.delete",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="warehouse",
-            object_id=name,
-        )
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    _STOCK_IMPORT_HEADERS = ["Nazwa produktu", "SKU", "Kod magazynu", "Ilość", "Notatka"]
-
-    @action(detail=False, methods=["get"], url_path="import-template")
-    def import_template(self, request):
-        """GET /api/warehouses/import-template/ — download a blank stock import XLSX template."""
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Stan magazynowy"
-        ws.append(self._STOCK_IMPORT_HEADERS)
-        ws.append(["Mąka pszenna typ 650", "SKU-001", "MG", 150, "Stan otwarcia"])
-        ws.append(["Chleb pszenny", "SKU-002", "MV1", 20, ""])
-        ws.append(["Mąka pszenna typ 650", "SKU-001", "MV2", 30, "Stan otwarcia"])
-
-        for col, width in zip("ABCDE", [35, 15, 16, 12, 30]):
-            ws.column_dimensions[col].width = width
-
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-
-        resp = HttpResponse(
-            buf.read(),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        resp["Content-Disposition"] = 'attachment; filename="szablon_stan_magazynowy.xlsx"'
-        return resp
-
-    @action(detail=False, methods=["post"], url_path="import", parser_classes=[MultiPartParser])
-    def import_stock(self, request):
-        """POST /api/warehouses/import/ — bulk set opening stock from CSV or XLSX.
-
-        Columns: Nazwa produktu | SKU | Kod magazynu | Ilość | Notatka (optional)
-
-        Match product by SKU (preferred) then by name.
-        Match warehouse by code.
-        Creates/adds a stock adjustment movement for each valid row.
-        Dedup: re-importing the same product+warehouse adds to existing stock (not replaces).
-        """
-        file_obj = request.FILES.get("file")
-        if not file_obj:
-            log_error(
-                user=request.user, action="warehouse.import", error_code="IMPORT_ROW_ERRORS",
-                error_detail="Brak pliku.", request=request,
-            )
-            return Response({"detail": "Brak pliku."}, status=status.HTTP_400_BAD_REQUEST)
-
-        dry_run = request.data.get("dry_run", "true").lower() != "false"
-        filename = file_obj.name.lower()
-
-        try:
-            rows = self._parse_stock_import_file(file_obj, filename)
-        except Exception as exc:
-            return Response({"detail": f"Nie udało się odczytać pliku: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        company = request.user.current_company
-
-        # Build lookup indexes
-        sku_index = {
-            p.sku.lower(): p
-            for p in Product.objects.filter(company=company)
-            if p.sku
-        }
-        name_index = {
-            p.name.lower(): p
-            for p in Product.objects.filter(company=company)
-        }
-        warehouse_index = {
-            w.code.lower(): w
-            for w in Warehouse.objects.filter(company=company)
-        }
-
-        errors = []
-        valid_rows = []
-
-        for i, raw in enumerate(rows, start=2):
-            row_errors, row_data = self._validate_stock_row(raw, i, sku_index, name_index, warehouse_index)
-            if row_errors:
-                errors.extend(row_errors)
-            else:
-                valid_rows.append(row_data)
-
-        if dry_run or errors:
-            return Response({
-                "dry_run": True,
-                "to_create": len(valid_rows),
-                "to_update": 0,
-                "to_skip": 0,
-                "valid_count": len(valid_rows),
-                "error_count": len(errors),
-                "errors": errors,
-            })
-
-        # Commit — create stock movements
-        imported = 0
-        with transaction.atomic():
-            for row in valid_rows:
-                product: Product = row["product"]
-                warehouse: Warehouse = row["warehouse"]
-                qty_change: Decimal = row["quantity"]
-                notes: str = row["notes"]
-
-                stock = (
-                    ProductStock.objects.select_for_update()
-                    .filter(product=product, warehouse=warehouse)
-                    .first()
-                )
-                qty_before = stock.quantity_available if stock else Decimal("0")
-                new_available = qty_before + qty_change
-
-                if stock is None:
-                    stock = ProductStock(
-                        company=company,
-                        product=product,
-                        warehouse=warehouse,
-                        quantity_available=new_available,
-                        quantity_reserved=Decimal("0"),
-                    )
-                    stock.save()
-                else:
-                    stock.quantity_available = new_available
-                    stock.save(update_fields=["quantity_available"])
-
-                StockMovement.objects.create(
-                    company=company,
-                    product=product,
-                    warehouse=warehouse,
-                    user=product.user or request.user,
-                    movement_type=StockMovement.MovementType.ADJUSTMENT,
-                    quantity=qty_change,
-                    quantity_before=qty_before,
-                    quantity_after=new_available,
-                    reference_type="import",
-                    notes=notes,
-                    created_by=request.user,
-                )
-                imported += 1
-
-        log_activity(
-            user=request.user,
-            action="warehouse.import",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="warehouse",
-            object_id=f"rows={imported}",
-        )
-        return Response({
-            "dry_run": False,
-            "created": imported,
-            "updated": 0,
-            "skipped": 0,
-            "error_count": 0,
-            "errors": [],
-        }, status=status.HTTP_201_CREATED)
-
-    def _parse_stock_import_file(self, file_obj, filename: str) -> list[dict]:
-        if filename.endswith(".xlsx") or filename.endswith(".xls"):
-            wb = load_workbook(file_obj, read_only=True, data_only=True)
-            ws = wb.active
-            rows_iter = ws.iter_rows(values_only=True)
-            headers = [str(h).strip() if h is not None else "" for h in next(rows_iter)]
-            result = []
-            for row in rows_iter:
-                if all(v is None or str(v).strip() == "" for v in row):
-                    continue
-                result.append({headers[j]: (str(row[j]).strip() if row[j] is not None else "") for j in range(len(headers))})
-            return result
-        else:
-            raw_bytes = file_obj.read()
-            text = raw_bytes.decode("utf-8-sig")
-            dialect = "excel" if "," in text.splitlines()[0] and ";" not in text.splitlines()[0] else None
-            reader = csv.DictReader(io.StringIO(text), delimiter=";" if dialect is None else ",")
-            return [{k.strip(): (v or "").strip() for k, v in row.items() if k is not None} for row in reader]
-
-    def _validate_stock_row(self, raw: dict, row_num: int, sku_index: dict, name_index: dict, warehouse_index: dict):
-        norm = {k.strip().lower(): v.strip() for k, v in raw.items() if k}
-
-        def get(*keys):
-            for k in keys:
-                if k.lower() in norm:
-                    return norm[k.lower()]
-            return ""
-
-        errors = []
-
-        # Resolve product
-        sku = get("sku")
-        product_name = get("nazwa produktu", "nazwa")
-        product = None
-        if sku and sku.lower() in sku_index:
-            product = sku_index[sku.lower()]
-        elif product_name and product_name.lower() in name_index:
-            product = name_index[product_name.lower()]
-        else:
-            label = sku or product_name or "(brak)"
-            errors.append({"row": row_num, "field": "Nazwa produktu / SKU", "message": f"Nie znaleziono produktu: '{label}'."})
-
-        # Resolve warehouse
-        wh_code = get("kod magazynu", "kod")
-        warehouse = None
-        if not wh_code:
-            errors.append({"row": row_num, "field": "Kod magazynu", "message": "Pole wymagane."})
-        elif wh_code.lower() not in warehouse_index:
-            errors.append({"row": row_num, "field": "Kod magazynu", "message": f"Nie znaleziono magazynu o kodzie: '{wh_code}'."})
-        else:
-            warehouse = warehouse_index[wh_code.lower()]
-
-        # Validate quantity
-        qty_raw = get("ilość", "ilosc", "quantity")
-        quantity = None
-        if not qty_raw:
-            errors.append({"row": row_num, "field": "Ilość", "message": "Pole wymagane."})
-        else:
-            try:
-                quantity = Decimal(qty_raw.replace(",", "."))
-                if quantity <= 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError):
-                errors.append({"row": row_num, "field": "Ilość", "message": f"Nieprawidłowa wartość: '{qty_raw}'. Musi być liczbą dodatnią."})
-
-        if errors:
-            return errors, None
-
-        return [], {
-            "product": product,
-            "warehouse": warehouse,
-            "quantity": quantity,
-            "notes": get("notatka") or "Stan otwarcia",
-        }
-
-    @action(detail=True, methods=["post"], url_path="transfer")
-    def transfer(self, request, uuid=None):
-        """POST /api/warehouses/{id}/transfer/ — move stock from this warehouse to another.
-
-        Body:
-          destination_warehouse_id  — UUID of target warehouse
-          items                     — list of {product_id, quantity}
-          notes                     — optional note (applied to all movements)
-
-        Creates two TRANSFER movements per item (deduct source, add destination).
-        Validates source has enough stock (unless allow_negative_stock is set).
-        """
-        source = self.get_object()
-        company = request.user.current_company
-
-        dest_id = request.data.get("destination_warehouse_id", "")
-        if not dest_id:
-            return Response({"detail": "Pole destination_warehouse_id jest wymagane."}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            destination = Warehouse.objects.get(uuid=dest_id, company=company)
-        except Warehouse.DoesNotExist:
-            return Response({"detail": "Nie znaleziono magazynu docelowego."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if source.pk == destination.pk:
-            return Response({"detail": "Magazyn źródłowy i docelowy nie mogą być takie same."}, status=status.HTTP_400_BAD_REQUEST)
-
-        items = request.data.get("items", [])
-        if not items or not isinstance(items, list):
-            return Response({"detail": "Lista produktów jest wymagana."}, status=status.HTTP_400_BAD_REQUEST)
-
-        notes = (request.data.get("notes") or "").strip() or f"Przesunięcie {source.code} → {destination.code}"
-
-        # Validate all items before touching the DB
-        validated = []
-        for i, item in enumerate(items):
-            product_id = item.get("product_id", "")
-            qty_raw = item.get("quantity")
-            try:
-                product = Product.objects.get(uuid=product_id, company=company)
-            except Product.DoesNotExist:
-                return Response({"detail": f"Produkt nie znaleziony: {product_id}"}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                qty = Decimal(str(qty_raw))
-                if qty <= 0:
-                    raise ValueError
-            except (InvalidOperation, ValueError, TypeError):
-                return Response({"detail": f"Nieprawidłowa ilość dla produktu {product.name}."}, status=status.HTTP_400_BAD_REQUEST)
-
-            source_stock = ProductStock.objects.filter(product=product, warehouse=source).first()
-            available = source_stock.quantity_available if source_stock else Decimal("0")
-            if qty > available and not source.allow_negative_stock:
-                return Response(
-                    {"detail": f"Niewystarczający stan dla '{product.name}': dostępne {available}, żądane {qty}."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            validated.append({"product": product, "quantity": qty, "source_stock": source_stock})
-
-        transferred = 0
-        with transaction.atomic():
-            for v in validated:
-                product = v["product"]
-                qty = v["quantity"]
-
-                # --- Deduct from source ---
-                src_stock = (
-                    ProductStock.objects.select_for_update()
-                    .filter(product=product, warehouse=source)
-                    .first()
-                )
-                src_before = src_stock.quantity_available if src_stock else Decimal("0")
-                src_after = src_before - qty
-                if src_stock:
-                    src_stock.quantity_available = src_after
-                    src_stock.save(update_fields=["quantity_available"])
-                else:
-                    src_stock = ProductStock.objects.create(
-                        company=company, product=product, warehouse=source,
-                        quantity_available=src_after, quantity_reserved=Decimal("0"),
-                    )
-                StockMovement.objects.create(
-                    company=company, product=product, warehouse=source,
-                    user=product.user or request.user,
-                    movement_type=StockMovement.MovementType.TRANSFER,
-                    quantity=-qty,
-                    quantity_before=src_before, quantity_after=src_after,
-                    reference_type="transfer",
-                    notes=notes, created_by=request.user,
-                )
-
-                # --- Add to destination ---
-                dst_stock = (
-                    ProductStock.objects.select_for_update()
-                    .filter(product=product, warehouse=destination)
-                    .first()
-                )
-                dst_before = dst_stock.quantity_available if dst_stock else Decimal("0")
-                dst_after = dst_before + qty
-                if dst_stock:
-                    dst_stock.quantity_available = dst_after
-                    dst_stock.save(update_fields=["quantity_available"])
-                else:
-                    ProductStock.objects.create(
-                        company=company, product=product, warehouse=destination,
-                        quantity_available=dst_after, quantity_reserved=Decimal("0"),
-                    )
-                StockMovement.objects.create(
-                    company=company, product=product, warehouse=destination,
-                    user=product.user or request.user,
-                    movement_type=StockMovement.MovementType.TRANSFER,
-                    quantity=qty,
-                    quantity_before=dst_before, quantity_after=dst_after,
-                    reference_type="transfer",
-                    notes=notes, created_by=request.user,
-                )
-                transferred += 1
-
-        log_activity(
-            user=request.user,
-            action="warehouse.transfer",
-            status=ActivityLog.STATUS_SUCCESS,
-            object_type="warehouse",
-            object_id=f"{source.code}→{destination.code} products={transferred}",
-        )
-        return Response({"transferred": transferred, "source": source.code, "destination": destination.code})
 
     @action(detail=True, methods=["get"], url_path="stock")
-    def stock(self, request, uuid=None):
+    def stock(self, request, pk=None):
         """GET /api/warehouses/{id}/stock/ — all ProductStock rows for this warehouse.
 
         Query params:
-          ?below_minimum=true   — only items below min_stock_alert
-          ?expiring_days=N      — only items with at least one batch expiring within N days
-          ?search=name          — filter by product name (icontains)
+          ?below_minimum=true  — only items below min_stock_alert
+          ?search=name         — filter by product name (icontains)
         """
-        from datetime import date, timedelta
-
         warehouse = self.get_object()
         company = request.user.current_company
 
@@ -1271,52 +308,7 @@ class WarehouseViewSet(viewsets.ModelViewSet):
                 if s.product.min_stock_alert and s.quantity_total < s.product.min_stock_alert
             ]
 
-        expiring_days_raw = request.query_params.get("expiring_days", "").strip()
-        if expiring_days_raw:
-            try:
-                days = int(expiring_days_raw)
-            except ValueError:
-                days = None
-            if days is not None and days > 0:
-                cutoff = date.today() + timedelta(days=days)
-                expiring_product_ids = set(
-                    StockBatch.objects.filter(
-                        warehouse=warehouse,
-                        company=company,
-                        quantity_remaining__gt=0,
-                        expiry_date__isnull=False,
-                        expiry_date__lte=cutoff,
-                    ).values_list("product_id", flat=True)
-                )
-                qs = [s for s in qs if s.product_id in expiring_product_ids]
-
         serializer = WarehouseStockItemSerializer(qs, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=["get"], url_path="batches")
-    def batches(self, request, uuid=None):
-        """GET /api/warehouses/{id}/batches/ — active FIFO batches for this warehouse.
-
-        Query params:
-          ?product={uuid}  — filter to a single product (required in practice)
-        """
-        warehouse = self.get_object()
-        company = request.user.current_company
-
-        qs = (
-            StockBatch.objects.filter(
-                warehouse=warehouse,
-                company=company,
-                quantity_remaining__gt=0,
-            )
-            .order_by("received_date", "id")
-        )
-
-        product_id = request.query_params.get("product")
-        if product_id:
-            qs = qs.filter(product__uuid=product_id)
-
-        serializer = StockBatchSerializer(qs, many=True)
         return Response(serializer.data)
 
 
@@ -1326,7 +318,6 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     Filter params: ?product={uuid}, ?warehouse={uuid}, ?type={TYPE},
                    ?date_from=YYYY-MM-DD, ?date_to=YYYY-MM-DD
     """
-    lookup_field = "uuid"
 
     serializer_class = StockMovementListSerializer
     permission_classes = [IsAuthenticated]
@@ -1348,9 +339,9 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
         date_to = self.request.query_params.get("date_to")
 
         if product_id:
-            qs = qs.filter(product__uuid=product_id)
+            qs = qs.filter(product_id=product_id)
         if warehouse_id:
-            qs = qs.filter(warehouse__uuid=warehouse_id)
+            qs = qs.filter(warehouse_id=warehouse_id)
         if movement_type:
             qs = qs.filter(movement_type=movement_type)
         if date_from:
@@ -1362,24 +353,36 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class CustomerProductPriceViewSet(viewsets.ModelViewSet):
+    """CRUD for individual customer price overrides.
+
+    Filter by ?customer_id=<uuid> to get all prices for a given customer.
+    Filter by ?product_id=<uuid> to get all customers with a custom price for a product.
+    """
+
     serializer_class = CustomerProductPriceSerializer
-    required_permission = 'can_manage_customers'
-    permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
-    pagination_class = None
-    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    permission_classes = [IsAuthenticated]
+    pagination_class = None  # small per-customer list, no pagination needed
 
     def get_queryset(self) -> QuerySet:
-        qs = CustomerProductPrice.objects.select_related("product", "customer").order_by(
-            "product__name"
+        company = self.request.user.current_company
+        qs = CustomerProductPrice.objects.filter(company=company).select_related(
+            "customer", "product"
         )
-        qs = filter_queryset_for_current_company(qs, self.request.user)
-        customer_id = self.request.query_params.get("customer")
+        customer_id = self.request.query_params.get("customer_id")
+        product_id = self.request.query_params.get("product_id")
         if customer_id:
-            qs = qs.filter(customer__uuid=customer_id)
-        return qs
+            qs = qs.filter(customer_id=customer_id)
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+        return qs.order_by("product__name")
 
     def perform_create(self, serializer):
-        serializer.save(company=self.request.user.current_company)
+        try:
+            serializer.save(company=self.request.user.current_company)
+        except IntegrityError:
+            raise ValidationError(
+                {"non_field_errors": ["Indywidualna cena dla tego klienta i produktu już istnieje."]}
+            )
 
     def perform_update(self, serializer):
         serializer.save(company=self.request.user.current_company)

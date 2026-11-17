@@ -28,6 +28,41 @@ def _anonymize_user(user: User) -> None:
     user.is_active = False
 
 
+def _hard_delete_demo(demo: Company, user: User) -> None:
+    """Hard-delete a demo company and all its data. Must be called inside a transaction."""
+    from apps.delivery.models import DeliveryItem  # noqa: PLC0415
+    from apps.invoices.models import InvoiceItem  # noqa: PLC0415
+    from apps.orders.models import OrderItem  # noqa: PLC0415
+    from apps.customers.models import Customer  # noqa: PLC0415
+    from apps.production.models import ProductionOrder, Recipe, RecipeItem  # noqa: PLC0415
+    from apps.products.models import Product, Warehouse  # noqa: PLC0415
+    from apps.purchase_orders.models import SupplierOrder, SupplierOrderItem  # noqa: PLC0415
+    from apps.van_routes.models import VanRoute  # noqa: PLC0415
+
+    # Clear current_company if pointing at demo
+    if user.current_company_id == demo.pk:
+        user.current_company = None
+        user.save(update_fields=["current_company"])
+
+    # Delete in dependency order to avoid ProtectedError on cross-app FKs.
+    DeliveryItem.objects.filter(delivery_document__company=demo).delete()
+    InvoiceItem.objects.filter(invoice__company=demo).delete()
+    OrderItem.objects.filter(order__company=demo).delete()
+    SupplierOrderItem.objects.filter(supplier_order__company=demo).delete()
+    RecipeItem.objects.filter(recipe__company=demo).delete()
+    demo.delivery_documents.all().delete()
+    demo.invoices.all().delete()
+    demo.orders.all().delete()
+    SupplierOrder.objects.filter(company=demo).delete()
+    ProductionOrder.objects.filter(company=demo).delete()
+    Recipe.objects.filter(company=demo).delete()
+    VanRoute.objects.filter(company=demo).delete()
+    Product.objects.filter(company=demo).delete()
+    Warehouse.objects.filter(company=demo).delete()
+    Customer.objects.filter(company=demo).delete()
+    demo.delete()
+
+
 class CompanyDeleteView(APIView):
     """
     DELETE /api/companies/<uuid:company_id>/delete/
@@ -103,6 +138,23 @@ class CompanyDeleteView(APIView):
             # 6. If the current user was not anonymized, still clear current_company
             if request.user.pk not in to_anonymize:
                 User.objects.filter(pk=request.user.pk).update(current_company=None)
+
+            # 7. If the deleted company was the user's last real company, auto-delete demo
+            remaining_real = Company.objects.filter(
+                memberships__user=request.user,
+                memberships__is_active=True,
+                is_demo=False,
+                deleted_at__isnull=True,
+            ).exclude(pk=company.pk).count()
+            if remaining_real == 0:
+                demo = Company.objects.filter(
+                    memberships__user=request.user,
+                    is_demo=True,
+                ).first()
+                if demo:
+                    # Reload request.user to get updated current_company
+                    request.user.refresh_from_db(fields=["current_company"])
+                    _hard_delete_demo(demo, request.user)
 
         return Response({"detail": "Firma została usunięta."}, status=status.HTTP_200_OK)
 

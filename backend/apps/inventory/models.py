@@ -122,6 +122,8 @@ class InventoryCountItem(models.Model):
         Product,
         on_delete=models.CASCADE,
         related_name="inventory_count_items",
+        null=True,
+        blank=True,
     )
     product_name = models.CharField(
         max_length=255,

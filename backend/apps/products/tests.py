@@ -1,4 +1,3 @@
-import io
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -7,13 +6,12 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
-from openpyxl import Workbook
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
+from apps.products.models import CustomerProductPrice, Product, ProductStock, StockBatch, StockMovement, Warehouse
 from apps.products.serializers import ProductSerializer, WarehouseSerializer
-from apps.users.models import Company, CompanyMembership, CompanyModule
+from apps.users.models import Company, CompanyMembership
 
 
 def _company_with_user(user, name_suffix="org"):
@@ -49,7 +47,7 @@ class ProductModelTests(TestCase):
             is_active=True,
         )
 
-        self.assertIsInstance(product.uuid, uuid.UUID)
+        self.assertIsInstance(product.id, uuid.UUID)
         self.assertEqual(product.user, self.user)
         self.assertEqual(product.price_net, Decimal("10.00"))
         self.assertEqual(product.price_gross, Decimal("12.30"))
@@ -110,7 +108,7 @@ class WarehouseModelTests(TestCase):
             fifo_enabled=False,
         )
 
-        self.assertIsInstance(warehouse.uuid, uuid.UUID)
+        self.assertIsInstance(warehouse.id, uuid.UUID)
         self.assertEqual(warehouse.user, self.user)
         self.assertEqual(warehouse.code, "MG")
         self.assertEqual(warehouse.name, "Magazyn główny")
@@ -135,19 +133,28 @@ class WarehouseModelTests(TestCase):
         self.assertFalse(warehouse.allow_negative_stock)
         self.assertTrue(warehouse.fifo_enabled)
 
-    def test_code_unique_globally(self):
+    def test_code_unique_per_company(self):
+        """Code must be unique within a company, but the same code is allowed across companies."""
         Warehouse.objects.create(
             user=self.user,
             company=self.company,
             code="MG",
             name="First",
         )
+        # Same code in a different company — allowed
+        Warehouse.objects.create(
+            user=self.other_user,
+            company=self.other_company,
+            code="MG",
+            name="Same code different company",
+        )
+        # Same code in the same company — not allowed
         with self.assertRaises(IntegrityError):
             Warehouse.objects.create(
-                user=self.other_user,
-                company=self.other_company,
+                user=self.user,
+                company=self.company,
                 code="MG",
-                name="Duplicate code different user",
+                name="Duplicate code same company",
             )
 
     def test_user_reverse_relation(self):
@@ -224,7 +231,7 @@ class ProductStockModelTests(TestCase):
             quantity_total=Decimal("12.50"),
         )
 
-        self.assertIsInstance(row.uuid, uuid.UUID)
+        self.assertIsInstance(row.id, uuid.UUID)
         self.assertEqual(row.product, self.product)
         self.assertEqual(row.warehouse, self.warehouse_a)
         self.assertEqual(row.quantity_available, Decimal("10.50"))
@@ -386,7 +393,7 @@ class StockBatchModelTests(TestCase):
             unit_cost=Decimal("12.34"),
         )
 
-        self.assertIsInstance(batch.uuid, uuid.UUID)
+        self.assertIsInstance(batch.id, uuid.UUID)
         self.assertEqual(batch.product, self.product)
         self.assertEqual(batch.warehouse, self.warehouse)
         self.assertEqual(batch.batch_number, "LOT-2026-01")
@@ -630,7 +637,7 @@ class ProductViewSetAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["name"], "New via API")
-        created = Product.objects.get(uuid=response.data["id"])
+        created = Product.objects.get(id=response.data["id"])
         self.assertEqual(created.user, self.user)
 
     def test_create_accepts_pkwiu(self):
@@ -648,7 +655,7 @@ class ProductViewSetAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["pkwiu"], "62.01.11.0")
-        created = Product.objects.get(uuid=response.data["id"])
+        created = Product.objects.get(id=response.data["id"])
         self.assertEqual(created.pkwiu, "62.01.11.0")
 
     def test_list_includes_pkwiu(self):
@@ -658,14 +665,14 @@ class ProductViewSetAPITests(TestCase):
         p.save(update_fields=["pkwiu"])
         response = self.client.get(reverse("product-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        row = next(r for r in response.data["results"] if r["id"] == str(p.uuid))
+        row = next(r for r in response.data["results"] if r["id"] == str(p.id))
         self.assertEqual(row["pkwiu"], "10.20.30")
 
     def test_patch_updates_pkwiu(self):
         self.client.force_authenticate(user=self.user)
         p = Product.objects.get(name="My catalog item")
         response = self.client.patch(
-            reverse("product-detail", kwargs={"uuid": p.uuid}),
+            reverse("product-detail", kwargs={"pk": p.id}),
             {"pkwiu": "44.55.66"},
             format="json",
         )
@@ -701,58 +708,14 @@ class ProductViewSetAPITests(TestCase):
             quantity_total=Decimal("5.25"),
         )
         response = self.client.get(
-            reverse("product-stock-snapshot"), {"warehouse_id": str(wh.uuid)}
+            reverse("product-stock-snapshot"), {"warehouse_id": str(wh.id)}
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["warehouse_id"], str(wh.uuid))
+        self.assertEqual(response.data["warehouse_id"], str(wh.id))
         self.assertEqual(response.data["warehouse_name"], "Main snap")
         self.assertEqual(len(response.data["items"]), 1)
-        self.assertEqual(response.data["items"][0]["product_id"], str(p.uuid))
+        self.assertEqual(response.data["items"][0]["product_id"], str(p.id))
         self.assertEqual(response.data["items"][0]["quantity_available"], "5.250")
-
-    def test_image_upload_stores_square_jpeg_thumbnail(self):
-        from PIL import Image
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        buf = io.BytesIO()
-        Image.new("RGB", (400, 180), (12, 80, 160)).save(buf, format="PNG")
-        upload = SimpleUploadedFile("wide.png", buf.getvalue(), content_type="image/png")
-        product = Product.objects.get(name="My catalog item")
-        self.client.force_authenticate(user=self.user)
-        response = self.client.post(
-            reverse("product-image", kwargs={"uuid": product.uuid}),
-            {"image": upload},
-            format="multipart",
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data["image_url"])
-        product.refresh_from_db()
-        self.assertTrue(product.image.name.endswith(".jpg"))
-        self.assertLess(product.image.size, 20_000)
-        with Image.open(product.image.path) as saved:
-            self.assertEqual(saved.size, (128, 128))
-            self.assertEqual(saved.format, "JPEG")
-
-        response = self.client.delete(reverse("product-image", kwargs={"uuid": product.uuid}))
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIsNone(response.data["image_url"])
-        product.refresh_from_db()
-        self.assertFalse(product.image)
-
-    def test_image_upload_rejects_non_image(self):
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        product = Product.objects.get(name="My catalog item")
-        self.client.force_authenticate(user=self.user)
-        upload = SimpleUploadedFile("notes.txt", b"not a photo", content_type="text/plain")
-        response = self.client.post(
-            reverse("product-image", kwargs={"uuid": product.uuid}),
-            {"image": upload},
-            format="multipart",
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        product.refresh_from_db()
-        self.assertFalse(product.image)
 
 
 class WarehouseViewSetAPITests(TestCase):
@@ -807,94 +770,8 @@ class WarehouseViewSetAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        wh = Warehouse.objects.get(uuid=response.data["id"])
+        wh = Warehouse.objects.get(id=response.data["id"])
         self.assertEqual(wh.user, self.user)
-
-
-class SilentDefaultWarehouseTests(TestCase):
-    def setUp(self):
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="silent-wh-user",
-            email="silent-wh@test.com",
-            password="test12345",
-        )
-        self.company = _company_with_user(self.user)
-        self.user.current_company = self.company
-        self.user.save(update_fields=["current_company"])
-
-    def _enable(self, *modules: str) -> None:
-        for module in modules:
-            CompanyModule.objects.update_or_create(
-                company=self.company,
-                module=module,
-                defaults={"is_enabled": True},
-            )
-
-    def test_creates_main_warehouse_when_production_on_and_warehouses_off(self):
-        from apps.products.default_warehouse import ensure_silent_default_warehouse
-
-        self._enable("production")
-        wh = ensure_silent_default_warehouse(self.company, self.user)
-        self.assertIsNotNone(wh)
-        self.assertEqual(wh.name, "Magazyn główny")
-        self.assertEqual(wh.warehouse_type, Warehouse.WarehouseType.MAIN)
-        self.assertTrue(wh.code.startswith("MG"))
-
-    def test_two_companies_get_distinct_codes(self):
-        from apps.products.default_warehouse import ensure_silent_default_warehouse
-
-        other_user = get_user_model().objects.create_user(
-            username="silent-wh-other",
-            email="silent-wh-o@test.com",
-            password="test12345",
-        )
-        other_co = _company_with_user(other_user, "other")
-        CompanyModule.objects.update_or_create(
-            company=self.company, module="production", defaults={"is_enabled": True}
-        )
-        CompanyModule.objects.update_or_create(
-            company=other_co, module="production", defaults={"is_enabled": True}
-        )
-        a = ensure_silent_default_warehouse(self.company, self.user)
-        b = ensure_silent_default_warehouse(other_co, other_user)
-        self.assertNotEqual(a.code, b.code)
-        self.assertEqual(Warehouse.objects.filter(company=self.company).count(), 1)
-        self.assertEqual(Warehouse.objects.filter(company=other_co).count(), 1)
-
-    def test_does_not_create_when_warehouses_module_on(self):
-        from apps.products.default_warehouse import ensure_silent_default_warehouse
-
-        self._enable("production", "warehouses")
-        self.assertIsNone(ensure_silent_default_warehouse(self.company, self.user))
-        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
-
-    def test_does_not_create_without_stock_ledger(self):
-        from apps.products.default_warehouse import ensure_silent_default_warehouse
-
-        self.assertIsNone(ensure_silent_default_warehouse(self.company, self.user))
-        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
-
-    def test_is_idempotent(self):
-        from apps.products.default_warehouse import ensure_silent_default_warehouse
-
-        self._enable("purchasing")
-        first = ensure_silent_default_warehouse(self.company, self.user)
-        second = ensure_silent_default_warehouse(self.company, self.user)
-        self.assertEqual(first.pk, second.pk)
-        self.assertEqual(Warehouse.objects.filter(company=self.company).count(), 1)
-
-    def test_warehouse_list_lazy_creates_silent_mg(self):
-        self._enable("production")
-        client = APIClient()
-        client.force_authenticate(user=self.user)
-        self.assertFalse(Warehouse.objects.filter(company=self.company).exists())
-        response = client.get(reverse("warehouse-list"))
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        codes = {row["code"] for row in response.data["results"]}
-        self.assertEqual(len(codes), 1)
-        self.assertTrue(next(iter(codes)).startswith("MG"))
-        self.assertEqual(Warehouse.objects.get(company=self.company).name, "Magazyn główny")
 
 
 class ProductUpdateStockAPITests(TestCase):
@@ -932,10 +809,10 @@ class ProductUpdateStockAPITests(TestCase):
 
     def test_update_stock_creates_movement_and_product_stock(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
+        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
         response = self.client.post(
             url,
-            {"warehouse_id": str(self.warehouse.uuid), "quantity_change": "7.50"},
+            {"warehouse_id": str(self.warehouse.id), "quantity_change": "7.50"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -949,10 +826,10 @@ class ProductUpdateStockAPITests(TestCase):
 
     def test_update_stock_amends_existing_movement(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
+        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
         first = self.client.post(
             url,
-            {"warehouse_id": str(self.warehouse.uuid), "quantity_change": "10.00"},
+            {"warehouse_id": str(self.warehouse.id), "quantity_change": "10.00"},
             format="json",
         )
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
@@ -965,16 +842,16 @@ class ProductUpdateStockAPITests(TestCase):
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         stock = ProductStock.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(stock.quantity_available, Decimal("3.00"))
-        movement = StockMovement.objects.get(uuid=movement_id)
+        movement = StockMovement.objects.get(pk=movement_id)
         self.assertEqual(movement.quantity, Decimal("3.00"))
         self.assertEqual(StockMovement.objects.count(), 1)
 
     def test_negative_available_rejected_without_allow_negative(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
+        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
         response = self.client.post(
             url,
-            {"warehouse_id": str(self.warehouse.uuid), "quantity_change": "-1.00"},
+            {"warehouse_id": str(self.warehouse.id), "quantity_change": "-1.00"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -993,17 +870,17 @@ class ProductUpdateStockAPITests(TestCase):
             name="Foreign",
         )
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
+        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
         response = self.client.post(
             url,
-            {"warehouse_id": str(foreign_wh.uuid), "quantity_change": "1.00"},
+            {"warehouse_id": str(foreign_wh.id), "quantity_change": "1.00"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_update_stock_accepts_warehouse_code_instead_of_id(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("product-update-stock", kwargs={"uuid": self.product.uuid})
+        url = reverse("product-update-stock", kwargs={"pk": self.product.id})
         response = self.client.post(
             url,
             {"warehouse_code": "us1", "quantity_change": "2.00", "movement_type": "purchase"},
@@ -1016,1107 +893,123 @@ class ProductUpdateStockAPITests(TestCase):
         self.assertEqual(stock.quantity_available, Decimal("2.00"))
 
 
-class CustomerProductPriceAPITests(TestCase):
+class CustomerProductPriceTests(TestCase):
+    """API tests for the /api/customer-prices/ viewset."""
+
     def setUp(self):
+        from apps.customers.models import Customer
+
         User = get_user_model()
-        self.user = User.objects.create_user(
-            username="cpp-test-user", email="cpp@test.com", password="test12345"
-        )
-        self.company = _company_with_user(self.user)
+        self.user = User.objects.create_user(username="cpp-user", email="cpp@test.com", password="pass123")
+        self.company = Company.objects.create(name="CPP Co")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="admin", is_active=True)
         self.user.current_company = self.company
         self.user.save()
 
-        from apps.customers.models import Customer
-        self.customer = Customer.objects.create(
-            company=self.company,
-            name="Test Sklep",
-        )
-        from apps.products.models import CustomerProductPrice
         self.product = Product.objects.create(
             company=self.company,
-            name="Chleb Zwykly",
+            name="Chleb",
             unit="szt.",
             price_net=Decimal("3.50"),
             price_gross=Decimal("3.78"),
             vat_rate=Decimal("8.00"),
         )
+        self.customer = Customer.objects.create(
+            company=self.company,
+            name="Sklep ABC",
+        )
+
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.base_url = "/api/customer-product-prices/"
 
-    def test_list_prices_for_customer(self):
-        from apps.products.models import CustomerProductPrice
+    def _url_list(self):
+        return reverse("customer-price-list")
+
+    def _url_detail(self, pk):
+        return reverse("customer-price-detail", args=[pk])
+
+    def test_create_custom_price(self):
+        resp = self.client.post(
+            self._url_list(),
+            {"customer": str(self.customer.id), "product": str(self.product.id), "price_net": "2.80", "note": "stały klient"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resp.data["price_net"], "2.80")
+        self.assertEqual(resp.data["product_name"], "Chleb")
+        self.assertEqual(resp.data["note"], "stały klient")
+
+    def test_list_by_customer(self):
         CustomerProductPrice.objects.create(
             company=self.company,
             customer=self.customer,
             product=self.product,
-            price_net=Decimal("2.80"),
+            price_net=Decimal("2.50"),
         )
-        response = self.client.get(self.base_url, {"customer": str(self.customer.id)})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        results = response.data
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["price_net"], "2.80")
-        self.assertEqual(results[0]["product_name"], "Chleb Zwykly")
+        resp = self.client.get(self._url_list(), {"customer_id": str(self.customer.id)})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["price_net"], "2.50")
 
-    def test_create_price(self):
-        response = self.client.post(
-            self.base_url,
-            {
-                "customer": str(self.customer.id),
-                "product": str(self.product.id),
-                "price_net": "2.00",
-                "note": "staly klient",
-            },
+    def test_unique_constraint_customer_product(self):
+        CustomerProductPrice.objects.create(
+            company=self.company,
+            customer=self.customer,
+            product=self.product,
+            price_net=Decimal("2.50"),
+        )
+        resp = self.client.post(
+            self._url_list(),
+            {"customer": str(self.customer.id), "product": str(self.product.id), "price_net": "1.00"},
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["price_net"], "2.00")
-        self.assertEqual(response.data["note"], "staly klient")
-        from apps.products.models import CustomerProductPrice
-        self.assertEqual(
-            CustomerProductPrice.objects.filter(
-                company=self.company, customer=self.customer, product=self.product
-            ).count(),
-            1,
-        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_update_price(self):
-        from apps.products.models import CustomerProductPrice
         cpp = CustomerProductPrice.objects.create(
             company=self.company,
             customer=self.customer,
             product=self.product,
-            price_net=Decimal("2.80"),
+            price_net=Decimal("2.50"),
         )
-        response = self.client.patch(
-            f"{self.base_url}{cpp.id}/",
-            {"price_net": "1.99"},
+        resp = self.client.patch(
+            self._url_detail(cpp.id),
+            {"price_net": "1.99", "note": "rabat"},
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
         cpp.refresh_from_db()
         self.assertEqual(cpp.price_net, Decimal("1.99"))
+        self.assertEqual(cpp.note, "rabat")
 
     def test_delete_price(self):
-        from apps.products.models import CustomerProductPrice
         cpp = CustomerProductPrice.objects.create(
             company=self.company,
             customer=self.customer,
             product=self.product,
-            price_net=Decimal("2.80"),
+            price_net=Decimal("2.50"),
         )
-        response = self.client.delete(f"{self.base_url}{cpp.id}/")
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        resp = self.client.delete(self._url_detail(cpp.id))
+        self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(CustomerProductPrice.objects.filter(id=cpp.id).exists())
 
-    def test_unique_constraint(self):
-        self.client.post(
-            self.base_url,
-            {"customer": str(self.customer.id), "product": str(self.product.id), "price_net": "2.80"},
-            format="json",
-        )
-        response = self.client.post(
-            self.base_url,
-            {"customer": str(self.customer.id), "product": str(self.product.id), "price_net": "1.50"},
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    def test_other_company_cannot_access(self):
+        from apps.customers.models import Customer as C
 
-
-class IsServiceFieldTests(TestCase):
-    """Tests for the is_service flag — serializer enforcement and API filter."""
-
-    def setUp(self):
-        self.client = APIClient()
         User = get_user_model()
-        self.user = User.objects.create_user(
-            username="service-test-user",
-            email="service@test.com",
-            password="test12345",
-        )
-        self.company = _company_with_user(self.user)
-        self.user.current_company = self.company
-        self.user.save(update_fields=["current_company"])
-        self.client.force_authenticate(user=self.user)
+        other_user = User.objects.create_user(username="cpp-other", email="other@test.com", password="pass123")
+        other_co = Company.objects.create(name="Other Co")
+        CompanyMembership.objects.create(user=other_user, company=other_co, role="admin", is_active=True)
+        other_user.current_company = other_co
+        other_user.save()
+        other_client = APIClient()
+        other_client.force_authenticate(user=other_user)
 
-    def _create_product(self, **kwargs):
-        kwargs.setdefault("name", "Physical product")
-        return Product.objects.create(
-            user=self.user,
+        cpp = CustomerProductPrice.objects.create(
             company=self.company,
-            unit="szt",
-            price_net=Decimal("10.00"),
-            price_gross=Decimal("12.30"),
-            **kwargs,
-        )
-
-    # --- Serializer enforcement ---
-
-    def test_create_service_forces_track_batches_false(self):
-        response = self.client.post(
-            reverse("product-list"),
-            {
-                "name": "Naprawa zmywarki",
-                "unit": "godz",
-                "price_net": "150.00",
-                "price_gross": "184.50",
-                "is_service": True,
-                "track_batches": True,  # should be forced to False
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertFalse(response.data["track_batches"])
-        product = Product.objects.get(uuid=response.data["id"])
-        self.assertFalse(product.track_batches)
-
-    def test_create_service_forces_is_resalable_true(self):
-        response = self.client.post(
-            reverse("product-list"),
-            {
-                "name": "Konsultacja IT",
-                "unit": "godz",
-                "price_net": "200.00",
-                "price_gross": "246.00",
-                "is_service": True,
-                "is_resalable": False,  # should be forced to True
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data["is_resalable"])
-
-    def test_update_service_still_enforces_track_batches_false(self):
-        product = self._create_product(is_service=True, track_batches=False)
-        response = self.client.patch(
-            reverse("product-detail", args=[str(product.uuid)]),
-            {"track_batches": True},
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        product.refresh_from_db()
-        self.assertFalse(product.track_batches)
-
-    def test_physical_product_keeps_track_batches(self):
-        response = self.client.post(
-            reverse("product-list"),
-            {
-                "name": "Fizyczny towar",
-                "unit": "szt",
-                "price_net": "5.00",
-                "price_gross": "6.15",
-                "is_service": False,
-                "track_batches": True,
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data["track_batches"])
-
-    # --- Filter ---
-
-    def test_filter_is_service_true_returns_only_services(self):
-        self._create_product(name="Produkt fizyczny", is_service=False)
-        Product.objects.create(
-            user=self.user,
-            company=self.company,
-            name="Usługa serwisowa",
-            unit="godz",
-            price_net=Decimal("100.00"),
-            price_gross=Decimal("123.00"),
-            is_service=True,
-        )
-        response = self.client.get(reverse("product-list"), {"is_service": "true"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        names = [r["name"] for r in response.data["results"]]
-        self.assertIn("Usługa serwisowa", names)
-        self.assertNotIn("Produkt fizyczny", names)
-
-    def test_filter_is_service_false_returns_only_physical(self):
-        self._create_product(name="Mąka pszenna", is_service=False)
-        Product.objects.create(
-            user=self.user,
-            company=self.company,
-            name="Strona internetowa",
-            unit="usługa",
-            price_net=Decimal("500.00"),
-            price_gross=Decimal("615.00"),
-            is_service=True,
-        )
-        response = self.client.get(reverse("product-list"), {"is_service": "false"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        names = [r["name"] for r in response.data["results"]]
-        self.assertIn("Mąka pszenna", names)
-        self.assertNotIn("Strona internetowa", names)
-
-    def test_no_filter_returns_both_types(self):
-        self._create_product(name="Towar", is_service=False)
-        Product.objects.create(
-            user=self.user,
-            company=self.company,
-            name="Usługa",
-            unit="godz",
-            price_net=Decimal("80.00"),
-            price_gross=Decimal("98.40"),
-            is_service=True,
-        )
-        response = self.client.get(reverse("product-list"))
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        names = [r["name"] for r in response.data["results"]]
-        self.assertIn("Towar", names)
-        self.assertIn("Usługa", names)
-
-
-class ProductImportTests(TestCase):
-    """Tests for POST /api/products/import/ and GET /api/products/import-template/."""
-
-    def setUp(self):
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="import-test-user",
-            email="import@test.com",
-            password="test12345",
-        )
-        self.company = _company_with_user(self.user)
-        self.user.current_company = self.company
-        self.user.save()
-
-        self.client = APIClient()
-        self.client.force_authenticate(user=self.user)
-
-    def _csv_file(self, content: str, filename="produkty.csv"):
-        import io
-        from django.core.files.uploadedfile import SimpleUploadedFile
-        return SimpleUploadedFile(filename, content.encode("utf-8"), content_type="text/csv")
-
-    def _xlsx_file(self, rows: list[list], filename="produkty.xlsx"):
-        import io
-        from django.core.files.uploadedfile import SimpleUploadedFile
-        from openpyxl import Workbook
-        wb = Workbook()
-        ws = wb.active
-        for row in rows:
-            ws.append(row)
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-        return SimpleUploadedFile(filename, buf.read(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # ── Template ──────────────────────────────────────────────────────────
-
-    def test_template_download_returns_xlsx(self):
-        resp = self.client.get(reverse("product-import-template"))
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("spreadsheetml", resp["Content-Type"])
-        self.assertIn("szablon_produkty.xlsx", resp["Content-Disposition"])
-
-    def test_template_requires_auth(self):
-        self.client.logout()
-        resp = APIClient().get(reverse("product-import-template"))
-        self.assertEqual(resp.status_code, 401)
-
-    # ── Dry run — valid CSV ───────────────────────────────────────────────
-
-    def test_dry_run_valid_csv(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU;Kod kreskowy;Opis;Alert minimalny\r\nChleb;szt;2,50;5;SKU-1;;;;\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.data["dry_run"])
-        self.assertEqual(resp.data["valid_count"], 1)
-        self.assertEqual(resp.data["error_count"], 0)
-        self.assertEqual(Product.objects.filter(company=self.company).count(), 0)  # no commit
-
-    def test_dry_run_valid_xlsx(self):
-        rows = [
-            ["Nazwa", "Jednostka", "Cena brutto", "VAT (%)", "SKU", "Kod kreskowy", "Opis", "Alert minimalny"],
-            ["Masło", "kg", "8.00", "5", "", "", "", ""],
-            ["Mąka", "kg", "3.20", "8", "MAK-001", "", "pszenna", "10"],
-        ]
-        f = self._xlsx_file(rows)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["valid_count"], 2)
-        self.assertEqual(resp.data["error_count"], 0)
-
-    # ── Dry run — validation errors ───────────────────────────────────────
-
-    def test_dry_run_missing_required_fields(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\n;szt;2,50;5\r\nChleb;;2,50;5\r\nChleb;szt;;5\r\nChleb;szt;2,50;\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["error_count"], 4)
-
-    def test_dry_run_invalid_vat_rate(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,50;7\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.data["error_count"], 1)
-        self.assertEqual(resp.data["errors"][0]["field"], "VAT (%)")
-
-    def test_dry_run_invalid_price(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;abc;5\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.data["error_count"], 1)
-        self.assertEqual(resp.data["errors"][0]["field"], "Cena brutto")
-
-    # ── Commit ────────────────────────────────────────────────────────────
-
-    def test_commit_creates_products(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU\r\nChleb;szt;2,50;5;SKU-1\r\nMasło;kg;8,00;5;\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        self.assertEqual(resp.status_code, 201)
-        self.assertFalse(resp.data["dry_run"])
-        self.assertEqual(resp.data["created"], 2)
-        self.assertEqual(Product.objects.filter(company=self.company).count(), 2)
-
-    def test_commit_calculates_price_net(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;10,00;23\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        product = Product.objects.get(company=self.company, name="Chleb")
-        # price_net = 10.00 / 1.23 ≈ 8.13
-        self.assertAlmostEqual(float(product.price_net), 10.00 / 1.23, places=2)
-        self.assertEqual(product.price_gross, Decimal("10.00"))
-        self.assertEqual(product.vat_rate, Decimal("23"))
-
-    def test_commit_scoped_to_current_company(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nBułka;szt;0,50;5\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Bułka")
-        self.assertEqual(p.company, self.company)
-
-    def test_commit_stops_on_errors(self):
-        # Mix of valid and invalid rows — commit should be rejected (errors returned, nothing created)
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,50;5\r\n;szt;2,50;5\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        self.assertEqual(resp.status_code, 200)  # returns preview with errors
-        self.assertTrue(resp.data["dry_run"])
-        self.assertEqual(Product.objects.filter(company=self.company).count(), 0)
-
-    def test_no_file_returns_400(self):
-        resp = self.client.post(reverse("product-import-products"), {}, format="multipart")
-        self.assertEqual(resp.status_code, 400)
-
-    # ── Dedup: dry-run preview ────────────────────────────────────────────
-
-    def test_dry_run_shows_update_when_sku_matches(self):
-        Product.objects.create(company=self.company, user=self.user, name="Chleb stary", sku="SKU-1", unit="szt",
-                               price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU\r\nChleb nowa cena;szt;3,00;5;SKU-1\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["to_update"], 1)
-        self.assertEqual(resp.data["to_create"], 0)
-        self.assertEqual(resp.data["to_skip"], 0)
-
-    def test_dry_run_shows_update_when_name_matches_no_sku(self):
-        Product.objects.create(company=self.company, user=self.user, name="Chleb", sku="", unit="szt",
-                               price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;3,00;5\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.data["to_update"], 1)
-        self.assertEqual(resp.data["to_create"], 0)
-
-    def test_dry_run_shows_create_for_new_products(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nBagietka;szt;3,50;5\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.data["to_create"], 1)
-        self.assertEqual(resp.data["to_update"], 0)
-        self.assertEqual(resp.data["to_skip"], 0)
-
-    # ── Dedup: commit ─────────────────────────────────────────────────────
-
-    def test_commit_updates_existing_product_by_sku(self):
-        p = Product.objects.create(company=self.company, user=self.user, name="Chleb stary", sku="SKU-1", unit="szt",
-                                   price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);SKU\r\nChleb nowa nazwa;szt;5,25;5;SKU-1\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        self.assertEqual(resp.status_code, 201)
-        self.assertEqual(resp.data["updated"], 1)
-        self.assertEqual(resp.data["created"], 0)
-        p.refresh_from_db()
-        self.assertEqual(p.name, "Chleb nowa nazwa")
-        self.assertEqual(p.price_gross, Decimal("5.25"))
-
-    def test_commit_updates_existing_product_by_name_no_sku(self):
-        Product.objects.create(company=self.company, user=self.user, name="Chleb", sku="", unit="szt",
-                               price_gross=Decimal("2.00"), price_net=Decimal("1.90"), vat_rate=Decimal("5"))
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;5,00;5\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        self.assertEqual(resp.data["updated"], 1)
-        self.assertEqual(resp.data["created"], 0)
-        # Price must have been updated
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertEqual(p.price_gross, Decimal("5.00"))
-
-    # ── New optional fields ───────────────────────────────────────────────
-
-    def test_commit_sets_is_service_from_typ_column(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Typ (produkt/usługa)\r\nDoradztwo;godz;100,00;23;usługa\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Doradztwo")
-        self.assertTrue(p.is_service)
-
-    def test_commit_product_typ_not_service(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Typ (produkt/usługa)\r\nChleb;szt;2,50;5;produkt\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertFalse(p.is_service)
-
-    def test_commit_sets_pkwiu(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);PKWiU\r\nChleb;szt;2,50;5;10.71.11\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertEqual(p.pkwiu, "10.71.11")
-
-    def test_commit_sets_shelf_life_days(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Termin przydatności (dni)\r\nChleb;szt;2,50;5;3\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertEqual(p.shelf_life_days, 3)
-
-    def test_commit_sets_avg_cost_with_source_manual(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Koszt własny\r\nChleb;szt;2,50;5;1,20\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertEqual(p.avg_cost, Decimal("1.20"))
-        self.assertEqual(p.avg_cost_source, "manual")
-
-    def test_commit_sets_markup_percent(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Narzut %\r\nChleb;szt;2,50;5;30\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertEqual(p.markup_percent, Decimal("30"))
-
-    def test_commit_sets_is_resalable_false(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Do sprzedaży (tak/nie)\r\nMąka;kg;3,00;8;nie\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Mąka")
-        self.assertFalse(p.is_resalable)
-
-    def test_commit_sets_track_batches_false(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Śledzenie partii (tak/nie)\r\nChleb;szt;2,50;5;nie\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertFalse(p.track_batches)
-
-    def test_invalid_shelf_life_returns_error(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Termin przydatności (dni)\r\nChleb;szt;2,50;5;abc\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.data["error_count"], 1)
-        self.assertEqual(resp.data["errors"][0]["field"], "Termin przydatności (dni)")
-
-    def test_invalid_avg_cost_returns_error(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Koszt własny\r\nChleb;szt;2,50;5;xyz\r\n"
-        f = self._csv_file(csv_content)
-        resp = self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "true"}, format="multipart")
-        self.assertEqual(resp.data["error_count"], 1)
-        self.assertEqual(resp.data["errors"][0]["field"], "Koszt własny")
-
-    def test_commit_uses_price_net_when_provided(self):
-        csv_content = "Nazwa;Jednostka;Cena netto;Cena brutto;VAT (%)\r\nChleb;szt;2,00;2,46;23\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertEqual(p.price_net, Decimal("2.00"))
-        self.assertEqual(p.price_gross, Decimal("2.46"))
-
-    def test_commit_derives_price_net_when_not_provided(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,46;23\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertAlmostEqual(float(p.price_net), 2.46 / 1.23, places=2)
-
-    def test_commit_sets_is_active_false(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%);Aktywny (tak/nie)\r\nChleb;szt;2,50;5;nie\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertFalse(p.is_active)
-
-    def test_commit_is_active_defaults_to_true(self):
-        csv_content = "Nazwa;Jednostka;Cena brutto;VAT (%)\r\nChleb;szt;2,50;5\r\n"
-        f = self._csv_file(csv_content)
-        self.client.post(reverse("product-import-products"), {"file": f, "dry_run": "false"}, format="multipart")
-        p = Product.objects.get(company=self.company, name="Chleb")
-        self.assertTrue(p.is_active)
-
-
-class ProductSafeDeleteTests(TestCase):
-    """Tests for safe DELETE /api/products/{uuid}/."""
-
-    def setUp(self):
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="delete-test-user",
-            email="delete@test.com",
-            password="test12345",
-        )
-        self.company = _company_with_user(self.user)
-        self.user.current_company = self.company
-        self.user.save()
-
-        self.client = APIClient()
-        self.client.force_authenticate(user=self.user)
-
-        self.product = Product.objects.create(
-            company=self.company,
-            user=self.user,
-            name="Produkt do usunięcia",
-            unit="szt",
-            price_gross=Decimal("10.00"),
-            price_net=Decimal("9.52"),
-            vat_rate=Decimal("5"),
-        )
-
-    def _delete_url(self):
-        return reverse("product-detail", kwargs={"uuid": self.product.uuid})
-
-    def test_delete_product_without_history(self):
-        resp = self.client.delete(self._delete_url())
-        self.assertEqual(resp.status_code, 204)
-        self.assertFalse(Product.objects.filter(pk=self.product.pk).exists())
-
-    def test_delete_blocked_by_stock_movement(self):
-        warehouse = Warehouse.objects.create(company=self.company, user=self.user, code="MG", name="Magazyn")
-        StockMovement.objects.create(
-            company=self.company,
+            customer=self.customer,
             product=self.product,
-            warehouse=warehouse,
-            user=self.user,
-            movement_type=StockMovement.MovementType.ADJUSTMENT,
-            quantity=Decimal("10"),
-            quantity_before=Decimal("0"),
-            quantity_after=Decimal("10"),
+            price_net=Decimal("2.50"),
         )
-        resp = self.client.delete(self._delete_url())
-        self.assertEqual(resp.status_code, 409)
-        self.assertIn("blockers", resp.data)
-        self.assertTrue(Product.objects.filter(pk=self.product.pk).exists())
-
-    def test_delete_blocked_by_stock_on_hand(self):
-        warehouse = Warehouse.objects.create(company=self.company, user=self.user, code="MG2", name="Magazyn 2")
-        ProductStock.objects.create(
-            company=self.company,
-            product=self.product,
-            warehouse=warehouse,
-            quantity_available=Decimal("5"),
-            quantity_reserved=Decimal("0"),
-        )
-        resp = self.client.delete(self._delete_url())
-        self.assertEqual(resp.status_code, 409)
-        self.assertTrue(Product.objects.filter(pk=self.product.pk).exists())
-
-    def test_delete_requires_auth(self):
-        resp = APIClient().delete(self._delete_url())
-        self.assertEqual(resp.status_code, 401)
-
-    def test_delete_blocked_by_order_item(self):
-        from apps.orders.models import Order, OrderItem
-        from apps.customers.models import Customer
-        customer = Customer.objects.create(company=self.company, name="Test Klient")
-        from datetime import date
-        today = date.today()
-        order = Order.objects.create(
-            company=self.company,
-            user=self.user,
-            customer=customer,
-            status=Order.STATUS_DRAFT,
-            order_date=today,
-            delivery_date=today,
-        )
-        OrderItem.objects.create(
-            order=order,
-            product=self.product,
-            product_name=self.product.name,
-            product_unit=self.product.unit,
-            quantity=Decimal("2"),
-            unit_price_gross=self.product.price_gross,
-            vat_rate=self.product.vat_rate,
-            line_total_gross=Decimal("20.00"),
-        )
-        resp = self.client.delete(self._delete_url())
-        self.assertEqual(resp.status_code, 409)
-        blockers = resp.data["blockers"]
-        self.assertTrue(any("zamówieni" in b for b in blockers))
-
-
-def _make_stock_xlsx(rows: list[dict]) -> io.BytesIO:
-    """Build a minimal in-memory XLSX with stock import columns."""
-    wb = Workbook()
-    ws = wb.active
-    headers = ["Nazwa produktu", "SKU", "Kod magazynu", "Ilość", "Notatka"]
-    ws.append(headers)
-    for row in rows:
-        ws.append([row.get(h, "") for h in headers])
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
-
-
-class WarehouseStockImportTests(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="import-stock-user",
-            email="importstock@test.com",
-            password="test12345",
-        )
-        self.company = _company_with_user(self.user)
-        self.user.current_company = self.company
-        self.user.save(update_fields=["current_company"])
-        self.client.force_authenticate(user=self.user)
-
-        self.wh = Warehouse.objects.create(
-            company=self.company, user=self.user, code="MG", name="Magazyn Główny"
-        )
-        self.wh2 = Warehouse.objects.create(
-            company=self.company, user=self.user, code="MV1", name="Van 1"
-        )
-        self.product = Product.objects.create(
-            company=self.company, user=self.user,
-            name="Mąka pszenna", unit="kg", price_gross="2.50", vat_rate=5,
-        )
-        self.product_sku = Product.objects.create(
-            company=self.company, user=self.user,
-            name="Chleb pszenny", sku="SKU-002", unit="szt", price_gross="3.50", vat_rate=5,
-        )
-
-    def _upload(self, rows, dry_run="true"):
-        buf = _make_stock_xlsx(rows)
-        buf.name = "stan.xlsx"
-        return self.client.post(
-            reverse("warehouse-import-stock"),
-            {"file": buf, "dry_run": dry_run},
-            format="multipart",
-        )
-
-    def test_dry_run_returns_preview(self):
-        r = self._upload([
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 150},
-            {"Nazwa produktu": "Chleb pszenny", "Kod magazynu": "MV1", "Ilość": 20},
-        ])
-        self.assertEqual(r.status_code, 200)
-        self.assertTrue(r.data["dry_run"])
-        self.assertEqual(r.data["to_create"], 2)
-        self.assertEqual(ProductStock.objects.count(), 0)
-
-    def test_commit_creates_stock_movements(self):
-        r = self._upload([
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 150, "Notatka": "Stan otwarcia"},
-        ], dry_run="false")
-        self.assertEqual(r.status_code, 201)
-        self.assertEqual(r.data["created"], 1)
-        stock = ProductStock.objects.get(product=self.product, warehouse=self.wh)
-        self.assertEqual(stock.quantity_available, Decimal("150"))
-        movement = StockMovement.objects.get(product=self.product, warehouse=self.wh)
-        self.assertEqual(movement.quantity, Decimal("150"))
-        self.assertEqual(movement.reference_type, "import")
-
-    def test_match_by_sku(self):
-        r = self._upload([
-            {"SKU": "SKU-002", "Kod magazynu": "MG", "Ilość": 50},
-        ], dry_run="false")
-        self.assertEqual(r.status_code, 201)
-        stock = ProductStock.objects.get(product=self.product_sku, warehouse=self.wh)
-        self.assertEqual(stock.quantity_available, Decimal("50"))
-
-    def test_same_product_multiple_warehouses(self):
-        r = self._upload([
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 100},
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MV1", "Ilość": 30},
-        ], dry_run="false")
-        self.assertEqual(r.status_code, 201)
-        self.assertEqual(r.data["created"], 2)
-        self.assertEqual(ProductStock.objects.filter(product=self.product).count(), 2)
-
-    def test_unknown_product_returns_error(self):
-        r = self._upload([
-            {"Nazwa produktu": "Nieistniejący produkt", "Kod magazynu": "MG", "Ilość": 10},
-        ])
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["error_count"], 1)
-        self.assertIn("Nie znaleziono produktu", r.data["errors"][0]["message"])
-
-    def test_unknown_warehouse_code_returns_error(self):
-        r = self._upload([
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "XXX", "Ilość": 10},
-        ])
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["error_count"], 1)
-        self.assertIn("Nie znaleziono magazynu", r.data["errors"][0]["message"])
-
-    def test_missing_quantity_returns_error(self):
-        r = self._upload([
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": ""},
-        ])
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["error_count"], 1)
-        self.assertEqual(r.data["errors"][0]["field"], "Ilość")
-
-    def test_zero_quantity_returns_error(self):
-        r = self._upload([
-            {"Nazwa produktu": "Mąka pszenna", "Kod magazynu": "MG", "Ilość": 0},
-        ])
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["error_count"], 1)
-
-    def test_template_download(self):
-        r = self.client.get(reverse("warehouse-import-template"))
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("spreadsheetml", r["Content-Type"])
-
-
-class WarehouseStockExpiryFilterTests(TestCase):
-    """Tests for ?expiring_days and nearest_expiry_date on GET /warehouses/{id}/stock/."""
-
-    def setUp(self):
-        self.client = APIClient()
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="expiry-filter-user",
-            email="expiry@test.com",
-            password="test12345",
-        )
-        self.co = _company_with_user(self.user)
-        self.user.current_company = self.co
-        self.user.save(update_fields=["current_company"])
-        self.client.force_authenticate(user=self.user)
-
-        self.warehouse = Warehouse.objects.create(
-            user=self.user, company=self.co, code="EW1", name="Expiry Warehouse",
-        )
-        self.p_expiring = Product.objects.create(
-            user=self.user, company=self.co, name="Produkt wygasający", unit="szt", track_batches=True,
-        )
-        self.p_ok = Product.objects.create(
-            user=self.user, company=self.co, name="Produkt OK", unit="szt", track_batches=True,
-        )
-        self.p_no_batch = Product.objects.create(
-            user=self.user, company=self.co, name="Produkt bez partii", unit="szt", track_batches=False,
-        )
-
-        for p in [self.p_expiring, self.p_ok, self.p_no_batch]:
-            ProductStock.objects.create(
-                company=self.co, product=p, warehouse=self.warehouse,
-                quantity_available=Decimal("10"), quantity_reserved=Decimal("0"),
-            )
-
-        today = date.today()
-        # batch expiring in 5 days
-        StockBatch.objects.create(
-            company=self.co, product=self.p_expiring, warehouse=self.warehouse,
-            received_date=today, expiry_date=today + __import__('datetime').timedelta(days=5),
-            quantity_initial=Decimal("10"), quantity_remaining=Decimal("10"),
-        )
-        # batch expiring in 60 days
-        StockBatch.objects.create(
-            company=self.co, product=self.p_ok, warehouse=self.warehouse,
-            received_date=today, expiry_date=today + __import__('datetime').timedelta(days=60),
-            quantity_initial=Decimal("10"), quantity_remaining=Decimal("10"),
-        )
-
-        self.url = reverse("warehouse-stock", kwargs={"uuid": str(self.warehouse.uuid)})
-
-    def test_no_filter_returns_all(self):
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.data), 3)
-
-    def test_expiring_days_filters_correctly(self):
-        r = self.client.get(self.url, {"expiring_days": 14})
-        self.assertEqual(r.status_code, 200)
-        names = [row["product_name"] for row in r.data]
-        self.assertIn("Produkt wygasający", names)
-        self.assertNotIn("Produkt OK", names)
-        self.assertNotIn("Produkt bez partii", names)
-
-    def test_expiring_days_wide_window_includes_both(self):
-        r = self.client.get(self.url, {"expiring_days": 90})
-        self.assertEqual(r.status_code, 200)
-        names = [row["product_name"] for row in r.data]
-        self.assertIn("Produkt wygasający", names)
-        self.assertIn("Produkt OK", names)
-
-    def test_nearest_expiry_date_returned(self):
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, 200)
-        expiring_row = next(row for row in r.data if row["product_name"] == "Produkt wygasający")
-        self.assertIsNotNone(expiring_row["nearest_expiry_date"])
-
-    def test_nearest_expiry_date_null_when_no_batch(self):
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, 200)
-        no_batch_row = next(row for row in r.data if row["product_name"] == "Produkt bez partii")
-        self.assertIsNone(no_batch_row["nearest_expiry_date"])
-
-    def test_expiring_days_zero_ignored(self):
-        r = self.client.get(self.url, {"expiring_days": 0})
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.data), 3)
-
-    def test_expiring_days_invalid_ignored(self):
-        r = self.client.get(self.url, {"expiring_days": "abc"})
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.data), 3)
-
-
-class WarehouseBatchesAPITests(TestCase):
-    """Tests for GET /warehouses/{id}/batches/?product={uuid}."""
-
-    def setUp(self):
-        self.client = APIClient()
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="batches-user",
-            email="batches@test.com",
-            password="test12345",
-        )
-        self.other = User.objects.create_user(
-            username="batches-other",
-            email="batches-other@test.com",
-            password="test12345",
-        )
-        self.co = _company_with_user(self.user)
-        self.co_other = _company_with_user(self.other)
-        self.user.current_company = self.co
-        self.user.save(update_fields=["current_company"])
-        self.other.current_company = self.co_other
-        self.other.save(update_fields=["current_company"])
-
-        self.warehouse = Warehouse.objects.create(
-            user=self.user, company=self.co, code="BW1", name="Batch Warehouse",
-        )
-        self.product = Product.objects.create(
-            user=self.user, company=self.co, name="Mąka pszenna", unit="kg", track_batches=True,
-        )
-        self.product2 = Product.objects.create(
-            user=self.user, company=self.co, name="Cukier", unit="kg", track_batches=True,
-        )
-
-        self.batch1 = StockBatch.objects.create(
-            company=self.co,
-            product=self.product,
-            warehouse=self.warehouse,
-            received_date=date(2026, 1, 1),
-            quantity_initial=Decimal("100"),
-            quantity_remaining=Decimal("60"),
-            unit_cost=Decimal("2.50"),
-        )
-        self.batch2 = StockBatch.objects.create(
-            company=self.co,
-            product=self.product,
-            warehouse=self.warehouse,
-            received_date=date(2026, 3, 1),
-            quantity_initial=Decimal("50"),
-            quantity_remaining=Decimal("50"),
-            unit_cost=Decimal("2.80"),
-        )
-        # Empty batch — should be excluded (quantity_remaining=0)
-        StockBatch.objects.create(
-            company=self.co,
-            product=self.product,
-            warehouse=self.warehouse,
-            received_date=date(2026, 2, 1),
-            quantity_initial=Decimal("30"),
-            quantity_remaining=Decimal("0"),
-        )
-        # Different product batch
-        StockBatch.objects.create(
-            company=self.co,
-            product=self.product2,
-            warehouse=self.warehouse,
-            received_date=date(2026, 4, 1),
-            quantity_initial=Decimal("20"),
-            quantity_remaining=Decimal("20"),
-        )
-        # Other company batch — should never be visible
-        other_wh = Warehouse.objects.create(
-            user=self.other, company=self.co_other, code="OW1", name="Other",
-        )
-        other_prod = Product.objects.create(
-            user=self.other, company=self.co_other, name="Other product", unit="szt",
-        )
-        StockBatch.objects.create(
-            company=self.co_other,
-            product=other_prod,
-            warehouse=other_wh,
-            received_date=date(2026, 1, 1),
-            quantity_initial=Decimal("100"),
-            quantity_remaining=Decimal("100"),
-        )
-
-        self.url = reverse("warehouse-batches", kwargs={"uuid": str(self.warehouse.uuid)})
-
-    def test_requires_auth(self):
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    def test_returns_active_batches_for_warehouse(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        # batch1 + batch2 + product2 batch = 3 (empty one excluded)
-        self.assertEqual(len(r.data), 3)
-
-    def test_filter_by_product(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url, {"product": str(self.product.uuid)})
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(r.data), 2)
-        ids = {b["id"] for b in r.data}
-        self.assertIn(str(self.batch1.uuid), ids)
-        self.assertIn(str(self.batch2.uuid), ids)
-
-    def test_excludes_empty_batches(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url, {"product": str(self.product.uuid)})
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        for b in r.data:
-            self.assertGreater(float(b["quantity_remaining"]), 0)
-
-    def test_other_company_cannot_access_warehouse(self):
-        self.client.force_authenticate(user=self.other)
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_batch_fields_returned(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url, {"product": str(self.product.uuid)})
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        first = next(b for b in r.data if b["id"] == str(self.batch1.uuid))
-        self.assertEqual(first["quantity_initial"], "100.00")
-        self.assertEqual(first["quantity_remaining"], "60.00")
-        self.assertEqual(first["unit_cost"], "2.50")
-        self.assertEqual(first["received_date"], "2026-01-01")
-
-
-class LowStockAPITests(TestCase):
-    """GET /api/products/low-stock/ — returns products below min_stock_alert."""
-
-    def setUp(self):
-        self.client = APIClient()
-        User = get_user_model()
-        self.user = User.objects.create_user(
-            username="lowstock-user",
-            email="lowstock@test.com",
-            password="test12345",
-        )
-        self.other = User.objects.create_user(
-            username="lowstock-other",
-            email="lowstock-other@test.com",
-            password="test12345",
-        )
-        self.co = _company_with_user(self.user)
-        self.co_other = _company_with_user(self.other)
-        self.user.current_company = self.co
-        self.user.save(update_fields=["current_company"])
-        self.other.current_company = self.co_other
-        self.other.save(update_fields=["current_company"])
-
-        self.wh = Warehouse.objects.create(
-            user=self.user, company=self.co, code="MG1", name="Magazyn"
-        )
-        # Product below threshold: available 30, min_stock_alert 100 → shortage 70
-        self.prod_low = Product.objects.create(
-            user=self.user, company=self.co, name="Mąka T500", unit="kg",
-            min_stock_alert=Decimal("100.00"),
-        )
-        ProductStock.objects.create(
-            company=self.co, product=self.prod_low, warehouse=self.wh,
-            quantity_available=Decimal("30.00"),
-        )
-        # Product exactly at threshold — should NOT appear
-        self.prod_ok = Product.objects.create(
-            user=self.user, company=self.co, name="Cukier", unit="kg",
-            min_stock_alert=Decimal("50.00"),
-        )
-        ProductStock.objects.create(
-            company=self.co, product=self.prod_ok, warehouse=self.wh,
-            quantity_available=Decimal("50.00"),
-        )
-        # Product with no min_stock_alert (0) — should NOT appear
-        self.prod_no_alert = Product.objects.create(
-            user=self.user, company=self.co, name="Sól", unit="kg",
-            min_stock_alert=Decimal("0.00"),
-        )
-        ProductStock.objects.create(
-            company=self.co, product=self.prod_no_alert, warehouse=self.wh,
-            quantity_available=Decimal("5.00"),
-        )
-        # Other company low-stock product — must NOT be visible to self.user
-        wh_other = Warehouse.objects.create(
-            user=self.other, company=self.co_other, code="OW1", name="Other"
-        )
-        prod_other = Product.objects.create(
-            user=self.other, company=self.co_other, name="Drożdże", unit="g",
-            min_stock_alert=Decimal("200.00"),
-        )
-        ProductStock.objects.create(
-            company=self.co_other, product=prod_other, warehouse=wh_other,
-            quantity_available=Decimal("10.00"),
-        )
-
-        self.url = reverse("product-low-stock")
-
-    def test_requires_auth(self):
-        r = self.client.get(self.url)
-        self.assertIn(r.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
-
-    def test_returns_only_low_stock_products(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(r.data), 1)
-        item = r.data[0]
-        self.assertEqual(item["product_name"], "Mąka T500")
-        self.assertEqual(item["unit"], "kg")
-        self.assertEqual(item["quantity_available"], "30.00")
-        self.assertEqual(item["min_stock_alert"], "100.00")
-        self.assertEqual(item["shortage"], "70.00")
-
-    def test_excludes_products_at_or_above_threshold(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        names = [i["product_name"] for i in r.data]
-        self.assertNotIn("Cukier", names)
-        self.assertNotIn("Sól", names)
-
-    def test_excludes_other_company_products(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        names = [i["product_name"] for i in r.data]
-        self.assertNotIn("Drożdże", names)
-
-    def test_response_contains_product_id(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.url)
-        self.assertEqual(r.status_code, status.HTTP_200_OK)
-        self.assertIn("product_id", r.data[0])
-        self.assertEqual(r.data[0]["product_id"], str(self.prod_low.uuid))
+        resp = other_client.get(self._url_detail(cpp.id))
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)

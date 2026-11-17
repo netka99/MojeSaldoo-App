@@ -14,6 +14,8 @@ from .views import (
     CompanyRoleDetailView,
     CompanyRolesListView,
     CompanyWorkflowSettingsView,
+    DemoCompanyDeleteView,
+    DemoCompanyResetView,
     SwitchCompanyView,
 )
 
@@ -21,6 +23,8 @@ urlpatterns = [
     path("", CompanyCreateView.as_view(), name="company-create"),
     path("me/", CompanyMeListView.as_view(), name="company-me-list"),
     path("switch/", SwitchCompanyView.as_view(), name="company-switch"),
+    path("demo/", DemoCompanyDeleteView.as_view(), name="company-demo-delete"),
+    path("demo/reset/", DemoCompanyResetView.as_view(), name="company-demo-reset"),
     path(
         "<uuid:company_id>/certificate/status/",
         KSeFCertificateStatusView.as_view(),

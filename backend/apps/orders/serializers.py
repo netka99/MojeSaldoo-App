@@ -41,6 +41,7 @@ class OrderItemSerializer(UUIDModelSerializer):
     """
 
     product_id = UUIDRelatedField(
+        slug_field="id",
         queryset=Product.objects.all(),
         source="product",
     )

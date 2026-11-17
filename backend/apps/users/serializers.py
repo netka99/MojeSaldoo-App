@@ -171,11 +171,12 @@ class CompanySerializer(UUIDModelSerializer):
             "invoice_number_period",
             "invoice_number_padding",
             "invoice_number_start",
+            "is_demo",
             "logo_url",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["is_active", "logo_url", "created_at", "updated_at"]
+        read_only_fields = ["is_active", "is_demo", "logo_url", "created_at", "updated_at"]
 
     def validate_nip(self, value):
         if value in (None, ""):
@@ -205,19 +206,17 @@ class UserRegistrationSerializer(UUIDModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'first_name', 'last_name', 'password', 'password2']
-        extra_kwargs = {
-            'first_name': {'required': True},
-            'last_name': {'required': True},
-        }
+        fields = ['email', 'password', 'password2']
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
-            raise serializers.ValidationError({"password": "Password fields didn't match."})
+            raise serializers.ValidationError({"password": "Hasła nie są identyczne."})
         return attrs
 
     def create(self, validated_data):
         validated_data.pop('password2')
+        # username is an internal Django field — set it to email so it stays unique
+        validated_data['username'] = validated_data['email']
         user = User.objects.create_user(**validated_data)
         return user
 

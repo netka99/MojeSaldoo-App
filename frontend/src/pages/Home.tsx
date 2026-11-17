@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { useDashboardSummaryQuery } from '@/query/use-reports';
+import { useMyCompaniesQuery, useSwitchCompanyMutation } from '@/query/use-companies';
 import { SetupNudgeBar } from '@/components/SetupNudgeBar';
 import { cn } from '@/lib/utils';
 import { statusGoldClass, statusRedClass } from '@/lib/reportSurface';
@@ -270,6 +271,57 @@ function StatCard({
   return inner;
 }
 
+function DemoReadyBanner() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user, refreshUser } = useAuth();
+  const { data: companies } = useMyCompaniesQuery();
+  const switchMutation = useSwitchCompanyMutation();
+  const [dismissed, setDismissed] = useState(false);
+
+  const params = new URLSearchParams(location.search);
+  if (!params.has('welcome') || dismissed) return null;
+
+  const list = (companies ?? []) as { id: string; name: string; is_demo?: boolean }[];
+  const demoCompany = list.find((c) => c.is_demo);
+  if (!demoCompany) return null;
+
+  async function switchToDemo() {
+    setDismissed(true);
+    await switchMutation.mutateAsync(demoCompany!.id);
+    await refreshUser();
+    navigate('/', { replace: true });
+  }
+
+  return (
+    <div className="mx-4 mb-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+      <p className="text-sm font-semibold text-slate-900">
+        Twoja firma jest gotowa!
+      </p>
+      <p className="mt-1 text-sm text-slate-600">
+        Masz też dostęp do <strong>przykładowych danych demo</strong> — możesz je przejrzeć żeby zobaczyć jak działa aplikacja.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void switchToDemo()}
+          disabled={switchMutation.isPending}
+          className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        >
+          Przejrzyj dane demo →
+        </button>
+        <button
+          type="button"
+          onClick={() => setDismissed(true)}
+          className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+        >
+          Zostań tutaj
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export const Home: React.FC = () => {
   const { user } = useAuth();
 
@@ -357,6 +409,8 @@ export const Home: React.FC = () => {
         </h1>
         <p className="mt-1 text-sm text-on-surface-variant">{subtitle}</p>
       </section>
+
+      <DemoReadyBanner />
 
       <SetupNudgeBar />
 

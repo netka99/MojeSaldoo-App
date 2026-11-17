@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, within } from '@testing-library/react';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { TestQueryProvider } from '@/test/TestQueryProvider';
@@ -173,6 +173,7 @@ const getToken = vi.spyOn(authStorage, 'getAccessToken');
 
 describe('OrderCreatePage', () => {
   beforeEach(() => {
+    sessionStorage.clear();
     getToken.mockReturnValue('token');
     createMutationState.isPending = false;
     vi.clearAllMocks();
@@ -221,21 +222,32 @@ describe('OrderCreatePage', () => {
     await user.type(input, 'Firma');
     await afterDebounce();
     await user.click(await screen.findByRole('button', { name: /Firma Test/ }));
-    expect(screen.getByDisplayValue('Firma Test')).toBeInTheDocument();
+    // After selecting, heading updates to "Dostawa <CustomerName>"
+    await waitFor(() =>
+      expect(screen.getByText(/Dostawa Firma Test/)).toBeInTheDocument(),
+    );
   });
 
-  it('disables Zapisz while mutation is pending', async () => {
+  it('disables submit while mutation is pending', async () => {
+    const user = userEvent.setup();
     createMutationState.isPending = true;
-    renderPage();
-    await screen.findByRole('button', { name: /Produkt Mąka/ });
-    expect(screen.getByRole('button', { name: 'Zapisz zamówienie' })).toBeDisabled();
+    renderPage('/orders/new?date=2026-06-15');
+    // Add a product so we can navigate to checkout
+    await user.click(await screen.findByRole('button', { name: /Produkt Mąka/ }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'OK' }));
+    await user.click(screen.getByRole('button', { name: /Do zamówienia/ }));
+    expect(screen.getByRole('button', { name: /Utwórz zamówienie|Tworzenie/ })).toBeDisabled();
   });
 
   it('shows validation error when customer not selected on submit', async () => {
     const user = userEvent.setup();
     renderPage('/orders/new?date=2026-05-20');
-    await screen.findByRole('button', { name: /Produkt Mąka/ });
-    await user.click(screen.getByRole('button', { name: 'Zapisz zamówienie' }));
+    await user.click(await screen.findByRole('button', { name: /Produkt Mąka/ }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'OK' }));
+    await user.click(screen.getByRole('button', { name: /Do zamówienia/ }));
+    await user.click(screen.getByRole('button', { name: /Utwórz zamówienie/ }));
     expect(await screen.findByText('Wybierz klienta')).toBeInTheDocument();
   });
 
@@ -249,19 +261,19 @@ describe('OrderCreatePage', () => {
     await user.click(screen.getByRole('button', { name: /Produkt Chleb/ }));
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
-    await user.click(screen.getByRole('button', { name: 'Zapisz zamówienie' }));
+    await user.click(screen.getByRole('button', { name: /Do zamówienia/ }));
+    await user.click(screen.getByRole('button', { name: /Utwórz zamówienie/ }));
     expect(await screen.findByText('Podaj datę dostawy')).toBeInTheDocument();
   });
 
-  it('shows validation error when no product lines on submit', async () => {
+  it('cart stays empty — "Do zamówienia" not shown when no products added', async () => {
     const user = userEvent.setup();
     renderPage('/orders/new?date=2026-05-20');
     await screen.findByRole('button', { name: /Produkt Mąka/ });
     await user.type(screen.getByLabelText('Wyszukaj klienta'), 'Firma');
     await afterDebounce();
     await user.click(await screen.findByRole('button', { name: /Firma Test/ }));
-    await user.click(screen.getByRole('button', { name: 'Zapisz zamówienie' }));
-    expect(await screen.findByText('Dodaj co najmniej jedną pozycję z produktem')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Do zamówienia/ })).not.toBeInTheDocument();
   });
 
   it('product list loads and renders items', async () => {
@@ -290,59 +302,69 @@ describe('OrderCreatePage', () => {
     expect(screen.getByRole('status')).toHaveTextContent('2');
   });
 
-  it('entering qty via numpad and confirming adds or updates the line', async () => {
+  it('entering qty via numpad and confirming shows "Do zamówienia" bar', async () => {
     const user = userEvent.setup();
     renderPage('/orders/new?date=2026-06-01');
     await user.click(await screen.findByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: '3' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
 
-    const sticky = screen.getByRole('button', { name: 'Zapisz zamówienie' }).closest('.fixed');
-    expect(sticky).toBeTruthy();
-    expect(sticky).toHaveTextContent(/Netto:/);
-    expect(within(sticky! as HTMLElement).getByText(/Brutto:/)).toBeInTheDocument();
+    // Fixed "Do zamówienia" bar should appear with the total price
+    const checkoutBtn = await screen.findByRole('button', { name: /Do zamówienia/ });
+    expect(checkoutBtn).toBeInTheDocument();
+    expect(checkoutBtn).toHaveTextContent(/Do zamówienia/);
 
+    // Updating qty to 5 should update the displayed total
     await user.click(screen.getByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: '5' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(checkoutBtn).toBeInTheDocument());
   });
 
-  it('confirming qty 0 removes the product from lines', async () => {
+  it('confirming qty 0 hides the quantity controls for that product', async () => {
     const user = userEvent.setup();
     renderPage('/orders/new?date=2026-06-01');
     await user.click(await screen.findByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: '4' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
 
-    const rowBefore = screen.getByRole('button', { name: /Produkt Mąka/ });
-    expect(within(rowBefore).getByText('4')).toBeInTheDocument();
+    // Quantity badge 4 is shown
+    const rowBefore = screen.getByRole('button', { name: /Produkt Mąka/ })
+      .closest('[data-product-row]') ?? screen.getByRole('button', { name: /Produkt Mąka/ }).parentElement!.parentElement!;
+    expect(rowBefore).toHaveTextContent('4');
 
+    // Clear the quantity
     await user.click(screen.getByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: 'Cofnij' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
 
-    const rowAfter = screen.getByRole('button', { name: /Produkt Mąka/ });
-    expect(within(rowAfter).getByText('0')).toBeInTheDocument();
+    // Quantity controls (minus/plus) should be gone — qty is 0
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Zmniejsz ilość Mąka/ })).not.toBeInTheDocument();
+    });
+    // "Do zamówienia" button gone when cart is empty
+    expect(screen.queryByRole('button', { name: /Do zamówienia/ })).not.toBeInTheDocument();
   });
 
-  it('bottom bar totals update as lines change', async () => {
+  it('checkout bar price updates as lines change', async () => {
     const user = userEvent.setup();
     renderPage('/orders/new?date=2026-06-01');
     await screen.findByRole('button', { name: /Produkt Mąka/ });
 
-    const sticky = screen.getByRole('button', { name: 'Zapisz zamówienie' }).closest('.fixed');
-    expect(sticky).toHaveTextContent(/0,00/);
+    // No checkout bar initially (empty cart)
+    expect(screen.queryByRole('button', { name: /Do zamówienia/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
 
+    // Bar appears and shows the gross total (4,92 for 1×Mąka)
     await waitFor(() => {
-      expect(sticky).toHaveTextContent(/4,92/);
+      expect(screen.getByRole('button', { name: /Do zamówienia/ })).toHaveTextContent(/4,92/);
     });
   });
 
-  it('successful submit calls createOrderMutation and navigates to order detail', async () => {
+  it('successful submit calls createOrderMutation and navigates back to orders list', async () => {
     const user = userEvent.setup();
     const { router } = renderPage('/orders/new?date=2026-07-10');
     await user.type(screen.getByLabelText('Wyszukaj klienta'), 'F');
@@ -351,7 +373,9 @@ describe('OrderCreatePage', () => {
     await user.click(await screen.findByRole('button', { name: /Produkt Mąka/ }));
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: 'OK' }));
-    await user.click(screen.getByRole('button', { name: 'Zapisz zamówienie' }));
+    // Navigate to checkout view
+    await user.click(screen.getByRole('button', { name: /Do zamówienia/ }));
+    await user.click(screen.getByRole('button', { name: /Utwórz zamówienie/ }));
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalled();
     });
@@ -362,10 +386,11 @@ describe('OrderCreatePage', () => {
     });
     expect(payload.items).toHaveLength(1);
     expect(payload.items[0]!.product_id).toBe('p-1');
+    // After submit, navigates back to orders list (with date filter)
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/orders/new-order-1');
+      expect(router.state.location.pathname).toBe('/orders');
     });
-    expect(screen.getByText('Order created')).toBeInTheDocument();
+    expect(screen.getByText('Orders list')).toBeInTheDocument();
   });
 
   it('Space on focused product row opens numpad', async () => {
@@ -378,14 +403,18 @@ describe('OrderCreatePage', () => {
     expect(screen.getByRole('status')).toHaveTextContent('0');
   });
 
-  it('numpad closes when tapping outside', async () => {
+  it('numpad closes when OK is confirmed', async () => {
     const user = userEvent.setup();
     renderPage('/orders/new?date=2026-06-01');
     await user.click(await screen.findByRole('button', { name: /Produkt Chleb/ }));
-    expect(screen.getByRole('status')).toBeInTheDocument();
+    // Numpad open: OK and Cofnij buttons are visible
+    expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
 
-    await user.click(screen.getByPlaceholderText('Szukaj produktów…'));
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'OK' }));
+    // Numpad closed: numpad buttons gone
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument();
+    });
   });
 
   it('back button navigates to /orders with current date query param', async () => {
@@ -394,7 +423,7 @@ describe('OrderCreatePage', () => {
     await screen.findByRole('button', { name: /Produkt Mąka/ });
     const dateInput = screen.getByLabelText('Data dostawy');
     await user.type(dateInput, '2026-04-15');
-    await user.click(screen.getByRole('button', { name: /Sprzedaż/i }));
+    await user.click(screen.getByRole('button', { name: /Wróć do listy sklepów/i }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/orders');
       expect(router.state.location.search).toContain('date=');

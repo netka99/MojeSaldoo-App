@@ -71,7 +71,8 @@ export const invoiceService = {
       params: { issue_date: issueDate, is_correction: isCorrection },
     }),
 
-  markPaid: (id: string) => api.post<Invoice>(`${basePath}${id}/mark-paid/`, {}),
+  markPaid: (id: string, paidAt?: string) =>
+    api.post<Invoice>(`${basePath}${id}/mark-paid/`, paidAt ? { paid_at: paidAt } : {}),
 
   markUnpaid: (id: string) => api.post<Invoice>(`${basePath}${id}/mark-unpaid/`, {}),
 

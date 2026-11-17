@@ -25,7 +25,7 @@ export const productionService = {
   deleteRecipe: (id: string) => api.delete<Record<string, never>>(`${recipesPath}${id}/`),
 
   // ── Production Orders ─────────────────────────────────────────────────────
-  fetchOrders: (params?: { page?: number }) =>
+  fetchOrders: (params?: { page?: number; date_from?: string; date_to?: string; status?: string }) =>
     api.get<PaginatedProductionOrders>(ordersPath, { params }),
 
   fetchOrderById: (id: string) => api.get<ProductionOrder>(`${ordersPath}${id}/`),

@@ -11,10 +11,7 @@ export function RegisterPage() {
   const { isAuthenticated, isLoading, refreshUser } = useAuth();
   const navigate = useNavigate();
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -47,9 +44,8 @@ export function RegisterPage() {
 
     setLoading(true);
     try {
-      await authApi.register({ username: username.trim(), email: email.trim(), first_name: firstName.trim(), last_name: lastName.trim(), password, password2 });
-      // Log in immediately after registration.
-      const data = await authApi.login(username.trim(), password);
+      await authApi.register({ email: email.trim(), password, password2 });
+      const data = await authApi.login(email.trim(), password);
       authStorage.setTokens(data.access, data.refresh);
       await refreshUser();
       navigate('/onboarding', { replace: true });
@@ -85,42 +81,14 @@ export function RegisterPage() {
                 </p>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  label="Imię"
-                  name="first_name"
-                  autoComplete="given-name"
-                  autoFocus
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  required
-                />
-                <Input
-                  label="Nazwisko"
-                  name="last_name"
-                  autoComplete="family-name"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  required
-                />
-              </div>
-
               <Input
                 label="E-mail"
                 name="email"
                 type="email"
                 autoComplete="email"
+                autoFocus
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-
-              <Input
-                label="Nazwa użytkownika"
-                name="username"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
                 required
               />
 

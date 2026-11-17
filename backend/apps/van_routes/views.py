@@ -63,11 +63,11 @@ class VanRouteViewSet(viewsets.ModelViewSet):
 
         van_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            uuid=data["van_warehouse_id"],
+            id=data["van_warehouse_id"],
         )
         main_wh = get_object_or_404(
             Warehouse.objects.filter(company_id=company_id),
-            uuid=data["main_warehouse_id"],
+            id=data["main_warehouse_id"],
         )
 
         route = create_van_route(

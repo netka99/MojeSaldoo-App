@@ -650,7 +650,7 @@ export function PurchasingPzPage() {
   return <PurchasingPzPageContent />;
 }
 
-function PurchasingPzPageContent() {
+export function PurchasingPzPageContent() {
   const canPurchasing = usePermission('can_manage_purchasing');
   const [searchParams, setSearchParams] = useSearchParams();
 

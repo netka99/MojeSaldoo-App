@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { customerService, type ImportCustomerError } from '@/services/customer.service';
 import { useImportCustomersMutation } from '@/query/use-customers';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +10,7 @@ type Step = 'upload' | 'preview' | 'done';
 
 export function CustomerImportDialog({ onClose }: { onClose: () => void }) {
   const titleId = useId();
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -201,17 +203,33 @@ export function CustomerImportDialog({ onClose }: { onClose: () => void }) {
                       <Button type="button" variant="outline" disabled={isBusy} onClick={() => setStep('upload')}>
                         Zmień plik
                       </Button>
-                      <Button
-                        type="button"
-                        disabled={(preview.toCreate + preview.toUpdate) === 0 || isBusy}
-                        loading={isBusy}
-                        onClick={handleConfirm}
-                      >
-                        {(() => {
-                          const n = preview.toCreate + preview.toUpdate;
-                          return `Importuj ${n} ${n === 1 ? 'klienta' : n < 5 ? 'klientów' : 'klientów'}`;
-                        })()}
-                      </Button>
+                      {errors.length > 0 && (preview.toCreate + preview.toUpdate) > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={isBusy}
+                          loading={isBusy}
+                          onClick={handleConfirm}
+                        >
+                          {(() => {
+                            const n = preview.toCreate + preview.toUpdate;
+                            return `Importuj ${n} poprawnych`;
+                          })()}
+                        </Button>
+                      )}
+                      {errors.length === 0 && (
+                        <Button
+                          type="button"
+                          disabled={(preview.toCreate + preview.toUpdate) === 0 || isBusy}
+                          loading={isBusy}
+                          onClick={handleConfirm}
+                        >
+                          {(() => {
+                            const n = preview.toCreate + preview.toUpdate;
+                            return `Importuj ${n} ${n === 1 ? 'klienta' : 'klientów'}`;
+                          })()}
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -238,7 +256,10 @@ export function CustomerImportDialog({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                 </div>
-                <div className="flex justify-end">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => { onClose(); navigate('/customers'); }}>
+                    Otwórz listę klientów
+                  </Button>
                   <Button type="button" onClick={onClose}>Gotowe</Button>
                 </div>
               </div>

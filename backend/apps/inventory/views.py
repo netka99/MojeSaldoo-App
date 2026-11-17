@@ -29,7 +29,7 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
     serializer_class = InventoryCountSerializer
     required_permission = 'can_manage_inventory'
     permission_classes = [IsAuthenticated, IsCompanyMember, HasCompanyPermission]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self) -> QuerySet:
         company_id = self.request.user.current_company_id
@@ -65,20 +65,27 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
                 status=InventoryCount.STATUS_DRAFT,
             )
 
-            # Snapshot all ProductStock rows for this warehouse
-            stocks = ProductStock.objects.filter(
-                company_id=company_id,
-                warehouse=warehouse,
-            ).select_related("product")
-
-            for stock in stocks:
-                product = stock.product
+            # Snapshot all non-service products for this company.
+            # Use ProductStock quantity where available, 0 otherwise.
+            from apps.products.models import Product
+            all_products = (
+                Product.objects.filter(company_id=company_id, is_active=True)
+                .exclude(product_type=Product.PRODUCT_TYPE_SERVICE)
+                .order_by("name")
+            )
+            stock_map = {
+                str(s.product_id): s.quantity_available
+                for s in ProductStock.objects.filter(
+                    company_id=company_id, warehouse=warehouse
+                )
+            }
+            for product in all_products:
                 InventoryCountItem.objects.create(
                     inventory_count=count,
                     product=product,
                     product_name=product.name,
                     product_unit=product.unit or "",
-                    quantity_system=stock.quantity_available,
+                    quantity_system=stock_map.get(str(product.id), 0),
                     quantity_actual=None,
                 )
 
@@ -134,6 +141,103 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
             user=request.user, action="inventory.cancel",
             object_type="inventory", object_id=count.document_number or str(count.uuid),
         )
+        serializer = InventoryCountSerializer(count, context={"request": request})
+        return Response(serializer.data)
+
+    def destroy(self, request, uuid=None):
+        """DELETE :id/ — permanently delete a draft or cancelled inventory count."""
+        count = self.get_object()
+
+        if count.status == InventoryCount.STATUS_COMPLETED:
+            raise ValidationError(
+                {"detail": "Zakończona inwentaryzacja nie może być usunięta."}
+            )
+
+        doc_number = count.document_number or str(count.uuid)
+        count.delete()
+        log_success(
+            user=request.user, action="inventory.delete",
+            object_type="inventory", object_id=doc_number,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="remove-item")
+    def remove_item(self, request, uuid=None):
+        """POST :id/remove-item/ — remove a single item from a draft inventory count."""
+        count = self.get_object()
+        if count.status != InventoryCount.STATUS_DRAFT:
+            raise ValidationError({"detail": "Można usuwać pozycje tylko ze szkicu."})
+
+        item_id = request.data.get("item_id")
+        if not item_id:
+            raise ValidationError({"item_id": "Wymagane."})
+
+        deleted, _ = count.items.filter(uuid=item_id).delete()
+        if not deleted:
+            raise ValidationError({"item_id": "Nie znaleziono pozycji."})
+
+        count.refresh_from_db()
+        serializer = InventoryCountSerializer(count, context={"request": request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="add-item")
+    def add_item(self, request, uuid=None):
+        """POST :id/add-item/ — add a product to a draft inventory count.
+
+        Body option A (existing product): { "product_id": "<uuid>" }
+        Body option B (manual item):      { "name": "Jabłka", "unit": "kg" }
+        """
+        from apps.products.models import Product, ProductStock
+
+        count = self.get_object()
+        if count.status != InventoryCount.STATUS_DRAFT:
+            raise ValidationError({"detail": "Można dodawać pozycje tylko do szkicu."})
+
+        company_id = request.user.current_company_id
+        product_id = request.data.get("product_id")
+
+        if product_id:
+            # Option A — existing product
+            try:
+                product = Product.objects.get(id=product_id, company_id=company_id, is_active=True)
+            except Product.DoesNotExist:
+                raise ValidationError({"product_id": "Produkt nie istnieje."})
+
+            if product.product_type == Product.PRODUCT_TYPE_SERVICE:
+                raise ValidationError({"product_id": "Usług nie można dodawać do inwentaryzacji."})
+
+            if count.items.filter(product=product).exists():
+                raise ValidationError({"product_id": "Ten produkt jest już na liście."})
+
+            stock = ProductStock.objects.filter(
+                company_id=company_id, warehouse=count.warehouse, product=product
+            ).first()
+
+            InventoryCountItem.objects.create(
+                inventory_count=count,
+                product=product,
+                product_name=product.name,
+                product_unit=product.unit or "",
+                quantity_system=stock.quantity_available if stock else 0,
+                quantity_actual=None,
+            )
+        else:
+            # Option B — manual item (no product FK)
+            name = (request.data.get("name") or "").strip()
+            unit = (request.data.get("unit") or "").strip()
+            if not name:
+                raise ValidationError({"name": "Nazwa jest wymagana."})
+
+            InventoryCountItem.objects.create(
+                inventory_count=count,
+                product=None,
+                product_name=name,
+                product_unit=unit,
+                quantity_system=0,
+                quantity_actual=None,
+            )
+
+        count.refresh_from_db()
         serializer = InventoryCountSerializer(count, context={"request": request})
         return Response(serializer.data)
 

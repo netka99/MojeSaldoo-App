@@ -22,6 +22,7 @@ const orderKeys = {
   all: ['production', 'orders'] as const,
   lists: () => [...orderKeys.all, 'list'] as const,
   list: (companyId: string, page: number) => [...orderKeys.lists(), companyId, page] as const,
+  listFiltered: (companyId: string, params: object) => [...orderKeys.lists(), companyId, params] as const,
   detail: (id: string) => [...orderKeys.all, 'detail', id] as const,
 };
 
@@ -98,6 +99,22 @@ export function useProductionOrdersQuery(page = 1) {
   return useQuery({
     queryKey: orderKeys.list(companyId, page),
     queryFn: () => productionService.fetchOrders({ page }),
+    enabled: Boolean(companyId),
+  });
+}
+
+export function useProductionOrdersListQuery(params: {
+  page?: number;
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+}) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: orderKeys.listFiltered(companyId, params),
+    queryFn: () => productionService.fetchOrders(params),
     enabled: Boolean(companyId),
   });
 }

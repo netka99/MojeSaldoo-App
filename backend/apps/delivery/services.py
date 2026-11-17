@@ -343,7 +343,7 @@ def create_van_loading_mm(
     with transaction.atomic():
         products = {
             str(p.uuid): p
-            for p in Product.objects.filter(company_id=company_id, uuid__in=product_ids)
+            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
         }
         missing = [str(pid) for pid in product_ids if str(pid) not in products]
         if missing:
@@ -532,7 +532,7 @@ def apply_van_reconciliation(
     with transaction.atomic():
         products = {
             str(p.uuid): p
-            for p in Product.objects.filter(company_id=company_id, uuid__in=product_ids)
+            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
         }
         missing = [str(pid) for pid in product_ids if str(pid) not in products]
         if missing:
@@ -1429,7 +1429,7 @@ def build_delivery_document_preview_data(doc: DeliveryDocument) -> dict:
             )
         return_documents_out.append(
             {
-                "id": str(zw.id),
+                "id": str(zw.uuid),
                 "document_number": zw.document_number or "",
                 "issue_date": str(zw.issue_date),
                 "items": zw_items,
@@ -1488,7 +1488,7 @@ def create_zw_from_pending_returns(
     with transaction.atomic():
         products = {
             str(p.uuid): p
-            for p in Product.objects.filter(company_id=company_id, uuid__in=product_ids)
+            for p in Product.objects.filter(company_id=company_id, id__in=product_ids)
         }
         missing = [pid for pid in product_ids if pid not in products]
         if missing:
@@ -1510,10 +1510,10 @@ def create_zw_from_pending_returns(
                 delivery_document__linked_wz=wz_doc,
                 delivery_document__document_type=DeliveryDocument.DOC_TYPE_ZW,
             )
-            .values("product__uuid")
+            .values("product__id")
             .annotate(total=Sum("quantity_actual"))
         ):
-            existing_zw_by_product[str(row["product__uuid"])] = row["total"] or Decimal("0")
+            existing_zw_by_product[str(row["product__id"])] = row["total"] or Decimal("0")
 
         # Level 3 guard: validate all quantities before creating anything.
         for row in return_items:

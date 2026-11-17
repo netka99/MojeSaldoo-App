@@ -277,7 +277,7 @@ export function WarehouseMovesPage() {
   return <WarehouseMovesPageContent />;
 }
 
-function WarehouseMovesPageContent() {
+export function WarehouseMovesPageContent() {
   const canRW = usePermission('can_manage_stock_moves');
   const [searchParams, setSearchParams] = useSearchParams();
 

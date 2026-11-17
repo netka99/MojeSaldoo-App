@@ -125,3 +125,23 @@ export function useLeaveCompanyMutation() {
     },
   });
 }
+
+export function useDeleteDemoCompanyMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => companyService.deleteDemoCompany(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}
+
+export function useResetDemoCompanyMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => companyService.resetDemoCompany(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}

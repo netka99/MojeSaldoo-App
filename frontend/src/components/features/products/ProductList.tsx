@@ -1,25 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
+import { Button } from '@/components/ui/Button';
 import { useProductListQuery } from '@/query/use-products';
 import { cn } from '@/lib/utils';
-import {
-  reportButtonClass,
-  reportRowClass,
-  reportSubtitleClass,
-  reportTableClass,
-  reportTdClass,
-  reportTdMoneyClass,
-  reportTdMutedClass,
-  reportThClass,
-  statusRedClass,
-} from '@/lib/reportSurface';
+import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
 import type { Product } from '@/types';
 
 /** Matches Django `PageNumberPagination` default in this project. */
 const PAGE_SIZE = 20;
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+
+const PRODUCT_TYPE_LABEL: Record<string, string> = {
+  trade: 'Towar',
+  material: 'Surowiec',
+  finished: 'Wyrób gotowy',
+  service: 'Usługa',
+};
 
 function formatMoney(value: string | number): string {
   const n = typeof value === 'string' ? Number.parseFloat(value) : value;
@@ -34,23 +32,7 @@ function formatTotalStock(value: string | number | undefined): string {
   return n.toLocaleString('pl-PL', { maximumFractionDigits: 3 });
 }
 
-type TypeFilter = 'all' | 'trade' | 'material' | 'finished' | 'services';
-
-const PRODUCT_TYPE_LABEL: Record<string, string> = {
-  trade: 'Towar handlowy',
-  material: 'Surowiec',
-  finished: 'Wyrób gotowy',
-  service: 'Usługa',
-};
-
-function itemCountLabel(count: number, filter: TypeFilter): string {
-  if (filter === 'services') {
-    if (count === 1) return '1 usługa';
-    const n = count % 10;
-    const n100 = count % 100;
-    if (n >= 2 && n <= 4 && (n100 < 10 || n100 >= 20)) return `${count} usługi`;
-    return `${count} usług`;
-  }
+function productCountLabel(count: number): string {
   if (count === 1) return '1 produkt';
   const n = count % 10;
   const n100 = count % 100;
@@ -58,18 +40,16 @@ function itemCountLabel(count: number, filter: TypeFilter): string {
   return `${count} produktów`;
 }
 
-function SearchIcon() {
+function ChevronRightIcon({ className }: { className?: string }) {
   return (
-    <svg
-      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      aria-hidden
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M9 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -85,378 +65,269 @@ function queryErrorMessage(err: unknown): string {
   return 'Nie udało się wczytać produktów';
 }
 
-const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string }[] = [
-  { value: 'all', label: 'Wszystkie' },
-  { value: 'trade', label: 'Towar handlowy' },
-  { value: 'material', label: 'Surowiec' },
-  { value: 'finished', label: 'Wyrób gotowy' },
-  { value: 'services', label: 'Usługa' },
-];
-
-function ColumnSortTh({ label, asc, desc, current, onSort, align = 'left', extraClass }: {
-  label: string; asc: string; desc: string; current: string; onSort: (v: string) => void; align?: 'left' | 'right'; extraClass?: string;
-}) {
-  const active = current === asc || current === desc;
-  const isAsc = current === asc;
-  const isDesc = current === desc;
-  return (
-    <th scope="col" className={cn('whitespace-nowrap px-3 py-3', align === 'right' ? 'text-right' : 'text-left', extraClass)}>
-      <div className={cn('flex items-center gap-1', align === 'right' && 'justify-end')}>
-        <span className={cn('text-xs font-semibold uppercase tracking-wide', active ? 'text-primary' : 'text-slate-500')}>
-          {label}
-        </span>
-        <div className="flex gap-0.5">
-          <button type="button" aria-label={`${label} A→Z`} title="Rosnąco"
-            onClick={() => onSort(isAsc ? '-created_at' : asc)}
-            className={cn('rounded px-0.5 text-[10px] leading-none', isAsc ? 'text-primary' : 'text-slate-600 hover:text-slate-900')}>
-            ↑
-          </button>
-          <button type="button" aria-label={`${label} Z→A`} title="Malejąco"
-            onClick={() => onSort(isDesc ? '-created_at' : desc)}
-            className={cn('rounded px-0.5 text-[10px] leading-none', isDesc ? 'text-primary' : 'text-slate-600 hover:text-slate-900')}>
-            ↓
-          </button>
-        </div>
-      </div>
-    </th>
-  );
-}
-
-function ColumnFilterTh({ label, active, open, onToggle, children }: {
-  label: string; active: boolean; open: boolean; onToggle: () => void; children: React.ReactNode;
-}) {
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const width = 220;
-      const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left));
-      setPos({ top: rect.bottom + 4, left });
-    };
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [open]);
-
-  return (
-    <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
-      <div data-column-filter="">
-        <button ref={buttonRef} type="button" aria-expanded={open} aria-haspopup="dialog"
-          onClick={onToggle}
-          className={cn('flex items-center gap-1 text-xs font-semibold uppercase tracking-wide',
-            active || open ? 'text-primary' : 'text-slate-500 hover:text-slate-700')}
-        >
-          {label}
-          {active && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />}
-          <svg className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        {open && pos && createPortal(
-          <div data-column-filter="" role="dialog" aria-label={`Filtr: ${label}`}
-            className="fixed z-40 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-apple-md"
-            style={{ top: pos.top, left: pos.left }}>
-            {children}
-          </div>,
-          document.body,
-        )}
-      </div>
-    </th>
-  );
-}
-
-function statusClass(active: boolean): string {
-  return active ? 'text-sm font-medium text-emerald-700' : 'text-sm font-medium text-slate-400';
-}
-
-function ProductThumb({ name, url }: { name: string; url?: string | null }) {
-  if (url) {
-    return <img src={url} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" />;
-  }
-  const letter = name.trim().charAt(0).toUpperCase() || '?';
-  return (
-    <span
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-sm font-semibold text-primary"
-      aria-hidden
-    >
-      {letter}
-    </span>
-  );
-}
-
 export function ProductList({ onEdit, onDelete, onRowClick }: ProductListProps) {
-  const [searchParams] = useSearchParams();
-  const initialSearch = searchParams.get('search') ?? '';
   const [page, setPage] = useState(1);
-  const [searchInput, setSearchInput] = useState(initialSearch);
-  const [searchFilter, setSearchFilter] = useState(initialSearch);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const [ordering, setOrdering] = useState<string>('-created_at');
-  const [openColumn, setOpenColumn] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [skuFilter, setSkuFilter] = useState('');
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      setSearchFilter(searchInput.trim());
+      setSkuFilter(searchInput.trim());
       setPage(1);
     }, 350);
     return () => window.clearTimeout(handle);
   }, [searchInput]);
 
-  const productTypeParam = typeFilter === 'all' ? undefined : typeFilter === 'services' ? 'service' : typeFilter;
-
-  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, searchFilter, productTypeParam, ordering);
+  const { data, isFetching, isError, error, refetch } = useProductListQuery(page, skuFilter);
   const items = data?.results ?? [];
   const count = data?.count ?? 0;
 
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const hasPrev = page > 1;
   const hasNext = page < totalPages;
-  const showActions = Boolean(onEdit || onDelete);
-
-  useEffect(() => {
-    if (!openColumn) return;
-    const onDown = (e: MouseEvent) => {
-      if (e.target instanceof Element && e.target.closest('[data-column-filter]')) return;
-      setOpenColumn(null);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenColumn(null); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [openColumn]);
-
-  function handleTypeFilter(f: TypeFilter) {
-    setTypeFilter(f);
-    setOpenColumn(null);
-    setPage(1);
-  }
-
-  function openRow(product: Product) {
-    onRowClick?.(product);
-  }
 
   return (
-    <>
-      <p className={reportSubtitleClass}>
-        {isFetching && !data ? 'Ładowanie…' : itemCountLabel(count, typeFilter)}
-      </p>
-
-      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 md:rounded-3xl md:px-5">
-        <div className="relative">
-          <SearchIcon />
-          <input
-            type="search"
+    <Card className="mx-auto w-full max-w-6xl shadow-sm">
+      <CardHeader className="flex flex-col gap-4 pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <CardTitle className="text-xl sm:text-[1.5rem]">Produkty</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {isFetching ? 'Ładowanie…' : productCountLabel(count)}
+          </p>
+        </div>
+        <div className="w-full min-w-0 sm:max-w-xs">
+          <Input
+            label="Filtr SKU"
+            placeholder="np. SKU-123"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Nazwa, SKU, opis…"
-            aria-label="Szukaj produktów po nazwie lub SKU"
-            className="field-ios w-full pl-9"
+            aria-label="Filtruj produkty po kodzie SKU"
           />
         </div>
-      </div>
-
-      {isError && (
-        <div
-          className={cn('flex flex-col gap-3 rounded-2xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between', statusRedClass)}
-          role="alert"
-        >
-          <p className="text-sm text-red-700">{queryErrorMessage(error)}</p>
-          <button type="button" className={reportButtonClass} onClick={() => void refetch()}>
-            Spróbuj ponownie
-          </button>
-        </div>
-      )}
-
-      {items.length > 0 && (
-      <div className="flex flex-col gap-2 md:hidden">
-        {items.map((p) => (
+      </CardHeader>
+      <CardContent className="pt-6">
+        {isError && (
           <div
-            key={p.id}
-            role={onRowClick ? 'button' : undefined}
-            tabIndex={onRowClick ? 0 : undefined}
-            aria-label={onRowClick ? `Otwórz edycję produktu: ${p.name}` : undefined}
-            className={cn(
-              'rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left',
-              onRowClick && 'cursor-pointer',
-            )}
-            onClick={() => openRow(p)}
-            onKeyDown={(e) => {
-              if (!onRowClick) return;
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                openRow(p);
-              }
-            }}
+            className="mb-4 flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            role="alert"
           >
-            <div className="flex items-start gap-3">
-              <ProductThumb name={p.name} url={p.image_url} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{p.name}</p>
-                <p className="mt-0.5 text-xs text-slate-500">{PRODUCT_TYPE_LABEL[p.product_type] ?? 'Produkt'}</p>
-              </div>
-                  <span className={cn('shrink-0', statusClass(p.is_active))}>{p.is_active ? 'Aktywny' : 'Nieaktywny'}</span>
-                </div>
-                <div className="mt-2 flex items-end justify-between gap-3">
-              <p className="min-w-0 text-sm font-normal text-slate-500">
-                {p.unit || '—'}
-                <span className="mx-1.5 text-slate-300">·</span>
-                <span className="tabular-nums">{p.sku ?? '—'}</span>
-                <span className="mx-1.5 text-slate-300">·</span>
-                Stan <span className="tabular-nums text-slate-600">{formatTotalStock(p.stock_total)}</span>
-              </p>
-                  <p className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">{formatMoney(p.price_gross)}</p>
-                </div>
-              </div>
-            </div>
-            {showActions && (
-              <div className="mt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                {onEdit && (
-                  <button type="button" className={cn(reportButtonClass, 'flex-1')} onClick={() => onEdit(p)}>
-                    Edytuj
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    type="button"
-                    className="flex-1 rounded-2xl bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive"
-                    onClick={() => onDelete(p)}
-                  >
-                    Usuń
-                  </button>
-                )}
-              </div>
-            )}
+            <p className="text-sm text-destructive">{queryErrorMessage(error)}</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+              Spróbuj ponownie
+            </Button>
           </div>
-        ))}
-      </div>
-      )}
+        )}
 
-      {items.length > 0 && (
-      <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white md:block md:rounded-3xl">
-        <table className={cn(reportTableClass, 'min-w-full')} aria-label="Lista produktów">
-          <thead>
-            <tr>
-              <ColumnSortTh label="Nazwa" asc="name" desc="-name" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} />
-              <ColumnFilterTh
-                label="Typ"
-                active={typeFilter !== 'all'}
-                open={openColumn === 'type'}
-                onToggle={() => setOpenColumn((c) => (c === 'type' ? null : 'type'))}
+        <div className="bg-surface-card rounded-2xl overflow-hidden md:hidden">
+          <ul className="flex flex-col gap-1">
+          {items.map((p) => (
+            <li key={p.id}>
+              <div
+                role={onRowClick ? 'button' : undefined}
+                tabIndex={onRowClick ? 0 : undefined}
+                aria-label={
+                  onRowClick ? `Otwórz edycję produktu: ${p.name}` : undefined
+                }
+                className={cn(
+                  'flex w-full gap-3 px-4 py-4 text-left transition-colors active:bg-surface-low hover:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
+                  onRowClick ? 'cursor-pointer' : 'cursor-default',
+                )}
+                onClick={() => onRowClick?.(p)}
+                onKeyDown={(e) => {
+                  if (!onRowClick) return;
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onRowClick(p);
+                  }
+                }}
               >
-                <ul className="space-y-0.5">
-                  {TYPE_FILTER_OPTIONS.map((opt) => (
-                    <li key={opt.value}>
-                      <label className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-sm text-slate-800 hover:bg-slate-50">
-                        <input type="radio" name="product-type-filter" className="h-4 w-4 accent-primary"
-                          checked={typeFilter === opt.value}
-                          onChange={() => handleTypeFilter(opt.value)} />
-                        <span>{opt.label}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </ColumnFilterTh>
-              <th scope="col" className={reportThClass}>Jednostka</th>
-              <ColumnSortTh label="SKU" asc="sku" desc="-sku" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} />
-              <th scope="col" className={cn(reportThClass, 'text-right')}>Netto</th>
-              <th scope="col" className={cn(reportThClass, 'text-right')}>Brutto</th>
-              <th scope="col" className={reportThClass}>Status</th>
-              <ColumnSortTh label="Stan" asc="stock_total" desc="-stock_total" current={ordering} onSort={(v) => { setOrdering(v); setPage(1); }} align="right" extraClass="pr-6" />
-              {showActions && (
-                <th scope="col" className={cn(reportThClass, 'text-right')}>Akcje</th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((p) => (
-              <tr
-                key={p.id}
-                className={cn(reportRowClass, onRowClick && 'cursor-pointer')}
-                onClick={() => openRow(p)}
-              >
-                <td className="max-w-[240px] px-3 py-3">
-                  <div className="flex items-center gap-3">
-                    <ProductThumb name={p.name} url={p.image_url} />
-                    <p className="truncate text-sm font-semibold text-slate-900">{p.name}</p>
+                <div className="min-w-0 flex-1 flex flex-col gap-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="font-medium text-foreground">{p.name}</span>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        p.is_active ? 'bg-emerald-100 text-emerald-900' : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {p.is_active ? 'Aktywny' : 'Nieaktywny'}
+                    </span>
                   </div>
-                </td>
-                <td className={reportTdMutedClass}>{PRODUCT_TYPE_LABEL[p.product_type] ?? '—'}</td>
-                <td className={reportTdMutedClass}>{p.unit || '—'}</td>
-                <td className={cn(reportTdClass, 'max-w-[140px] truncate tabular-nums')}>{p.sku ?? '—'}</td>
-                <td className={cn(reportTdMutedClass, 'text-right')}>{formatMoney(p.price_net)}</td>
-                <td className={reportTdMoneyClass}>{formatMoney(p.price_gross)}</td>
-                <td className="whitespace-nowrap px-3 py-3">
-                  <span className={statusClass(p.is_active)}>{p.is_active ? 'Aktywny' : 'Nieaktywny'}</span>
-                </td>
-                <td className={cn(reportTdClass, 'pr-6 text-right tabular-nums')}>{formatTotalStock(p.stock_total)}</td>
-                {showActions && (
-                  <td className="whitespace-nowrap px-3 py-3 text-right">
+                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                    <span>Jednostka: {p.unit || '—'}</span>
+                    <span className="text-right font-medium text-foreground">{formatMoney(p.price_gross)}</span>
+                    <span className="col-span-2">
+                      Stan (wszystkie magazyny):{' '}
+                      <span className="font-medium text-foreground tabular-nums">{formatTotalStock(p.stock_total)}</span>
+                    </span>
+                    <span className="col-span-2 truncate">SKU: {p.sku ?? '—'}</span>
+                  </div>
+                  <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openLabelPrintWindow(p)}
+                      aria-label={`Drukuj etykietę ${p.name}`}
+                    >
+                      Etykieta
+                    </Button>
+                    {onEdit && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => onEdit(p)}
+                      >
+                        Edytuj
+                      </Button>
+                    )}
+                    {onDelete && (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => onDelete(p)}
+                      >
+                        Usuń
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {onRowClick && (
+                  <ChevronRightIcon className="mt-1 h-5 w-5 shrink-0 self-start text-muted-foreground" />
+                )}
+              </div>
+            </li>
+          ))}
+          </ul>
+        </div>
+
+        <div className="hidden md:block">
+          <div className="overflow-x-auto rounded-2xl bg-surface-card">
+          <table className="min-w-full text-sm">
+            <thead className="bg-surface-low/80">
+              <tr>
+                <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                  Nazwa
+                </th>
+                <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                  Typ
+                </th>
+                <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                  Jednostka
+                </th>
+                <th scope="col" className="px-4 py-4 text-left font-medium text-muted-foreground">
+                  SKU
+                </th>
+                <th scope="col" className="px-4 py-4 text-right font-medium text-muted-foreground">
+                  Netto
+                </th>
+                <th scope="col" className="px-4 py-4 text-right font-medium text-muted-foreground">
+                  Brutto
+                </th>
+                <th scope="col" className="px-4 py-4 text-center font-medium text-muted-foreground">
+                  Aktywność
+                </th>
+                <th scope="col" className="px-4 py-4 text-right font-medium text-muted-foreground">
+                  Stan (Σ)
+                </th>
+                <th scope="col" className="px-4 py-4 text-right font-medium text-muted-foreground">
+                  Akcje
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((p) => (
+                <tr
+                  key={p.id}
+                  className={cn(
+                    'transition-colors hover:bg-surface-low/50 active:bg-surface-low',
+                    onRowClick && 'cursor-pointer',
+                  )}
+                  onClick={() => onRowClick?.(p)}
+                >
+                  <td className="max-w-[200px] truncate px-4 py-4 font-medium text-foreground">{p.name}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">
+                    {p.product_type ? (PRODUCT_TYPE_LABEL[p.product_type] ?? p.product_type) : '—'}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">{p.unit}</td>
+                  <td className="max-w-[120px] truncate px-4 py-4 text-muted-foreground">{p.sku ?? '—'}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums text-muted-foreground">
+                    {formatMoney(p.price_net)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums font-medium text-foreground">
+                    {formatMoney(p.price_gross)}
+                  </td>
+                  <td className="px-4 py-4 text-center">
+                    <span
+                      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                        p.is_active ? 'bg-emerald-100 text-emerald-900' : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {p.is_active ? 'Aktywny' : 'Nieaktywny'}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums text-foreground">
+                    {formatTotalStock(p.stock_total)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right">
                     <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openLabelPrintWindow(p)}
+                        aria-label={`Drukuj etykietę ${p.name}`}
+                      >
+                        Etykieta
+                      </Button>
                       {onEdit && (
-                        <button type="button" className={reportButtonClass} onClick={() => onEdit(p)}>
+                        <Button type="button" variant="outline" size="sm" onClick={() => onEdit(p)}>
                           Edytuj
-                        </button>
+                        </Button>
                       )}
                       {onDelete && (
-                        <button
-                          type="button"
-                          className="rounded-2xl bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive"
-                          onClick={() => onDelete(p)}
-                        >
+                        <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(p)}>
                           Usuń
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      )}
-
-      {!isFetching && items.length === 0 && !isError && (
-        <p className="rounded-2xl border border-slate-200 bg-white px-4 py-12 text-center text-sm text-slate-500 md:rounded-3xl">
-          {typeFilter === 'services'
-            ? 'Brak usług spełniających ten filtr.'
-            : 'Brak produktów spełniających ten filtr.'}
-        </p>
-      )}
-
-      {totalPages > 1 && (
-        <nav className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center" aria-label="Paginacja">
-          <p className="text-center text-sm text-slate-500 sm:text-left">
-            Strona <span className="font-semibold tabular-nums text-slate-900">{page}</span> z{' '}
-            <span className="font-semibold tabular-nums text-slate-900">{totalPages}</span>
-          </p>
-          <div className="flex justify-center gap-2 sm:justify-end">
-            <button
-              type="button"
-              className={cn(reportButtonClass, 'disabled:cursor-not-allowed disabled:opacity-50')}
-              disabled={!hasPrev}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Poprzednia
-            </button>
-            <button
-              type="button"
-              className={cn(reportButtonClass, 'disabled:cursor-not-allowed disabled:opacity-50')}
-              disabled={!hasNext}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Następna
-            </button>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           </div>
-        </nav>
-      )}
-    </>
+        </div>
+
+        {!isFetching && items.length === 0 && !isError && (
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            Brak produktów spełniających ten filtr.
+          </p>
+        )}
+
+        {totalPages > 1 && (
+          <nav
+            className="mt-6 flex flex-col items-stretch justify-between gap-3 pt-4 sm:flex-row sm:items-center"
+            aria-label="Paginacja"
+          >
+            <p className="text-center text-sm text-muted-foreground sm:text-left">
+              Strona <span className="font-medium text-foreground">{page}</span> z{' '}
+              <span className="font-medium text-foreground">{totalPages}</span>
+            </p>
+            <div className="flex justify-center gap-2 sm:justify-end">
+              <Button type="button" variant="outline" size="sm" disabled={!hasPrev} onClick={() => setPage((p) => p - 1)}>
+                Poprzednia
+              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={!hasNext} onClick={() => setPage((p) => p + 1)}>
+                Następna
+              </Button>
+            </div>
+          </nav>
+        )}
+      </CardContent>
+    </Card>
   );
 }

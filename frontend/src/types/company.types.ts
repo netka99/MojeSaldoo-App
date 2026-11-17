@@ -115,6 +115,7 @@ export interface Company {
   phone: string
   email: string
   isActive: boolean
+  is_demo: boolean
   createdAt: string
   // KSeF / invoice defaults
   bank_account_iban?: string

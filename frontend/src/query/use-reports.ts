@@ -242,4 +242,16 @@ export function useCustomerMarginQuery(dateFrom: string, dateTo: string, limit =
   });
 }
 
+/** Material consumption report (`GET /reports/material-consumption/`). */
+export function useMaterialConsumptionQuery(dateFrom: string, dateTo: string) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: reportKeys.materialConsumption({ companyId, dateFrom, dateTo }),
+    queryFn: () => reportingService.fetchMaterialConsumption({ date_from: dateFrom, date_to: dateTo }),
+    enabled: Boolean(companyId && dateFrom && dateTo),
+  });
+}
+
 export { TOP_LIMIT };

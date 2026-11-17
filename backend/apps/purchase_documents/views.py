@@ -310,7 +310,7 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            warehouse = Warehouse.objects.get(uuid=warehouse_id, company=instance.company)
+            warehouse = Warehouse.objects.get(id=warehouse_id, company=instance.company)
         except Warehouse.DoesNotExist:
             return Response({"detail": "Magazyn nie istnieje."}, status=status.HTTP_400_BAD_REQUEST)
 

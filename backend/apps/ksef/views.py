@@ -718,7 +718,7 @@ def _invoice_parsed_from_db(db_invoice: "ReceivedKSeFInvoice", company) -> dict:
     if db_invoice.seller_nip:
         supplier = Supplier.objects.filter(nip=db_invoice.seller_nip, company=company).first()
         if supplier:
-            suggested_supplier_id = str(supplier.id)
+            suggested_supplier_id = str(supplier.uuid)
             suggested_supplier_name = supplier.name
 
     # Pre-load all mappings for this seller in one query
@@ -890,7 +890,7 @@ def _parse_fa3_invoice(xml_bytes: bytes, company) -> dict:
     if seller_nip:
         supplier = Supplier.objects.filter(nip=seller_nip, company=company).first()
         if supplier:
-            suggested_supplier_id = str(supplier.id)
+            suggested_supplier_id = str(supplier.uuid)
             suggested_supplier_name = supplier.name
 
     # Pre-load product mappings for this seller in one query
@@ -1357,7 +1357,7 @@ class KSeFProductMappingView(KSeFModuleMixin, APIView):
             if not name or not product_id:
                 continue
             try:
-                product = Product.objects.get(uuid=product_id, company=company)
+                product = Product.objects.get(id=product_id, company=company)
             except (Product.DoesNotExist, Exception):
                 continue
             KSeFProductMapping.objects.update_or_create(
@@ -1624,7 +1624,7 @@ class KorMatchView(KSeFModuleMixin, APIView):
             items = []
             for item in pz.items.select_related("product").all():
                 items.append({
-                    "id": str(item.id),
+                    "id": str(item.uuid),
                     "productId": str(item.product_id) if item.product_id else None,
                     "productName": item.product.name if item.product else item.product_name or "",
                     "quantity": float(item.quantity_actual or item.quantity_ordered or 0),
@@ -1632,7 +1632,7 @@ class KorMatchView(KSeFModuleMixin, APIView):
                     "unit": item.unit or "",
                 })
             pz_list.append({
-                "id": str(pz.id),
+                "id": str(pz.uuid),
                 "documentNumber": pz.document_number,
                 "status": pz.status,
                 "issueDate": pz.issue_date.isoformat() if pz.issue_date else None,

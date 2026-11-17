@@ -243,6 +243,13 @@ class CustomerImportTests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["error_count"], 1)
 
+    def test_float_payment_terms_accepted(self):
+        """Excel sometimes writes integers as floats (e.g. 14.0). Should be accepted."""
+        r = self._upload([{"Nazwa": "FloatTest", "Termin płatności (dni)": "14.0"}])
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["error_count"], 0)
+        self.assertEqual(r.data["to_create"], 1)
+
     def test_template_download(self):
         r = self.client.get(reverse("customer-import-template"))
         self.assertEqual(r.status_code, status.HTTP_200_OK)

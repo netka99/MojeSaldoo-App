@@ -49,6 +49,7 @@ export interface WarehouseStockItem {
   product_name: string;
   product_sku: string | null;
   product_unit: string;
+  product_type: 'material' | 'finished' | 'trade' | 'service' | null;
   quantity_available: string | number;
   quantity_reserved: string | number;
   quantity_total: string | number;

@@ -157,7 +157,8 @@ export function useIssueInvoiceMutation() {
 export function useMarkPaidInvoiceMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => invoiceService.markPaid(id),
+    mutationFn: ({ id, paidAt }: { id: string; paidAt?: string }) =>
+      invoiceService.markPaid(id, paidAt),
     onSuccess: (inv: Invoice) => {
       void queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
       void queryClient.invalidateQueries({ queryKey: invoiceKeys.detail(inv.id) });

@@ -678,7 +678,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
         if link:
             inv = link.ksef_invoice
             return {
-                "id": str(inv.id),
+                "id": str(inv.uuid),
                 "ksef_number": inv.ksef_number,
                 "invoice_number": inv.invoice_number,
             }
@@ -686,7 +686,7 @@ class DeliveryDocumentSerializer(UUIDModelSerializer):
         if obj.ksef_invoice_id:
             inv = obj.ksef_invoice
             return {
-                "id": str(inv.id),
+                "id": str(inv.uuid),
                 "ksef_number": inv.ksef_number,
                 "invoice_number": inv.invoice_number,
             }

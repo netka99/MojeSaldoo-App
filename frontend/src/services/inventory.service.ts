@@ -30,4 +30,16 @@ export const inventoryService = {
 
   cancel: (id: string) =>
     api.post<InventoryCount>(`/inventory/${id}/cancel/`, {}),
+
+  delete: (id: string) =>
+    api.delete<void>(`/inventory/${id}/`),
+
+  removeItem: (id: string, itemId: string) =>
+    api.post<InventoryCount>(`/inventory/${id}/remove-item/`, { item_id: itemId }),
+
+  addItem: (id: string, productId: string) =>
+    api.post<InventoryCount>(`/inventory/${id}/add-item/`, { product_id: productId }),
+
+  addManualItem: (id: string, name: string, unit: string) =>
+    api.post<InventoryCount>(`/inventory/${id}/add-item/`, { name, unit }),
 };

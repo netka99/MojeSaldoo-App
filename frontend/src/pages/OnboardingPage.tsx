@@ -156,9 +156,16 @@ export function OnboardingPage() {
   const [entryChecked, setEntryChecked] = useState(false);
   const [hasExistingCompany, setHasExistingCompany] = useState(false);
 
-  // Check on first load whether the user already has a company.
+  // Check on first load whether the user already has a real (non-demo) company.
+  // A demo company alone does not count — it is auto-created on registration
+  // and the user still needs to go through onboarding to set up their own company.
   if (!entryChecked && (isSuccess || isError)) {
-    if (isSuccess && (myCompanies?.length ?? 0) > 0) setHasExistingCompany(true);
+    if (isSuccess) {
+      const realCompanies = (myCompanies ?? []).filter(
+        (c) => !(c as unknown as { is_demo?: boolean }).is_demo,
+      );
+      if (realCompanies.length > 0) setHasExistingCompany(true);
+    }
     setEntryChecked(true);
   }
 
@@ -255,7 +262,7 @@ export function OnboardingPage() {
         ryczalt_category: ryczaltCategory,
       });
       await refreshUser();
-      navigate('/', { replace: true });
+      navigate('/?welcome=1', { replace: true });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Nie udało się zapisać ustawień');
     }

@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ProductForm, type ProductImageChange } from '@/components/features/ProductForm';
+import { ProductForm } from '@/components/features/ProductForm';
 import { Button } from '@/components/ui/Button';
 import { productKeys } from '@/query/keys';
-import { useProductQuery, useUpdateProductMutation, useDeleteProductMutation } from '@/query/use-products';
-import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
+import { useProductQuery, useUpdateProductMutation } from '@/query/use-products';
 import { authStorage } from '@/services/api';
-import { productService } from '@/services/product.service';
+import { cn } from '@/lib/utils';
+import { openLabelPrintWindow } from '@/lib/openLabelPrintWindow';
 import type { ProductWrite } from '@/types';
 
 function ChevronLeftIcon({ className }: { className?: string }) {
@@ -45,11 +45,7 @@ export function ProductEditPage() {
   const queryClient = useQueryClient();
   const { data: product, isLoading, isError, error, refetch } = useProductQuery(id);
   const update = useUpdateProductMutation();
-  const deleteMutation = useDeleteProductMutation();
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -60,37 +56,52 @@ export function ProductEditPage() {
   }
 
   return (
-    <div className="safe-area-pt safe-area-pb mx-auto max-w-xl space-y-3 px-4 pb-8 pt-4 sm:max-w-2xl sm:px-6 lg:max-w-3xl">
+    <div className="safe-area-pt safe-area-pb mx-auto max-w-xl space-y-4 px-4 pb-8 pt-4 sm:max-w-2xl sm:px-6 lg:max-w-3xl">
       <header className="flex items-center gap-3">
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary md:h-10 md:w-10"
-          aria-label="Wróć"
+          className="shadow-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-card text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          aria-label="Wróć do listy"
         >
           <ChevronLeftIcon className="h-5 w-5" />
         </button>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-bold tracking-tight text-slate-900 md:text-xl">
+          <h1 className="text-[1.25rem] font-semibold leading-tight tracking-tight text-foreground sm:text-[1.375rem]">
             Edytuj produkt
           </h1>
-          <p className="truncate text-xs text-slate-500">
+          <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
             {product?.name ?? (isLoading ? 'Ładowanie…' : '')}
           </p>
         </div>
+        {product && (
+          <button
+            type="button"
+            onClick={() => openLabelPrintWindow(product)}
+            className="shadow-soft flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-surface-card px-3 text-[13px] font-medium text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Drukuj etykietę"
+          >
+            <svg className="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+              <polyline points="6 9 6 2 18 2 18 9" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" strokeLinecap="round" strokeLinejoin="round" />
+              <rect x="6" y="14" width="12" height="8" rx="1" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="hidden sm:inline">Etykieta</span>
+          </button>
+        )}
         <Link
           to={`/products/${id}/movements`}
-          className="flex h-9 shrink-0 items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="shadow-soft flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-surface-card px-3 text-[13px] font-medium text-on-surface transition-colors hover:bg-surface-low/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           aria-label="Historia ruchów"
         >
-          <ClockIcon className="h-4 w-4 text-slate-500" />
+          <ClockIcon className="h-4 w-4 text-muted-foreground" />
           <span className="hidden sm:inline">Historia ruchów</span>
         </Link>
       </header>
 
       {isError && (
         <div
-          className="flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          className="shadow-soft flex flex-col gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
           role="alert"
         >
           <p className="text-sm text-destructive">
@@ -118,147 +129,44 @@ export function ProductEditPage() {
           )}
           <ProductForm
             product={product}
-            onSubmit={async (data: ProductWrite, image?: ProductImageChange) => {
+            onSubmit={async (data: ProductWrite) => {
               setSubmitError(null);
-              setSaving(true);
               try {
                 await update.mutateAsync({ id, body: productBodyForPut(data) });
-                if (image?.file) {
-                  await productService.uploadImage(id, image.file);
-                } else if (image?.remove) {
-                  await productService.deleteImage(id);
-                }
                 await queryClient.invalidateQueries({ queryKey: productKeys.all });
                 navigate('/products');
               } catch (e) {
                 setSubmitError(e instanceof Error ? e.message : 'Nie udało się zapisać zmian');
-              } finally {
-                setSaving(false);
               }
             }}
             onCancel={() => navigate(-1)}
-            isLoading={saving}
+            isLoading={update.isPending}
           />
 
-          {/* ── Delete zone ──────────────────────────────────────── */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl">
-            <p className="text-sm font-semibold text-slate-900">Usuń produkt</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Możliwe tylko gdy produkt nie ma ruchów magazynowych, zamówień, WZ/PZ ani faktur.
+          <div className="shadow-soft rounded-2xl bg-surface-card p-4">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Stan magazynowy
             </p>
-
-            {deleteError && (
-              <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
-                {deleteError}
-              </p>
-            )}
-
-            {!confirmDelete ? (
-              <button
-                type="button"
-                className="mt-3 rounded-2xl border border-destructive/40 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5"
-                onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
-              >
-                Usuń produkt
-              </button>
-            ) : (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-sm text-foreground">Na pewno usunąć?</span>
-                <button
-                  type="button"
-                  disabled={deleteMutation.isPending}
-                  className="rounded-2xl bg-destructive px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                  onClick={async () => {
-                    setDeleteError(null);
-                    try {
-                      await deleteMutation.mutateAsync(id!);
-                      navigate('/products');
-                    } catch (e: unknown) {
-                      const err = e as { response?: { data?: { blockers?: string[]; detail?: string } } };
-                      const blockers = err?.response?.data?.blockers;
-                      setDeleteError(
-                        blockers?.length
-                          ? blockers.join(' ')
-                          : (e instanceof Error ? e.message : 'Nie udało się usunąć produktu.')
-                      );
-                      setConfirmDelete(false);
-                    }
-                  }}
-                >
-                  {deleteMutation.isPending ? 'Usuwanie…' : 'Tak, usuń'}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
-                  onClick={() => setConfirmDelete(false)}
-                >
-                  Anuluj
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 md:rounded-3xl">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-slate-900">Stan magazynowy</p>
-              <Link
-                to={`/products/${id}/adjust-stock`}
-                className="text-sm font-medium text-primary hover:underline"
-              >
-                Korekta
-              </Link>
-            </div>
-
-            {product.stocks_by_warehouse && product.stocks_by_warehouse.length > 0 ? (
-              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
-                {product.stocks_by_warehouse.map((s) => (
-                  <div key={s.warehouse_id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">{s.warehouse_name}</p>
-                      <p className="text-xs text-slate-400">{s.warehouse_code}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold tabular-nums text-slate-900">
-                        {parseFloat(s.quantity_available).toLocaleString('pl-PL')} {product.unit}
-                      </p>
-                      {parseFloat(s.quantity_reserved) > 0 && (
-                        <p className="text-xs tabular-nums text-amber-600">
-                          {parseFloat(s.quantity_reserved).toLocaleString('pl-PL')} zarezerwowane
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-2 text-xs text-slate-500">
-                Brak danych o stanie — dodaj stan przez korektę.
-              </p>
-            )}
-
+            <p className="mt-1 text-[13px] text-on-surface-variant">
+              Korektę ilości w magazynie zapisujesz osobno — nie wpływa na dane katalogowe (cena, VAT, SKU).
+            </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link
+                to={`/products/${id}/adjust-stock`}
+                className={cn(
+                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
+                )}
+              >
+                Korekta stanów magazynowych
+              </Link>
+              <Link
                 to={`/products/${id}/movements`}
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className={cn(
+                  'inline-flex h-9 items-center justify-center rounded-2xl bg-surface-card px-4 text-sm font-medium text-on-surface shadow-[0_2px_12px_rgba(26,28,31,0.08)] ring-offset-background transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-95',
+                )}
               >
                 Historia ruchów
               </Link>
-              <button
-                type="button"
-                onClick={() =>
-                  openLabelPrintWindow({
-                    id: product.id,
-                    name: product.name,
-                    sku: product.sku ?? null,
-                    barcode: product.barcode ?? null,
-                    unit: product.unit,
-                    price_gross: product.price_gross,
-                  })
-                }
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                Drukuj etykietę
-              </button>
             </div>
           </div>
         </>
