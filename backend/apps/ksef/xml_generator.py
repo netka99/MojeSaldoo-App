@@ -294,11 +294,15 @@ def generate_fa3_xml(invoice) -> str:
             vat_groups[rate_key]["vat"] += item.line_vat
             total_gross += item.line_gross
 
-    # FA-3 schema positions for VAT rates (covers most common Polish rates)
+    # FA-3 schema positions for VAT rates
+    # 7% (P_13_4/P_14_4) and 22% (P_13_5/P_14_5) are historical rates (pre-2022),
+    # needed for corrections to invoices issued before the rate change.
     _vat_position_map = {
         "23": ("P_13_1", "P_14_1"),
         "8":  ("P_13_2", "P_14_2"),
         "5":  ("P_13_3", "P_14_3"),
+        "7":  ("P_13_4", "P_14_4"),
+        "22": ("P_13_5", "P_14_5"),
         "0":  ("P_13_6", "P_14_6"),
     }
 
@@ -606,7 +610,7 @@ def generate_fa3_xml(invoice) -> str:
   </Podmiot1>
   <Podmiot2>
     <DaneIdentyfikacyjne>
-      <NIP>{_escape(customer.nip)}</NIP>
+      {f"<BrakID>1</BrakID>" if getattr(customer, "is_individual", False) else f"<NIP>{_escape(customer.nip)}</NIP>"}
       <Nazwa>{_escape(buyer_name)}</Nazwa>
     </DaneIdentyfikacyjne>
     <Adres>
@@ -619,7 +623,7 @@ def generate_fa3_xml(invoice) -> str:
   <Fa>
     <KodWaluty>PLN</KodWaluty>
     <P_1>{_fmt_date(invoice.issue_date)}</P_1>
-    <P_1M>{_escape(invoice.place_of_issue or company.city or "Warszawa")}</P_1M>
+    <P_1M>{_escape(invoice.place_of_issue or company.city or "")}</P_1M>
     <P_2>{_escape(invoice.invoice_number)}</P_2>{wz_xml}
     {_build_p6_xml(invoice)}{vat_fields_xml}
     <P_15>{_fmt_amount(total_gross)}</P_15>{adnotacje_xml}{p106e_xml}

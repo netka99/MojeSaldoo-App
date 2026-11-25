@@ -11,7 +11,7 @@ type NavGlyphName =
   | 'grid' | 'user' | 'clipboard' | 'file' | 'filePlus' | 'clock' | 'banknote' | 'truck'
   | 'box' | 'warehouse' | 'layers' | 'check' | 'minus' | 'building' | 'cart' | 'inbox'
   | 'files' | 'scan' | 'factory' | 'book' | 'wallet' | 'tag' | 'calendar' | 'chart'
-  | 'trend' | 'percent' | 'users' | 'receipt' | 'history' | 'gear' | 'list';
+  | 'trend' | 'percent' | 'users' | 'receipt' | 'history' | 'gear' | 'list' | 'shield';
 
 export function NavGlyph({ name }: { name: NavGlyphName }) {
   return (
@@ -206,6 +206,11 @@ export function NavGlyph({ name }: { name: NavGlyphName }) {
       {name === 'list' && (
         <>
           <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </>
+      )}
+      {name === 'shield' && (
+        <>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         </>
       )}
     </svg>
@@ -605,6 +610,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
 
               <NavGroup>
                 <AppNavItemLink to="/activity" icon={<NavGlyph name="history" />}>Historia aktywności</AppNavItemLink>
+                <AppNavItemLink to="/audit" icon={<NavGlyph name="shield" />}>Dziennik audytu</AppNavItemLink>
                 {canTeam && <AppNavItemLink to="/settings/team" end icon={<NavGlyph name="users" />}>Zespół</AppNavItemLink>}
               </NavGroup>
             </nav>

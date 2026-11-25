@@ -18,7 +18,7 @@ from .serializers import (
     RecipeSerializer,
     RecipeWriteSerializer,
 )
-from .services import complete_production_order, get_production_planning
+from .services import complete_production_order, get_production_planning, get_product_flow_report
 
 
 def _parse_date(raw: str | None) -> _date | None:
@@ -127,6 +127,23 @@ class ProductionOrderViewSet(viewsets.ModelViewSet):
             company=company,
             date_from=_parse_date(request.query_params.get("date_from")),
             date_to=_parse_date(request.query_params.get("date_to")),
+        )
+        return Response(items)
+
+    @action(detail=False, methods=["get"], url_path="product-flow")
+    def product_flow(self, request):
+        """
+        GET /api/production/orders/product-flow/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&product_id=UUID
+
+        Per-finished-product view of production runs, source orders, WZ and FV
+        documents, and balance alerts.
+        """
+        company = request.user.current_company
+        items = get_product_flow_report(
+            company=company,
+            date_from=_parse_date(request.query_params.get("date_from")),
+            date_to=_parse_date(request.query_params.get("date_to")),
+            product_id=request.query_params.get("product_id") or None,
         )
         return Response(items)
 

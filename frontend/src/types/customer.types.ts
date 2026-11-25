@@ -18,6 +18,7 @@ export interface Customer {
   payment_terms: number;
   credit_limit: string | number;
   is_active: boolean;
+  is_individual: boolean;
   image_url: string | null;
   // KSeF / FA-3 Podmiot2 flags
   is_jst: boolean;

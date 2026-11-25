@@ -32,6 +32,7 @@ import { formatMoneyGross } from '@/lib/order-utils';
 import { openInvoicePrintWindow } from '@/lib/openInvoicePrintWindow';
 import { invoiceService } from '@/services/invoice.service';
 import { invoiceKsefStatusBadgeClassName, invoiceStatusBadgeClassName } from './InvoicesPage';
+import { AuditHistorySection } from '@/components/features/AuditHistorySection';
 import type { Invoice } from '@/types';
 
 const plDate = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' });
@@ -1069,6 +1070,10 @@ export function InvoiceDetailPage() {
               issuing={issueM.isPending}
             />
           </div>
+        )}
+
+        {invoice && (
+          <AuditHistorySection objectType="Invoice" objectId={invoice.id} />
         )}
       </div>
     </>

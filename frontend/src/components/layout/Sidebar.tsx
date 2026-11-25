@@ -230,6 +230,9 @@ function NavSectionProdukcja() {
         <ModuleNavItem module="production" to="/production/recipes" icon={<NavGlyph name="book" />}>
           Receptury
         </ModuleNavItem>
+        <AppNavItemLink to="/reports/production-flow" icon={<NavGlyph name="chart" />}>
+          Raport produkcji
+        </AppNavItemLink>
     </NavGroup>
   );
 }

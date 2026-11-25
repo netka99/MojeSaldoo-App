@@ -18,6 +18,7 @@ import {
 } from '@/query/use-warehouses';
 import { usePermission } from '@/hooks/usePermission';
 import { authStorage } from '@/services/api';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 import type { WarehouseStockItem, WarehouseWrite } from '@/types';
 
 function fmt(v: string | number | null | undefined, unit?: string): string {
@@ -253,14 +254,7 @@ export function WarehouseDetailPage() {
                             >
                               <td className="px-4 py-3 font-medium text-foreground">
                                 <div className="flex items-center gap-1.5">
-                                  <svg
-                                    viewBox="0 0 16 16"
-                                    fill="none"
-                                    className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
-                                    aria-hidden
-                                  >
-                                    <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
+                                  <ReportExpandIcon open={isExpanded} />
                                   <div className="min-w-0">
                                     <div className="truncate">{row.product_name}</div>
                                     <ExpiryTag dateStr={row.nearest_expiry_date} />

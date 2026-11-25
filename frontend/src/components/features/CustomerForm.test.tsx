@@ -45,6 +45,7 @@ const baseCustomer: Customer = {
   payment_terms: 14,
   credit_limit: '1000.00',
   is_active: true,
+  is_individual: false,
   is_jst: false,
   is_gv_member: false,
   podmiot3_role: null as '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | '11' | null,

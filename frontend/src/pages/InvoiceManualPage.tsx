@@ -138,8 +138,8 @@ type ProductOption = {
 let _lineId = 1;
 function nextLineId() { return _lineId++; }
 
-function emptyLine(name = ''): LineItem {
-  return { id: nextLineId(), product_id: '', product_name: name, product_unit: 'szt', quantity: '1', unit_price_net: '', vat_rate: '23' };
+function emptyLine(name = '', defaultVatRate = '23'): LineItem {
+  return { id: nextLineId(), product_id: '', product_name: name, product_unit: 'szt', quantity: '1', unit_price_net: '', vat_rate: defaultVatRate };
 }
 
 function lineFromProduct(p: ProductOption, isGross: boolean): LineItem {
@@ -1125,10 +1125,11 @@ function InvoiceManualPageContent() {
       bank_account_iban: company.bank_account_iban ?? '',
       bank_swift: company.bank_swift ?? '',
       bank_name: company.bank_name ?? '',
+      annotation_zwolnienie: !(company.is_vat_payer ?? true),
       ...prev,
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company?.bank_account_iban, company?.bank_swift, company?.bank_name]);
+  }, [company?.bank_account_iban, company?.bank_swift, company?.bank_name, company?.is_vat_payer]);
 
   /* Auto-set payment received date for cash payments */
   useEffect(() => {
@@ -1196,7 +1197,7 @@ function InvoiceManualPageContent() {
   }
 
   function addEmptyLine() {
-    setLines((prev) => [...prev, emptyLine()]);
+    setLines((prev) => [...prev, emptyLine('', company?.is_vat_payer === false ? 'zw' : '23')]);
   }
 
   function updateLine(id: number, patch: Partial<LineItem>) {

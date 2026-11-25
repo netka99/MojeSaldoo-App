@@ -126,7 +126,7 @@ export function CertificateUploadPage() {
   const isStaff = Boolean(user?.is_staff);
 
   const envOptions: { value: KsefEnvironment; label: string; hint: string; url: string }[] = [
-    ...(isStaff ? [{ value: 'test' as KsefEnvironment, label: 'Testowe', hint: 'Fikcyjne dane — tylko dla programistów', url: 'https://ap-test.ksef.mf.gov.pl/web/' }] : []),
+    { value: 'test', label: 'Testowe', hint: 'Publiczne dane testowe MF — do testowania integracji', url: 'https://ap-test.ksef.mf.gov.pl/web/' },
     { value: 'demo', label: 'Demo', hint: 'Prawdziwe dane firmowe, fikcyjne faktury', url: 'https://ap-demo.ksef.mf.gov.pl/web/' },
     { value: 'production', label: 'Produkcja', hint: 'Realne faktury w KSeF', url: 'https://ap.ksef.mf.gov.pl/web/' },
   ];
@@ -294,7 +294,7 @@ export function CertificateUploadPage() {
       <section className="rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
         <div className="px-4 py-3 md:px-6">
           <p className="text-sm font-semibold text-slate-900">Środowisko KSeF</p>
-          <p className="text-xs text-slate-500">Demo i Produkcja wymagają certyfikatu kwalifikowanego.</p>
+          <p className="text-xs text-slate-500">Wszystkie środowiska wymagają certyfikatu kwalifikowanego.</p>
         </div>
         <div className="divide-y divide-slate-100 border-t border-slate-100">
           {envOptions.map((opt) => (

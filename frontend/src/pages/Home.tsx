@@ -271,6 +271,123 @@ function StatCard({
   return inner;
 }
 
+type WorkflowStep = {
+  key: string;
+  label: string;
+  sub: string;
+  count: number;
+  to: string;
+  accentColor: 'amber' | 'blue' | 'green' | 'purple';
+  show: boolean;
+};
+
+function WorkflowChecklist({
+  d,
+  moduleEnabled,
+  hasPermission,
+}: {
+  d: import('@/types/reporting.types').DashboardSummary;
+  moduleEnabled: Record<string, boolean>;
+  hasPermission: (key: keyof UserPermissions) => boolean;
+}) {
+  const steps: WorkflowStep[] = [
+    {
+      key: 'confirm',
+      label: 'Do potwierdzenia',
+      sub: 'Zamówienia czekające na akceptację',
+      count: d.orders_pending_confirmation,
+      to: '/orders',
+      accentColor: 'amber',
+      show: moduleEnabled.orders && hasPermission('can_manage_orders'),
+    },
+    {
+      key: 'produce',
+      label: 'Do produkcji',
+      sub: 'Zamówienia z brakującą produkcją',
+      count: d.orders_to_produce ?? 0,
+      to: '/production/orders',
+      accentColor: 'purple',
+      show: moduleEnabled.production && hasPermission('can_manage_production'),
+    },
+    {
+      key: 'wz_draft',
+      label: 'WZ do wysłania',
+      sub: 'Dokumenty wydania w szkicu',
+      count: d.wz_draft_count ?? 0,
+      to: '/delivery',
+      accentColor: 'blue',
+      show: moduleEnabled.delivery && hasPermission('can_manage_delivery'),
+    },
+    {
+      key: 'invoice',
+      label: 'Do zafakturowania',
+      sub: 'Dostarczone zamówienia bez faktury',
+      count: d.orders_to_invoice ?? 0,
+      to: '/invoices',
+      accentColor: 'green',
+      show: moduleEnabled.invoicing && hasPermission('can_manage_invoices'),
+    },
+  ];
+
+  const visibleSteps = steps.filter((s) => s.show);
+  const activeSteps = visibleSteps.filter((s) => s.count > 0);
+
+  if (visibleSteps.length === 0) return null;
+
+  const accentClasses: Record<WorkflowStep['accentColor'], { bar: string; count: string; countBg: string }> = {
+    amber:  { bar: 'bg-amber-400',   count: 'text-amber-700',  countBg: 'bg-amber-100'   },
+    blue:   { bar: 'bg-blue-400',    count: 'text-blue-700',   countBg: 'bg-blue-100'    },
+    green:  { bar: 'bg-emerald-400', count: 'text-emerald-700',countBg: 'bg-emerald-100' },
+    purple: { bar: 'bg-violet-400',  count: 'text-violet-700', countBg: 'bg-violet-100'  },
+  };
+
+  return (
+    <section className="mt-4 px-4">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold text-on-surface">Co dziś zrobić?</h2>
+        {activeSteps.length === 0 && (
+          <span className="text-xs text-emerald-600 font-medium">Wszystko gotowe ✓</span>
+        )}
+      </div>
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        {visibleSteps.map((step, idx) => {
+          const cls = accentClasses[step.accentColor];
+          const done = step.count === 0;
+          return (
+            <Link
+              key={step.key}
+              to={step.to}
+              className={cn(
+                'flex items-center gap-3 px-4 py-3 no-underline',
+                idx < visibleSteps.length - 1 && 'border-b border-slate-100',
+                done ? 'opacity-50' : 'hover:bg-slate-50/60',
+              )}
+            >
+              {/* color bar */}
+              <span className={cn('h-8 w-1 shrink-0 rounded-full', cls.bar, done && 'opacity-30')} />
+              <div className="min-w-0 flex-1">
+                <p className={cn('text-sm font-medium', done ? 'text-slate-400' : 'text-slate-800')}>
+                  {step.label}
+                  {done && <span className="ml-2 text-xs font-normal text-emerald-500">✓</span>}
+                </p>
+                <p className="text-xs text-slate-400">{step.sub}</p>
+              </div>
+              {!done && (
+                <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-sm font-bold', cls.countBg, cls.count)}>
+                  {step.count}
+                </span>
+              )}
+              <svg className="h-4 w-4 shrink-0 text-slate-300" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function DemoReadyBanner() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -414,8 +531,20 @@ export const Home: React.FC = () => {
 
       <SetupNudgeBar />
 
+      {/* Today's workflow checklist — shown when at least orders or production module active */}
+      {d && ((moduleEnabled.orders && hasPermission('can_manage_orders')) ||
+        (moduleEnabled.production && hasPermission('can_manage_production')) ||
+        (moduleEnabled.delivery && hasPermission('can_manage_delivery')) ||
+        (moduleEnabled.invoicing && hasPermission('can_manage_invoices'))) && (
+        <WorkflowChecklist
+          d={d}
+          moduleEnabled={moduleEnabled}
+          hasPermission={hasPermission}
+        />
+      )}
+
       {activeTiles.length > 0 && (
-        <section className="grid grid-cols-2 gap-3 px-4 mt-4">
+        <section className="grid grid-cols-2 gap-3 px-4 mt-6">
           {activeTiles.map(({ key, label, to, Icon }) => (
             <MotionLink
               key={key}
@@ -440,28 +569,12 @@ export const Home: React.FC = () => {
         (moduleEnabled.warehouses && hasPermission('can_manage_products')) ||
         (moduleEnabled.production && hasPermission('can_manage_production'))) && (
         <section className="mt-6 grid grid-cols-2 gap-3 px-4">
-          {moduleEnabled.orders && hasPermission('can_manage_orders') && (
-            <StatCard
-              label="Zamówienia do potwierdzenia"
-              value={d ? d.orders_pending_confirmation : '—'}
-              accent={d && d.orders_pending_confirmation > 0 ? 'amber' : undefined}
-              to="/orders"
-            />
-          )}
           {moduleEnabled.delivery && hasPermission('can_manage_delivery') && (
             <StatCard
               label="WZ w trasie"
               value={d ? d.wz_in_transit : '—'}
               accent={d && d.wz_in_transit > 0 ? 'blue' : undefined}
               to="/delivery"
-            />
-          )}
-          {moduleEnabled.production && hasPermission('can_manage_production') && (
-            <StatCard
-              label="Zlecenia w produkcji"
-              value={d ? (d.production_in_progress ?? '—') : '—'}
-              accent={d && (d.production_in_progress ?? 0) > 0 ? 'amber' : undefined}
-              to="/production/orders"
             />
           )}
           {moduleEnabled.invoicing && hasPermission('can_manage_invoices') && (

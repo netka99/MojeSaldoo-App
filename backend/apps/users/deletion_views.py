@@ -44,6 +44,8 @@ def _hard_delete_demo(demo: Company, user: User) -> None:
         user.current_company = None
         user.save(update_fields=["current_company"])
 
+    from apps.activity.models import ActivityLog, AuditLog  # noqa: PLC0415
+
     # Delete in dependency order to avoid ProtectedError on cross-app FKs.
     DeliveryItem.objects.filter(delivery_document__company=demo).delete()
     InvoiceItem.objects.filter(invoice__company=demo).delete()
@@ -60,6 +62,8 @@ def _hard_delete_demo(demo: Company, user: User) -> None:
     Product.objects.filter(company=demo).delete()
     Warehouse.objects.filter(company=demo).delete()
     Customer.objects.filter(company=demo).delete()
+    ActivityLog.objects.filter(company=demo).delete()
+    AuditLog.objects.filter(company=demo).delete()
     demo.delete()
 
 

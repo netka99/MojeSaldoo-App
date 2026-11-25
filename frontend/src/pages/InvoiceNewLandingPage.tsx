@@ -2,6 +2,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { authStorage } from '@/services/api';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { cn } from '@/lib/utils';
+import { KsefTestEnvBanner } from '@/components/features/invoicing/KsefTestEnvBanner';
 
 function IconCalendar({ className }: { className?: string }) {
   return (
@@ -80,6 +81,7 @@ function InvoiceNewLandingPageContent() {
 
       {/* Cards */}
       <div className="flex flex-col gap-3 px-4 pt-5 pb-8">
+        <KsefTestEnvBanner />
         <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Wybierz sposób wystawiania
         </p>

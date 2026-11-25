@@ -31,6 +31,7 @@ import { useAuth } from '@/context/AuthContext';
 import { resolveCustomerIdFromSearch } from '@/lib/customer-picker-utils';
 import { cn } from '@/lib/utils';
 import { openWZPrintWindow } from '@/lib/openWZPrintWindow';
+import { AuditHistorySection } from '@/components/features/AuditHistorySection';
 import type { DeliveryDocument, DeliveryItem, LinkedZWDocument, PendingReturnItem, PzKorPayload } from '@/types';
 import type { Customer, Order, Product } from '@/types';
 
@@ -1910,6 +1911,13 @@ export function DeliveryDocumentDetailPage() {
               </div>
             )}
           </>
+        )}
+
+        {/* Audit history */}
+        {doc && !isError && (
+          <div className="mt-3 px-4 pb-6 md:px-0">
+            <AuditHistorySection objectType="DeliveryDocument" objectId={String(doc.id)} />
+          </div>
         )}
       </main>
 

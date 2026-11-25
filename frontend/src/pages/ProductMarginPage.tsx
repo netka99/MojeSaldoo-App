@@ -6,6 +6,7 @@ import { useProductMarginQuery, useProductMarginDetailQuery } from '@/query/use-
 import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const qty4 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 4 });
@@ -344,14 +345,7 @@ export function ProductMarginPage() {
                             onClick={() => canExpand && toggleProduct(pid)}
                           >
                             <td className="border-b px-3 py-2 text-muted-foreground">
-                              {canExpand && (
-                                <svg
-                                  className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
-                                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
-                                >
-                                  <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              )}
+                              {canExpand && <ReportExpandIcon open={isExpanded} />}
                             </td>
                             <td className="border-b px-3 py-2 font-medium">{row.productName || '—'}</td>
                             <td className="border-b px-3 py-2 text-right tabular-nums">

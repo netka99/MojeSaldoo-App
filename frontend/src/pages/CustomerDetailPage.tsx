@@ -15,6 +15,7 @@ import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
 import { orderStatusBadgeClassName } from '@/lib/order-utils';
+import { AuditHistorySection } from '@/components/features/AuditHistorySection';
 import type { Order, DeliveryDocument } from '@/types';
 import type { CustomerProductPrice } from '@/types/product.types';
 
@@ -115,9 +116,12 @@ function OrderRow({
             {wzDocs.map((wz) => (
               <span
                 key={wz.id}
-                className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                className={wz.status === 'draft'
+                  ? 'rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700'
+                  : 'rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700'
+                }
               >
-                {wz.document_number ?? 'WZ'}
+                {wz.document_number ?? 'WZ'}{wz.status === 'draft' ? ' szkic' : ''}
               </span>
             ))}
             {zwCount > 0 && (
@@ -629,6 +633,12 @@ function CustomerDetailContent({ customerId, date }: { customerId: string; date:
               )}
             </section>
           </>
+        )}
+
+        {customer && (
+          <div className="px-4 pb-6 md:px-0">
+            <AuditHistorySection objectType="Customer" objectId={customer.id} />
+          </div>
         )}
       </main>
     </div>

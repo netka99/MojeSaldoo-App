@@ -168,6 +168,7 @@ class ProductionOrderSerializer(UUIDModelSerializer):
             "rw_document_number",
             "pw_document",
             "pw_document_number",
+            "is_stock_production",
             "source_orders",
             "source_orders_info",
             "notes",
@@ -227,7 +228,7 @@ class ProductionOrderCreateSerializer(UUIDModelSerializer):
 
     class Meta:
         model = ProductionOrder
-        fields = ["id", "recipe", "date", "mode", "quantity_produced", "source_orders", "notes", "inputs"]
+        fields = ["id", "recipe", "date", "mode", "is_stock_production", "quantity_produced", "source_orders", "notes", "inputs"]
         read_only_fields = []
 
     def validate(self, data):

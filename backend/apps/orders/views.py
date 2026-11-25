@@ -80,7 +80,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             Order.objects.all()
             .select_related("customer", "company", "user")
             .prefetch_related(
-                "items", "items__product", "production_orders",
+                "items", "items__product",
+                "production_orders",
+                "production_orders__rw_document",
+                "production_orders__pw_document",
                 "delivery_documents",
                 "delivery_documents__wz_corrections",
                 "invoices",

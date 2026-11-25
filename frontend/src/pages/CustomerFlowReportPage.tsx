@@ -13,6 +13,7 @@ import {
   reportThClass,
   reportRowClass,
   reportTableClass,
+  ReportExpandIcon,
 } from '@/lib/reportSurface';
 import type { CustomerFlowReport, FlowCustomerRow, FlowInvoiceEntry, FlowManualInvoice, FlowOrderDetail, FlowOrderLine, FlowProblem, FlowStandaloneInvoice, FlowWzEntry } from '@/types/reporting.types';
 import { ORDER_STATUS_LABELS_PL } from '@/constants/orderStatusPl';
@@ -303,11 +304,11 @@ function OrderDetailRow({ row, striped }: { row: FlowOrderDetail; striped: boole
             <button
               type="button"
               onClick={() => setLinesOpen((v) => !v)}
-              className="flex items-center rounded-lg px-1 py-0.5 text-slate-500 hover:bg-slate-100"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
               title="Pokaż linie produktów"
               aria-expanded={linesOpen}
             >
-              <ChevronDown open={linesOpen} />
+              <ReportExpandIcon open={linesOpen} />
             </button>
           )}
         </div>
@@ -557,8 +558,7 @@ function OrdersBlock({ orders }: { orders: FlowOrderDetail[] }) {
 }
 
 /* ── Customer row (collapsible) ────────────────────────────────── */
-function CustomerRow({ row, wzRequired }: { row: FlowCustomerRow; wzRequired: boolean }) {
-  const [open, setOpen] = useState(false);
+function CustomerRow({ row, wzRequired, open, onToggle }: { row: FlowCustomerRow; wzRequired: boolean; open: boolean; onToggle: () => void }) {
   const hasProblems = row.problems.length > 0;
   const worstProblem = row.problems.includes('invoice_overdue') ? 'invoice_overdue'
     : row.problems.length > 0 ? row.problems[0]! : null;
@@ -571,7 +571,7 @@ function CustomerRow({ row, wzRequired }: { row: FlowCustomerRow; wzRequired: bo
       {/* Header */}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         className="w-full text-left hover:bg-slate-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
       >
         <div className="grid items-center gap-3 px-4 py-3 md:px-5
@@ -606,13 +606,13 @@ function CustomerRow({ row, wzRequired }: { row: FlowCustomerRow; wzRequired: bo
             <p className="text-[11px] text-slate-400 uppercase tracking-wide">WZ</p>
             <p className={cn('text-base font-bold tabular-nums',
               row.wz.without_invoice > 0 ? 'text-amber-600' :
-              row.problems.includes('wz_draft') ? 'text-amber-500' : 'text-slate-900')}>
+              (row.wz as any).draft > 0 ? 'text-amber-500' : 'text-slate-900')}>
               {row.wz.total}
             </p>
             {row.wz.without_invoice > 0 ? (
               <p className="text-[11px] tabular-nums text-amber-600">{row.wz.without_invoice} bez FV</p>
-            ) : row.problems.includes('wz_draft') ? (
-              <p className="text-[11px] tabular-nums text-amber-500">szkic ⚠</p>
+            ) : (row.wz as any).draft > 0 ? (
+              <p className="text-[11px] tabular-nums text-amber-500">{(row.wz as any).draft} szkic ⚠</p>
             ) : (
               <p className="text-[11px] text-slate-400">—</p>
             )}
@@ -715,6 +715,21 @@ export function CustomerFlowReportPage() {
   });
 
   const [okSectionOpen, setOkSectionOpen] = useState(false);
+  const [openCustomers, setOpenCustomers] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('customer-flow-open');
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+
+  function toggleCustomer(id: string) {
+    setOpenCustomers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { sessionStorage.setItem('customer-flow-open', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
 
   const { withProblems, okRows } = useMemo(() => {
     if (!data) return { withProblems: [], okRows: [] };
@@ -840,7 +855,7 @@ export function CustomerFlowReportPage() {
           ) : (
             <div className="flex flex-col gap-2">
               {withProblems.map((row) => (
-                <CustomerRow key={row.customer_id} row={row} wzRequired={data.wz_required} />
+                <CustomerRow key={row.customer_id} row={row} wzRequired={data.wz_required} open={openCustomers.has(row.customer_id)} onToggle={() => toggleCustomer(row.customer_id)} />
               ))}
             </div>
           )}
@@ -864,7 +879,7 @@ export function CustomerFlowReportPage() {
               {okSectionOpen && (
                 <div className="flex flex-col gap-2 border-t border-slate-100 p-3">
                   {okRows.map((row) => (
-                    <CustomerRow key={row.customer_id} row={row} wzRequired={data.wz_required} />
+                    <CustomerRow key={row.customer_id} row={row} wzRequired={data.wz_required} open={openCustomers.has(row.customer_id)} onToggle={() => toggleCustomer(row.customer_id)} />
                   ))}
                 </div>
               )}

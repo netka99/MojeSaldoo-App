@@ -347,13 +347,56 @@ Koło jest płaskie: `bg-slate-100`, hover `bg-slate-200`. Bez `shadow-soft` i b
 
 Tytuł stoi obok, w `flex items-center gap-3`. Strzałka wraca do poprzedniej strony.
 
-### Rozwijanie wiersza
+### Rozwijanie wiersza (tabela)
 
 Użyj `ReportExpandIcon` z `frontend/src/lib/reportSurface.tsx`. Ikona `h-4 w-4 text-slate-500`, ścieżka w prawo, `rotate-90` gdy wiersz jest otwarty. Kliknięcie strzałki albo wiersza otwiera szczegóły. Na liście faktur checkbox zaznaczenia, gdy tryb wyboru jest włączony, stoi przed strzałką.
 
-### Akordeon
+Strzałka jest w **pierwszej kolumnie, z lewej**. Nie przenoś jej na prawą stronę tabeli.
 
-Chevron `h-4 w-4 text-slate-400`, ścieżka w dół, `rotate-180` gdy sekcja jest otwarta. Bez koła.
+```tsx
+// w pierwszej komórce <td> wiersza tabeli:
+<td className="w-8 pl-3 pr-1">
+  <button onClick={() => toggle(id)} className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100">
+    <ReportExpandIcon open={open} />
+  </button>
+</td>
+```
+
+### Rozwijanie karty (lista kart)
+
+Gdy wiersze są kartami (nie tabelą), rozwijanie dochodzi jako dodatkowy przycisk po **prawej** stronie karty, obok ceny/licznika. Kliknięcie środka karty nadal nawiguje do szczegółów.
+
+```tsx
+<div className="flex items-center gap-3 px-4 py-3">
+  {/* klik środka → szczegóły */}
+  <button className="min-w-0 flex-1 text-left" onClick={() => navigate(id)}>
+    ...treść...
+  </button>
+  {/* prawa strona: cena/licznik */}
+  <div className="shrink-0 text-right">...</div>
+  {/* strzałka rozwijania — na końcu, po prawej */}
+  {hasItems && (
+    <button onClick={() => toggle(id)} aria-expanded={open}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
+      <ReportExpandIcon open={open} />
+    </button>
+  )}
+</div>
+```
+
+### Akordeon (nagłówek karty/sekcji)
+
+Chevron `h-4 w-4 text-slate-400`, ścieżka w dół (`M6 9l6 6 6-6`), `rotate-180` gdy sekcja jest otwarta. Bez koła. Stoi po **prawej** stronie nagłówka.
+
+```tsx
+<svg viewBox="0 0 24 24" fill="none"
+  className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', open && 'rotate-180')}
+  stroke="currentColor" strokeWidth={2}>
+  <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+</svg>
+```
+
+Nie używaj `rotate-90` dla akordeonu. Nie używaj chevron-w-dół dla rozwijania wiersza tabeli.
 
 ---
 

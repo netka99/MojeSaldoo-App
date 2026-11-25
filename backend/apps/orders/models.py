@@ -65,7 +65,17 @@ class Order(models.Model):
         help_text="Human-readable id, e.g. ZAM/2026/0001 (unique per company)",
     )
     order_date = models.DateField(help_text="Date when the order was placed")
-    delivery_date = models.DateField(help_text="Planned delivery date")
+    delivery_date = models.DateField(help_text="Planned delivery date (contractual date for the customer)")
+    production_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Planned date to start production. Used by production planning when set.",
+    )
+    shipment_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Planned date to issue WZ and ship. Used as default WZ issue_date when set.",
+    )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
@@ -260,16 +270,23 @@ class OrderItem(models.Model):
         default=Decimal("0.00"),
         validators=[MinValueValidator(Decimal("0"))],
     )
-    unit_price_net = models.DecimalField(
+    quantity_produced = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         default=Decimal("0.00"),
         validators=[MinValueValidator(Decimal("0"))],
+        help_text="Total quantity produced via completed production orders (PRD).",
+    )
+    unit_price_net = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal("0.0000"),
+        validators=[MinValueValidator(Decimal("0"))],
     )
     unit_price_gross = models.DecimalField(
         max_digits=10,
-        decimal_places=2,
-        default=Decimal("0.00"),
+        decimal_places=4,
+        default=Decimal("0.0000"),
         validators=[MinValueValidator(Decimal("0"))],
     )
     vat_rate = models.DecimalField(

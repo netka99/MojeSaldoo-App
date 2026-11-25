@@ -1,6 +1,7 @@
 import { api } from './api';
 import type {
   PaginatedProductionOrders,
+  ProductFlowItem,
   ProductionOrder,
   ProductionOrderCreate,
   ProductionPlanningItem,
@@ -44,4 +45,11 @@ export const productionService = {
    */
   fetchPlanning: (params?: { date_from?: string; date_to?: string }) =>
     api.get<ProductionPlanningItem[]>(`${ordersPath}planning/`, { params }),
+
+  /**
+   * Product flow report: per finished-product view of production runs with
+   * source orders, WZ and FV documents, and balance alerts.
+   */
+  fetchProductFlow: (params?: { date_from?: string; date_to?: string; product_id?: string }) =>
+    api.get<ProductFlowItem[]>(`${ordersPath}product-flow/`, { params }),
 };

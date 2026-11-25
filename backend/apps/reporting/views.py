@@ -129,9 +129,9 @@ class SalesSummaryView(ReportingModuleMixin, APIView):
         date_to = _optional_query_date(request, "date_to")
         qs = Order.objects.filter(company=company)
         if date_from is not None:
-            qs = qs.filter(order_date__gte=date_from)
+            qs = qs.filter(delivery_date__gte=date_from)
         if date_to is not None:
-            qs = qs.filter(order_date__lte=date_to)
+            qs = qs.filter(delivery_date__lte=date_to)
 
         by_status = {
             row["status"]: row["c"]
@@ -202,9 +202,9 @@ class TopProductsView(ReportingModuleMixin, APIView):
             order__status=Order.STATUS_CANCELLED
         )
         if date_from is not None:
-            items = items.filter(order__order_date__gte=date_from)
+            items = items.filter(order__delivery_date__gte=date_from)
         if date_to is not None:
-            items = items.filter(order__order_date__lte=date_to)
+            items = items.filter(order__delivery_date__lte=date_to)
 
         rows = (
             items.values("product_id")
@@ -241,9 +241,9 @@ class TopCustomersView(ReportingModuleMixin, APIView):
             status=Order.STATUS_CANCELLED
         )
         if date_from is not None:
-            qs = qs.filter(order_date__gte=date_from)
+            qs = qs.filter(delivery_date__gte=date_from)
         if date_to is not None:
-            qs = qs.filter(order_date__lte=date_to)
+            qs = qs.filter(delivery_date__lte=date_to)
 
         rows = (
             qs.values("customer_id")
@@ -476,6 +476,27 @@ class DashboardSummaryView(ReportingModuleMixin, APIView):
             status=ProductionOrder.STATUS_DRAFT,
         ).count()
 
+        # WZ in draft — created but not yet sent/confirmed
+        wz_draft_count = DeliveryDocument.objects.filter(
+            company=company,
+            document_type=DeliveryDocument.DOC_TYPE_WZ,
+            status=DeliveryDocument.STATUS_DRAFT,
+        ).count()
+
+        # Confirmed orders with at least one item not yet fully produced
+        orders_to_produce = Order.objects.filter(
+            company=company,
+            status__in=[Order.STATUS_CONFIRMED, Order.STATUS_IN_PREPARATION],
+        ).filter(
+            items__quantity_produced__lt=F('items__quantity'),
+        ).distinct().count()
+
+        # Delivered orders not yet invoiced (status=delivered means WZ confirmed, ready to invoice)
+        orders_to_invoice = Order.objects.filter(
+            company=company,
+            status=Order.STATUS_DELIVERED,
+        ).count()
+
         return Response({
             'orders_pending_confirmation': orders_pending,
             'wz_in_transit': wz_in_transit,
@@ -487,6 +508,9 @@ class DashboardSummaryView(ReportingModuleMixin, APIView):
             'van_routes_today': van_routes_today,
             'low_stock_alerts': low_stock,
             'date': str(today),
+            'wz_draft_count': wz_draft_count,
+            'orders_to_produce': orders_to_produce,
+            'orders_to_invoice': orders_to_invoice,
         })
 
 

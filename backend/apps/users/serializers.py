@@ -257,6 +257,8 @@ class CompanyWorkflowSettingsSerializer(UUIDModelSerializer):
             "auto_deliver_wz_changed_at",
             "production_complete_immediately",
             "production_complete_immediately_changed_at",
+            "order_dates_enabled",
+            "order_dates_enabled_changed_at",
         ]
         read_only_fields = [
             "orders_required_changed_at",
@@ -264,6 +266,7 @@ class CompanyWorkflowSettingsSerializer(UUIDModelSerializer):
             "auto_wz_on_order_changed_at",
             "auto_deliver_wz_changed_at",
             "production_complete_immediately_changed_at",
+            "order_dates_enabled_changed_at",
         ]
 
 

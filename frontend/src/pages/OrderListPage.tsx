@@ -1,7 +1,9 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useOrderListQuery, useOrderProductSummaryQuery, buildOrderListApiFilters } from '@/query/use-orders';
+import { useAuth } from '@/context/AuthContext';
+import { useWorkflowSettingsQuery } from '@/query/use-companies';
 import { formatMoneyGross } from '@/lib/order-utils';
 import { ORDER_STATUS_LABELS_PL, orderStatusOptions } from '@/constants/orderStatusPl';
 import {
@@ -265,8 +267,178 @@ function OrderItems({ order, compact = false }: { order: Order; compact?: boolea
   );
 }
 
+interface ColFilters {
+  orderNumber: string;
+  wz: string;
+  production: string;
+  invoice: string;
+}
+
+type SortDir = 'asc' | 'desc' | null;
+
+function FilterIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-primary' : 'text-slate-400')}
+      viewBox="0 0 24 24"
+      fill={active ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden
+    >
+      <path d="M3 4h18M7 10h10M11 16h2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ColFilterTh({
+  label, col, placeholder, colFilters, openColFilter, onToggle, onSet,
+}: {
+  label: string;
+  col: keyof ColFilters;
+  placeholder: string;
+  colFilters: ColFilters;
+  openColFilter: keyof ColFilters | null;
+  onToggle: (col: keyof ColFilters) => void;
+  onSet: (col: keyof ColFilters, value: string) => void;
+}) {
+  const active = !!colFilters[col];
+  const open = openColFilter === col;
+  return (
+    <div className="relative flex items-center gap-1">
+      {active ? (
+        <button
+          type="button"
+          onClick={() => onToggle(col)}
+          className="flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-primary hover:bg-primary/20"
+          aria-label={`Filtruj po kolumnie ${label}: ${colFilters[col]}`}
+          aria-expanded={open}
+        >
+          <span className="max-w-[7rem] truncate normal-case tracking-normal">{colFilters[col]}</span>
+          <FilterIcon active />
+        </button>
+      ) : (
+        <>
+          <span>{label}</span>
+          <button
+            type="button"
+            onClick={() => onToggle(col)}
+            className={cn('rounded p-0.5 transition-colors hover:bg-slate-100', open && 'bg-slate-100')}
+            aria-label={`Filtruj po kolumnie ${label}`}
+            aria-expanded={open}
+          >
+            <FilterIcon active={false} />
+          </button>
+        </>
+      )}
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => onToggle(col)} aria-hidden />
+          <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-apple-md">
+            <input
+              autoFocus
+              type="search"
+              value={colFilters[col]}
+              onChange={(e) => onSet(col, e.target.value)}
+              placeholder={placeholder}
+              className="field-ios w-full py-1.5 text-xs font-normal normal-case tracking-normal"
+            />
+            {active && (
+              <button
+                type="button"
+                onClick={() => onSet(col, '')}
+                className="mt-1.5 w-full rounded-lg px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-50"
+              >
+                Wyczyść
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DateSortFilterTh({
+  label, sort, filterDate, open, onToggleOpen, onSort, onFilter,
+}: {
+  label: string;
+  sort: SortDir;
+  filterDate: string;
+  open: boolean;
+  onToggleOpen: () => void;
+  onSort: (dir: SortDir) => void;
+  onFilter: (val: string) => void;
+}) {
+  const active = sort !== null || !!filterDate;
+  return (
+    <div className="relative flex items-center gap-1">
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={onToggleOpen}
+        className={cn('rounded p-0.5 transition-colors hover:bg-slate-100', (open || active) && 'bg-slate-100')}
+        aria-label={`Opcje kolumny ${label}`}
+      >
+        {sort === 'asc' ? (
+          <svg className="h-3.5 w-3.5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden><path d="M12 19V5M5 12l7-7 7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        ) : sort === 'desc' ? (
+          <svg className="h-3.5 w-3.5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden><path d="M12 5v14M19 12l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        ) : (
+          <FilterIcon active={!!filterDate} />
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={onToggleOpen} aria-hidden />
+          <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-2 shadow-apple-md">
+            <div className="mb-2 flex gap-1">
+              <button
+                type="button"
+                onClick={() => { onSort(sort === 'asc' ? null : 'asc'); onToggleOpen(); }}
+                className={cn('flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-medium transition-colors', sort === 'asc' ? 'bg-primary/10 text-primary' : 'text-slate-600 hover:bg-slate-50')}
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M12 19V5M5 12l7-7 7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Rosnąco
+              </button>
+              <button
+                type="button"
+                onClick={() => { onSort(sort === 'desc' ? null : 'desc'); onToggleOpen(); }}
+                className={cn('flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-medium transition-colors', sort === 'desc' ? 'bg-primary/10 text-primary' : 'text-slate-600 hover:bg-slate-50')}
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M12 5v14M19 12l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Malejąco
+              </button>
+            </div>
+            <input
+              type="date"
+              value={filterDate}
+              onChange={(e) => onFilter(e.target.value)}
+              className="field-ios w-full py-1.5 text-xs font-normal"
+            />
+            {active && (
+              <button
+                type="button"
+                onClick={() => { onSort(null); onFilter(''); onToggleOpen(); }}
+                className="mt-1.5 w-full rounded-lg px-2 py-1 text-left text-xs text-slate-500 hover:bg-slate-50"
+              >
+                Wyczyść
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function OrderListPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId || undefined);
+  const orderDatesEnabled = workflowSettings?.order_dates_enabled ?? false;
+
   const defaultDateFrom = startOfMonthIso();
   const presets = periodPresets();
   const [search, setSearch] = useState('');
@@ -276,6 +448,17 @@ export function OrderListPage() {
   const [page, setPage] = useState(1);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [colFilters, setColFilters] = useState<ColFilters>({ orderNumber: '', wz: '', production: '', invoice: '' });
+  const [openColFilter, setOpenColFilter] = useState<keyof ColFilters | null>(null);
+  const [orderDateFilter, setOrderDateFilter] = useState('');
+  const [orderDateSort, setOrderDateSort] = useState<SortDir>(null);
+  const [openOrderDate, setOpenOrderDate] = useState(false);
+  const [deliveryDateFilter, setDeliveryDateFilter] = useState('');
+  const [deliveryDateSort, setDeliveryDateSort] = useState<SortDir>(null);
+  const [openDeliveryDate, setOpenDeliveryDate] = useState(false);
+  const [productionDateFilter, setProductionDateFilter] = useState('');
+  const [productionDateSort, setProductionDateSort] = useState<SortDir>(null);
+  const [openProductionDate, setOpenProductionDate] = useState(false);
 
   const filters = buildOrderListApiFilters(search, status, dateFrom, dateTo);
   const apiParams = { ...filters, ordering: '-delivery_date' as const };
@@ -283,7 +466,52 @@ export function OrderListPage() {
   const { data, isLoading, isError } = useOrderListQuery(page, apiParams);
   const { data: summary, isLoading: summaryLoading } = useOrderProductSummaryQuery(apiParams, summaryOpen);
 
-  const orders = data?.results ?? [];
+  const rawOrders = data?.results ?? [];
+
+  const filteredOrders = rawOrders.filter((o) => {
+    const q = (s: string) => s.trim().toLowerCase();
+    if (colFilters.orderNumber && !(o.order_number ?? '').toLowerCase().includes(q(colFilters.orderNumber))) return false;
+    if (orderDateFilter && o.order_date !== orderDateFilter) return false;
+    if (deliveryDateFilter && o.delivery_date !== deliveryDateFilter) return false;
+    if (productionDateFilter && o.production_date !== productionDateFilter) return false;
+    if (colFilters.wz) {
+      const wzMatch = (o.wz_numbers ?? []).some((d) => d.number.toLowerCase().includes(q(colFilters.wz)));
+      if (!wzMatch) return false;
+    }
+    if (colFilters.production) {
+      const prodMatch = (o.production_docs ?? []).some((d) => (d.number ?? '').toLowerCase().includes(q(colFilters.production)));
+      if (!prodMatch) return false;
+    }
+    if (colFilters.invoice) {
+      const invMatch = (o.invoice_numbers ?? []).some((d) => d.number.toLowerCase().includes(q(colFilters.invoice)));
+      if (!invMatch) return false;
+    }
+    return true;
+  });
+
+  const orders = useMemo(() => [...filteredOrders].sort((a, b) => {
+    if (orderDateSort) {
+      const cmp = (a.order_date ?? '').localeCompare(b.order_date ?? '');
+      return orderDateSort === 'asc' ? cmp : -cmp;
+    }
+    if (deliveryDateSort) {
+      const cmp = (a.delivery_date ?? '').localeCompare(b.delivery_date ?? '');
+      return deliveryDateSort === 'asc' ? cmp : -cmp;
+    }
+    if (productionDateSort) {
+      const cmp = (a.production_date ?? '').localeCompare(b.production_date ?? '');
+      return productionDateSort === 'asc' ? cmp : -cmp;
+    }
+    return 0;
+  }), [filteredOrders, orderDateSort, deliveryDateSort, productionDateSort]);
+
+  function toggleColFilter(col: keyof ColFilters) {
+    setOpenColFilter((prev) => (prev === col ? null : col));
+  }
+  function setColFilter(col: keyof ColFilters, value: string) {
+    setColFilters((prev) => ({ ...prev, [col]: value }));
+  }
+
   const count = data?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const hasResults = !isLoading && !isError && orders.length > 0;
@@ -313,7 +541,8 @@ export function OrderListPage() {
   }
 
   return (
-    <ReportShell>
+    <div className="min-h-full bg-[#F2F2F7] pb-16">
+    <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-3 px-4 pt-8 sm:px-6">
       <header className="flex items-center gap-3">
         <button
           type="button"
@@ -506,17 +735,38 @@ export function OrderListPage() {
       {hasResults && (
         <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white md:block md:rounded-3xl">
           <div className="overflow-x-auto">
-            <table className={cn(reportTableClass, 'min-w-full')} aria-label="Lista zamówień">
+            <table className={cn(reportTableClass, orderDatesEnabled ? 'min-w-[1000px]' : 'min-w-[720px]')} aria-label="Lista zamówień">
               <thead>
                 <tr>
                   <th scope="col" className="w-8 border-b border-slate-200 bg-white px-2 py-3" />
-                  <th scope="col" className={reportThClass}>Numer</th>
-                  <th scope="col" className={reportThClass}>Klient</th>
-                  <th scope="col" className={reportThClass}>Data dostawy</th>
+                  <th scope="col" className={reportThClass}>
+                    <ColFilterTh label="Numer" col="orderNumber" placeholder="np. ZAM/2026…" colFilters={colFilters} openColFilter={openColFilter} onToggle={toggleColFilter} onSet={setColFilter} />
+                  </th>
+                  <th scope="col" className={cn(reportThClass, 'w-[240px] max-w-[240px]')}>Klient</th>
+                  {orderDatesEnabled && (
+                    <th scope="col" className={reportThClass}>
+                      <DateSortFilterTh label="Data zam." sort={orderDateSort} filterDate={orderDateFilter} open={openOrderDate} onToggleOpen={() => setOpenOrderDate((v) => !v)} onSort={setOrderDateSort} onFilter={setOrderDateFilter} />
+                    </th>
+                  )}
+                  <th scope="col" className={reportThClass}>
+                    <DateSortFilterTh label="Data dostawy" sort={deliveryDateSort} filterDate={deliveryDateFilter} open={openDeliveryDate} onToggleOpen={() => setOpenDeliveryDate((v) => !v)} onSort={setDeliveryDateSort} onFilter={setDeliveryDateFilter} />
+                  </th>
+                  {orderDatesEnabled && (
+                    <th scope="col" className={reportThClass}>
+                      <DateSortFilterTh label="Data prod." sort={productionDateSort} filterDate={productionDateFilter} open={openProductionDate} onToggleOpen={() => setOpenProductionDate((v) => !v)} onSort={setProductionDateSort} onFilter={setProductionDateFilter} />
+                    </th>
+                  )}
                   <th scope="col" className={cn(reportThClass, 'text-right')}>Brutto</th>
                   <th scope="col" className={reportThClass}>Status</th>
-                  <th scope="col" className={reportThClass}>WZ</th>
-                  <th scope="col" className={reportThClass}>Faktura</th>
+                  <th scope="col" className={reportThClass}>
+                    <ColFilterTh label="WZ" col="wz" placeholder="np. WZ/2026…" colFilters={colFilters} openColFilter={openColFilter} onToggle={toggleColFilter} onSet={setColFilter} />
+                  </th>
+                  <th scope="col" className={reportThClass}>
+                    <ColFilterTh label="Produkcja" col="production" placeholder="np. PRD/2026…" colFilters={colFilters} openColFilter={openColFilter} onToggle={toggleColFilter} onSet={setColFilter} />
+                  </th>
+                  <th scope="col" className={reportThClass}>
+                    <ColFilterTh label="Faktura" col="invoice" placeholder="np. FV/2026…" colFilters={colFilters} openColFilter={openColFilter} onToggle={toggleColFilter} onSet={setColFilter} />
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -552,7 +802,9 @@ export function OrderListPage() {
                           </Link>
                         </td>
                         <td className={cn(reportTdClass, 'max-w-[240px] truncate')}>{order.customer_name || '—'}</td>
+                        {orderDatesEnabled && <td className={reportTdMutedClass}>{order.order_date ? formatReportDate(order.order_date) : '—'}</td>}
                         <td className={reportTdMutedClass}>{formatReportDate(order.delivery_date)}</td>
+                        {orderDatesEnabled && <td className={reportTdMutedClass}>{order.production_date ? formatReportDate(order.production_date) : '—'}</td>}
                         <td className={cn('whitespace-nowrap px-3 py-3 text-right', orderMoneyClass)}>{plnFmt(order.total_gross)}</td>
                         <td className="whitespace-nowrap px-3 py-3">
                           <span className={orderStatusTextClass(order.status)}>{ORDER_STATUS_LABELS_PL[order.status]}</span>
@@ -561,12 +813,21 @@ export function OrderListPage() {
                           <DocumentLinks docs={order.wz_numbers} href={(id) => `/delivery/${id}`} kind="delivery" />
                         </td>
                         <td className="whitespace-nowrap px-3 py-3">
+                          {(order.production_docs ?? []).length > 0 ? (
+                            <span className="flex flex-col gap-0.5">
+                              {(order.production_docs ?? []).map((d) => d.number && (
+                                <span key={d.id ?? d.number} className="text-sm font-normal text-violet-700">{d.number}</span>
+                              ))}
+                            </span>
+                          ) : <span className="text-sm text-slate-400">—</span>}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-3">
                           <DocumentLinks docs={order.invoice_numbers} href={(id) => `/invoices/${id}`} kind="invoice" />
                         </td>
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={8} className="border-b border-slate-100 px-3 py-3 pl-14">
+                          <td colSpan={orderDatesEnabled ? 11 : 9} className="border-b border-slate-100 px-3 py-3 pl-14">
                             <OrderItems order={order} compact />
                           </td>
                         </tr>
@@ -669,6 +930,7 @@ export function OrderListPage() {
           </div>
         </nav>
       )}
-    </ReportShell>
+    </div>
+    </div>
   );
 }

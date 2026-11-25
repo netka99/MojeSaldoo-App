@@ -38,7 +38,8 @@ type NewLine = {
   vatRate: string;
 };
 
-const VAT_OPTIONS = ['23', '8', '5', '0'];
+// Includes historical rates 7% and 22% (pre-2022) needed for corrections to old invoices
+const VAT_OPTIONS = ['23', '22', '8', '7', '5', '0'];
 const PAYMENT_METHODS: { value: InvoicePaymentMethod; label: string }[] = [
   { value: 'transfer', label: 'Przelew' },
   { value: 'cash', label: 'Gotówka' },

@@ -141,7 +141,7 @@ export function useResetDemoCompanyMutation() {
   return useMutation({
     mutationFn: () => companyService.resetDemoCompany(),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: companyKeys.all });
+      queryClient.clear();
     },
   });
 }

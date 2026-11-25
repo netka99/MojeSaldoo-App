@@ -20,13 +20,14 @@ from decimal import Decimal
 # Constants (FA-3 schema limits)
 # ---------------------------------------------------------------------------
 
-# Only these rates have dedicated P_13_X / P_14_X positions in the FA-3 schema.
-# Historical rates (3, 4, 7, 22) are not supported and would be silently dropped
-# from the XML, causing KSeF to reject the invoice.
+# Rates with dedicated P_13_X / P_14_X positions in the FA-3 schema.
+# 7% and 22% are historical (pre-2022) — needed for corrections to old invoices.
 _SUPPORTED_VAT_RATES: set[Decimal] = {
     Decimal("0"),
     Decimal("5"),
+    Decimal("7"),   # historical — valid in FA-3 as P_13_4/P_14_4
     Decimal("8"),
+    Decimal("22"),  # historical — valid in FA-3 as P_13_5/P_14_5
     Decimal("23"),
 }
 
@@ -62,6 +63,15 @@ _VALID_PAYMENT_METHODS = {"cash", "transfer"}
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _validate_nip_checksum(nip: str) -> bool:
+    """Validate Polish NIP using modulo-11 checksum algorithm."""
+    if len(nip) != 10 or not nip.isdigit():
+        return False
+    weights = [6, 5, 7, 2, 3, 4, 5, 6, 7]
+    checksum = sum(int(nip[i]) * weights[i] for i in range(9)) % 11
+    return checksum == int(nip[9])
+
 
 def _decimal_places(value: Decimal) -> int:
     """Return the number of significant decimal places in a Decimal value."""
@@ -137,9 +147,14 @@ def validate_invoice_for_ksef(invoice) -> tuple[list[str], list[str]]:
             f"Adres firmy (kod + miasto) zbyt długi ({len(seller_l2)}/{_MAX_ADDRESS_L2} znaków)."
         )
 
-    # P_1M: city of issue (max 256, defaults to "Warszawa" if empty — not an error)
-    city_of_issue = (company.city or "").strip()
-    if len(city_of_issue) > _MAX_CITY:
+    # P_1M: city of issue — required, no silent "Warszawa" fallback
+    city_of_issue = (getattr(invoice, "place_of_issue", None) or company.city or "").strip()
+    if not city_of_issue:
+        errors.append(
+            "Brak miasta wystawienia faktury. Uzupełnij miasto w ustawieniach firmy "
+            "lub wpisz ręcznie w polu 'Miejsce wystawienia' na fakturze."
+        )
+    elif len(city_of_issue) > _MAX_CITY:
         errors.append(
             f"Miasto wystawienia zbyt długie ({len(city_of_issue)}/{_MAX_CITY} znaków)."
         )
@@ -148,14 +163,34 @@ def validate_invoice_for_ksef(invoice) -> tuple[list[str], list[str]]:
     # 2. BUYER — Podmiot2 (from customer)
     # ------------------------------------------------------------------
 
-    # NIP
+    # NIP — wymagany dla B2B, opcjonalny dla B2C (is_individual=True)
+    is_individual = getattr(customer, "is_individual", False)
     buyer_nip = (customer.nip or "").replace(" ", "").replace("-", "")
-    if not buyer_nip:
-        errors.append("Nabywca nie ma uzupełnionego NIP.")
-    elif not buyer_nip.isdigit() or len(buyer_nip) != _MAX_NIP:
-        errors.append(
-            f"NIP nabywcy musi mieć dokładnie 10 cyfr (podano: '{customer.nip}')."
-        )
+    if is_individual:
+        # B2C: NIP nie jest wymagany. Jeśli podany — sprawdź format.
+        if buyer_nip and (not buyer_nip.isdigit() or len(buyer_nip) != _MAX_NIP):
+            errors.append(
+                f"NIP nabywcy B2C ma nieprawidłowy format (podano: '{customer.nip}')."
+            )
+        elif buyer_nip and not _validate_nip_checksum(buyer_nip):
+            errors.append(
+                f"NIP nabywcy B2C ma błędną sumę kontrolną (podano: '{customer.nip}')."
+            )
+    else:
+        # B2B: NIP wymagany i musi być poprawny
+        if not buyer_nip:
+            errors.append(
+                "Nabywca nie ma uzupełnionego NIP. "
+                "Jeśli to osoba fizyczna, zaznacz 'Osoba fizyczna (B2C)' na karcie klienta."
+            )
+        elif not buyer_nip.isdigit() or len(buyer_nip) != _MAX_NIP:
+            errors.append(
+                f"NIP nabywcy musi mieć dokładnie 10 cyfr (podano: '{customer.nip}')."
+            )
+        elif not _validate_nip_checksum(buyer_nip):
+            errors.append(
+                f"NIP nabywcy ma błędną sumę kontrolną (podano: '{customer.nip}')."
+            )
 
     # Nazwa
     buyer_name = (

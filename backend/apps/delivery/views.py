@@ -1924,8 +1924,8 @@ class DeliveryDocumentViewSet(viewsets.ModelViewSet):
             except Warehouse.DoesNotExist:
                 pass
 
-        # Resolve issue_date: caller > order delivery_date > today
-        issue_date = order.delivery_date or timezone.localdate()
+        # Resolve issue_date: caller > order shipment_date > order delivery_date > today
+        issue_date = order.shipment_date or order.delivery_date or timezone.localdate()
         issue_date_raw = request.query_params.get("issue_date")
         if issue_date_raw:
             from django.utils.dateparse import parse_date

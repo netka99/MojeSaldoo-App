@@ -54,6 +54,36 @@ class UserTokenObtainPairView(TokenObtainPairView):
     serializer_class = UserTokenObtainPairSerializer
     throttle_classes = [LoginRateThrottle]
 
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            try:
+                from apps.activity.audit import log_audit
+                from apps.activity.models import AuditLog
+                # Identify user from the response data (token already validated)
+                from rest_framework_simplejwt.tokens import AccessToken
+                token = AccessToken(response.data['access'])
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                user = User.objects.select_related('current_company').get(pk=token['user_id'])
+                if user.current_company:
+                    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+                    ip = xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+                    AuditLog.objects.create(
+                        company=user.current_company,
+                        user=user,
+                        action='auth.login',
+                        object_type='User',
+                        object_id=str(user.pk),
+                        object_repr=user.get_full_name() or user.username,
+                        before=None,
+                        after={'username': user.username},
+                        ip_address=ip,
+                    )
+            except Exception:
+                pass  # never block login due to audit failure
+        return response
+
 
 class CurrentUserView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -141,6 +171,7 @@ class CompanyCreateView(mixins.CreateModelMixin, generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
+        from apps.activity.log import log_success as _log_success
         company = serializer.save()
         admin_role = CompanyRole.objects.create(
             company=company,
@@ -155,6 +186,17 @@ class CompanyCreateView(mixins.CreateModelMixin, generics.GenericAPIView):
             is_active=True,
         )
         _ensure_company_modules(company)
+        # Switch the user's current_company so the activity log can be written
+        # (log_activity requires current_company to be set).
+        if not self.request.user.current_company:
+            User.objects.filter(pk=self.request.user.pk).update(current_company=company)
+            self.request.user.refresh_from_db()
+        _log_success(
+            user=self.request.user,
+            action="company",
+            object_type="Company",
+            object_id=str(company.pk),
+        )
 
     def post(self, request, *args, **kwargs):
         return self.create(request, *args, **kwargs)
@@ -319,6 +361,7 @@ class CompanyWorkflowSettingsView(APIView):
             "auto_wz_on_order",
             "auto_deliver_wz",
             "production_complete_immediately",
+            "order_dates_enabled",
         ]
         before = {f: getattr(settings, f) for f in _BOOLEAN_FLAGS}
         was_auto_deliver = settings.auto_deliver_wz

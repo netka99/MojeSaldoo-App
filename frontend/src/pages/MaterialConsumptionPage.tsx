@@ -129,9 +129,8 @@ function MovementTable({
 
 /* ── Row with expand ──────────────────────────────────────────────── */
 
-function ConsumptionRow({ row }: { row: MaterialConsumptionRow }) {
+function ConsumptionRow({ row, open, onToggle }: { row: MaterialConsumptionRow; open: boolean; onToggle: () => void }) {
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
   const consumed = toNum(row.consumed);
   const purchased = toNum(row.purchased);
   const stockAfter = toNum(row.stock_after);
@@ -142,7 +141,7 @@ function ConsumptionRow({ row }: { row: MaterialConsumptionRow }) {
     <>
       <tr
         className={`${reportRowClass} cursor-pointer select-none`}
-        onClick={() => hasMovements && setOpen((o) => !o)}
+        onClick={() => hasMovements && onToggle()}
       >
         <td className={reportTdClass}>
           <div className="flex items-center gap-2">
@@ -195,14 +194,14 @@ function ConsumptionRow({ row }: { row: MaterialConsumptionRow }) {
       {open && hasMovements && (
         <tr className="bg-slate-50/70">
           <td colSpan={6} className="px-4 py-3">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
+            <div className="grid gap-0 sm:grid-cols-2">
+              <div className="rounded-lg bg-emerald-50 p-3 sm:mr-2">
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-700">
                   Przyjęcia
                 </p>
                 <MovementTable movements={row.movements} unit={row.unit} sign="positive" />
               </div>
-              <div>
+              <div className="mt-2 rounded-lg bg-orange-50 p-3 sm:ml-2 sm:mt-0">
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-orange-700">
                   Zużycie
                 </p>
@@ -223,6 +222,22 @@ export default function MaterialConsumptionPage() {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
+  const [openRows, setOpenRows] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('material-consumption-open');
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+
+  function toggleRow(productId: string) {
+    setOpenRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      try { sessionStorage.setItem('material-consumption-open', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
 
   const dateFrom = startOfMonth(monthDate);
   const dateTo = endOfMonth(monthDate);
@@ -295,7 +310,14 @@ export default function MaterialConsumptionPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => <ConsumptionRow key={row.product_id} row={row} />)}
+                {rows.map((row) => (
+                  <ConsumptionRow
+                    key={row.product_id}
+                    row={row}
+                    open={openRows.has(row.product_id)}
+                    onToggle={() => toggleRow(row.product_id)}
+                  />
+                ))}
               </tbody>
             </table>
           </div>

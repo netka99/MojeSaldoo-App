@@ -11,6 +11,12 @@ const planningKeys = {
     [...planningKeys.all, companyId, params] as const,
 };
 
+const flowKeys = {
+  all: ['production', 'product-flow'] as const,
+  list: (companyId: string, params: object) =>
+    [...flowKeys.all, companyId, params] as const,
+};
+
 const recipeKeys = {
   all: ['production', 'recipes'] as const,
   lists: () => [...recipeKeys.all, 'list'] as const,
@@ -178,6 +184,21 @@ export function useProductionPlanningQuery(params: { date_from?: string; date_to
   return useQuery({
     queryKey: planningKeys.list(companyId, params),
     queryFn: () => productionService.fetchPlanning(params),
+    enabled: Boolean(companyId),
+  });
+}
+
+export function useProductionFlowQuery(params: {
+  date_from?: string;
+  date_to?: string;
+  product_id?: string;
+}) {
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+
+  return useQuery({
+    queryKey: flowKeys.list(companyId, params),
+    queryFn: () => productionService.fetchProductFlow(params),
     enabled: Boolean(companyId),
   });
 }

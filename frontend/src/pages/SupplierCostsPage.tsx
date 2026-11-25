@@ -6,6 +6,7 @@ import { useSupplierCostsQuery, useSupplierCostsDetailQuery } from '@/query/use-
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { downloadCsv } from '@/lib/downloadCsv';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
@@ -224,12 +225,7 @@ export function SupplierCostsPage() {
                           >
                             <td className="border-b px-3 py-2">
                               <div className="flex items-center gap-1.5">
-                                <svg
-                                  className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', isExpanded && 'rotate-90')}
-                                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
-                                >
-                                  <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
+                                <ReportExpandIcon open={isExpanded} />
                                 <div>
                                   <div className="font-medium">{supplier.supplier_name}</div>
                                   <div

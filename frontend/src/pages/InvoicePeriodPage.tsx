@@ -135,7 +135,7 @@ function periodItemToEdit(p: PeriodPreviewItem, isGross = false): EditItem {
   };
 }
 
-function emptyEditItem(): EditItem {
+function emptyEditItem(defaultVatRate = '23'): EditItem {
   return {
     id: nextEditId(),
     product_id: null,
@@ -143,7 +143,7 @@ function emptyEditItem(): EditItem {
     product_unit: 'szt',
     qty: '1',
     unit_price_net: '',
-    vat_rate: '23',
+    vat_rate: defaultVatRate,
   };
 }
 
@@ -492,7 +492,7 @@ function PeriodQtyRow({
       </div>
       <span className="shrink-0 text-xs text-slate-500">{unitLabel}</span>
 
-      {/* Cena netto */}
+      {/* Cena netto — główna gdy tryb netto, pomocnicza gdy tryb brutto */}
       {editingField === 'net' ? (
         <input ref={priceInputRef} type="text" inputMode="decimal" value={priceInput}
           onChange={(e) => setPriceInput(toDecimalInput(e.target.value))}
@@ -500,17 +500,19 @@ function PeriodQtyRow({
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitPrice(); } if (e.key === 'Escape') setEditingField(null); }}
           className="h-8 w-28 shrink-0 rounded-lg border border-primary bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/30" />
       ) : (
-        <button type="button" onClick={() => startEdit('net')}
-          title={onPrice ? 'Edytuj cenę netto' : undefined}
+        <button type="button" onClick={() => !priceIsGross ? startEdit('net') : undefined}
+          title={onPrice && !priceIsGross ? 'Edytuj cenę netto' : 'Cena netto (tylko informacyjnie — tryb firmy: brutto)'}
           className={cn(
-            'flex h-8 w-28 shrink-0 items-center justify-end gap-1 rounded-lg border px-2.5 text-sm font-semibold tabular-nums text-slate-900',
-            onPrice ? 'border-[#AEAEB2] bg-white hover:border-primary hover:bg-primary/5' : 'cursor-default border-[#AEAEB2] bg-white',
+            'flex h-8 w-28 shrink-0 items-center justify-end gap-1 rounded-lg border px-2.5 text-sm tabular-nums',
+            !priceIsGross && onPrice
+              ? 'border-primary/40 bg-white font-semibold text-slate-900 hover:border-primary hover:bg-primary/5'
+              : 'cursor-default border-[#AEAEB2] bg-[#F2F2F7] font-normal text-slate-400',
           )}>
           <span className="text-[10px] font-normal text-slate-400">netto</span>{priceNet.toFixed(2)}
         </button>
       )}
 
-      {/* Cena brutto */}
+      {/* Cena brutto — główna gdy tryb brutto, pomocnicza gdy tryb netto */}
       {editingField === 'gross' ? (
         <input ref={priceInputRef} type="text" inputMode="decimal" value={priceInput}
           onChange={(e) => setPriceInput(toDecimalInput(e.target.value))}
@@ -518,11 +520,13 @@ function PeriodQtyRow({
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitPrice(); } if (e.key === 'Escape') setEditingField(null); }}
           className="h-8 w-28 shrink-0 rounded-lg border border-amber-400 bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-300/40" />
       ) : (
-        <button type="button" onClick={() => startEdit('gross')}
-          title={onPrice ? 'Edytuj cenę brutto' : undefined}
+        <button type="button" onClick={() => priceIsGross ? startEdit('gross') : undefined}
+          title={onPrice && priceIsGross ? 'Edytuj cenę brutto' : 'Cena brutto (tylko informacyjnie — tryb firmy: netto)'}
           className={cn(
-            'flex h-8 w-28 shrink-0 items-center justify-end gap-1 rounded-lg border px-2.5 text-sm tabular-nums text-slate-700',
-            onPrice ? 'border-[#AEAEB2] bg-white hover:border-amber-400 hover:bg-amber-50/50' : 'cursor-default border-[#AEAEB2] bg-white',
+            'flex h-8 w-28 shrink-0 items-center justify-end gap-1 rounded-lg border px-2.5 text-sm tabular-nums',
+            priceIsGross && onPrice
+              ? 'border-amber-400/60 bg-white font-semibold text-slate-900 hover:border-amber-400 hover:bg-amber-50/50'
+              : 'cursor-default border-[#AEAEB2] bg-[#F2F2F7] font-normal text-slate-400',
           )}>
           <span className="text-[10px] font-normal text-slate-400">brutto</span>{displayGross ?? priceGross.toFixed(2)}
         </button>
@@ -628,10 +632,11 @@ function InvoicePeriodPageContent() {
       bank_account_iban: company.bank_account_iban ?? '',
       bank_swift: company.bank_swift ?? '',
       bank_name: company.bank_name ?? '',
+      annotation_zwolnienie: !(company.is_vat_payer ?? true),
       ...prev,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company?.bank_account_iban, company?.bank_swift, company?.bank_name]);
+  }, [company?.bank_account_iban, company?.bank_swift, company?.bank_name, company?.is_vat_payer]);
 
   /* Warn on browser tab close when form has data */
   useEffect(() => {
@@ -1324,7 +1329,7 @@ function InvoicePeriodPageContent() {
                 )}
                 <button
                   type="button"
-                  onClick={() => setEditItems((prev) => [...prev, emptyEditItem()])}
+                  onClick={() => setEditItems((prev) => [...prev, emptyEditItem(company?.is_vat_payer === false ? 'zw' : '23')])}
                   className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-border py-3 text-sm font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors"
                 >
                   <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth={2}>

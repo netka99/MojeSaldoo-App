@@ -163,6 +163,8 @@ export interface CompanyWorkflowSettings {
   auto_deliver_wz_changed_at: string | null;
   production_complete_immediately: boolean;
   production_complete_immediately_changed_at: string | null;
+  order_dates_enabled: boolean;
+  order_dates_enabled_changed_at: string | null;
 }
 
 export interface CompanyWrite {

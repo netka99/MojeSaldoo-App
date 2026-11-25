@@ -68,7 +68,7 @@ export function deliveryStatusBadgeClassName(status: DeliveryDocumentStatus, doc
     return 'bg-purple-100 text-purple-800';
   }
   switch (status) {
-    case 'draft':      return 'bg-surface-container text-on-surface';
+    case 'draft':      return 'bg-amber-100 text-amber-700';
     case 'saved':      return 'bg-blue-100 text-blue-800';
     case 'in_transit': return 'bg-amber-100 text-amber-900';
     case 'delivered':  return 'bg-green-100 text-green-800';

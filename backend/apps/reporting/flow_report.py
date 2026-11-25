@@ -120,6 +120,10 @@ def _build_order_lines(order) -> list:
     wz_delivered: dict = {}
     wz_returned: dict = {}
     for wz in getattr(order, 'wz_docs', []):
+        # Only count quantities from fully delivered WZ documents.
+        # Draft/in_transit WZ items should not inflate delivered_qty.
+        if wz.status != DeliveryDocument.STATUS_DELIVERED:
+            continue
         for wi in getattr(wz, 'wz_items', []):
             pid = str(wi.product_id) if wi.product_id else None
             if pid is None:
@@ -355,6 +359,7 @@ def build_customer_flow(company, date_from, date_to):
         ]
         all_wz = [wz for wz, _ in order_wz_pairs] + stan_wz
         wz_total = len(all_wz)
+        wz_draft = sum(1 for wz in all_wz if wz.status == 'draft')
         wz_no_invoice = 0
         for wz, o in order_wz_pairs:
             if wz.status in ('delivered', 'in_transit', 'saved'):
@@ -542,6 +547,7 @@ def build_customer_flow(company, date_from, date_to):
             },
             'wz': {
                 'total': wz_total,
+                'draft': wz_draft,
                 'without_invoice': wz_no_invoice,
             },
             'invoices': {

@@ -12,8 +12,38 @@ request and avoid duplicate entries.
 import json
 import logging
 import re
+import threading
 
 from .format import flatten_error_value
+
+# ---------------------------------------------------------------------------
+# Thread-local current request — used by audit signals to get user + IP
+# ---------------------------------------------------------------------------
+
+_thread_local = threading.local()
+
+
+def get_current_request():
+    """Return the current request stored in thread-local, or None."""
+    return getattr(_thread_local, 'request', None)
+
+
+def get_current_user():
+    request = get_current_request()
+    if request is None:
+        return None
+    user = getattr(request, 'user', None)
+    return user if user and getattr(user, 'is_authenticated', False) else None
+
+
+def get_current_ip():
+    request = get_current_request()
+    if request is None:
+        return None
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +172,20 @@ def _extract_error_detail(response) -> tuple[str, str]:
 def _first_string_value(d: dict) -> str:
     """Return the first string value found in a flat dict (for generic error shapes)."""
     return flatten_error_value(d)
+
+
+class CurrentRequestMiddleware:
+    """Stores the current request in thread-local so audit signals can read user + IP."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        _thread_local.request = request
+        try:
+            return self.get_response(request)
+        finally:
+            _thread_local.request = None
 
 
 class ActivityLogMiddleware:

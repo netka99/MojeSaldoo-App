@@ -24,6 +24,7 @@ from .serializers import (
     WarehouseStockItemSerializer,
 )
 from apps.users.tenant import filter_queryset_for_current_company
+from apps.activity.log import log_success, log_error
 
 
 def _stock_owner_user(product, request_user):
@@ -71,11 +72,25 @@ class ProductViewSet(viewsets.ModelViewSet):
             company=self.request.user.current_company,
             user=self.request.user,
         )
+        instance = serializer.instance
+        log_success(
+            user=self.request.user,
+            action="product.create",
+            object_type="Product",
+            object_id=str(instance.pk),
+        )
 
     def perform_update(self, serializer):
         serializer.save(
             company=self.request.user.current_company,
             user=self.request.user,
+        )
+        instance = serializer.instance
+        log_success(
+            user=self.request.user,
+            action="product",
+            object_type="Product",
+            object_id=str(instance.pk),
         )
 
     @action(detail=True, methods=["post"], url_path="update-stock")
@@ -186,6 +201,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                 )
                 http_status = status.HTTP_201_CREATED
 
+        log_success(
+            user=request.user,
+            action="product.stock",
+            object_type="Product",
+            object_id=str(product.pk),
+            request=request,
+        )
         return Response(
             StockMovementSerializer(movement).data,
             status=http_status,
@@ -371,7 +393,7 @@ class CustomerProductPriceViewSet(viewsets.ModelViewSet):
         customer_id = self.request.query_params.get("customer_id")
         product_id = self.request.query_params.get("product_id")
         if customer_id:
-            qs = qs.filter(customer_id=customer_id)
+            qs = qs.filter(customer__uuid=customer_id)
         if product_id:
             qs = qs.filter(product_id=product_id)
         return qs.order_by("product__name")

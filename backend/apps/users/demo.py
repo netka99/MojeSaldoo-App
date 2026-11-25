@@ -7,8 +7,10 @@ Called automatically on registration and available as a management command.
 """
 from __future__ import annotations
 
+import datetime as _dt
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.utils import timezone
 
@@ -19,6 +21,45 @@ def create_demo_company_for_user(user) -> None:
     All errors are propagated to the caller — wrap in try/except when calling
     from registration so a failure doesn't block account creation.
     """
+    # Disconnect audit signals so demo seeding doesn't pollute the audit log.
+    # Use real model classes (not strings) so disconnect/connect works reliably.
+    from apps.activity import audit as _audit_module
+    from django.apps import apps as django_apps
+    from django.db.models.signals import post_delete, post_save, pre_save
+
+    def _get(label):
+        return django_apps.get_model(label)
+
+    _audit_signals = [
+        (pre_save,   _audit_module._invoice_pre_save,              _get('invoices.Invoice')),
+        (post_save,  _audit_module._invoice_post_save,             _get('invoices.Invoice')),
+        (post_delete,_audit_module._invoice_post_delete,           _get('invoices.Invoice')),
+        (pre_save,   _audit_module._product_pre_save,              _get('products.Product')),
+        (post_save,  _audit_module._product_post_save,             _get('products.Product')),
+        (post_save,  _audit_module._stock_movement_post_save,      _get('products.StockMovement')),
+        (pre_save,   _audit_module._delivery_pre_save,             _get('delivery.DeliveryDocument')),
+        (post_save,  _audit_module._delivery_post_save,            _get('delivery.DeliveryDocument')),
+        (post_delete,_audit_module._delivery_post_delete,          _get('delivery.DeliveryDocument')),
+        (pre_save,   _audit_module._order_pre_save,                _get('orders.Order')),
+        (post_save,  _audit_module._order_post_save,               _get('orders.Order')),
+        (pre_save,   _audit_module._customer_pre_save,             _get('customers.Customer')),
+        (post_save,  _audit_module._customer_post_save,            _get('customers.Customer')),
+        (pre_save,   _audit_module._company_pre_save,              _get('users.Company')),
+        (post_save,  _audit_module._company_post_save,             _get('users.Company')),
+        (pre_save,   _audit_module._production_order_pre_save,     _get('production.ProductionOrder')),
+        (post_save,  _audit_module._production_order_post_save,    _get('production.ProductionOrder')),
+    ]
+    for signal, handler, sender in _audit_signals:
+        signal.disconnect(handler, sender=sender)
+
+    try:
+        return _create_demo_company_for_user_inner(user)
+    finally:
+        for signal, handler, sender in _audit_signals:
+            signal.connect(handler, sender=sender)
+
+
+def _create_demo_company_for_user_inner(user) -> None:
     from apps.cash_flow.models import DailyB2CRevenue, QuickExpense
     from apps.sales_reports.models import DailySalesReport, DailySalesReportItem, SalesReportTemplate
     from apps.customers.models import Customer
@@ -27,11 +68,11 @@ def create_demo_company_for_user(user) -> None:
     from apps.invoices.models import Invoice, InvoiceItem
     from apps.invoices.services import recalculate_invoice_totals
     from apps.orders.models import Order, OrderItem
-    from apps.production.models import ProductionOrder, Recipe, RecipeItem
-    from apps.products.models import Product, ProductStock, StockMovement, Warehouse
+    from apps.production.models import ProductionOrder, ProductionOrderSource, Recipe, RecipeItem
+    from apps.products.models import Product, ProductStock, StockBatch, StockMovement, Warehouse
     from apps.purchase_orders.models import SupplierOrder, SupplierOrderItem
     from apps.suppliers.models import Supplier
-    from apps.users.models import Company, CompanyMembership, CompanyModule, CompanyRole
+    from apps.users.models import Company, CompanyMembership, CompanyModule, CompanyRole, get_workflow_settings
     from apps.van_routes.models import VanRoute
 
     # ------------------------------------------------------------------
@@ -54,6 +95,24 @@ def create_demo_company_for_user(user) -> None:
     today = company.created_at.date()
     m1 = (today.replace(day=1) - timedelta(days=1)).replace(day=1)   # first day of prev month
     m2 = today.replace(day=1)                                          # first day of current month
+
+    # Last completed Mon-Fri work week before today.
+    # monday_this_week = today minus today.weekday() (0=Mon)
+    # We go one full week back so the whole week is in the past.
+    _days_since_monday = today.weekday()  # 0=Mon … 6=Sun
+    # Last Monday: if today is Mon (0) → 7 days back; otherwise this week's Monday - 7
+    _last_monday = today - timedelta(days=_days_since_monday + 7)
+    wk_mon = _last_monday          # Monday  (last week  = week 2)
+    wk_tue = _last_monday + timedelta(days=1)
+    wk_wed = _last_monday + timedelta(days=2)
+    wk_thu = _last_monday + timedelta(days=3)
+    wk_fri = _last_monday + timedelta(days=4)
+    # Week 1 = the week before week 2 (fully completed)
+    wk1_mon = wk_mon - timedelta(days=7)
+    wk1_tue = wk1_mon + timedelta(days=1)
+    wk1_wed = wk1_mon + timedelta(days=2)
+    wk1_thu = wk1_mon + timedelta(days=3)
+    wk1_fri = wk1_mon + timedelta(days=4)
 
     admin_role = CompanyRole.objects.create(
         company=company,
@@ -97,6 +156,14 @@ def create_demo_company_for_user(user) -> None:
         )
 
     # ------------------------------------------------------------------
+    # 1b. Workflow settings — enable planning dates for demo
+    # ------------------------------------------------------------------
+    wf = get_workflow_settings(company)
+    wf.order_dates_enabled = True
+    wf.production_complete_immediately = True
+    wf.save()
+
+    # ------------------------------------------------------------------
     # 2. Warehouses
     # ------------------------------------------------------------------
     wh_main = Warehouse.objects.create(
@@ -120,18 +187,27 @@ def create_demo_company_for_user(user) -> None:
         name="Mąka pszenna typ 650", unit="kg",
         product_type=Product.PRODUCT_TYPE_MATERIAL,
         price_net=Decimal("2.10"), price_gross=Decimal("2.27"), vat_rate=Decimal("8.00"),
+        # avg_cost from PZ history: 150kg@2.00 + 100kg@2.05 = weighted avg 2.02
+        avg_cost=Decimal("2.0200"), last_cost=Decimal("2.05"),
+        avg_cost_source=Product.COST_SOURCE_PZ,
     )
     cukier = Product.objects.create(
         company=company, user=user,
         name="Cukier biały", unit="kg",
         product_type=Product.PRODUCT_TYPE_MATERIAL,
         price_net=Decimal("3.60"), price_gross=Decimal("3.89"), vat_rate=Decimal("8.00"),
+        # avg_cost from PZ history: 50kg@3.40
+        avg_cost=Decimal("3.4000"), last_cost=Decimal("3.40"),
+        avg_cost_source=Product.COST_SOURCE_PZ,
     )
     maslo = Product.objects.create(
         company=company, user=user,
         name="Masło extra 82%", unit="kg",
         product_type=Product.PRODUCT_TYPE_MATERIAL,
         price_net=Decimal("20.00"), price_gross=Decimal("21.60"), vat_rate=Decimal("8.00"),
+        # avg_cost from PZ history: 30kg@19.00 + 20kg@19.50 = weighted avg 19.20
+        avg_cost=Decimal("19.2000"), last_cost=Decimal("19.50"),
+        avg_cost_source=Product.COST_SOURCE_PZ,
     )
     chleb = Product.objects.create(
         company=company, user=user,
@@ -176,12 +252,19 @@ def create_demo_company_for_user(user) -> None:
         price_net=Decimal("3.50"), price_gross=Decimal("4.31"), vat_rate=Decimal("23.00"),
     )
 
-    # Stock levels in main warehouse
+    # Opening stock for raw materials only.
+    # Sized to cover all production runs AND leave realistic end-of-week balances:
+    #   maka:   740 kg opening + pz1(150) + pz2(100) → ~250 kg remaining (target 250–320 kg)
+    #   cukier:  70 kg opening + pz1(50)              → ~79 kg remaining  (target 80–110 kg)
+    #   maslo:   25 kg opening + pz1(30) + pz2(20)    → ~43 kg remaining  (target 40–55 kg)
+    # Finished goods (chleb, bulka, rogal, drozdzowka, tort) are NOT seeded here —
+    # they will be created automatically via complete_production_order() PW receipts.
     for product, qty in [
-        (maka, "300.00"), (cukier, "100.00"), (maslo, "50.00"),
-        (chleb, "180.00"), (bulka, "500.00"), (rogal, "250.00"),
-        (drozdzowka, "120.00"), (tort, "8.00"),
-        (torba, "200.00"), (pudelko, "30.00"),
+        (maka,   "740.00"),
+        (cukier,  "70.00"),
+        (maslo,   "25.00"),
+        (torba, "200.00"),
+        (pudelko, "30.00"),
     ]:
         ProductStock.objects.create(
             company=company,
@@ -189,6 +272,44 @@ def create_demo_company_for_user(user) -> None:
             warehouse=wh_main,
             quantity_available=Decimal(qty),
             quantity_reserved=Decimal("0.00"),
+        )
+
+    # Opening StockBatches for FIFO — one batch per raw material at avg_cost from first PZ.
+    # These represent stock on hand before the first purchase delivery (pz1 at m1+3).
+    _opening_date = m1 - timedelta(days=1)
+    for product, qty, unit_cost in [
+        (maka,   Decimal("740.00"), Decimal("2.00")),
+        (cukier,  Decimal("70.00"), Decimal("3.40")),
+        (maslo,   Decimal("25.00"), Decimal("19.00")),
+    ]:
+        StockBatch.objects.create(
+            company=company,
+            product=product,
+            warehouse=wh_main,
+            batch_number=f"OTWARCIE-{product.name[:6].upper()}",
+            received_date=_opening_date,
+            quantity_initial=qty,
+            quantity_remaining=qty,
+            unit_cost=unit_cost,
+        )
+
+    # Opening StockMovement ADJUSTMENT for each raw material (opening balance record).
+    for product, qty_str in [
+        (maka,   "740.00"),
+        (cukier,  "70.00"),
+        (maslo,   "25.00"),
+    ]:
+        StockMovement.objects.create(
+            company=company,
+            product=product,
+            warehouse=wh_main,
+            user=user,
+            movement_type=StockMovement.MovementType.ADJUSTMENT,
+            quantity=Decimal(qty_str),
+            quantity_before=Decimal("0"),
+            quantity_after=Decimal(qty_str),
+            notes="Stan otwarcia — saldo początkowe",
+            created_by=user,
         )
 
     # ------------------------------------------------------------------
@@ -285,15 +406,33 @@ def create_demo_company_for_user(user) -> None:
         quantity_planned=Decimal("20.00"), unit_cost=Decimal("19.50"),
     )
 
+    # Apply PZ receipts through the proper service so StockBatch (FIFO) records
+    # and StockMovement(PURCHASE) are created consistently.
+    from apps.delivery.services import apply_pz_receipt
+    apply_pz_receipt(pz1, user)
+    apply_pz_receipt(pz2, user)
+
     # ------------------------------------------------------------------
-    # 7. Orders — 4 zrealizowane + 1 draft
+    # 7. Orders
     # ------------------------------------------------------------------
-    def _make_order(customer, order_date, delivery_date, status, items):
+    # Scenario: realistic bakery work week (last full Mon-Fri week before today).
+    # Orders arrive the evening before for next-morning delivery.
+    # Mon-Wed: fully completed (PRD → WZ delivered → FV paid).
+    # Thu: delivered (WZ), invoice issued but not yet paid.
+    # Fri: confirmed, production planned (PRD draft), delivery pending — no WZ/FV.
+    # Next week (Mon): one open order without any PRD — shows "unscheduled" in report.
+    # Previous month: two completed invoiced orders for historical context.
+    # ------------------------------------------------------------------
+
+    def _make_order(customer, order_date, delivery_date, status, items,
+                    production_date=None, shipment_date=None):
         order = Order.objects.create(
             company=company, user=user,
             customer=customer,
             order_date=order_date,
             delivery_date=delivery_date,
+            production_date=production_date,
+            shipment_date=shipment_date,
             status=status,
         )
         for product, qty, price_net in items:
@@ -307,44 +446,160 @@ def create_demo_company_for_user(user) -> None:
                 unit_price_gross=product.price_gross,
                 vat_rate=product.vat_rate,
             )
-        # OrderItem.save() calls order.calculate_total() automatically
         return order
 
-    order1 = _make_order(
+    # ── Previous month — historical, fully invoiced ──────────────────
+    # m1: two orders, both invoiced and paid
+    order_m1a = _make_order(
         sklep, m1 + timedelta(days=2), m1 + timedelta(days=3),
         Order.STATUS_INVOICED,
-        [(chleb, 80, "4.50"), (bulka, 150, "0.80"), (rogal, 100, "1.20")],
+        [(chleb, 100, "4.50"), (bulka, 200, "0.80"), (rogal, 150, "1.20")],
     )
-    order2 = _make_order(
-        kawiarnia, m1 + timedelta(days=12), m1 + timedelta(days=13),
+    order_m1b = _make_order(
+        hotel, m1 + timedelta(days=11), m1 + timedelta(days=12),
         Order.STATUS_INVOICED,
-        [(drozdzowka, 60, "2.00"), (tort, 3, "85.00"), (rogal, 50, "1.20")],
+        [(chleb, 60, "4.50"), (drozdzowka, 80, "2.00"), (tort, 4, "85.00")],
     )
-    order3 = _make_order(
-        hotel, m1 + timedelta(days=18), m1 + timedelta(days=20),
+
+    # ── Current month before the work week — invoiced ────────────────
+    order_m2a = _make_order(
+        kawiarnia, m2 + timedelta(days=1), m2 + timedelta(days=2),
         Order.STATUS_INVOICED,
-        [(tort, 5, "85.00"), (chleb, 40, "4.50"), (drozdzowka, 30, "2.00")],
+        [(drozdzowka, 60, "2.00"), (rogal, 80, "1.20"), (tort, 2, "85.00")],
     )
-    order4 = _make_order(
-        przedszkole, m2 + timedelta(days=2), m2 + timedelta(days=3),
+    order_m2b = _make_order(
+        przedszkole, m2 + timedelta(days=4), m2 + timedelta(days=5),
         Order.STATUS_INVOICED,
-        [(chleb, 50, "4.50"), (bulka, 120, "0.80"), (rogal, 60, "1.20")],
+        [(chleb, 80, "4.50"), (bulka, 150, "0.80"), (rogal, 60, "1.20")],
     )
-    order_draft = _make_order(
-        bar, today - timedelta(days=1), today + timedelta(days=1),
+
+    # ── Week 1 (fully completed, 2 weeks ago) ───────────────────────
+    wk1_mon = wk_mon - timedelta(days=7)
+    wk1_tue = wk1_mon + timedelta(days=1)
+    wk1_wed = wk1_mon + timedelta(days=2)
+    wk1_thu = wk1_mon + timedelta(days=3)
+    wk1_fri = wk1_mon + timedelta(days=4)
+
+    # wk1_mon deliveries: Sklep + Przedszkole
+    order_wk1_mon_sklep = _make_order(
+        sklep, wk1_mon - timedelta(days=1), wk1_mon,
+        Order.STATUS_INVOICED,
+        [(chleb, 80, "4.50"), (bulka, 150, "0.80")],
+    )
+    order_wk1_mon_przed = _make_order(
+        przedszkole, wk1_mon - timedelta(days=1), wk1_mon,
+        Order.STATUS_INVOICED,
+        [(chleb, 50, "4.50"), (bulka, 100, "0.80")],
+    )
+    # wk1_wed deliveries: Bar + Kawiarnia
+    order_wk1_wed_bar = _make_order(
+        bar, wk1_wed - timedelta(days=1), wk1_wed,
+        Order.STATUS_INVOICED,
+        [(chleb, 60, "4.50"), (bulka, 80, "0.80"), (rogal, 60, "1.20")],
+    )
+    order_wk1_wed_kaw = _make_order(
+        kawiarnia, wk1_wed - timedelta(days=1), wk1_wed,
+        Order.STATUS_INVOICED,
+        [(rogal, 80, "1.20"), (drozdzowka, 48, "2.00")],
+    )
+    # wk1_fri deliveries: Sklep + Bistro
+    order_wk1_fri_sklep = _make_order(
+        sklep, wk1_fri - timedelta(days=1), wk1_fri,
+        Order.STATUS_INVOICED,
+        [(chleb, 100, "4.50"), (bulka, 120, "0.80"), (rogal, 80, "1.20")],
+    )
+    order_wk1_fri_bistro = _make_order(
+        bistro, wk1_fri - timedelta(days=1), wk1_fri,
+        Order.STATUS_INVOICED,
+        [(rogal, 60, "1.20"), (drozdzowka, 36, "2.00")],
+    )
+
+    # ── Week 2 (last full work week, in progress) ────────────────────
+    # Monday: Sklep + Hotel — STATUS_INVOICED
+    order_mon_sklep = _make_order(
+        sklep, wk_mon - timedelta(days=1), wk_mon,
+        Order.STATUS_INVOICED,
+        [(chleb, 100, "4.50"), (bulka, 200, "0.80")],
+    )
+    order_mon_hotel = _make_order(
+        hotel, wk_mon - timedelta(days=1), wk_mon,
+        Order.STATUS_INVOICED,
+        [(chleb, 80, "4.50"), (rogal, 60, "1.20")],
+    )
+    # Tuesday: Bar — delivered, no invoice yet
+    order_tue = _make_order(
+        bar, wk_mon, wk_tue,
+        Order.STATUS_DELIVERED,
+        [(chleb, 60, "4.50"), (bulka, 100, "0.80")],
+    )
+    # Wednesday: Kawiarnia + Przedszkole — delivered, no invoice yet
+    order_wed_kaw = _make_order(
+        kawiarnia, wk_tue, wk_wed,
+        Order.STATUS_DELIVERED,
+        [(rogal, 80, "1.20"), (drozdzowka, 60, "2.00")],
+    )
+    order_wed_przed = _make_order(
+        przedszkole, wk_tue, wk_wed,
+        Order.STATUS_DELIVERED,
+        [(chleb, 60, "4.50"), (bulka, 80, "0.80")],
+    )
+    # Thursday: Restauracja — STATUS_DELIVERED (WZ done, FV issued not paid)
+    order_thu = _make_order(
+        restauracja, wk_wed, wk_thu,
+        Order.STATUS_DELIVERED,
+        [(chleb, 50, "4.50"), (rogal, 40, "1.20")],
+    )
+    # Friday: Hotel — STATUS_CONFIRMED (PRD draft, WZ draft, no FV)
+    order_fri = _make_order(
+        hotel, wk_thu, wk_fri,
         Order.STATUS_CONFIRMED,
-        [(chleb, 30, "4.50"), (bulka, 80, "0.80"), (rogal, 40, "1.20")],
+        [(drozdzowka, 48, "2.00"), (tort, 2, "85.00")],
     )
-    # WZ bez FV — dostarczone ale jeszcze nie zafakturowane (pokazuje potencjał przepływu)
-    order_wz_no_fv = _make_order(
-        bistro, m2 + timedelta(days=7), m2 + timedelta(days=8),
-        Order.STATUS_DELIVERED,
-        [(drozdzowka, 100, "2.00"), (rogal, 80, "1.20")],
+    # Next Monday (wk_fri + 3): Bistro — STATUS_CONFIRMED, NO PRD → "unscheduled"
+    # production_date = Saturday (wk_fri+1), shipment_date = Monday morning (delivery same day)
+    order_next_mon = _make_order(
+        bistro, wk_fri, wk_fri + timedelta(days=3),
+        Order.STATUS_CONFIRMED,
+        [(rogal, 100, "1.20"), (bulka, 120, "0.80")],
+        production_date=wk_fri + timedelta(days=1),
+        shipment_date=wk_fri + timedelta(days=3),
     )
-    order_wz_no_fv2 = _make_order(
-        restauracja, m2 + timedelta(days=9), m2 + timedelta(days=10),
-        Order.STATUS_DELIVERED,
-        [(chleb, 150, "4.50"), (bulka, 200, "0.80")],
+    # Next Monday: Sklep — chleb + bułki, no PRD
+    # production_date = Saturday, shipment_date = Monday
+    order_next_mon_sklep = _make_order(
+        sklep, wk_fri, wk_fri + timedelta(days=3),
+        Order.STATUS_CONFIRMED,
+        [(chleb, 50, "4.50"), (bulka, 80, "0.80")],
+        production_date=wk_fri + timedelta(days=1),
+        shipment_date=wk_fri + timedelta(days=3),
+    )
+    # Next Tuesday: Kawiarnia — rogale + drożdżówki, no PRD
+    # production_date = Sunday, shipment_date = Tuesday (dostawa = Tuesday)
+    order_next_tue_kaw = _make_order(
+        kawiarnia, wk_fri + timedelta(days=1), wk_fri + timedelta(days=4),
+        Order.STATUS_CONFIRMED,
+        [(rogal, 40, "1.20"), (drozdzowka, 24, "2.00")],
+        production_date=wk_fri + timedelta(days=2),
+        shipment_date=wk_fri + timedelta(days=4),
+    )
+    # Next Tuesday: Przedszkole — chleb + bułki, no PRD
+    # Bez dat planowania — pokazuje mix: niektóre z datami, niektóre bez
+    order_next_tue_przed = _make_order(
+        przedszkole, wk_fri + timedelta(days=1), wk_fri + timedelta(days=4),
+        Order.STATUS_CONFIRMED,
+        [(chleb, 40, "4.50"), (bulka, 60, "0.80")],
+    )
+    # TODAY: Bar Centrum — rogale + drożdżówki, dostawa dzisiaj, brak PRD
+    order_today_bar = _make_order(
+        bar, today - timedelta(days=1), today,
+        Order.STATUS_CONFIRMED,
+        [(rogal, 30, "1.20"), (drozdzowka, 12, "2.00")],
+    )
+    # TODAY: Hotel Złoty — chleb, dostawa dzisiaj, brak PRD
+    order_today_hotel = _make_order(
+        hotel, today - timedelta(days=1), today,
+        Order.STATUS_CONFIRMED,
+        [(chleb, 20, "4.50")],
     )
 
     # ------------------------------------------------------------------
@@ -366,50 +621,131 @@ def create_demo_company_for_user(user) -> None:
             )
         return wz
 
-    _make_wz(
-        order1, m1 + timedelta(days=3), DeliveryDocument.STATUS_DELIVERED,
-        [(chleb, 80), (bulka, 150), (rogal, 100)],
-    )
-    _make_wz(
-        order2, m1 + timedelta(days=13), DeliveryDocument.STATUS_DELIVERED,
-        [(drozdzowka, 60), (tort, 3), (rogal, 50)],
-    )
-    _make_wz(
-        order3, m1 + timedelta(days=20), DeliveryDocument.STATUS_DELIVERED,
-        [(tort, 5), (chleb, 40), (drozdzowka, 30)],
-    )
-    _make_wz(
-        order4, m2 + timedelta(days=3), DeliveryDocument.STATUS_DELIVERED,
-        [(chleb, 50), (bulka, 120), (rogal, 60)],
-    )
-    _make_wz(
-        order_draft, today, DeliveryDocument.STATUS_DRAFT,
-        [(chleb, 30), (bulka, 80), (rogal, 40)],
-    )
-    # WZ dostarczone bez faktury — widoczne w przepływie rozliczeniowym jako "WZ bez FV"
-    _make_wz(
-        order_wz_no_fv, m2 + timedelta(days=8), DeliveryDocument.STATUS_DELIVERED,
-        [(drozdzowka, 100), (rogal, 80)],
-    )
-    _make_wz(
-        order_wz_no_fv2, m2 + timedelta(days=10), DeliveryDocument.STATUS_DELIVERED,
-        [(chleb, 150), (bulka, 200)],
-    )
+    # _apply_wz_deduction is called AFTER all production orders are completed (section 16),
+    # because ProductStock records for finished goods are created by complete_production_order.
+    # We collect (wz_doc, items) here and apply them all at the end of section 16.
+    _pending_wz_deductions = []
+
+    def _apply_wz_deduction(wz_doc, items_with_qty):
+        """
+        Deduct finished goods from ProductStock after WZ delivery.
+        Also updates quantity_delivered on linked OrderItems so planning
+        correctly excludes already-delivered quantities.
+        items_with_qty: list of (product, qty) tuples matching the WZ items.
+        Must be called AFTER all production orders are completed so ProductStock
+        records for finished goods already exist.
+        """
+        from apps.products.models import ProductStock, StockMovement
+        from apps.orders.models import OrderItem
+        for product, qty in items_with_qty:
+            qty_dec = Decimal(str(qty))
+            stock = ProductStock.objects.filter(
+                company=company, product=product, warehouse=wh_main
+            ).first()
+            if stock:
+                qty_before = stock.quantity_available
+                stock.quantity_available -= qty_dec
+                stock.save(update_fields=["quantity_available"])
+                StockMovement.objects.create(
+                    company=company, product=product, warehouse=wh_main, user=user,
+                    movement_type=StockMovement.MovementType.SALE,
+                    quantity=-qty_dec,
+                    quantity_before=qty_before,
+                    quantity_after=stock.quantity_available,
+                    reference_type="delivery_document",
+                    reference_id=wz_doc.uuid,
+                    notes=f"WZ {wz_doc.document_number or ''}",
+                    created_by=user,
+                )
+            # Update quantity_delivered on linked OrderItem so planning excludes delivered qty
+            if wz_doc.order_id:
+                oi = OrderItem.objects.filter(order_id=wz_doc.order_id, product=product).first()
+                if oi:
+                    oi.quantity_delivered = (oi.quantity_delivered or Decimal("0")) + qty_dec
+                    oi.save(update_fields=["quantity_delivered"])
+
+    # Historical WZs
+    wz = _make_wz(order_m1a, m1 + timedelta(days=3), DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 100), (bulka, 200), (rogal, 150)])
+    _pending_wz_deductions.append((wz, [(chleb, 100), (bulka, 200), (rogal, 150)]))
+
+    wz = _make_wz(order_m1b, m1 + timedelta(days=12), DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 60), (drozdzowka, 80), (tort, 4)])
+    _pending_wz_deductions.append((wz, [(chleb, 60), (drozdzowka, 80), (tort, 4)]))
+
+    wz = _make_wz(order_m2a, m2 + timedelta(days=2), DeliveryDocument.STATUS_DELIVERED,
+                  [(drozdzowka, 60), (rogal, 80), (tort, 2)])
+    _pending_wz_deductions.append((wz, [(drozdzowka, 60), (rogal, 80), (tort, 2)]))
+
+    wz = _make_wz(order_m2b, m2 + timedelta(days=5), DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 80), (bulka, 150), (rogal, 60)])
+    _pending_wz_deductions.append((wz, [(chleb, 80), (bulka, 150), (rogal, 60)]))
+
+    # Week 1 WZs — all STATUS_DELIVERED
+    wz = _make_wz(order_wk1_mon_sklep, wk1_mon, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 80), (bulka, 150)])
+    _pending_wz_deductions.append((wz, [(chleb, 80), (bulka, 150)]))
+
+    wz = _make_wz(order_wk1_mon_przed, wk1_mon, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 50), (bulka, 100)])
+    _pending_wz_deductions.append((wz, [(chleb, 50), (bulka, 100)]))
+
+    wz = _make_wz(order_wk1_wed_bar, wk1_wed, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 60), (bulka, 80), (rogal, 60)])
+    _pending_wz_deductions.append((wz, [(chleb, 60), (bulka, 80), (rogal, 60)]))
+
+    wz = _make_wz(order_wk1_wed_kaw, wk1_wed, DeliveryDocument.STATUS_DELIVERED,
+                  [(rogal, 80), (drozdzowka, 48)])
+    _pending_wz_deductions.append((wz, [(rogal, 80), (drozdzowka, 48)]))
+
+    wz = _make_wz(order_wk1_fri_sklep, wk1_fri, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 100), (bulka, 120), (rogal, 80)])
+    _pending_wz_deductions.append((wz, [(chleb, 100), (bulka, 120), (rogal, 80)]))
+
+    wz = _make_wz(order_wk1_fri_bistro, wk1_fri, DeliveryDocument.STATUS_DELIVERED,
+                  [(rogal, 60), (drozdzowka, 36)])
+    _pending_wz_deductions.append((wz, [(rogal, 60), (drozdzowka, 36)]))
+
+    # Week 2 WZs
+    wz = _make_wz(order_mon_sklep, wk_mon, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 100), (bulka, 200)])
+    _pending_wz_deductions.append((wz, [(chleb, 100), (bulka, 200)]))
+
+    wz = _make_wz(order_mon_hotel, wk_mon, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 80), (rogal, 60)])
+    _pending_wz_deductions.append((wz, [(chleb, 80), (rogal, 60)]))
+
+    wz = _make_wz(order_tue, wk_tue, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 60), (bulka, 100)])
+    _pending_wz_deductions.append((wz, [(chleb, 60), (bulka, 100)]))
+
+    wz = _make_wz(order_wed_kaw, wk_wed, DeliveryDocument.STATUS_DELIVERED,
+                  [(rogal, 80), (drozdzowka, 60)])
+    _pending_wz_deductions.append((wz, [(rogal, 80), (drozdzowka, 60)]))
+
+    wz = _make_wz(order_wed_przed, wk_wed, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 60), (bulka, 80)])
+    _pending_wz_deductions.append((wz, [(chleb, 60), (bulka, 80)]))
+
+    # Thursday: delivered, invoice issued not paid
+    wz = _make_wz(order_thu, wk_thu, DeliveryDocument.STATUS_DELIVERED,
+                  [(chleb, 50), (rogal, 40)])
+    _pending_wz_deductions.append((wz, [(chleb, 50), (rogal, 40)]))
+
+    # Friday: draft WZ (not yet delivered — no deduction)
+    _make_wz(order_fri, wk_fri, DeliveryDocument.STATUS_DRAFT,
+             [(drozdzowka, 48), (tort, 2)])
 
     # ------------------------------------------------------------------
-    # 9. Invoices — 8 historycznych (łączny przychód ~20–25 tys. PLN)
+    # 9. Invoices
     # ------------------------------------------------------------------
     inv_seq = [0]  # mutable counter
 
     def _make_invoice(customer, order, issue_date, status, items, ksef_status=None, due_days=14):
         inv_seq[0] += 1
-        # Generate a unique invoice number matching the company's FV/{year}/{seq:04d} format
         invoice_number = f"FV/{issue_date.year}/{inv_seq[0]:04d}"
-        # Default ksef_status: all historical invoices are accepted in KSeF
-        # (KSeF responses are near-instant — "sent" as a final state would be misleading)
         if ksef_status is None:
             ksef_status = "accepted" if status in (Invoice.STATUS_PAID, Invoice.STATUS_ISSUED) else "not_sent"
-        # paid_at must be set for STATUS_PAID — the cash flow view filters by paid_at, not issue_date
         paid_at = (
             timezone.make_aware(datetime.combine(issue_date + timedelta(days=3), time()))
             if status == Invoice.STATUS_PAID else None
@@ -438,74 +774,72 @@ def create_demo_company_for_user(user) -> None:
             )
         recalculate_invoice_totals(inv)
         inv.save(update_fields=["subtotal_net", "subtotal_gross", "vat_amount", "total_gross"])
+        if order is not None:
+            from apps.orders.models import Order as OrderModel
+            OrderModel.objects.filter(pk=order.pk).update(status=OrderModel.STATUS_INVOICED)
         return inv
 
-    # m1 invoices — razem ~14 500 zł gross
-    _make_invoice(
-        sklep, order1, m1 + timedelta(days=4), Invoice.STATUS_PAID,
-        [(chleb, 400, "4.50"), (bulka, 800, "0.80"), (rogal, 500, "1.20")],
-        # net: 1800+640+600 = 3040, gross ~3283.20
-    )
-    _make_invoice(
-        kawiarnia, order2, m1 + timedelta(days=14), Invoice.STATUS_PAID,
-        [(drozdzowka, 200, "2.00"), (tort, 8, "85.00"), (rogal, 150, "1.20")],
-        # net: 400+680+180 = 1260, gross ~1360.80
-    )
-    _make_invoice(
-        hotel, order3, m1 + timedelta(days=21), Invoice.STATUS_PAID,
-        [(tort, 15, "85.00"), (chleb, 200, "4.50"), (drozdzowka, 100, "2.00")],
-        # net: 1275+900+200 = 2375, gross ~2565
-    )
-    _make_invoice(
-        bar, None, m1 + timedelta(days=8), Invoice.STATUS_PAID,
-        [(bulka, 600, "0.80"), (rogal, 400, "1.20"), (chleb, 200, "4.50")],
-        # net: 480+480+900 = 1860, gross ~2008.80
-    )
-    _make_invoice(
-        przedszkole, None, m1 + timedelta(days=16), Invoice.STATUS_PAID,
-        [(chleb, 300, "4.50"), (bulka, 500, "0.80"), (rogal, 200, "1.20")],
-        # net: 1350+400+240 = 1990, gross ~2149.20
-    )
-    # m2 invoices — wszystkie zapłacone żeby wpłynęło było widoczne w bieżącym miesiącu
-    _make_invoice(
-        przedszkole, order4, m2 + timedelta(days=4), Invoice.STATUS_PAID,
-        [(chleb, 300, "4.50"), (bulka, 500, "0.80"), (rogal, 200, "1.20")],
-        # net: 1350+400+240 = 1990, gross ~2149.20
-    )
-    _make_invoice(
-        hotel, None, m2 + timedelta(days=6), Invoice.STATUS_PAID,
-        [(tort, 12, "85.00"), (chleb, 150, "4.50"), (drozdzowka, 120, "2.00")],
-        # net: 1020+675+240 = 1935, gross ~2089.80
-    )
-    _make_invoice(
-        sklep, None, m2 + timedelta(days=10), Invoice.STATUS_PAID,
-        [(chleb, 350, "4.50"), (bulka, 700, "0.80"), (rogal, 450, "1.20")],
-        # net: 1575+560+540 = 2675, gross ~2889
-    )
-    _make_invoice(
-        bar, None, m2 + timedelta(days=13), Invoice.STATUS_PAID,
-        [(bulka, 500, "0.80"), (rogal, 300, "1.20"), (chleb, 150, "4.50")],
-        # net: 400+360+675 = 1435, gross ~1549.80
-    )
-    _make_invoice(
-        kawiarnia, None, today - timedelta(days=3), Invoice.STATUS_ISSUED,
-        [(drozdzowka, 180, "2.00"), (tort, 6, "85.00"), (rogal, 200, "1.20")],
-        # net: 360+510+240 = 1110, gross ~1198.80
-    )
-    # Zaległe faktury — wystawione dawno, termin minął, widoczne w "Zaległe FV"
-    inv_overdue1 = _make_invoice(
+    # Historical invoices — m1
+    _make_invoice(sklep, order_m1a, m1 + timedelta(days=4), Invoice.STATUS_PAID,
+                  [(chleb, 100, "4.50"), (bulka, 200, "0.80"), (rogal, 150, "1.20")])
+    _make_invoice(hotel, order_m1b, m1 + timedelta(days=13), Invoice.STATUS_PAID,
+                  [(chleb, 60, "4.50"), (drozdzowka, 80, "2.00"), (tort, 4, "85.00")])
+    # Extra m1 sales — bar and przedszkole (no linked order, weekly settlement)
+    _make_invoice(bar, None, m1 + timedelta(days=7), Invoice.STATUS_PAID,
+                  [(bulka, 500, "0.80"), (rogal, 300, "1.20"), (chleb, 150, "4.50")])
+    _make_invoice(przedszkole, None, m1 + timedelta(days=16), Invoice.STATUS_PAID,
+                  [(chleb, 200, "4.50"), (bulka, 400, "0.80"), (rogal, 100, "1.20")])
+
+    # Current month — m2 before work week
+    _make_invoice(kawiarnia, order_m2a, m2 + timedelta(days=3), Invoice.STATUS_PAID,
+                  [(drozdzowka, 60, "2.00"), (rogal, 80, "1.20"), (tort, 2, "85.00")])
+    _make_invoice(przedszkole, order_m2b, m2 + timedelta(days=6), Invoice.STATUS_PAID,
+                  [(chleb, 80, "4.50"), (bulka, 150, "0.80"), (rogal, 60, "1.20")])
+    # Extra m2 weekly settlements
+    _make_invoice(sklep, None, m2 + timedelta(days=8), Invoice.STATUS_PAID,
+                  [(chleb, 300, "4.50"), (bulka, 600, "0.80"), (rogal, 400, "1.20")])
+    _make_invoice(hotel, None, m2 + timedelta(days=10), Invoice.STATUS_PAID,
+                  [(tort, 8, "85.00"), (chleb, 100, "4.50"), (drozdzowka, 100, "2.00")])
+
+    # Week 1 invoices — all STATUS_PAID (issued 1-2 days after WZ)
+    _make_invoice(sklep, order_wk1_mon_sklep, wk1_mon + timedelta(days=1), Invoice.STATUS_PAID,
+                  [(chleb, 80, "4.50"), (bulka, 150, "0.80")])
+    _make_invoice(przedszkole, order_wk1_mon_przed, wk1_mon + timedelta(days=1), Invoice.STATUS_PAID,
+                  [(chleb, 50, "4.50"), (bulka, 100, "0.80")])
+    _make_invoice(bar, order_wk1_wed_bar, wk1_wed + timedelta(days=1), Invoice.STATUS_PAID,
+                  [(chleb, 60, "4.50"), (bulka, 80, "0.80"), (rogal, 60, "1.20")])
+    _make_invoice(kawiarnia, order_wk1_wed_kaw, wk1_wed + timedelta(days=1), Invoice.STATUS_PAID,
+                  [(rogal, 80, "1.20"), (drozdzowka, 48, "2.00")])
+    _make_invoice(sklep, order_wk1_fri_sklep, wk1_fri + timedelta(days=1), Invoice.STATUS_PAID,
+                  [(chleb, 100, "4.50"), (bulka, 120, "0.80"), (rogal, 80, "1.20")])
+    _make_invoice(bistro, order_wk1_fri_bistro, wk1_fri + timedelta(days=1), Invoice.STATUS_PAID,
+                  [(rogal, 60, "1.20"), (drozdzowka, 36, "2.00")])
+
+    # Week 2 Mon — issued, not yet paid (14-day term)
+    _make_invoice(sklep, order_mon_sklep, wk_mon + timedelta(days=1), Invoice.STATUS_ISSUED,
+                  [(chleb, 100, "4.50"), (bulka, 200, "0.80")])
+    _make_invoice(hotel, order_mon_hotel, wk_mon + timedelta(days=1), Invoice.STATUS_ISSUED,
+                  [(chleb, 80, "4.50"), (rogal, 60, "1.20")])
+    # Week 2 Tue (Bar) — WZ delivered, no invoice yet → STATUS_DELIVERED stays
+    # Week 2 Wed (Kawiarnia, Przedszkole) — WZ delivered, no invoice yet → STATUS_DELIVERED stays
+
+    # Thursday: invoice issued (not paid yet — standard 14-day term)
+    _make_invoice(restauracja, order_thu, wk_thu, Invoice.STATUS_ISSUED,
+                  [(chleb, 50, "4.50"), (rogal, 40, "1.20")])
+
+    # Overdue invoice: Bistro (older, term expired)
+    inv_overdue = _make_invoice(
         bistro, None, m1 + timedelta(days=5), Invoice.STATUS_ISSUED,
         [(drozdzowka, 80, "2.00"), (rogal, 60, "1.20")],
-        # net: 160+72 = 232, gross ~250.56 — zaległa ponad miesiąc
         due_days=7,
     )
-    inv_overdue1.status = Invoice.STATUS_OVERDUE
-    inv_overdue1.save(update_fields=["status", "updated_at"])
+    inv_overdue.status = Invoice.STATUS_OVERDUE
+    inv_overdue.save(update_fields=["status", "updated_at"])
 
+    # Another overdue: Restauracja
     inv_overdue2 = _make_invoice(
         restauracja, None, m2 + timedelta(days=1), Invoice.STATUS_ISSUED,
         [(chleb, 80, "4.50"), (bulka, 150, "0.80")],
-        # net: 360+120 = 480, gross ~518.40 — zaległa kilkanaście dni
         due_days=5,
     )
     inv_overdue2.status = Invoice.STATUS_OVERDUE
@@ -644,14 +978,23 @@ def create_demo_company_for_user(user) -> None:
         for product, qty, unit_price in product_lines:
             line_revenue = unit_price * qty
             total_revenue += line_revenue
-            lines.append({
+            _unit_costs = {
+            str(chleb.id):      Decimal("1.42"),
+            str(bulka.id):      Decimal("0.22"),
+            str(rogal.id):      Decimal("0.55"),
+            str(drozdzowka.id): Decimal("0.70"),
+            str(tort.id):       Decimal("32.00"),
+        }
+        unit_cost = float(_unit_costs.get(str(product.id), Decimal("0")))
+        line_cost = unit_cost * qty
+        lines.append({
                 "product_id": str(product.id),
                 "name": product.name,
                 "qty": qty,
                 "unit_price": float(unit_price),
-                "unit_cost": 0,
+                "unit_cost": unit_cost,
                 "line_revenue": float(line_revenue),
-                "line_cost": 0,
+                "line_cost": line_cost,
             })
         DailyB2CRevenue.objects.create(
             company=company,
@@ -733,10 +1076,10 @@ def create_demo_company_for_user(user) -> None:
         name="Sklep przy piekarni",
         is_default=True,
         lines=[
-            {"product_id": str(chleb.id), "product_name": chleb.name, "unit": chleb.unit, "qty": 45, "unit_price": float(chleb.price_gross), "unit_cost": 0},
-            {"product_id": str(bulka.id), "product_name": bulka.name, "unit": bulka.unit, "qty": 120, "unit_price": float(bulka.price_gross), "unit_cost": 0},
-            {"product_id": str(rogal.id), "product_name": rogal.name, "unit": rogal.unit, "qty": 40, "unit_price": float(rogal.price_gross), "unit_cost": 0},
-            {"product_id": str(drozdzowka.id), "product_name": drozdzowka.name, "unit": drozdzowka.unit, "qty": 25, "unit_price": float(drozdzowka.price_gross), "unit_cost": 0},
+            {"product_id": str(chleb.id), "product_name": chleb.name, "unit": chleb.unit, "qty": 45, "unit_price": float(chleb.price_gross), "unit_cost": 1.42},
+            {"product_id": str(bulka.id), "product_name": bulka.name, "unit": bulka.unit, "qty": 120, "unit_price": float(bulka.price_gross), "unit_cost": 0.22},
+            {"product_id": str(rogal.id), "product_name": rogal.name, "unit": rogal.unit, "qty": 40, "unit_price": float(rogal.price_gross), "unit_cost": 0.55},
+            {"product_id": str(drozdzowka.id), "product_name": drozdzowka.name, "unit": drozdzowka.unit, "qty": 25, "unit_price": float(drozdzowka.price_gross), "unit_cost": 0.70},
         ],
     )
     SalesReportTemplate.objects.create(
@@ -744,10 +1087,10 @@ def create_demo_company_for_user(user) -> None:
         name="Targ Stary Kleparz",
         is_default=False,
         lines=[
-            {"product_id": str(chleb.id), "product_name": chleb.name, "unit": chleb.unit, "qty": 80, "unit_price": float(chleb.price_gross), "unit_cost": 0},
-            {"product_id": str(bulka.id), "product_name": bulka.name, "unit": bulka.unit, "qty": 200, "unit_price": float(bulka.price_gross), "unit_cost": 0},
-            {"product_id": str(rogal.id), "product_name": rogal.name, "unit": rogal.unit, "qty": 60, "unit_price": float(rogal.price_gross), "unit_cost": 0},
-            {"product_id": str(drozdzowka.id), "product_name": drozdzowka.name, "unit": drozdzowka.unit, "qty": 40, "unit_price": float(drozdzowka.price_gross), "unit_cost": 0},
+            {"product_id": str(chleb.id), "product_name": chleb.name, "unit": chleb.unit, "qty": 80, "unit_price": float(chleb.price_gross), "unit_cost": 1.42},
+            {"product_id": str(bulka.id), "product_name": bulka.name, "unit": bulka.unit, "qty": 200, "unit_price": float(bulka.price_gross), "unit_cost": 0.22},
+            {"product_id": str(rogal.id), "product_name": rogal.name, "unit": rogal.unit, "qty": 60, "unit_price": float(rogal.price_gross), "unit_cost": 0.55},
+            {"product_id": str(drozdzowka.id), "product_name": drozdzowka.name, "unit": drozdzowka.unit, "qty": 40, "unit_price": float(drozdzowka.price_gross), "unit_cost": 0.70},
         ],
     )
 
@@ -764,19 +1107,19 @@ def create_demo_company_for_user(user) -> None:
         main_warehouse=wh_main,
         status=VanRoute.STATUS_CLOSED,
     )
-    route1.orders.set([order1])
+    route1.orders.set([order_m1a])
 
     route2 = VanRoute.objects.create(
         company=company,
         user=user,
-        date=m2 + timedelta(days=3),
+        date=m2 + timedelta(days=5),
         driver_name="Marek Wiśniewski",
         van_name="WY 12345",
         van_warehouse=wh_van,
         main_warehouse=wh_main,
         status=VanRoute.STATUS_CLOSED,
     )
-    route2.orders.set([order4])
+    route2.orders.set([order_m2b])
 
     # ------------------------------------------------------------------
     # 14. Supplier orders / ZD (zamówienia do dostawców)
@@ -851,18 +1194,20 @@ def create_demo_company_for_user(user) -> None:
         yield_quantity=Decimal("10"),  # one batch = 10 loaves
         notes="Tradycyjny chleb na zakwasie, pieczony w piecu opalanym drewnem.",
     )
-    RecipeItem.objects.create(
-        recipe=recipe_chleb,
-        ingredient=maka,
-        quantity=Decimal("6.00"),   # 6 kg mąki na 10 chlebów
-        unit="kg",
+    RecipeItem.objects.create(recipe=recipe_chleb, ingredient=maka,
+                               quantity=Decimal("6.00"), unit="kg")   # 6 kg mąki na 10 chlebów
+    RecipeItem.objects.create(recipe=recipe_chleb, ingredient=cukier,
+                               quantity=Decimal("0.20"), unit="kg")   # 0.2 kg cukru
+
+    recipe_bulka = Recipe.objects.create(
+        company=company,
+        product=bulka,
+        name="Bułka pszenna",
+        yield_quantity=Decimal("20"),  # one batch = 20 bułek
+        notes="Pszenna bułka kajzerka.",
     )
-    RecipeItem.objects.create(
-        recipe=recipe_chleb,
-        ingredient=cukier,
-        quantity=Decimal("0.20"),   # 0.2 kg cukru
-        unit="kg",
-    )
+    RecipeItem.objects.create(recipe=recipe_bulka, ingredient=maka,
+                               quantity=Decimal("1.00"), unit="kg")   # 1 kg mąki na 20 bułek
 
     recipe_rogal = Recipe.objects.create(
         company=company,
@@ -871,122 +1216,561 @@ def create_demo_company_for_user(user) -> None:
         yield_quantity=Decimal("20"),  # one batch = 20 rogali
         notes="Delikatny rogal z masłem, posypany cukrem pudrem.",
     )
-    RecipeItem.objects.create(
-        recipe=recipe_rogal,
-        ingredient=maka,
-        quantity=Decimal("2.00"),   # 2 kg mąki na 20 rogali
-        unit="kg",
+    RecipeItem.objects.create(recipe=recipe_rogal, ingredient=maka,
+                               quantity=Decimal("2.00"), unit="kg")   # 2 kg mąki na 20 rogali
+    RecipeItem.objects.create(recipe=recipe_rogal, ingredient=maslo,
+                               quantity=Decimal("0.60"), unit="kg")   # 0.6 kg masła
+    RecipeItem.objects.create(recipe=recipe_rogal, ingredient=cukier,
+                               quantity=Decimal("0.30"), unit="kg")   # 0.3 kg cukru
+
+    recipe_drozdzowka = Recipe.objects.create(
+        company=company,
+        product=drozdzowka,
+        name="Drożdżówka z serem",
+        yield_quantity=Decimal("12"),  # one batch = 12 drożdżówek
+        notes="Drożdżówki z nadzieniem serowym, posypane cukrem pudrem.",
     )
-    RecipeItem.objects.create(
-        recipe=recipe_rogal,
-        ingredient=maslo,
-        quantity=Decimal("0.60"),   # 0.6 kg masła
-        unit="kg",
+    RecipeItem.objects.create(recipe=recipe_drozdzowka, ingredient=maka,
+                               quantity=Decimal("1.50"), unit="kg")
+    RecipeItem.objects.create(recipe=recipe_drozdzowka, ingredient=maslo,
+                               quantity=Decimal("0.20"), unit="kg")
+    RecipeItem.objects.create(recipe=recipe_drozdzowka, ingredient=cukier,
+                               quantity=Decimal("0.25"), unit="kg")
+
+    recipe_tort = Recipe.objects.create(
+        company=company,
+        product=tort,
+        name="Tort urodzinowy",
+        yield_quantity=Decimal("1"),  # one batch = 1 tort
+        notes="Tort biszkoptowy z masą maślaną.",
     )
-    RecipeItem.objects.create(
-        recipe=recipe_rogal,
-        ingredient=cukier,
-        quantity=Decimal("0.30"),   # 0.3 kg cukru
-        unit="kg",
-    )
+    RecipeItem.objects.create(recipe=recipe_tort, ingredient=maka,
+                               quantity=Decimal("0.30"), unit="kg")
+    RecipeItem.objects.create(recipe=recipe_tort, ingredient=maslo,
+                               quantity=Decimal("0.25"), unit="kg")
+    RecipeItem.objects.create(recipe=recipe_tort, ingredient=cukier,
+                               quantity=Decimal("0.40"), unit="kg")
 
     # ------------------------------------------------------------------
     # 16. Production orders (zlecenia produkcji)
     # ------------------------------------------------------------------
+    # Helper: complete a production order with a historical date.
+    # Patches timezone.now() / timezone.localdate() so the service uses
+    # the given target_date as the RW/PW issue_date instead of today.
+    def _complete_prd_on_date(order, target_date):
+        fake_dt = _dt.datetime.combine(target_date, _dt.time(6, 0))
+        fake_now = timezone.make_aware(fake_dt)
+        with patch("apps.production.services.timezone") as mock_tz:
+            mock_tz.now.return_value = fake_now
+            mock_tz.localdate.return_value = target_date
+            mock_tz.make_aware.side_effect = timezone.make_aware
+            from apps.production.services import complete_production_order
+            return complete_production_order(order, user)
+
+    # ── Historical production — m1 ───────────────────────────────────
+    # m1 day 1: 100 chleb, 200 bułek, 150 rogali — for order_m1a
     prod_chleb_m1 = ProductionOrder.objects.create(
-        company=company,
-        created_by=user,
-        recipe=recipe_chleb,
-        date=m1 + timedelta(days=1),
-        mode=ProductionOrder.MODE_SIMPLE,
-        status=ProductionOrder.STATUS_COMPLETED,
-        quantity_produced=Decimal("100"),   # 10 batches × 10 chlebów
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=m1 + timedelta(days=1),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("100"),
         notes="Produkcja poranna — chleby wiejskie",
     )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_m1, order=order_m1a, quantity=Decimal("100"),
+    )
+    _complete_prd_on_date(prod_chleb_m1, m1 + timedelta(days=1))
 
-    prod_rogal_m2 = ProductionOrder.objects.create(
-        company=company,
-        created_by=user,
-        recipe=recipe_rogal,
-        date=m2 + timedelta(days=1),
-        mode=ProductionOrder.MODE_SIMPLE,
-        status=ProductionOrder.STATUS_COMPLETED,
-        quantity_produced=Decimal("200"),   # 10 batches × 20 rogali
+    prod_bulka_m1 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=m1 + timedelta(days=1),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("200"),
+        notes="Produkcja poranna — bułki pszenne",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_m1, order=order_m1a, quantity=Decimal("200"),
+    )
+    _complete_prd_on_date(prod_bulka_m1, m1 + timedelta(days=1))
+
+    prod_rogal_m1 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=m1 + timedelta(days=1),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("150"),
         notes="Produkcja poranna — rogale maślane",
     )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_m1, order=order_m1a, quantity=Decimal("150"),
+    )
+    _complete_prd_on_date(prod_rogal_m1, m1 + timedelta(days=1))
 
-    # Open (draft) production orders — visible in "Zlecenia produkcji" as aktywne
-    ProductionOrder.objects.create(
-        company=company,
-        created_by=user,
-        recipe=recipe_chleb,
-        date=today,
-        mode=ProductionOrder.MODE_SIMPLE,
-        status=ProductionOrder.STATUS_DRAFT,
-        quantity_produced=Decimal("0"),
-        notes="Produkcja dzienna — chleby wiejskie",
+    # m1 day 11: for order_m1b — chleb, drożdżówki, tort
+    prod_chleb_m1b = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=m1 + timedelta(days=11),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja — chleb dla Hotelu Złoty",
     )
-    ProductionOrder.objects.create(
-        company=company,
-        created_by=user,
-        recipe=recipe_rogal,
-        date=today,
-        mode=ProductionOrder.MODE_SIMPLE,
-        status=ProductionOrder.STATUS_DRAFT,
-        quantity_produced=Decimal("0"),
-        notes="Produkcja dzienna — rogale maślane",
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_m1b, order=order_m1b, quantity=Decimal("60"),
     )
-    ProductionOrder.objects.create(
-        company=company,
-        created_by=user,
-        recipe=recipe_chleb,
-        date=today + timedelta(days=1),
-        mode=ProductionOrder.MODE_SIMPLE,
-        status=ProductionOrder.STATUS_DRAFT,
-        quantity_produced=Decimal("0"),
-        notes="Zlecenie jutrzejsze — chleby wiejskie",
+    _complete_prd_on_date(prod_chleb_m1b, m1 + timedelta(days=11))
+
+    prod_drozdzowka_m1 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_drozdzowka, date=m1 + timedelta(days=11),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("80"),
+        notes="Produkcja — drożdżówki dla Hotelu Złoty",
     )
+    ProductionOrderSource.objects.create(
+        production_order=prod_drozdzowka_m1, order=order_m1b, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_drozdzowka_m1, m1 + timedelta(days=11))
+
+    prod_tort_m1 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_tort, date=m1 + timedelta(days=11),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("4"),
+        notes="Produkcja — torty dla Hotelu Złoty",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_tort_m1, order=order_m1b, quantity=Decimal("4"),
+    )
+    _complete_prd_on_date(prod_tort_m1, m1 + timedelta(days=11))
+
+    # ── Current month before work week — m2 ─────────────────────────
+    # m2 day 1: for order_m2a — drożdżówki, rogale, tort
+    prod_drozdzowka_m2 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_drozdzowka, date=m2 + timedelta(days=1),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna — drożdżówki dla Kawiarni",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_drozdzowka_m2, order=order_m2a, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_drozdzowka_m2, m2 + timedelta(days=1))
+
+    # Shared PRD for two orders — shows "wspólne" badge in report
+    prod_rogal_m2 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=m2 + timedelta(days=1),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("140"),  # 80 (kawiarnia) + 60 (przedszkole)
+        notes="Produkcja poranna — rogale (Kawiarnia Różana + Przedszkole Słoneczko)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_m2, order=order_m2a, quantity=Decimal("80"),
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_m2, order=order_m2b, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_rogal_m2, m2 + timedelta(days=1))
+
+    prod_tort_m2 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_tort, date=m2 + timedelta(days=1),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("2"),
+        notes="Produkcja — tort urodzinowy dla Kawiarni Różanej",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_tort_m2, order=order_m2a, quantity=Decimal("2"),
+    )
+    _complete_prd_on_date(prod_tort_m2, m2 + timedelta(days=1))
+
+    # m2 day 4: for order_m2b — chleb, bułki
+    prod_chleb_m2 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=m2 + timedelta(days=4),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("80"),
+        notes="Produkcja — chleby dla Przedszkola Słoneczko",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_m2, order=order_m2b, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_chleb_m2, m2 + timedelta(days=4))
+
+    prod_bulka_m2 = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=m2 + timedelta(days=4),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("150"),
+        notes="Produkcja — bułki dla Przedszkola Słoneczko",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_m2, order=order_m2b, quantity=Decimal("150"),
+    )
+    _complete_prd_on_date(prod_bulka_m2, m2 + timedelta(days=4))
+
+    # ── Week 1 production (fully completed, 2 weeks ago) ────────────
+    # wk1_mon: PRD chleba 130 szt (Sklep 80 + Przedszkole 50) — WSPÓLNE
+    prod_chleb_wk1_mon = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk1_mon,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("130"),
+        notes="Produkcja poranna poniedziałek tyg1 — chleby (Sklep + Przedszkole)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_wk1_mon, order=order_wk1_mon_sklep, quantity=Decimal("80"),
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_wk1_mon, order=order_wk1_mon_przed, quantity=Decimal("50"),
+    )
+    _complete_prd_on_date(prod_chleb_wk1_mon, wk1_mon)
+
+    # wk1_mon: PRD bułek 250 szt (Sklep 150 + Przedszkole 100) — WSPÓLNE
+    prod_bulka_wk1_mon = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk1_mon,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("250"),
+        notes="Produkcja poranna poniedziałek tyg1 — bułki (Sklep + Przedszkole)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_wk1_mon, order=order_wk1_mon_sklep, quantity=Decimal("150"),
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_wk1_mon, order=order_wk1_mon_przed, quantity=Decimal("100"),
+    )
+    _complete_prd_on_date(prod_bulka_wk1_mon, wk1_mon)
+
+    # wk1_wed: PRD chleba 60 szt (Bar)
+    prod_chleb_wk1_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk1_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna środa tyg1 — chleby (Bar)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_wk1_wed, order=order_wk1_wed_bar, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_chleb_wk1_wed, wk1_wed)
+
+    # wk1_wed: PRD bułek 80 szt (Bar)
+    prod_bulka_wk1_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk1_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("80"),
+        notes="Produkcja poranna środa tyg1 — bułki (Bar)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_wk1_wed, order=order_wk1_wed_bar, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_bulka_wk1_wed, wk1_wed)
+
+    # wk1_wed: PRD rogali 140 szt (Bar 60 + Kawiarnia 80) — WSPÓLNE
+    prod_rogal_wk1_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=wk1_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("140"),
+        notes="Produkcja poranna środa tyg1 — rogale (Bar + Kawiarnia)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_wk1_wed, order=order_wk1_wed_bar, quantity=Decimal("60"),
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_wk1_wed, order=order_wk1_wed_kaw, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_rogal_wk1_wed, wk1_wed)
+
+    # wk1_wed: PRD drożdżówek 48 szt (Kawiarnia)
+    prod_drozdzowka_wk1_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_drozdzowka, date=wk1_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("48"),
+        notes="Produkcja poranna środa tyg1 — drożdżówki (Kawiarnia)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_drozdzowka_wk1_wed, order=order_wk1_wed_kaw, quantity=Decimal("48"),
+    )
+    _complete_prd_on_date(prod_drozdzowka_wk1_wed, wk1_wed)
+
+    # wk1_fri: PRD chleba 100 szt (Sklep)
+    prod_chleb_wk1_fri = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk1_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("100"),
+        notes="Produkcja poranna piątek tyg1 — chleby (Sklep)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_wk1_fri, order=order_wk1_fri_sklep, quantity=Decimal("100"),
+    )
+    _complete_prd_on_date(prod_chleb_wk1_fri, wk1_fri)
+
+    # wk1_fri: PRD bułek 120 szt (Sklep)
+    prod_bulka_wk1_fri = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk1_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("120"),
+        notes="Produkcja poranna piątek tyg1 — bułki (Sklep)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_wk1_fri, order=order_wk1_fri_sklep, quantity=Decimal("120"),
+    )
+    _complete_prd_on_date(prod_bulka_wk1_fri, wk1_fri)
+
+    # wk1_fri: PRD rogali 140 szt (Sklep 80 + Bistro 60) — WSPÓLNE
+    prod_rogal_wk1_fri = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=wk1_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("140"),
+        notes="Produkcja poranna piątek tyg1 — rogale (Sklep + Bistro)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_wk1_fri, order=order_wk1_fri_sklep, quantity=Decimal("80"),
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_wk1_fri, order=order_wk1_fri_bistro, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_rogal_wk1_fri, wk1_fri)
+
+    # wk1_fri: PRD drożdżówek 36 szt (Bistro)
+    prod_drozdzowka_wk1_fri = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_drozdzowka, date=wk1_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("36"),
+        notes="Produkcja poranna piątek tyg1 — drożdżówki (Bistro)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_drozdzowka_wk1_fri, order=order_wk1_fri_bistro, quantity=Decimal("36"),
+    )
+    _complete_prd_on_date(prod_drozdzowka_wk1_fri, wk1_fri)
+
+    # ── Week 2 production (last full work week) ──────────────────────
+    # wk_mon: PRD chleba 180 szt (Sklep 100 + Hotel 80) — WSPÓLNE
+    prod_chleb_mon = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk_mon,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("180"),
+        notes="Produkcja poranna poniedziałek — chleby wiejskie (Sklep + Hotel)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_mon, order=order_mon_sklep, quantity=Decimal("100"),
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_mon, order=order_mon_hotel, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_chleb_mon, wk_mon)
+
+    # wk_mon: PRD bułek 200 szt (Sklep)
+    prod_bulka_mon = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk_mon,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("200"),
+        notes="Produkcja poranna poniedziałek — bułki pszenne (Sklep)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_mon, order=order_mon_sklep, quantity=Decimal("200"),
+    )
+    _complete_prd_on_date(prod_bulka_mon, wk_mon)
+
+    # wk_mon: PRD rogali 60 szt (Hotel)
+    prod_rogal_mon = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=wk_mon,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna poniedziałek — rogale maślane (Hotel)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_mon, order=order_mon_hotel, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_rogal_mon, wk_mon)
+
+    # wk_tue: PRD chleba 60 szt (Bar)
+    prod_chleb_tue = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk_tue,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna wtorek — chleby wiejskie (Bar)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_tue, order=order_tue, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_chleb_tue, wk_tue)
+
+    # wk_tue: PRD bułek 100 szt (Bar)
+    prod_bulka_tue = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk_tue,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("100"),
+        notes="Produkcja poranna wtorek — bułki pszenne (Bar)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_tue, order=order_tue, quantity=Decimal("100"),
+    )
+    _complete_prd_on_date(prod_bulka_tue, wk_tue)
+
+    # wk_wed: PRD rogali 80 szt (Kawiarnia)
+    prod_rogal_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=wk_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("80"),
+        notes="Produkcja poranna środa — rogale maślane (Kawiarnia)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_wed, order=order_wed_kaw, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_rogal_wed, wk_wed)
+
+    # wk_wed: PRD drożdżówek 60 szt (Kawiarnia)
+    prod_drozdzowka_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_drozdzowka, date=wk_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna środa — drożdżówki (Kawiarnia)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_drozdzowka_wed, order=order_wed_kaw, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_drozdzowka_wed, wk_wed)
+
+    # wk_wed: PRD chleba 60 szt (Przedszkole)
+    prod_chleb_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna środa — chleby wiejskie (Przedszkole)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_wed, order=order_wed_przed, quantity=Decimal("60"),
+    )
+    _complete_prd_on_date(prod_chleb_wed, wk_wed)
+
+    # wk_wed: PRD bułek 80 szt (Przedszkole)
+    prod_bulka_wed = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk_wed,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("80"),
+        notes="Produkcja poranna środa — bułki pszenne (Przedszkole)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_wed, order=order_wed_przed, quantity=Decimal("80"),
+    )
+    _complete_prd_on_date(prod_bulka_wed, wk_wed)
+
+    # wk_thu: PRD chleba 50 szt (Restauracja)
+    prod_chleb_thu = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk_thu,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("50"),
+        notes="Produkcja poranna czwartek — chleby wiejskie (Restauracja)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_chleb_thu, order=order_thu, quantity=Decimal("50"),
+    )
+    _complete_prd_on_date(prod_chleb_thu, wk_thu)
+
+    # wk_thu: PRD rogali 40 szt (Restauracja)
+    prod_rogal_thu = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=wk_thu,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("40"),
+        notes="Produkcja poranna czwartek — rogale maślane (Restauracja)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_rogal_thu, order=order_thu, quantity=Decimal("40"),
+    )
+    _complete_prd_on_date(prod_rogal_thu, wk_thu)
+
+    # wk_fri: PRD chleba 40 szt — poranna partia dla sklepu przy piekarni (sprzedaż detaliczna)
+    prod_chleb_fri_retail = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_chleb, date=wk_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("40"),
+        notes="Produkcja poranna piątek — chleby wiejskie (sklep detaliczny)",
+    )
+    _complete_prd_on_date(prod_chleb_fri_retail, wk_fri)
+
+    # wk_fri: PRD bułek 80 szt — poranna partia dla sklepu przy piekarni (sprzedaż detaliczna)
+    prod_bulka_fri_retail = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("80"),
+        notes="Produkcja poranna piątek — bułki pszenne (sklep detaliczny)",
+    )
+    _complete_prd_on_date(prod_bulka_fri_retail, wk_fri)
+
+    # wk_fri: PRD rogali 60 szt — poranna partia dla sklepu przy piekarni (sprzedaż detaliczna)
+    prod_rogal_fri_retail = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_rogal, date=wk_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("60"),
+        notes="Produkcja poranna piątek — rogale maślane (sklep detaliczny)",
+    )
+    _complete_prd_on_date(prod_rogal_fri_retail, wk_fri)
+
+    # wk_fri: PRD drożdżówek 48 szt (Hotel) — wyprodukowane, czekają na odbiór (WZ w drafcie)
+    prod_drozdzowka_fri = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_drozdzowka, date=wk_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("48"),
+        notes="Produkcja piątek — drożdżówki (Hotel Złoty)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_drozdzowka_fri, order=order_fri, quantity=Decimal("48"),
+    )
+    _complete_prd_on_date(prod_drozdzowka_fri, wk_fri)  # drożdżówki gotowe, czekają na odbiór
+
+    # wk_fri: PRD tortu 2 szt (Hotel) — STATUS_DRAFT (w piecu)
+    prod_tort_fri = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_tort, date=wk_fri,
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("2"),
+        notes="Produkcja piątek — tort urodzinowy (Hotel Złoty)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_tort_fri, order=order_fri, quantity=Decimal("2"),
+    )
+    # STATUS_DRAFT — still in production
+
+    # wk_fri + 3: PRD bułek dla Bistro — STATUS_DRAFT (zaplanowane na poniedziałek)
+    prod_bulka_next_mon = ProductionOrder.objects.create(
+        company=company, created_by=user,
+        recipe=recipe_bulka, date=wk_fri + timedelta(days=3),
+        mode=ProductionOrder.MODE_SIMPLE, status=ProductionOrder.STATUS_DRAFT,
+        quantity_produced=Decimal("40"),
+        notes="Produkcja poniedziałek — bułki (Bistro Pod Lipą)",
+    )
+    ProductionOrderSource.objects.create(
+        production_order=prod_bulka_next_mon, order=order_next_mon, quantity=Decimal("40"),
+    )
+    # STATUS_DRAFT — scheduled for Monday
 
     # ------------------------------------------------------------------
-    # 17. Stock movements for materials (must come after pz1, pz2, prod_chleb_m1, prod_rogal_m2)
-    # Timeline: m1+1 consume, m1+3 pz1, m2+1 consume, m2+4 pz2 → current stock
-    # maka:   130 → -60 → 70 → +150 → 220 → -20 → 200 → +100 → 300 ✓
-    # cukier:  55 →  -2 → 53 →  +50 → 103 →  -3 → 100 ✓
-    # maslo:   26 →       26 →  +30 →  56 →  -6 →  50 → +20  →  70... but current=50
-    #          actual maslo current=50, pz2 added 20, so before pz2: 30, before consume: 36, before pz1: 6
-    #          6 → +30 → 36 → -6 → 30 → +20 → 50 ✓
+    # 17. Apply WZ deductions — must run AFTER all production orders are
+    #     completed so ProductStock records for finished goods already exist.
     # ------------------------------------------------------------------
-    def _mov(product, qty_str, mov_type, qty_before_str, dt, ref_type=None, ref_id=None):
-        qty = Decimal(qty_str)
-        qty_before = Decimal(qty_before_str)
-        StockMovement.objects.create(
-            company=company,
-            product=product,
-            warehouse=wh_main,
-            user=user,
-            movement_type=mov_type,
-            quantity=qty,
-            quantity_before=qty_before,
-            quantity_after=qty_before + qty,
-            reference_type=ref_type,
-            reference_id=ref_id,
-            created_at=timezone.make_aware(datetime.combine(dt, time())),
-        )
-
-    PURCHASE = StockMovement.MovementType.PURCHASE
-    ADJUST = StockMovement.MovementType.ADJUSTMENT
-
-    # m1+1: zużycie do produkcji chlebów
-    _mov(maka,   "-60.00", ADJUST,  "130.00", m1 + timedelta(days=1), "production_order", prod_chleb_m1.uuid)
-    _mov(cukier,  "-2.00", ADJUST,   "55.00", m1 + timedelta(days=1), "production_order", prod_chleb_m1.uuid)
-    # m1+3: przyjęcie PZ1
-    _mov(maka,  "150.00", PURCHASE,  "70.00", m1 + timedelta(days=3), "delivery_document", pz1.uuid)
-    _mov(cukier,  "50.00", PURCHASE, "53.00", m1 + timedelta(days=3), "delivery_document", pz1.uuid)
-    _mov(maslo,   "30.00", PURCHASE,  "6.00", m1 + timedelta(days=3), "delivery_document", pz1.uuid)
-    # m2+1: zużycie do produkcji rogali
-    _mov(maka,   "-20.00", ADJUST,  "220.00", m2 + timedelta(days=1), "production_order", prod_rogal_m2.uuid)
-    _mov(cukier,  "-3.00", ADJUST,  "103.00", m2 + timedelta(days=1), "production_order", prod_rogal_m2.uuid)
-    _mov(maslo,   "-6.00", ADJUST,   "36.00", m2 + timedelta(days=1), "production_order", prod_rogal_m2.uuid)
-    # m2+4: przyjęcie PZ2
-    _mov(maka,  "100.00", PURCHASE, "200.00", m2 + timedelta(days=4), "delivery_document", pz2.uuid)
-    _mov(maslo,   "20.00", PURCHASE, "30.00", m2 + timedelta(days=4), "delivery_document", pz2.uuid)
+    for _wz_doc, _items in _pending_wz_deductions:
+        _apply_wz_deduction(_wz_doc, _items)

@@ -25,6 +25,7 @@ class DeliveryDocument(models.Model):
     DOC_TYPE_PZ = "PZ"
     DOC_TYPE_ZW = "ZW"
     DOC_TYPE_RW = "RW"
+    DOC_TYPE_PW = "PW"
     DOC_TYPE_PZ_KOR = "PZ-KOR"
     DOC_TYPE_WZ_KOR = "WZ-KOR"
 
@@ -34,6 +35,7 @@ class DeliveryDocument(models.Model):
         (DOC_TYPE_PZ, "Przyjęcie Zewnętrzne"),
         (DOC_TYPE_ZW, "Zwrot Zewnętrzny"),
         (DOC_TYPE_RW, "Rozchód Wewnętrzny"),
+        (DOC_TYPE_PW, "Przyjęcie Wewnętrzne"),
         (DOC_TYPE_PZ_KOR, "Korekta Przyjęcia Zewnętrznego"),
         (DOC_TYPE_WZ_KOR, "Korekta Wydania Zewnętrznego"),
     ]

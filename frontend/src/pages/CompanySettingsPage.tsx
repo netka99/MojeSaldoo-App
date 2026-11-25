@@ -328,7 +328,9 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
   const updateMutation = useUpdateWorkflowSettingsMutation(companyId);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const toggle = async (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately', next: boolean) => {
+  type WorkflowField = 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately' | 'order_dates_enabled';
+
+  const toggle = async (field: WorkflowField, next: boolean) => {
     if (!canEdit) return;
     setSaveError(null);
     try {
@@ -338,10 +340,10 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
     }
   };
 
-  const changedAtField = (field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately') =>
+  const changedAtField = (field: WorkflowField) =>
     `${field}_changed_at` as keyof typeof settings;
 
-  const rows: { field: 'orders_required' | 'wz_required_before_invoice' | 'auto_wz_on_order' | 'auto_deliver_wz' | 'production_complete_immediately'; title: string; description: string; confirmOnEnable?: string }[] = [
+  const rows: { field: WorkflowField; title: string; description: string; confirmOnEnable?: string }[] = [
     {
       field: 'orders_required',
       title: 'Wymagaj zamówienia przed WZ',
@@ -373,6 +375,12 @@ function WorkflowSettingsSection({ companyId, canEdit }: WorkflowSettingsSection
       title: 'Zakończ produkcję od razu',
       description:
         'Gdy włączone, formularz tworzenia zlecenia produkcji domyślnie zaznacza opcję "Zakończ od razu" — zlecenie jest tworzone i dokumenty RW+PW wystawiane w jednym kroku. Idealne dla piekarni, gdzie produkcja i ewidencja odbywają się równocześnie.',
+    },
+    {
+      field: 'order_dates_enabled',
+      title: 'Daty planowania na zamówieniu',
+      description:
+        'Gdy włączone, każde zamówienie ma dodatkowe pola dat w sekcji "Planowanie":\n• Data produkcji — kiedy zacząć produkować\n• Data wysyłki — kiedy wystawić WZ i wysłać\nPrzydatne gdy produkcja trwa kilka dni lub wysyłka jest inna niż data dostawy do klienta. Dla piekarni z dostawą następnego dnia można zostawić wyłączone.',
     },
   ];
 

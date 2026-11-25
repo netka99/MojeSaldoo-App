@@ -14,7 +14,7 @@ from rest_framework.response import Response
 
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
 from apps.users.tenant import filter_queryset_for_current_company
-from apps.activity.log import log_error
+from apps.activity.log import log_error, log_success
 
 from .models import InvoiceItemPzLink, PurchaseDocument, PurchaseDocumentItem, PurchaseDocumentPzLink
 from .serializers import PurchaseDocumentSerializer
@@ -618,6 +618,13 @@ class PurchaseDocumentViewSet(viewsets.ModelViewSet):
             instance.status = PurchaseDocument.STATUS_MATCHED
             instance.save(update_fields=["status"])
 
+        log_success(
+            user=request.user,
+            action="purchase_document.match",
+            object_type="PurchaseDocument",
+            object_id=str(instance.uuid),
+            request=request,
+        )
         return Response(self._serialized_instance(instance))
 
     # ------------------------------------------------------------------

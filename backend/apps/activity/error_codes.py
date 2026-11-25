@@ -201,6 +201,26 @@ ERROR_MESSAGES: dict[str, dict] = {
         "action_hint": "Sprawdź status faktury. Nie wysyłaj tej samej faktury więcej niż raz.",
         "action_url": "/invoices",
     },
+    # ── Products ─────────────────────────────────────────────────────────────
+    "PRODUCT_IMPORT_FAILED": {
+        "title": "Błąd importu produktów",
+        "description": "Plik importu produktów nie mógł zostać przetworzony lub zawierał błędne dane.",
+        "action_hint": "Pobierz szablon importu, popraw dane i spróbuj wgrać plik ponownie.",
+        "action_url": "/products",
+    },
+    # ── KSeF certificate ─────────────────────────────────────────────────────
+    "CERT_EXPIRED": {
+        "title": "Certyfikat KSeF wygasł",
+        "description": "Certyfikat używany do uwierzytelniania w KSeF wygasł i nie można się nim zalogować.",
+        "action_hint": "Wgraj aktualny certyfikat w ustawieniach firmy.",
+        "action_url": "/settings/certificate",
+    },
+    "CERT_INVALID": {
+        "title": "Nieprawidłowy certyfikat KSeF",
+        "description": "Wgrany certyfikat nie może zostać odczytany lub jest niezgodny z formatem wymaganym przez KSeF.",
+        "action_hint": "Wgraj certyfikat .p12/.crt i klucz w formacie obsługiwanym przez KSeF.",
+        "action_url": "/settings/certificate",
+    },
 }
 
 

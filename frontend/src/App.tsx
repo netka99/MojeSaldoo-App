@@ -67,6 +67,7 @@ const OrderListPage = lazy(() => import('./pages/OrderListPage').then((m) => ({ 
 const ReconciliationReportPage = lazy(() => import('./pages/ReconciliationReportPage').then((m) => ({ default: m.ReconciliationReportPage })));
 const CustomerFlowReportPage = lazy(() => import('./pages/CustomerFlowReportPage').then((m) => ({ default: m.CustomerFlowReportPage })));
 const MaterialConsumptionPage = lazy(() => import('./pages/MaterialConsumptionPage'));
+const ProductionFlowReportPage = lazy(() => import('./pages/ProductionFlowReportPage'));
 const OrderCreatePage = lazy(() =>
   import('./pages/OrderCreatePage').then((m) => ({ default: m.OrderCreatePage })),
 );
@@ -412,6 +413,14 @@ function App() {
                   }
                 />
                 <Route path="/reports/material-consumption" element={<MaterialConsumptionPage />} />
+                <Route
+                  path="/reports/production-flow"
+                  element={
+                    <ModuleRouteGate module="production">
+                      <ProductionFlowReportPage />
+                    </ModuleRouteGate>
+                  }
+                />
                 <Route
                   path="/orders/new"
                   element={

@@ -168,6 +168,7 @@ def generate_invoice_from_order(
         bank_account_iban=company.bank_account_iban or "",
         bank_swift=company.bank_swift or "",
         bank_name=company.bank_name or "",
+        annotation_zwolnienie=not getattr(company, "is_vat_payer", True),
     )
     invoice.save()
 
@@ -510,6 +511,7 @@ def generate_invoice_from_orders(
         bank_swift=company.bank_swift or "",
         bank_name=company.bank_name or "",
         show_wz_numbers=show_wz_numbers,
+        annotation_zwolnienie=not getattr(company, "is_vat_payer", True),
     )
 
     # Auto-populate DodatkowyOpis with delivery period when sale_date_type='period'.
@@ -705,6 +707,8 @@ def create_manual_invoice(
         due_date_description=due_date_description or "",
         contracts=contracts or [],
         purchase_orders=purchase_orders or [],
+        # Auto-set zwolnienie for non-VAT companies (art. 113)
+        annotation_zwolnienie=not getattr(company, "is_vat_payer", True),
     )
     invoice.save()
 

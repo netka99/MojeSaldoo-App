@@ -7,6 +7,7 @@ import { downloadCsv } from '@/lib/downloadCsv';
 import { authStorage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { OPEX_CATEGORY_LABELS } from '@/services/ksef.service';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
@@ -416,12 +417,7 @@ export function ProfitLossPage() {
                             onClick={() => toggleMonth(row.month)}
                           >
                             <td className="border-b px-3 py-2 text-muted-foreground">
-                              <svg
-                                className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
-                                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
-                              >
-                                <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
+                              <ReportExpandIcon open={isExpanded} />
                             </td>
                             <td className="border-b px-3 py-2 font-mono font-medium">{row.month}</td>
                             <td className="border-b px-3 py-2 text-right tabular-nums text-blue-600">{formatMoney(row.revenue)}</td>

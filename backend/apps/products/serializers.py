@@ -339,6 +339,13 @@ class CustomerProductPriceSerializer(serializers.ModelSerializer):
     product_price_net = serializers.DecimalField(
         source="product.price_net", max_digits=10, decimal_places=2, read_only=True,
     )
+    product_vat_rate = serializers.DecimalField(
+        source="product.vat_rate", max_digits=5, decimal_places=2, read_only=True,
+    )
+    price_type = serializers.SerializerMethodField()
+
+    def get_price_type(self, obj):
+        return "net"
 
     class Meta:
         model = CustomerProductPrice
@@ -349,7 +356,9 @@ class CustomerProductPriceSerializer(serializers.ModelSerializer):
             "product_name",
             "product_unit",
             "product_price_net",
+            "product_vat_rate",
             "price_net",
+            "price_type",
             "note",
             "created_at",
             "updated_at",

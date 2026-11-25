@@ -7,6 +7,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useProductionOrderQuery, useCompleteProductionOrderMutation, useDeleteProductionOrderMutation } from '@/query/use-production';
 import { usePermission } from '@/hooks/usePermission';
 import { useState } from 'react';
+import { AuditHistorySection } from '@/components/features/AuditHistorySection';
 
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 const n4 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 4 });
@@ -109,6 +110,11 @@ export function ProductionOrderDetailPage() {
             <span className="text-xs text-slate-400">
               {order.mode === 'batch' ? 'Tryb wsadu' : 'Tryb prosty'}
             </span>
+            {order.is_stock_production && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                na zapas
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -320,6 +326,12 @@ export function ProductionOrderDetailPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {order && (
+        <div className="px-4 pb-6 md:px-0">
+          <AuditHistorySection objectType="ProductionOrder" objectId={String(order.id)} />
         </div>
       )}
     </div>

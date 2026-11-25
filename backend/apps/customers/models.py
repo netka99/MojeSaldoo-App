@@ -28,6 +28,13 @@ class Customer(models.Model):
     payment_terms = models.IntegerField(default=14)
     credit_limit = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
+    is_individual = models.BooleanField(
+        default=False,
+        help_text=(
+            "Zaznacz dla osób fizycznych nieprowadzących działalności (B2C). "
+            "Na fakturze w KSeF zamiast NIP pojawi się BrakID=1."
+        ),
+    )
 
     # --- KSeF / FA-3 Podmiot2 flags ---
     # JST: 1 = nabywca jest jednostką sektora finansów publicznych (art. 14 uptu).

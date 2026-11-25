@@ -9,11 +9,14 @@ import {
   useApplyWzCorrectionMutation,
   useCancelOrderMutation,
   useConfirmOrderMutation,
+  useDeleteOrderMutation,
   useOrderChangelogQuery,
   useOrderQuery,
   useUnblockOrderMutation,
   useUpdateOrderMutation,
 } from '@/query/use-orders';
+import { useWorkflowSettingsQuery } from '@/query/use-companies';
+import { useAuth } from '@/context/AuthContext';
 import { authStorage } from '@/services/api';
 import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { usePermission } from '@/hooks/usePermission';
@@ -224,9 +227,10 @@ const DELIVERY_STATUS_PL: Record<string, string> = {
 
 function deliveryStatusBadgeClass(status: string): string {
   switch (status) {
+    case 'draft':     return 'bg-amber-100 text-amber-700';
     case 'saved':     return 'bg-emerald-50 text-emerald-700';
-    case 'in_transit':return 'bg-amber-50 text-amber-700';
-    case 'delivered': return 'bg-blue-50 text-blue-700';
+    case 'in_transit':return 'bg-blue-50 text-blue-700';
+    case 'delivered': return 'bg-green-100 text-green-700';
     case 'cancelled': return 'bg-red-50 text-red-600';
     default:          return 'bg-muted text-muted-foreground';
   }
@@ -597,9 +601,14 @@ export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const companyId = user?.current_company ?? '';
+  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId || undefined);
+  const orderDatesEnabled = workflowSettings?.order_dates_enabled ?? false;
   const { data: order, isLoading, isError, error, refetch } = useOrderQuery(id, Boolean(id));
   const confirmM = useConfirmOrderMutation();
   const cancelM = useCancelOrderMutation();
+  const deleteM = useDeleteOrderMutation();
   const unblockM = useUnblockOrderMutation();
   const generateWzM = useGenerateDeliveryForOrderMutation();
   const syncWzM = useSyncWzFromOrderMutation();
@@ -608,6 +617,7 @@ export function OrderDetailPage() {
   const [printError, setPrintError] = useState<string | null>(null);
   const [wzDatePicker, setWzDatePicker] = useState<string | null>(null);
   const [wzSuccessMsg, setWzSuccessMsg] = useState<string | null>(null);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   const isDraft = order?.status === 'draft';
   const canEdit =
@@ -658,6 +668,8 @@ export function OrderDetailPage() {
   /* Local editable lines */
   const [editLines, setEditLines] = useState<EditLine[]>([]);
   const [editDate, setEditDate] = useState('');
+  const [editProductionDate, setEditProductionDate] = useState('');
+  const [editShipmentDate, setEditShipmentDate] = useState('');
   const [isDirty, setIsDirty] = useState(false);
 
   /* Sync edit lines when order loads / changes */
@@ -672,14 +684,17 @@ export function OrderDetailPage() {
   /* Sync editDate when order loads */
   useEffect(() => {
     if (order?.delivery_date) setEditDate(order.delivery_date);
-  }, [order?.delivery_date]);
+    setEditProductionDate(order?.production_date ?? '');
+    setEditShipmentDate(order?.shipment_date ?? '');
+  }, [order?.delivery_date, order?.production_date, order?.shipment_date]);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   if (!id) return <Navigate to="/orders" replace />;
 
-  const backUrl = order?.delivery_date ? `/orders?date=${order.delivery_date}` : '/orders';
+  const fromState = (location.state as { from?: string } | null)?.from;
+  const backUrl = fromState ?? (order?.delivery_date ? `/orders?date=${order.delivery_date}` : '/orders');
 
   /* ── Edit handlers ───────────────────────────────────────────── */
   const handleQtyChange = (productId: string, delta: number) => {
@@ -707,6 +722,8 @@ export function OrderDetailPage() {
         body: {
           customer_id: order.customer_id,
           delivery_date: editDate || order.delivery_date,
+          production_date: editProductionDate || null,
+          shipment_date: editShipmentDate || null,
           items: editLines.map((l) => ({
             product_id: l.item.product_id,
             quantity: String(l.quantity),
@@ -741,10 +758,17 @@ export function OrderDetailPage() {
   };
 
   const onCancel = async () => {
-    if (!window.confirm('Czy na pewno anulować to zamówienie?')) return;
     setActionError(null);
-    try { await cancelM.mutateAsync(id); }
-    catch (e) { setActionError(errMsg(e)); }
+    try {
+      if (isDraft) {
+        await deleteM.mutateAsync(id);
+        const d = order?.delivery_date;
+        navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
+      } else {
+        await cancelM.mutateAsync(id);
+      }
+    } catch (e) { setActionError(errMsg(e)); }
+    finally { setShowCancelDialog(false); }
   };
 
   const onCreateWz = async (issueDate: string) => {
@@ -797,7 +821,7 @@ export function OrderDetailPage() {
             <motion.button
               whileTap={{ scale: 0.94 }}
               type="button"
-              onClick={() => navigate(-1)}
+              onClick={() => navigate(backUrl)}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-card shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
               aria-label="Wróć"
             >
@@ -813,7 +837,7 @@ export function OrderDetailPage() {
                     {ORDER_STATUS_LABELS_PL[order.status]}
                   </span>
                   <span className="text-[13px] text-muted-foreground">
-                    {order.order_number} · dostawa {formatDate(order.delivery_date)}
+                    {order.order_number} · zam. {formatDate(order.order_date)} · dostawa {formatDate(order.delivery_date)}
                   </span>
                 </div>
               )}
@@ -824,7 +848,7 @@ export function OrderDetailPage() {
                 <motion.button
                   whileTap={{ scale: 0.94 }}
                   type="button"
-                  onClick={() => void onCancel()}
+                  onClick={() => setShowCancelDialog(true)}
                   disabled={cancelM.isPending}
                   className="flex h-10 items-center gap-1.5 rounded-full border border-destructive/40 bg-card px-3 text-[13px] font-medium text-destructive shadow-[0_2px_8px_rgba(0,0,0,0.08)] disabled:opacity-60"
                   aria-label="Anuluj zamówienie"
@@ -933,6 +957,54 @@ export function OrderDetailPage() {
                   onChange={(e) => { setEditDate(e.target.value); setIsDirty(true); }}
                   className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
                 />
+              </div>
+            )}
+
+            {orderDatesEnabled && (order?.production_date || order?.shipment_date || isDraft || isEditing) && (
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Planowanie</p>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {/* Data produkcji */}
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800">Data produkcji</p>
+                      <p className="text-xs text-slate-400">Kiedy zacząć produkować</p>
+                    </div>
+                    {(isDraft || isEditing) ? (
+                      <input
+                        type="date"
+                        value={editProductionDate}
+                        onChange={(e) => { setEditProductionDate(e.target.value); setIsDirty(true); }}
+                        className="date-pill w-40 border-solid border-slate-300 bg-white"
+                      />
+                    ) : (
+                      <span className="text-sm font-medium text-slate-700">
+                        {order?.production_date ? formatDate(order.production_date) : <span className="text-slate-300">—</span>}
+                      </span>
+                    )}
+                  </div>
+                  {/* Data wysyłki WZ */}
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800">Data wysyłki WZ</p>
+                      <p className="text-xs text-slate-400">Kiedy wystawić WZ i wysłać towar</p>
+                    </div>
+                    {(isDraft || isEditing) ? (
+                      <input
+                        type="date"
+                        value={editShipmentDate}
+                        onChange={(e) => { setEditShipmentDate(e.target.value); setIsDirty(true); }}
+                        className="date-pill w-40 border-solid border-slate-300 bg-white"
+                      />
+                    ) : (
+                      <span className="text-sm font-medium text-slate-700">
+                        {order?.shipment_date ? formatDate(order.shipment_date) : <span className="text-slate-300">—</span>}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1118,6 +1190,59 @@ export function OrderDetailPage() {
             <path d="M12 5v14M5 12h14" strokeLinecap="round" />
           </svg>
         </button>
+      )}
+
+      {/* Cancel confirmation dialog */}
+      {showCancelDialog && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-[200] bg-foreground/30 backdrop-blur-sm"
+            onClick={() => setShowCancelDialog(false)}
+            aria-hidden
+          />
+          <motion.div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="cancel-dialog-title"
+            initial={{ opacity: 0, scale: 0.95, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            className="fixed left-1/2 top-1/2 z-[210] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-card shadow-[0_8px_32px_rgba(0,0,0,0.18)]"
+          >
+            <div className="px-5 pb-2 pt-5">
+              <h2 id="cancel-dialog-title" className="text-[17px] font-semibold text-foreground">
+                {isDraft ? 'Usunąć szkic?' : 'Anulować zamówienie?'}
+              </h2>
+              <p className="mt-1.5 text-[14px] leading-snug text-muted-foreground">
+                {isDraft
+                  ? 'Szkic zostanie trwale usunięty.'
+                  : 'Zamówienie zostanie oznaczone jako anulowane. Tej operacji nie można cofnąć.'}
+              </p>
+            </div>
+            <div className="flex flex-col gap-1 p-3">
+              <button
+                type="button"
+                onClick={() => void onCancel()}
+                disabled={cancelM.isPending || deleteM.isPending}
+                className="w-full rounded-xl bg-destructive/10 py-3 text-[15px] font-semibold text-destructive disabled:opacity-60"
+              >
+                {(cancelM.isPending || deleteM.isPending)
+                  ? '…'
+                  : isDraft ? 'Usuń szkic' : 'Tak, anuluj zamówienie'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCancelDialog(false)}
+                disabled={cancelM.isPending || deleteM.isPending}
+                className="w-full rounded-xl py-3 text-[15px] font-semibold text-primary"
+              >
+                Zostań
+              </button>
+            </div>
+          </motion.div>
+        </>
       )}
     </div>
   );

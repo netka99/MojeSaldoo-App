@@ -39,6 +39,7 @@ class CustomerSerializer(UUIDModelSerializer):
             "payment_terms",
             "credit_limit",
             "is_active",
+            "is_individual",
             # KSeF / FA-3 Podmiot2 flags
             "is_jst",
             "is_gv_member",
@@ -58,9 +59,14 @@ class CustomerSerializer(UUIDModelSerializer):
         read_only_fields = ["user", "company", "created_at", "updated_at"]
 
     def validate_nip(self, value):
-        if value and not self.validate_nip_format(value):
-            raise serializers.ValidationError("Invalid NIP format")
-        return value
+        if not value:
+            return value
+        nip_clean = value.replace("-", "").replace(" ", "")
+        if not self.validate_nip_format(nip_clean):
+            raise serializers.ValidationError(
+                "Nieprawidłowy NIP — błędna suma kontrolna lub format (wymagane 10 cyfr)."
+            )
+        return nip_clean
 
     def validate_phone(self, value):
         if value and not self.validate_phone_format(value):

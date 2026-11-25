@@ -2,6 +2,7 @@ import { Navigate, Link, useLocation, useNavigate, useParams } from 'react-route
 import { authStorage } from '@/services/api';
 import { useProductQuery } from '@/query/use-products';
 import { Button } from '@/components/ui/Button';
+import { AuditHistorySection } from '@/components/features/AuditHistorySection';
 
 const PRODUCT_TYPE_LABEL: Record<string, string> = {
   trade: 'Towar handlowy',
@@ -188,6 +189,10 @@ export function ProductDetailPage() {
             </section>
           )}
         </>
+      )}
+
+      {product && (
+        <AuditHistorySection objectType="Product" objectId={product.id} />
       )}
     </div>
   );

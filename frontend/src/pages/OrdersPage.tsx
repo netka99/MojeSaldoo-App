@@ -10,6 +10,7 @@ import { useModuleGuard } from '@/hooks/useModuleGuard';
 import { usePermission } from '@/hooks/usePermission';
 import { formatOrderLineQuantityWithUnit } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 import { useGenerateDeliveryForOrderMutation, useDeliveryByOrdersQuery } from '@/query/use-delivery';
 import { useAllActiveCustomersQuery } from '@/query/use-customers';
 import { useOrdersByDateQuery, useOpenOrdersQuery } from '@/query/use-orders';
@@ -80,7 +81,10 @@ function OrdersPageContent() {
   const canOrders = usePermission('can_manage_orders');
   const [searchParams, setSearchParams] = useSearchParams();
   const date = searchParams.get('date') ?? todayIso();
-  const [viewMode, setViewMode] = useState<ViewMode>('day');
+  const viewMode: ViewMode = (searchParams.get('view') as ViewMode | null) ?? 'day';
+  const setViewMode = (mode: ViewMode) => {
+    setSearchParams((prev) => { const p = new URLSearchParams(prev); if (mode === 'day') p.delete('view'); else p.set('view', mode); return p; }, { replace: true });
+  };
 
   const [search, setSearch] = useState('');
   const [pill, setPill] = useState<FilterPill>('all');
@@ -125,6 +129,7 @@ function OrdersPageContent() {
 
   // All open orders (cross-day view)
   const { data: openOrders = [], isPending: openOrdersPending, refetch: openOrdersRefetch } = useOpenOrdersQuery();
+
 
   const showLoading = customersPending || (ordersPending && orderData === undefined);
 
@@ -317,7 +322,7 @@ function OrdersPageContent() {
       }
       // Single order → go directly to it; multiple or none → go to customer page
       if (customerOrders.length === 1) {
-        navigate(`/orders/${customerOrders[0]!.id}`);
+        navigate(`/orders/${customerOrders[0]!.id}`, { state: { from: location.pathname + location.search } });
       } else if (customerOrders.length > 1) {
         navigate(`/customers/${customer.id}?date=${encodeURIComponent(date)}`);
       } else if (canOrders) {
@@ -364,7 +369,7 @@ function OrdersPageContent() {
       </div>
       {viewMode === 'all' && (
         <p className="px-1 text-xs text-slate-500">
-          Szkice, potwierdzone i w realizacji — ostatnie 60 dni i przyszłe. Bez anulowanych i zafakturowanych.
+          Szkice, potwierdzone i w realizacji — ostatnie 60 dni i przyszłe. Bez anulowanych i zafakturowanych. Grupowane według daty dostawy.
         </p>
       )}
 
@@ -373,7 +378,7 @@ function OrdersPageContent() {
           orders={openOrders}
           isPending={openOrdersPending}
           onRefetch={() => void openOrdersRefetch()}
-          onOrderClick={(id) => navigate(`/orders/${id}`)}
+          onOrderClick={(id) => navigate(`/orders/${id}`, { state: { from: location.pathname + location.search } })}
           canOrders={canOrders ?? false}
           onNewOrder={() => navigate(`/orders/new?date=${encodeURIComponent(todayIso())}`)}
         />
@@ -844,11 +849,14 @@ function CustomerShopRow({
                 </span>
               )}
               {hasOrder && productionEnabled && (() => {
-                const prodStatus = orders.some((o) => o.production_status === 'completed') ? 'completed'
+                const prodStatus = orders.some((o) => o.production_status === 'partial') ? 'partial'
+                  : orders.some((o) => o.production_status === 'completed') ? 'completed'
                   : orders.some((o) => o.production_status === 'in_progress') ? 'in_progress' : null;
                 if (!prodStatus) return null;
                 return prodStatus === 'completed'
                   ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Wyprodukowano</span>
+                  : prodStatus === 'partial'
+                  ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Częściowo w prod.</span>
                   : <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">W produkcji</span>;
               })()}
             </div>
@@ -866,7 +874,7 @@ function CustomerShopRow({
                     {wzBadges.type === 'single' && (
                       <>
                         {wzBadges.showMissing && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Brak WZ</span>}
-                        {wzBadges.wzDocs.map((wz) => <span key={wz.id} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">{wz.document_number ?? 'WZ'}</span>)}
+                        {wzBadges.wzDocs.map((wz) => <span key={wz.id} className={wz.status === 'draft' ? 'rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700' : 'rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700'}>{wz.document_number ?? 'WZ'}{wz.status === 'draft' ? ' ⚠' : ''}</span>)}
                         {wzBadges.zwDocs.map((zw) => <span key={zw.id} className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{zw.document_number ?? 'ZW'}</span>)}
                       </>
                     )}
@@ -916,14 +924,9 @@ function CustomerShopRow({
               aria-expanded={expanded}
               onClick={toggleExpand}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleExpand(e); }}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
             >
-              <svg
-                className={cn('h-5 w-5 transition-transform duration-200', expanded && 'rotate-180')}
-                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden
-              >
-                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <ReportExpandIcon open={expanded} />
             </button>
               ) : null}
             </>
@@ -1036,19 +1039,43 @@ interface AllOrdersViewProps {
   onNewOrder: () => void;
 }
 
+type OrderTabFilter = 'all' | 'production' | 'in_production' | 'delivery' | 'invoice';
+
+const ORDER_TAB_FILTERS: { id: OrderTabFilter; label: string }[] = [
+  { id: 'all', label: 'Wszystkie' },
+  { id: 'production', label: 'Do produkcji' },
+  { id: 'in_production', label: 'W produkcji' },
+  { id: 'delivery', label: 'Do dostarczenia' },
+  { id: 'invoice', label: 'Do zafakturowania' },
+];
+
 function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, onNewOrder }: AllOrdersViewProps) {
   const productionEnabled = useModuleGuard('production');
   const [search, setSearch] = useState('');
+  const [tabFilter, setTabFilter] = useState<OrderTabFilter>('all');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) =>
+    setExpandedIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const tabFiltered = useMemo(() => {
+    if (tabFilter === 'production') return orders.filter((o) => o.status === 'confirmed' && !o.production_status);
+    if (tabFilter === 'in_production') return orders.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial'));
+    if (tabFilter === 'delivery') return orders.filter((o) =>
+      (o.status === 'confirmed' && (o.production_status === 'completed' || o.production_status === 'partial')) || o.status === 'delivered'
+    );
+    if (tabFilter === 'invoice') return orders.filter((o) => o.status === 'delivered' && !o.has_active_invoice);
+    return orders;
+  }, [orders, tabFilter]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter(
+    if (!q) return tabFiltered;
+    return tabFiltered.filter(
       (o) =>
         o.customer_name.toLowerCase().includes(q) ||
         (o.order_number ?? '').toLowerCase().includes(q),
     );
-  }, [orders, search]);
+  }, [tabFiltered, search]);
 
   // Group by delivery_date
   const groups = useMemo(() => {
@@ -1102,6 +1129,36 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
         />
       </div>
 
+      {/* Tab filters */}
+      <div className="flex flex-wrap gap-1.5">
+        {ORDER_TAB_FILTERS.map((tab) => {
+          const count = tab.id === 'all' ? orders.length
+            : tab.id === 'production' ? orders.filter((o) => o.status === 'confirmed' && !o.production_status).length
+            : tab.id === 'in_production' ? orders.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial')).length
+            : tab.id === 'delivery' ? orders.filter((o) => (o.status === 'confirmed' && (o.production_status === 'completed' || o.production_status === 'partial')) || o.status === 'delivered').length
+            : orders.filter((o) => o.status === 'delivered' && !o.has_active_invoice).length;
+          const active = tabFilter === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setTabFilter(tab.id)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                active
+                  ? 'border-primary bg-primary text-white'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              {tab.label}
+              <span className={cn('rounded-full px-1.5 py-0.5 text-xs font-semibold', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {orders.length === 0 && (
         <div className="flex flex-col items-center gap-3 py-12 text-center">
           <p className="text-sm text-muted-foreground">Brak otwartych zamówień.</p>
@@ -1125,23 +1182,22 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
             {isToday(dateIso) && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">dziś</span>}
           </h2>
           <ul className="flex flex-col gap-2">
-            {dateOrders.map((order) => (
+            {dateOrders.map((order) => {
+              const open = expandedIds.has(order.id);
+              return (
               <li key={order.id}>
-                <button
-                  type="button"
-                  className={cn(
-                    'w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition-colors md:rounded-3xl',
-                    'border-l-4',
-                    orderStatusLeftBorderClass(order.status),
-                    'hover:bg-surface-low/40 active:bg-surface-low/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
-                  )}
-                  onClick={() => onOrderClick(order.id)}
-                >
+                <div className={cn(
+                  'overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl',
+                  'border-l-4',
+                  orderStatusLeftBorderClass(order.status),
+                )}>
                   <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary" aria-hidden>
-                      <BuildingIcon className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
+                    {/* Main row — click navigates to detail */}
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => onOrderClick(order.id)}
+                    >
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-foreground">{order.customer_name}</span>
                         <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', orderStatusBadgeClassName(order.status))}>
@@ -1149,6 +1205,9 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                         </span>
                         {productionEnabled && order.production_status === 'completed' && (
                           <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Wyprodukowano</span>
+                        )}
+                        {productionEnabled && order.production_status === 'partial' && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Częściowo w prod.</span>
                         )}
                         {productionEnabled && order.production_status === 'in_progress' && (
                           <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">W produkcji</span>
@@ -1161,7 +1220,9 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                           )}
                           {order.wz_numbers?.map((d) => (
                             <span key={d.id} className="contents">
-                              <Link to={`/delivery/${d.id}`} onClick={(e) => e.stopPropagation()} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-200">{d.number}</Link>
+                              <Link to={`/delivery/${d.id}`} onClick={(e) => e.stopPropagation()} className={d.status === 'draft' ? 'rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-200' : 'rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-200'}>
+                                {d.number}{d.status === 'draft' ? ' ⚠' : ''}
+                              </Link>
                               {d.corrections?.map((kor) => (
                                 <Link key={kor.id} to={`/delivery/${kor.id}`} onClick={(e) => e.stopPropagation()} className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200">{kor.number}</Link>
                               ))}
@@ -1175,7 +1236,7 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                           ))}
                         </div>
                       )}
-                    </div>
+                    </button>
                     <div className="shrink-0 text-right">
                       <p className="text-sm font-semibold tabular-nums text-slate-900">
                         {formatMoneyGrossLocal(order.total_gross)}
@@ -1184,10 +1245,31 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                         {order.items.length} poz.
                       </p>
                     </div>
+                    {/* Expand toggle — RIGHT side, matching daily view */}
+                    {order.items.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(order.id)}
+                        aria-expanded={open}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
+                      >
+                        <ReportExpandIcon open={open} />
+                      </button>
+                    )}
                   </div>
-                </button>
+                  {open && order.items.length > 0 && (
+                    <div className="border-t border-slate-100 px-4 py-2">
+                      <ul className="flex flex-col divide-y divide-slate-50">
+                        {order.items.map((item) => (
+                          <ItemRow key={item.id} item={item} />
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </section>
       ))}

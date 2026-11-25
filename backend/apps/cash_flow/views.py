@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from apps.users.permissions import HasCompanyPermission, IsCompanyMember
+from apps.activity.log import log_success
 
 from .models import CompanyOpexCategory, CompanyTaxConfig, DailyB2CRevenue, QuickExpense
 from .serializers import (
@@ -87,6 +88,16 @@ class QuickExpenseViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         return QuickExpenseSerializer
 
+    def perform_create(self, serializer):
+        serializer.save()
+        instance = serializer.instance
+        log_success(
+            user=self.request.user,
+            action="cashflow.expense",
+            object_type="QuickExpense",
+            object_id=str(instance.pk),
+        )
+
 
 class DailyB2CRevenueViewSet(viewsets.ModelViewSet):
     """CRUD for daily cash-register / B2C revenue entries."""
@@ -106,6 +117,16 @@ class DailyB2CRevenueViewSet(viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         return DailyB2CRevenueSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+        instance = serializer.instance
+        log_success(
+            user=self.request.user,
+            action="cashflow.b2c",
+            object_type="DailyB2CRevenue",
+            object_id=str(instance.pk),
+        )
 
 
 class CompanyOpexCategoryViewSet(viewsets.ModelViewSet):

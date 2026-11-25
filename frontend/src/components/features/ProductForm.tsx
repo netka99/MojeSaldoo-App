@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type SVGProps } from 'react';
+import { Link } from 'react-router-dom';
 import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -609,6 +610,14 @@ export function ProductForm({
           <SectionHeader Icon={IconTag} title="Sprzedaż" />
         </div>
         <div className="space-y-3 px-4 pb-4 pt-3">
+          <p className="text-xs text-slate-500">
+            Firma wycenia w{' '}
+            <span className="font-medium text-slate-700">{isGross ? 'cenach brutto' : 'cenach netto'}</span>
+            {' — '}
+            <Link to="/settings/company" className="text-primary underline-offset-2 hover:underline">
+              zmień w ustawieniach firmy
+            </Link>
+          </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {isGross ? (
               <>
@@ -622,8 +631,11 @@ export function ProductForm({
                 <TextField
                   label="Cena netto (obliczona)"
                   inputMode="decimal"
+                  readOnly
+                  tabIndex={-1}
                   stateValue={priceNet}
-                  error={errors.price_net?.message}
+                  helperText="Wyliczana automatycznie z ceny brutto"
+                  className="cursor-default bg-[#F2F2F7] text-slate-500"
                   {...register('price_net')}
                 />
               </>
@@ -648,10 +660,13 @@ export function ProductForm({
                   )}
                 </div>
                 <TextField
-                  label="Cena brutto"
+                  label="Cena brutto (obliczona)"
                   inputMode="decimal"
+                  readOnly
+                  tabIndex={-1}
                   stateValue={priceGross}
-                  error={errors.price_gross?.message}
+                  helperText="Wyliczana automatycznie z ceny netto"
+                  className="cursor-default bg-[#F2F2F7] text-slate-500"
                   {...register('price_gross')}
                 />
               </>

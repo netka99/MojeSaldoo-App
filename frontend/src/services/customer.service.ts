@@ -96,14 +96,14 @@ export type ImportCustomersResult = {
 
 export const customerPriceService = {
   fetchByCustomer: (customerId: string) =>
-    api.get<CustomerProductPrice[]>('/customer-product-prices/', { params: { customer: customerId } }),
+    api.get<CustomerProductPrice[]>('/customer-prices/', { params: { customer_id: customerId } }),
 
   create: (body: CustomerProductPriceWrite) =>
-    api.post<CustomerProductPrice>('/customer-product-prices/', body),
+    api.post<CustomerProductPrice>('/customer-prices/', body),
 
   update: (id: string, body: CustomerProductPriceUpdate) =>
-    api.patch<CustomerProductPrice>(`/customer-product-prices/${id}/`, body),
+    api.patch<CustomerProductPrice>(`/customer-prices/${id}/`, body),
 
   delete: (id: string) =>
-    api.delete<Record<string, never>>(`/customer-product-prices/${id}/`),
+    api.delete<Record<string, never>>(`/customer-prices/${id}/`),
 };

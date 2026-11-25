@@ -109,6 +109,7 @@ export type ProductionOrder = {
   date: string;
   mode: ProductionOrderMode;
   status: ProductionOrderStatus;
+  is_stock_production: boolean;
   quantity_produced: string | number;
   total_input_cost: string | number | null;
   real_unit_cost: string | number | null;
@@ -129,6 +130,7 @@ export type ProductionOrderCreate = {
   recipe: string;
   date: string;
   mode: ProductionOrderMode;
+  is_stock_production?: boolean;
   quantity_produced: number | string;
   source_orders?: { order: string; quantity: number | string }[];
   notes?: string;
@@ -137,6 +139,61 @@ export type ProductionOrderCreate = {
     quantity_used: number | string;
     unit?: string;
   }[];
+};
+
+// ── Product Flow Report ───────────────────────────────────────────────────────
+
+export type ProductFlowSourceOrder = {
+  order_id: string;
+  order_number: string;
+  customer_name: string;
+  qty_from_order: string | number;
+  qty_delivered: string | number;
+  qty_invoiced: string | number;
+  wz_docs: { id: string; number: string; qty: string | number; date: string; status: string }[];
+  invoices: { id: string; number: string; date: string; qty: string | number }[];
+  has_wz: boolean;
+  has_invoice: boolean;
+  alerts: string[];
+};
+
+export type ProductFlowRun = {
+  id: string;
+  prd_number: string;
+  date: string;
+  status: 'draft' | 'completed';
+  qty_produced: string | number;
+  total_input_cost: string | number | null;
+  real_unit_cost: string | number | null;
+  rw_number: string | null;
+  rw_id: string | null;
+  pw_number: string | null;
+  pw_id: string | null;
+  source_orders: ProductFlowSourceOrder[];
+  alerts: string[];
+};
+
+export type ProductFlowUnscheduledOrder = {
+  order_id: string;
+  order_number: string;
+  customer_name: string;
+  qty: string | number;
+  delivery_date: string | null;
+  is_overdue: boolean;
+};
+
+export type ProductFlowItem = {
+  product_id: string;
+  product_name: string;
+  product_unit: string;
+  stock_before: string | number | null;
+  stock_available: string | number | null;
+  qty_produced: string | number;
+  qty_delivered: string | number;
+  qty_invoiced: string | number;
+  has_alerts: boolean;
+  production_runs: ProductFlowRun[];
+  unscheduled_orders: ProductFlowUnscheduledOrder[];
 };
 
 export interface PaginatedProductionOrders {

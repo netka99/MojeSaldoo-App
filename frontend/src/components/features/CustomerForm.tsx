@@ -80,6 +80,7 @@ export const customerFormSchema = z.object({
   ),
   credit_limit: creditLimitStr,
   is_active: z.boolean(),
+  is_individual: z.boolean(),
   // KSeF FA-3 Podmiot2 flags
   is_jst: z.boolean(),
   is_gv_member: z.boolean(),
@@ -109,6 +110,7 @@ const EMPTY_CUSTOMER_DEFAULTS: CustomerFormValues = {
   payment_terms: '14',
   credit_limit: '0',
   is_active: true,
+  is_individual: false,
   is_jst: false,
   is_gv_member: false,
   podmiot3_role: '',
@@ -135,6 +137,7 @@ function customerToFormDefaults(customer: Customer): CustomerFormValues {
     payment_terms: String(customer.payment_terms),
     credit_limit: String(customer.credit_limit),
     is_active: customer.is_active,
+    is_individual: customer.is_individual ?? false,
     is_jst: customer.is_jst ?? false,
     is_gv_member: customer.is_gv_member ?? false,
     podmiot3_role: (customer.podmiot3_role ?? '') as '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | '11' | '',
@@ -164,6 +167,7 @@ function formValuesToCustomerWrite(values: CustomerFormValues, id?: string): Cus
     payment_terms: Number.parseInt(values.payment_terms, 10),
     credit_limit: values.credit_limit,
     is_active: values.is_active,
+    is_individual: values.is_individual,
     is_jst: values.is_jst,
     is_gv_member: values.is_gv_member,
     podmiot3_role: values.podmiot3_role || null,
@@ -325,6 +329,8 @@ export function CustomerForm({
 
   const hasSubmitErrors = isSubmitted && Object.keys(errors).length > 0;
 
+  const isIndividual = form.watch('is_individual');
+
   const nipLookup = useNipLookupMutation();
   const [nipLookupError, setNipLookupError] = useState<string | null>(null);
 
@@ -465,15 +471,30 @@ export function CustomerForm({
             />
           </div>
           <div>
+            <Controller
+              name="is_individual"
+              control={control}
+              render={({ field }) => (
+                <IosToggle
+                  checked={field.value}
+                  onChange={field.onChange}
+                  label="Osoba fizyczna (B2C)"
+                  description="Zaznacz dla klientów indywidualnych bez NIP (rolnicy ryczałtowi, osoby fizyczne). Faktura w KSeF zostanie wystawiona bez NIP nabywcy."
+                  disabled={isLoading}
+                />
+              )}
+            />
+          </div>
+          <div>
             <div className="flex items-end gap-2">
               <div className="flex-1">
                 <Input
-                  label="NIP"
+                  label={isIndividual ? 'NIP (opcjonalny)' : 'NIP'}
                   placeholder="10 cyfr"
                   maxLength={10}
                   {...register('nip')}
                   error={errors.nip?.message}
-                  helperText="Polski NIP z sumą kontrolną lub puste."
+                  helperText={isIndividual ? 'Opcjonalny dla osób fizycznych — wpisz jeśli klient ma NIP.' : 'Polski NIP z sumą kontrolną lub puste.'}
                   className={inField('nip')}
                 />
               </div>

@@ -310,7 +310,7 @@ function LineRow({
             aria-label="Stawka VAT"
             className="select-pill bg-white"
           >
-            {['0', '5', '8', '23', 'zw'].map((r) => (
+            {['0', '5', '7', '8', '22', '23', 'zw'].map((r) => (
               <option key={r} value={r}>{r === 'zw' ? 'ZW' : `VAT ${r}%`}</option>
             ))}
           </select>

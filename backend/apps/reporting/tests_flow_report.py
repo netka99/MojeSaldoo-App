@@ -132,7 +132,7 @@ def _make_invoice(co, customer, order=None, status="issued",
         status=status,
         issue_date=issue_date,
         sale_date=issue_date,
-        due_date=due_date or issue_date + timedelta(days=30),
+        due_date=due_date or issue_date + timedelta(days=90),
         total_gross=Decimal(total_gross),
         is_correction=is_correction,
         corrects_invoice=corrects,
@@ -498,22 +498,22 @@ class FlowReportManualInvoiceTest(TestCase):
         self.inv = _make_invoice(self.co, self.customer, order=None, total_gross="246.00")
         _make_invoice_item(self.inv, self.product, qty="20.00")
 
-    def test_manual_invoice_in_manual_invoices(self):
+    def test_manual_invoice_in_standalone_invoices(self):
         result = build_customer_flow(self.co, D_FROM, D_TO)
-        row = result["customers"][0]
-        self.assertEqual(len(row["manual_invoices"]), 1)
-        self.assertEqual(row["manual_invoices"][0]["id"], str(self.inv.uuid))
+        standalone = result["standalone_invoices"]
+        self.assertEqual(len(standalone), 1)
+        self.assertEqual(standalone[0]["id"], str(self.inv.uuid))
 
     def test_manual_invoice_has_lines(self):
         result = build_customer_flow(self.co, D_FROM, D_TO)
-        lines = result["customers"][0]["manual_invoices"][0]["lines"]
+        lines = result["standalone_invoices"][0]["lines"]
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0]["product_name"], self.product.name)
 
     def test_manual_invoice_not_in_orders_detail(self):
         result = build_customer_flow(self.co, D_FROM, D_TO)
-        orders_detail = result["customers"][0]["orders_detail"]
-        self.assertEqual(orders_detail, [])
+        # Manual invoice has no linked order, so customers bucket is empty
+        self.assertEqual(result["customers"], [])
 
 
 class FlowReportDateFilterTest(TestCase):

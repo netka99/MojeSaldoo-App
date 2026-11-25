@@ -25,6 +25,16 @@ import type { Order, OrderItem } from '@/types/order.types';
 
 const DEBOUNCE_MS = 300;
 const PAGE_SIZE = 30;
+
+type ProductTypeFilter = 'all' | 'finished' | 'material' | 'trade' | 'in_cart';
+
+const PRODUCT_TYPE_PILLS: { key: ProductTypeFilter; label: string }[] = [
+  { key: 'all', label: 'Wszystkie' },
+  { key: 'finished', label: 'Gotowe' },
+  { key: 'material', label: 'Surowce' },
+  { key: 'trade', label: 'Towar' },
+  { key: 'in_cart', label: 'W koszyku' },
+];
 const pln = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
 
 type SelectedCustomer = { id: string; name: string };
@@ -111,7 +121,8 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
     const netU = parseDecimalInput(l.unitPriceNet);
     if (netU == null) return 0;
     const vat = parseDecimalInput(String(l.product.vat_rate)) ?? 0;
-    return unitGrossFromNet(netU, vat) * q;
+    const unitG = Math.round(unitGrossFromNet(netU, vat) * 100) / 100;
+    return Math.round(unitG * q * 100) / 100;
   };
 
   const total = lines.reduce((s, l) => s + getLineGross(l), 0);
@@ -285,7 +296,7 @@ function CheckoutView({ lines, setLines, customerName, onBack, onSubmit, isPendi
                       <span className="text-muted-foreground">Suma pozycji</span>
                       <span className="tabular-nums text-foreground">{formatGrossPln(subtotal)}</span>
                     </div>
-                    {totalDiscount > 0.001 && (
+                    {totalDiscount > 0.005 && (
                       <div className="flex justify-between text-[14px]">
                         <span className="text-primary">Rabaty</span>
                         <span className="tabular-nums text-primary">−{formatGrossPln(totalDiscount)}</span>
@@ -638,6 +649,11 @@ export function OrderCreatePage() {
 
   const [productSearch, setProductSearch] = useState('');
   const productSearchDebounced = useDebouncedValue(productSearch, DEBOUNCE_MS);
+  const [productTypeFilter, setProductTypeFilter] = useState<ProductTypeFilter>('all');
+
+  const apiProductType = productTypeFilter !== 'all' && productTypeFilter !== 'in_cart'
+    ? productTypeFilter
+    : undefined;
 
   const {
     data: productPages,
@@ -646,7 +662,7 @@ export function OrderCreatePage() {
     isFetchingNextPage,
     isPending: productsLoading,
   } = useInfiniteQuery({
-    queryKey: ['products', 'order-create', companyId, productSearchDebounced] as const,
+    queryKey: ['products', 'order-create', companyId, productSearchDebounced, apiProductType] as const,
     queryFn: ({ pageParam }) =>
       productService.fetchList({
         page: pageParam as number,
@@ -654,18 +670,19 @@ export function OrderCreatePage() {
         search: productSearchDebounced.trim() || undefined,
         is_active: true,
         ordering: 'name',
+        product_type: apiProductType,
       }),
     initialPageParam: 1,
     getNextPageParam: (last) => pageFromDrfNext(last.next),
     enabled: Boolean(companyId),
   });
 
-  const products = useMemo(() => productPages?.pages.flatMap((p) => p.results) ?? [], [productPages]);
+  const allProducts = useMemo(() => productPages?.pages.flatMap((p) => p.results) ?? [], [productPages]);
   const productById = useMemo(() => {
     const m = new Map<string, Product>();
-    for (const p of products) m.set(p.id, p);
+    for (const p of allProducts) m.set(p.id, p);
     return m;
-  }, [products]);
+  }, [allProducts]);
 
   const [lines, setLines] = useState<OrderDraftLine[]>(draft.lines ?? []);
   const [prevOrderDismissed, setPrevOrderDismissed] = useState(draft.prevOrderDismissed ?? false);
@@ -693,6 +710,9 @@ export function OrderCreatePage() {
   const [numPadValue, setNumPadValue] = useState('0');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [view, setView] = useState<'products' | 'checkout'>('products');
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const pendingNavRef = useRef<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -710,7 +730,7 @@ export function OrderCreatePage() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage, products.length]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, allProducts.length]);
 
   // Close customer dropdown on outside click
   useEffect(() => {
@@ -733,11 +753,43 @@ export function OrderCreatePage() {
     };
   }, [activeProductId]);
 
+  // Warn on browser back/close/reload when there are unsaved lines
+  useEffect(() => {
+    if (lines.length === 0) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [lines.length]);
+
+  // Intercept in-app link clicks (sidebar, bottom nav) when there are unsaved lines
+  useEffect(() => {
+    if (lines.length === 0) return;
+    const handler = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest('a[href]');
+      if (!target) return;
+      const href = (target as HTMLAnchorElement).getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('http')) return;
+      // Same page — ignore
+      if (href === window.location.pathname + window.location.search) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pendingNavRef.current = href;
+      setShowLeaveDialog(true);
+    };
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
+  }, [lines.length]);
+
+  const lineByProductId = useMemo(() => new Map(lines.map((l) => [l.product.id, l])), [lines]);
+
+  const products = useMemo(() => {
+    if (productTypeFilter !== 'in_cart') return allProducts;
+    return allProducts.filter((p) => lineByProductId.has(p.id));
+  }, [allProducts, productTypeFilter, lineByProductId]);
+
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
-
-  const lineByProductId = useMemo(() => new Map(lines.map((l) => [l.product.id, l])), [lines]);
 
   /* Cart totals */
   const lineNetGross = (l: OrderDraftLine) => {
@@ -870,7 +922,7 @@ export function OrderCreatePage() {
           product_id: l.product.id,
           quantity: toApiDecimalString(parseDecimalInput(l.quantity) ?? 0),
           unit_price_net: toApiDecimalString(netU),
-          unit_price_gross: toApiDecimalString(unitGrossFromNet(netU, vat)),
+          unit_price_gross: (Math.round(unitGrossFromNet(netU, vat) * 10000) / 10000).toFixed(4),
           vat_rate: toApiDecimalString(vat),
           discount_percent: toApiDecimalString(parseDecimalInput(l.discountPercent) ?? 0),
         };
@@ -887,9 +939,63 @@ export function OrderCreatePage() {
   };
 
   const backToOrders = () => {
+    if (lines.length > 0) {
+      setShowLeaveDialog(true);
+      return;
+    }
     clearDraft();
     const d = deliveryDate.trim();
     navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
+  };
+
+  const confirmLeave = () => {
+    clearDraft();
+    setShowLeaveDialog(false);
+    const dest = pendingNavRef.current;
+    pendingNavRef.current = null;
+    if (dest) {
+      navigate(dest);
+    } else {
+      const d = deliveryDate.trim();
+      navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
+    }
+  };
+
+  const cancelLeave = () => {
+    pendingNavRef.current = null;
+    setShowLeaveDialog(false);
+  };
+
+  const saveAsDraft = async () => {
+    if (!selectedCustomer || !deliveryDate.trim() || lines.length === 0) return;
+    setSavingDraft(true);
+    try {
+      const items: OrderItemWrite[] = lines.map((l) => {
+        const netU = parseDecimalInput(l.unitPriceNet)!;
+        const vat = parseDecimalInput(String(l.product.vat_rate)) ?? 0;
+        return {
+          product_id: l.product.id,
+          quantity: toApiDecimalString(parseDecimalInput(l.quantity) ?? 0),
+          unit_price_net: toApiDecimalString(netU),
+          unit_price_gross: (Math.round(unitGrossFromNet(netU, vat) * 10000) / 10000).toFixed(4),
+          vat_rate: toApiDecimalString(vat),
+          discount_percent: toApiDecimalString(parseDecimalInput(l.discountPercent) ?? 0),
+        };
+      });
+      await create.mutateAsync({ customer_id: selectedCustomer.id, delivery_date: deliveryDate, items });
+      clearDraft();
+      setShowLeaveDialog(false);
+      const dest = pendingNavRef.current;
+      pendingNavRef.current = null;
+      if (dest) {
+        navigate(dest);
+      } else {
+        const d = deliveryDate.trim();
+        navigate(d ? `/orders?date=${encodeURIComponent(d)}` : '/orders');
+      }
+    } catch {
+      setSavingDraft(false);
+    }
   };
 
   const numpadOpen = Boolean(activeProductId);
@@ -989,6 +1095,25 @@ export function OrderCreatePage() {
               aria-label="Szukaj produktu"
               className="h-12 w-full rounded-2xl border border-border bg-card pl-12 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
             />
+          </div>
+
+          {/* Product type pills */}
+          <div className="-mx-1 mt-2 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {PRODUCT_TYPE_PILLS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => setProductTypeFilter(p.key)}
+                className={cn(
+                  'shrink-0 rounded-2xl border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                  productTypeFilter === p.key
+                    ? 'border-primary bg-primary text-white'
+                    : 'border-slate-200 bg-white text-slate-700',
+                )}
+              >
+                {p.key === 'in_cart' && cartCount > 0 ? `${p.label} (${Math.round(cartCount)})` : p.label}
+              </button>
+            ))}
           </div>
         </div>
       </header>
@@ -1205,6 +1330,71 @@ export function OrderCreatePage() {
             document.body,
           )
         : null}
+
+      {/* Leave confirmation dialog */}
+      <AnimatePresence>
+        {showLeaveDialog && (
+          <>
+            <motion.div
+              key="leave-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[200] bg-foreground/30 backdrop-blur-sm"
+              onClick={cancelLeave}
+              aria-hidden
+            />
+            <motion.div
+              key="leave-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="leave-dialog-title"
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              className="fixed left-1/2 top-1/2 z-[210] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-card shadow-[0_8px_32px_rgba(0,0,0,0.18)]"
+            >
+              <div className="px-5 pb-2 pt-5">
+                <h2 id="leave-dialog-title" className="text-[17px] font-semibold text-foreground">
+                  Wyjść z zamówienia?
+                </h2>
+                <p className="mt-1.5 text-[14px] leading-snug text-muted-foreground">
+                  Masz {lines.length} {lines.length === 1 ? 'produkt' : 'produkty'} w zamówieniu.
+                </p>
+              </div>
+              <div className="flex flex-col gap-1 p-3">
+                {selectedCustomer && deliveryDate.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => void saveAsDraft()}
+                    disabled={savingDraft}
+                    className="w-full rounded-xl bg-primary py-3 text-[15px] font-semibold text-white disabled:opacity-60"
+                  >
+                    {savingDraft ? 'Zapisywanie…' : 'Zapisz jako szkic'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={cancelLeave}
+                  disabled={savingDraft}
+                  className="w-full rounded-xl bg-slate-100 py-3 text-[15px] font-semibold text-slate-800"
+                >
+                  Zostań
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmLeave}
+                  disabled={savingDraft}
+                  className="w-full rounded-xl py-3 text-[14px] text-muted-foreground"
+                >
+                  Wyjdź bez zapisywania
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -56,6 +56,7 @@ class OrderItemSerializer(UUIDModelSerializer):
             "quantity",
             "quantity_delivered",
             "quantity_returned",
+            "quantity_produced",
             "unit_price_net",
             "unit_price_gross",
             "vat_rate",
@@ -63,7 +64,7 @@ class OrderItemSerializer(UUIDModelSerializer):
             "line_total_net",
             "line_total_gross",
         ]
-        read_only_fields = ["product_name", "product_unit", "line_total_net", "line_total_gross"]
+        read_only_fields = ["product_name", "product_unit", "line_total_net", "line_total_gross", "quantity_produced"]
 
     def validate_quantity(self, value):
         if value <= 0:
@@ -79,7 +80,7 @@ class OrderItemSerializer(UUIDModelSerializer):
             data["unit_price_net"] = net_from_gross(gross, vat)
         elif gross is None and net is not None:
             # derive gross from net so line_total_gross is correct
-            data["unit_price_gross"] = (net * (1 + vat / 100)).quantize(Decimal("0.01"))
+            data["unit_price_gross"] = (net * (1 + vat / 100)).quantize(Decimal("0.0001"))
         return data
 
     def __init__(self, *args, **kwargs):
@@ -118,6 +119,7 @@ class OrderSerializer(UUIDModelSerializer):
     wz_numbers = serializers.SerializerMethodField()
     invoice_numbers = serializers.SerializerMethodField()
     production_status = serializers.SerializerMethodField()
+    production_docs = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -131,6 +133,8 @@ class OrderSerializer(UUIDModelSerializer):
             "order_number",
             "order_date",
             "delivery_date",
+            "production_date",
+            "shipment_date",
             "status",
             "subtotal_net",
             "subtotal_gross",
@@ -150,13 +154,20 @@ class OrderSerializer(UUIDModelSerializer):
             "wz_numbers",
             "invoice_numbers",
             "production_status",
+            "production_docs",
         ]
-        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice", "has_wz", "wz_numbers", "invoice_numbers", "production_status"]
+        read_only_fields = ["order_number", "created_at", "updated_at", "subtotal_net", "subtotal_gross", "total_net", "total_gross", "status", "company", "user", "has_active_invoice", "has_wz", "wz_numbers", "invoice_numbers", "production_status", "production_docs"]
 
     def get_wz_numbers(self, obj) -> list[dict]:
+        # Only customer-facing documents: WZ, ZW, WZ-KOR
+        # RW (rozchód surowców) and PZ/PW (przyjęcie wyrobów) are internal production docs
+        # and belong in production_docs, not here.
+        EXTERNAL_TYPES = {"WZ", "ZW", "WZ-KOR"}
         result = []
         for doc in obj.delivery_documents.all():
             if not doc.document_number:
+                continue
+            if doc.document_type not in EXTERNAL_TYPES:
                 continue
             corrections = [
                 {"id": str(kor.uuid), "number": kor.document_number}
@@ -166,6 +177,7 @@ class OrderSerializer(UUIDModelSerializer):
             result.append({
                 "id": str(doc.uuid),
                 "number": doc.document_number,
+                "status": doc.status,
                 "corrections": corrections,
             })
         return result
@@ -202,9 +214,67 @@ class OrderSerializer(UUIDModelSerializer):
         orders = obj.production_orders.all()
         if not orders:
             return None
-        if any(o.status == "completed" for o in orders):
+        statuses = {o.status for o in orders}
+        has_completed = "completed" in statuses
+        has_draft = "draft" in statuses
+        if has_completed and has_draft:
+            return "partial"
+        if has_completed:
             return "completed"
         return "in_progress"
+
+    def get_production_docs(self, obj) -> list[dict]:
+        """
+        Returns production orders linked to this customer order (via source_orders M2M),
+        each with its RW (material outflow) and PW (product inflow) document numbers.
+
+        Fallback: if delivery_documents contains RW/PZ-type docs with no linked PRD
+        (older orders created before M2M was wired), surface them directly.
+        """
+        PRODUCTION_TYPES = {"RW", "PW"}
+
+        result = []
+        seen_delivery_ids: set = set()
+
+        for po in obj.production_orders.all():
+            if not po.order_number:
+                continue
+            rw = po.rw_document
+            pw = po.pw_document
+            if rw:
+                seen_delivery_ids.add(rw.id)
+            if pw:
+                seen_delivery_ids.add(pw.id)
+            result.append({
+                "id": str(po.uuid),
+                "number": po.order_number,
+                "status": po.status,
+                "rw": rw.document_number if rw and rw.document_number else None,
+                "rw_id": str(rw.uuid) if rw else None,
+                "pw": pw.document_number if pw and pw.document_number else None,
+                "pw_id": str(pw.uuid) if pw else None,
+            })
+
+        # Fallback: RW/PW docs linked directly to this order but not via a PRD
+        for doc in obj.delivery_documents.all():
+            if doc.document_type not in PRODUCTION_TYPES:
+                continue
+            if not doc.document_number:
+                continue
+            if doc.id in seen_delivery_ids:
+                continue
+            is_rw = doc.document_type == "RW"
+            result.append({
+                "id": None,
+                "number": None,
+                "status": "completed",
+                "rw": doc.document_number if is_rw else None,
+                "rw_id": str(doc.uuid) if is_rw else None,
+                "pw": doc.document_number if not is_rw else None,
+                "pw_id": str(doc.uuid) if not is_rw else None,
+            })
+
+        return result
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -94,9 +94,11 @@ class ProductionOrder(models.Model):
     ]
 
     STATUS_DRAFT = "draft"
+    STATUS_IN_PROGRESS = "in_progress"
     STATUS_COMPLETED = "completed"
     STATUS_CHOICES = [
         (STATUS_DRAFT, "Szkic"),
+        (STATUS_IN_PROGRESS, "W toku"),
         (STATUS_COMPLETED, "Zakończone"),
     ]
 
@@ -144,6 +146,10 @@ class ProductionOrder(models.Model):
         through="ProductionOrderSource",
         related_name="production_orders",
         help_text="Optional: customer orders this production run fulfils (MTO).",
+    )
+    is_stock_production = models.BooleanField(
+        default=False,
+        help_text="True when this run produces for stock (not tied to a customer order).",
     )
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(

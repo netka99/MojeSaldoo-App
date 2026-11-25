@@ -392,6 +392,14 @@ class CompanyWorkflowSettings(models.Model):
             "Useful for bakeries where production and recording happen at the same time."
         ),
     )
+    order_dates_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, orders expose two additional planning date fields: "
+            "production_date (when to start production) and shipment_date (when to issue WZ). "
+            "Disable for simple bakery-style flows where delivery_date is the only relevant date."
+        ),
+    )
 
     # Timestamps tracking when each boolean flag was last changed (None = never changed).
     orders_required_changed_at = models.DateTimeField(null=True, blank=True)
@@ -399,6 +407,7 @@ class CompanyWorkflowSettings(models.Model):
     auto_wz_on_order_changed_at = models.DateTimeField(null=True, blank=True)
     auto_deliver_wz_changed_at = models.DateTimeField(null=True, blank=True)
     production_complete_immediately_changed_at = models.DateTimeField(null=True, blank=True)
+    order_dates_enabled_changed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Company workflow settings"

@@ -17,8 +17,10 @@ import { useOrderListQuery } from '@/query/use-orders';
 import { useWorkflowSettingsQuery } from '@/query/use-companies';
 import { useAuth } from '@/context/AuthContext';
 import { authStorage } from '@/services/api';
+import { productionService } from '@/services/production.service';
 import { usePermission } from '@/hooks/usePermission';
 import { cn } from '@/lib/utils';
+import { ReportExpandIcon } from '@/lib/reportSurface';
 import type { PlanningOrder, ProductionOrder, ProductionOrderCreate, ProductionPlanningItem, Recipe } from '@/types/production.types';
 import type { Order } from '@/types';
 
@@ -144,6 +146,7 @@ function OrderForm({
 }) {
   const lockedFromPlanning = !!prefillRecipeId;
   const [completeImmediately, setCompleteImmediately] = useState(defaultCompleteImmediately ?? false);
+  const [isStockProduction, setIsStockProduction] = useState(false);
   const [recipeId, setRecipeId] = useState(prefillRecipeId ?? '');
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [mode, setMode] = useState<'simple' | 'batch'>('simple');
@@ -194,6 +197,7 @@ function OrderForm({
   }, [ordersData, prefillSourceOrders, sourceOrdersPrefilled, planningOrderMap]);
 
   // Recalculate qty from checked orders using remaining_qty from planning data
+  // Cap at prefillQty when provided (suggested_production_qty already accounts for stock on hand)
   useEffect(() => {
     if (qtyManuallyEdited || sourceOrderIds.size === 0) return;
     let total = 0;
@@ -208,8 +212,11 @@ function OrderForm({
         if (item) total += parseFloat(String(item.quantity));
       }
     }
-    if (total > 0) setQtyProduced(String(Math.ceil(total)));
-  }, [sourceOrderIds, planningOrderMap, highlightProductId, qtyManuallyEdited]);
+    if (total > 0) {
+      const capped = prefillQty != null ? Math.min(Math.ceil(total), prefillQty) : Math.ceil(total);
+      setQtyProduced(String(capped));
+    }
+  }, [sourceOrderIds, planningOrderMap, highlightProductId, qtyManuallyEdited, prefillQty]);
 
   // Auto-update notes from checked orders
   useEffect(() => {
@@ -294,6 +301,7 @@ function OrderForm({
       recipe: recipeId,
       date,
       mode,
+      is_stock_production: sourceOrdersPayload.length === 0 ? isStockProduction : false,
       quantity_produced: totalQty,
       source_orders: sourceOrdersPayload.length > 0 ? sourceOrdersPayload : undefined,
       notes,
@@ -365,12 +373,7 @@ function OrderForm({
       </div>
 
       <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">
-          Ilość wyrobów *
-          {highlightProductId && !qtyManuallyEdited && (
-            <span className="ml-1.5 font-normal text-slate-400">— obliczone z zaznaczonych zamówień</span>
-          )}
-        </label>
+        <label className="text-xs font-medium text-muted-foreground">Ilość wyrobów *</label>
         <input
           type="number"
           min="0"
@@ -380,6 +383,19 @@ function OrderForm({
           onChange={(e) => { setQtyProduced(e.target.value); setQtyManuallyEdited(true); }}
           required
         />
+        {/* Na zapas — tylko gdy ilość > suma zamówień */}
+        {(() => {
+          const total = Number(qtyProduced) || 0;
+          const fromOrders = [...sourceOrderIds].reduce((s, id) => {
+            const po = planningOrderMap.get(id);
+            return s + (po ? Number(po.remaining_qty) : 0);
+          }, 0);
+          const onStock = Math.max(0, total - fromOrders);
+          if (onStock <= 0) return null;
+          return (
+            <p className="pt-0.5 text-xs font-medium text-amber-600">+{n2.format(onStock)} {selectedRecipe?.product_unit} na zapas</p>
+          );
+        })()}
       </div>
 
       {mode === 'batch' && (
@@ -425,39 +441,36 @@ function OrderForm({
         </div>
       )}
 
-      {allOrders.length > 0 && (
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Powiązane zamówienia</label>
-          <div className="divide-y divide-border rounded-lg border border-border">
-            {allOrders.map((o) => {
-              const po = planningOrderMap.get(o.id);
-              return (
-                <SourceOrderRow
-                  key={o.id}
-                  order={o}
-                  checked={sourceOrderIds.has(o.id)}
-                  highlightProductId={highlightProductId}
-                  scheduledQty={po ? Number(po.scheduled_qty) : undefined}
-                  totalQty={po ? Number(po.quantity) : undefined}
-                  onToggle={() =>
-                    setSourceOrderIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(o.id)) next.delete(o.id);
-                      else next.add(o.id);
-                      return next;
-                    })
-                  }
-                />
-              );
-            })}
-          </div>
+
+      {/* Na zapas toggle — only shown when no source orders are linked */}
+      {sourceOrderIds.size === 0 && !prefillSourceOrders?.length && (
+        <div className="flex items-center gap-2.5">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={isStockProduction}
+              onChange={(e) => setIsStockProduction(e.target.checked)}
+            />
+            <span className="text-sm text-slate-700">Produkcja na zapas (bez powiązania z zamówieniem)</span>
+          </label>
         </div>
       )}
 
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Notatki</label>
-        <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </div>
+      {/* Notatki — zwinięte domyślnie */}
+      <details className="group">
+        <summary className="cursor-pointer list-none">
+          <span className="flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
+            <svg className="h-3 w-3 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Notatki
+          </span>
+        </summary>
+        <div className="mt-1.5">
+          <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+      </details>
 
       <div className="flex items-center gap-2.5">
         <label className="flex cursor-pointer items-center gap-2.5">
@@ -519,8 +532,32 @@ function OrderCard({
   const [completedData, setCompletedData] = useState<ProductionOrder | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [ingredientsOpen, setIngredientsOpen] = useState(false);
+  const [qtyInput, setQtyInput] = useState('');
+  const [showQtyInput, setShowQtyInput] = useState(false);
 
   const plnFmt = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+
+  async function handleComplete() {
+    setCompleteError(null);
+    // If quantity not yet set, ask first
+    if (Number(order.quantity_produced) <= 0 && !showQtyInput) {
+      setShowQtyInput(true);
+      return;
+    }
+    try {
+      if (showQtyInput) {
+        const qty = Number(qtyInput);
+        if (!qty || qty <= 0) { setCompleteError('Podaj ilość większą od zera.'); return; }
+        await productionService.patchOrder(order.id, { quantity_produced: qty });
+      }
+      const data = await onComplete(order.id);
+      setCompletedData(data);
+      setShowQtyInput(false);
+      setQtyInput('');
+    } catch (e: unknown) {
+      setCompleteError(e instanceof Error ? e.message : 'Błąd zakończenia zlecenia.');
+    }
+  }
 
   return (
     <div className={cn(
@@ -551,16 +588,23 @@ function OrderCard({
         const match = completeError.match(/dla '([^']+)':/);
         const productName = match?.[1];
         return (
-          <div className="mb-3 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
-            {completeError}
-            {productName && (
-              <Link
-                to={`/products?search=${encodeURIComponent(productName)}`}
-                className="ml-2 inline-flex items-center gap-1 rounded-lg border border-destructive/30 bg-white/60 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-white"
-              >
-                Uzupełnij stan →
-              </Link>
-            )}
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
+            <span className="flex-1">
+              {completeError}
+              {productName && (
+                <Link
+                  to={`/products?search=${encodeURIComponent(productName)}`}
+                  className="ml-2 inline-flex items-center gap-1 rounded-lg border border-destructive/30 bg-white/60 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-white"
+                >
+                  Uzupełnij stan →
+                </Link>
+              )}
+            </span>
+            <button type="button" onClick={() => setCompleteError(null)} className="shrink-0 text-destructive/60 hover:text-destructive" aria-label="Zamknij">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         );
       })()}
@@ -576,9 +620,9 @@ function OrderCard({
             </Link>
             <span className={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium',
-              isCompleted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
+              isCompleted ? 'bg-green-100 text-green-700' : order.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700',
             )}>
-              {isCompleted ? 'Zakończone' : 'W produkcji'}
+              {isCompleted ? 'Zakończone' : order.status === 'in_progress' ? 'W toku' : 'Szkic'}
             </span>
             <span className="text-xs text-muted-foreground">
               {order.mode === 'batch' ? 'wsad' : 'prosty'}
@@ -586,8 +630,9 @@ function OrderCard({
           </div>
           <p className="mt-0.5 text-sm">
             <span className="font-medium">{order.finished_product_name}</span>
-            {' — '}
-            {order.quantity_produced} {order.finished_product_unit}
+            {Number(order.quantity_produced) > 0 && (
+              <> {' — '}<span className="font-semibold">{order.quantity_produced}</span> {order.finished_product_unit}</>
+            )}
             {' · '}
             {order.date}
           </p>
@@ -625,7 +670,7 @@ function OrderCard({
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => setIngredientsOpen((v) => !v)}
               >
-                <svg className={cn('h-3 w-3 transition-transform', ingredientsOpen && 'rotate-90')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <ReportExpandIcon open={ingredientsOpen} />
                 Składniki ({order.recipe_items.length})
               </button>
               {ingredientsOpen && (
@@ -653,20 +698,29 @@ function OrderCard({
         </div>
         {canProduction && !isCompleted && (
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <Button
-              size="sm"
-              disabled={completing}
-              onClick={() => {
-                setCompleteError(null);
-                onComplete(order.id)
-                  .then((data) => setCompletedData(data))
-                  .catch((e: unknown) => {
-                    setCompleteError(e instanceof Error ? e.message : 'Błąd zakończenia zlecenia.');
-                  });
-              }}
-            >
-              {completing ? '…' : 'Zakończ'}
-            </Button>
+            {showQtyInput && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Ilość szt."
+                  value={qtyInput}
+                  onChange={(e) => setQtyInput(e.target.value)}
+                  className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') void handleComplete(); if (e.key === 'Escape') { setShowQtyInput(false); setQtyInput(''); } }}
+                />
+                <Button size="sm" disabled={completing} onClick={() => void handleComplete()}>
+                  {completing ? '…' : 'OK'}
+                </Button>
+              </div>
+            )}
+            {!showQtyInput && (
+              <Button size="sm" disabled={completing} onClick={() => void handleComplete()}>
+                {completing ? '…' : 'Zakończ'}
+              </Button>
+            )}
             <button
               type="button"
               className="rounded-xl border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
@@ -692,6 +746,9 @@ function PlanningItem({
   draftInProd,
   allInProduction,
   canManage,
+  isCovered,
+  customQty,
+  onCustomQtyChange,
   onToggle,
   onOpenModal,
 }: {
@@ -702,22 +759,58 @@ function PlanningItem({
   draftInProd: number;
   allInProduction: boolean;
   canManage: boolean;
+  isCovered?: boolean;
+  customQty?: number;
+  onCustomQtyChange?: (qty: number) => void;
   onToggle: () => void;
-  onOpenModal: () => void;
+  onOpenModal: (selectedOrders: PlanningOrder[]) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [showQtyInput, setShowQtyInput] = useState(false);
+  const [qtyInputVal, setQtyInputVal] = useState('');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(
+    () => new Set(item.orders.filter((o) => Number(o.remaining_qty) > 0).map((o) => o.order_id))
+  );
   const hasIngredients = item.ingredients.length > 0;
+  const showCheckbox = !isCovered || (customQty != null && customQty > 0);
+  const showIngredients = hasIngredients && (!isCovered || (customQty != null && customQty > 0));
+
+  function commitCustomQty() {
+    const v = parseFloat(qtyInputVal.replace(',', '.'));
+    if (!isNaN(v) && v > 0) {
+      onCustomQtyChange?.(v);
+    } else {
+      onCustomQtyChange?.(0);
+    }
+    setShowQtyInput(false);
+  }
 
   return (
-    <div className={cn('transition-colors', allInProduction ? 'opacity-50' : isSelected && 'bg-primary/5')}>
-      <div className="flex items-center gap-3 px-4 py-3 md:px-6">
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-primary shrink-0"
-          checked={isSelected && !allInProduction}
-          disabled={allInProduction}
-          onChange={onToggle}
-        />
+    <div className={cn('rounded-xl border border-slate-200 transition-colors', allInProduction ? 'opacity-50' : isSelected ? 'bg-primary/5 border-primary/20' : 'bg-white')}>
+      <div className="flex items-center gap-3 px-4 py-3.5 md:px-6">
+        {/* Expand arrow */}
+        <button
+          type="button"
+          className="shrink-0 text-slate-400 hover:text-slate-600"
+          onClick={() => setDetailsExpanded((v) => !v)}
+        >
+          <svg className={cn('h-4 w-4 transition-transform', detailsExpanded && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {/* Checkbox — always shown for schedulable, shown for covered only when customQty > 0 */}
+        {showCheckbox ? (
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary shrink-0"
+            checked={isSelected && !allInProduction}
+            disabled={allInProduction}
+            onChange={onToggle}
+          />
+        ) : (
+          <span className="h-4 w-4 shrink-0" />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-slate-900">{item.product_name}</span>
@@ -741,12 +834,15 @@ function PlanningItem({
                 w produkcji: {n2.format(draftInProd)} {item.product_unit}
               </span>
             )}
+            {isCovered && customQty != null && customQty > 0 && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                na zapas: {n2.format(customQty)} {item.product_unit}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
-            Do zaplanowania: <strong className="text-slate-800">{n2.format(Number(item.suggested_production_qty))} {item.product_unit}</strong>
-            {Number(item.already_scheduled) > 0 && (
-              <> · Łącznie: <strong className="text-slate-800">{n2.format(Number(item.total_ordered))} {item.product_unit}</strong></>
-            )}
+            Do zlecenia: <strong className="text-slate-800">{n2.format(Number(item.suggested_production_qty))} {item.product_unit}</strong>
+            {' · '}Z zamówień: <strong className="text-slate-800">{n2.format(item.orders.reduce((s, o) => s + Number(o.remaining_qty), 0))} {item.product_unit}</strong>
             {stockTracked && (
               <> · Stan: <strong className="text-slate-800">{n2.format(Number(item.stock_available))} {item.product_unit}</strong></>
             )}
@@ -754,18 +850,49 @@ function PlanningItem({
               <> · Koszt: <strong className="text-slate-800">{pln.format(Number(item.estimated_total_cost))}</strong></>
             )}
           </p>
+          {/* Inline qty input for covered items */}
+          {isCovered && canManage && showQtyInput && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                step="1"
+                autoFocus
+                className="h-7 w-24 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="Ilość"
+                value={qtyInputVal}
+                onChange={(e) => setQtyInputVal(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitCustomQty(); if (e.key === 'Escape') setShowQtyInput(false); }}
+              />
+              <span className="text-xs text-slate-500">{item.product_unit}</span>
+              <button
+                type="button"
+                className="rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-white hover:bg-primary/90"
+                onClick={commitCustomQty}
+              >
+                OK
+              </button>
+              <button
+                type="button"
+                className="text-xs text-slate-400 hover:text-slate-600"
+                onClick={() => setShowQtyInput(false)}
+              >
+                Anuluj
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {canManage && !allInProduction && (
+          {canManage && !allInProduction && isCovered && (
             <button
               type="button"
               className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20"
-              onClick={onOpenModal}
+              onClick={() => { setQtyInputVal(customQty ? String(customQty) : ''); setShowQtyInput((v) => !v); }}
             >
-              zmień ilość
+              {customQty && customQty > 0 ? 'zmień ilość' : '+ na zapas'}
             </button>
           )}
-          {hasIngredients && (
+          {showIngredients && (
             <button
               type="button"
               className={cn(
@@ -788,30 +915,183 @@ function PlanningItem({
         </div>
       </div>
 
-      {expanded && hasIngredients && (
-        <div className="border-t border-slate-100 bg-slate-50/60 px-4 pb-3 pt-2 md:px-6">
-          <div className="space-y-1">
-            {item.ingredients.map((ing) => (
-              <div key={ing.ingredient_id} className="flex items-center justify-between gap-3">
-                <span className={cn('text-xs', !ing.has_enough_stock ? 'font-medium text-red-700' : 'text-slate-600')}>
-                  {ing.ingredient_name}
-                  {!ing.has_enough_stock && (
-                    <span className="ml-1 text-red-400">— za mało!</span>
-                  )}
-                </span>
-                <div className="shrink-0 text-right">
-                  <span className={cn('text-xs font-medium tabular-nums', !ing.has_enough_stock ? 'text-red-700' : 'text-slate-800')}>
-                    {n2.format(Number(ing.quantity_needed))} {ing.ingredient_unit}
-                  </span>
-                  <span className="ml-2 text-xs text-slate-400">
-                    (stan: {n2.format(Number(ing.stock_available))})
-                  </span>
+      {/* ── Surowce (inline pod headerem) ── */}
+      {expanded && showIngredients && (
+        <div className="border-t border-emerald-100 bg-emerald-50/40 px-4 pb-4 pt-3 md:px-10">
+          {(() => {
+            const baseProdQty = Number(item.suggested_production_qty);
+            const totalProdQty = baseProdQty + (customQty ?? 0);
+            const yieldQty = Number(item.recipe_yield_quantity) || 1;
+            const batchesNeeded = totalProdQty / yieldQty;
+            return (
+              <div className="overflow-hidden rounded-lg border border-emerald-200">
+                <div className="flex items-center justify-between border-b border-emerald-200 bg-white px-4 py-1.5">
+                  <span className="text-xs font-semibold text-emerald-700">Surowce</span>
+                  <span className="text-xs text-slate-400">dla {n2.format(totalProdQty)} {item.product_unit}</span>
+                </div>
+                <div className="divide-y divide-emerald-100 bg-white">
+                  {item.ingredients.map((ing) => {
+                    const qtyNeeded = Number(ing.quantity_per_batch) * batchesNeeded;
+                    const stockAvail = Number(ing.stock_available);
+                    const hasEnough = stockAvail >= qtyNeeded;
+                    return (
+                      <div key={ing.ingredient_id} className="flex items-center justify-between gap-3 px-4 py-2">
+                        <span className={cn('text-xs', !hasEnough ? 'font-medium text-red-700' : 'text-slate-600')}>
+                          {ing.ingredient_name}
+                          {!hasEnough && <span className="ml-1.5 font-normal text-red-400">— za mało!</span>}
+                        </span>
+                        <div className="shrink-0 text-right">
+                          <span className={cn('text-xs font-semibold tabular-nums', !hasEnough ? 'text-red-700' : 'text-slate-800')}>
+                            {n2.format(qtyNeeded)} {ing.ingredient_unit}
+                          </span>
+                          <span className="ml-2 text-xs text-slate-400">stan: {n2.format(stockAvail)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            ))}
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ── Szczegóły zamówień ── */}
+      {detailsExpanded && (
+        <div className="border-t border-slate-100 bg-slate-50/70 px-4 pb-4 pt-3 md:px-10">
+          <div className="flex flex-col gap-3">
+
+            {/* Zamówienia klientów z checkboxami */}
+            {item.orders.length > 0 && (
+              <div>
+                <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/60 px-4 py-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Zamówienia klientów</span>
+                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-600">{n2.format(item.orders.reduce((s, o) => s + Number(o.remaining_qty), 0))} {item.product_unit}</span>
+                  </div>
+                  {item.orders.map((o) => {
+                    const fullyInProd = o.fully_scheduled;
+                    const partialInProd = o.in_production && !o.fully_scheduled;
+                    return fullyInProd ? (
+                      <div key={o.order_id} className="flex items-center gap-2.5 bg-blue-50/60 px-4 py-2">
+                        {/* checkmark icon instead of checkbox */}
+                        <svg className="h-3.5 w-3.5 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                          <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-medium text-slate-700">{o.customer_name || o.order_number}</span>
+                          {o.customer_name && <span className="ml-1.5 text-xs text-slate-400">{o.order_number}</span>}
+                          {o.delivery_date && <span className="ml-1.5 text-xs text-slate-400">· {o.delivery_date}</span>}
+                          <span className="ml-2 rounded-full bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700">w produkcji</span>
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-500">
+                          {n2.format(Number(o.quantity))} {item.product_unit}
+                        </span>
+                      </div>
+                    ) : (
+                      <label key={o.order_id} className="flex cursor-pointer items-center gap-2.5 px-4 py-2 hover:bg-slate-50/60">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-primary shrink-0"
+                          checked={selectedOrderIds.has(o.order_id)}
+                          onChange={() => setSelectedOrderIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(o.order_id)) next.delete(o.order_id);
+                            else next.add(o.order_id);
+                            return next;
+                          })}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-medium text-slate-800">{o.customer_name || o.order_number}</span>
+                          {o.customer_name && <span className="ml-1.5 text-xs text-slate-400">{o.order_number}</span>}
+                          {o.delivery_date && <span className="ml-1.5 text-xs text-slate-400">· {o.delivery_date}</span>}
+                          {partialInProd && (
+                            <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                              częściowo w prod.: {n2.format(Number(o.scheduled_qty))} szt.
+                            </span>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-800">
+                          {n2.format(Number(o.remaining_qty))} {item.product_unit}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {/* Przycisk otwiera form z zaznaczonymi zamówieniami */}
+                {canManage && (
+                  <button
+                    type="button"
+                    className="mt-2 w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-40"
+                    disabled={selectedOrderIds.size === 0}
+                    onClick={() => onOpenModal(item.orders.filter((o) => selectedOrderIds.has(o.order_id)))}
+                  >
+                    Utwórz zlecenie ({n2.format(Number(item.suggested_production_qty))} {item.product_unit})
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Bilans */}
+            {(() => {
+              const stock = Number(item.stock_available ?? 0);
+              const inProd = Number(item.already_scheduled ?? 0);
+              const remainingOrdered = item.orders.reduce((s, o) => s + Number(o.remaining_qty), 0);
+              // afterFulfillment = stock on hand + already in production - remaining orders
+              const afterFulfillment = stock + inProd - remainingOrdered;
+              const isOk = afterFulfillment >= 0;
+              // unscheduled = remaining orders not yet covered by any active production order
+              const unscheduled = Math.max(0, remainingOrdered - inProd);
+              return (
+                <div className="rounded-lg border border-slate-200 overflow-hidden">
+                  <p className="border-b border-slate-100 bg-slate-50/60 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Bilans</p>
+                  <div className="divide-y divide-slate-100">
+                    {item.stock_available != null && (
+                      <div className="flex items-center justify-between px-4 py-2">
+                        <span className="text-xs text-slate-500">Stan magazynowy</span>
+                        <span className="text-xs font-semibold tabular-nums text-slate-800">
+                          {n2.format(stock)} {item.product_unit}
+                        </span>
+                      </div>
+                    )}
+                    {inProd > 0 && (
+                      <div className="flex items-center justify-between px-4 py-2">
+                        <span className="text-xs text-slate-500">W produkcji (zlecenia draft)</span>
+                        <span className="text-xs font-semibold tabular-nums text-blue-700">
+                          +{n2.format(inProd)} {item.product_unit}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between px-4 py-2">
+                      <span className="text-xs text-slate-500">Zamówienia klientów</span>
+                      <span className="text-xs font-semibold tabular-nums text-slate-800">
+                        −{n2.format(remainingOrdered)} {item.product_unit}
+                        {inProd > 0 && unscheduled < remainingOrdered && (
+                          <span className="ml-1.5 text-slate-400 font-normal">
+                            ({n2.format(unscheduled)} bez pokrycia)
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    <div className={cn('flex items-center justify-between px-4 py-2', isOk ? 'bg-green-50' : 'bg-red-50')}>
+                      <span className={cn('text-xs font-semibold', isOk ? 'text-green-700' : 'text-red-700')}>
+                        Po realizacji
+                      </span>
+                      <span className={cn('text-xs font-bold tabular-nums', isOk ? 'text-green-700' : 'text-red-700')}>
+                        {isOk
+                          ? `+${n2.format(afterFulfillment)} ${item.product_unit} nadwyżki`
+                          : `brakuje ${n2.format(Math.abs(afterFulfillment))} ${item.product_unit}`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
           </div>
         </div>
       )}
+
     </div>
   );
 }
@@ -828,34 +1108,66 @@ type IngredientSummaryRow = {
   sources: { productName: string; qty: number }[];
 };
 
-function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningItem[]; totalCount: number }) {
+function IngredientsSummary({ items, totalCount, activeOrders }: { items: ProductionPlanningItem[]; totalCount: number; activeOrders: ProductionOrder[] }) {
   const [open, setOpen] = useState(true);
+
+  // Check if all selected items are fully covered (nothing left to plan)
+  const allFullyCovered = items.every((item) =>
+    item.ingredients.every((ing) => Number(ing.quantity_needed) === 0)
+  );
+
   const summary = useMemo(() => {
     const map = new Map<string, IngredientSummaryRow>();
-    for (const item of items) {
-      for (const ing of item.ingredients) {
-        const existing = map.get(ing.ingredient_id);
-        const qty = Number(ing.quantity_needed);
-        if (existing) {
-          existing.totalNeeded += qty;
-          existing.sources.push({ productName: item.product_name, qty });
-          // has_enough is per-item; recalculate against stock
-          existing.hasEnough = existing.stockAvailable >= existing.totalNeeded;
-        } else {
-          map.set(ing.ingredient_id, {
-            id: ing.ingredient_id,
-            name: ing.ingredient_name,
-            unit: ing.ingredient_unit,
-            totalNeeded: qty,
-            stockAvailable: Number(ing.stock_available),
-            hasEnough: Number(ing.stock_available) >= qty,
-            sources: [{ productName: item.product_name, qty }],
-          });
+
+    if (allFullyCovered) {
+      // Show ingredients needed by active (in-production) orders instead
+      for (const order of activeOrders) {
+        for (const ri of (order.recipe_items ?? [])) {
+          const key = ri.ingredient_name;
+          const qty = Number(ri.quantity_needed);
+          if (qty <= 0) continue;
+          const existing = map.get(key);
+          if (existing) {
+            existing.totalNeeded += qty;
+            existing.sources.push({ productName: order.finished_product_name ?? '', qty });
+          } else {
+            map.set(key, {
+              id: key,
+              name: ri.ingredient_name,
+              unit: ri.unit,
+              totalNeeded: qty,
+              stockAvailable: 0,
+              hasEnough: true,
+              sources: [{ productName: order.finished_product_name ?? '', qty }],
+            });
+          }
+        }
+      }
+    } else {
+      for (const item of items) {
+        for (const ing of item.ingredients) {
+          const existing = map.get(ing.ingredient_id);
+          const qty = Number(ing.quantity_needed);
+          if (existing) {
+            existing.totalNeeded += qty;
+            existing.sources.push({ productName: item.product_name, qty });
+            existing.hasEnough = existing.stockAvailable >= existing.totalNeeded;
+          } else {
+            map.set(ing.ingredient_id, {
+              id: ing.ingredient_id,
+              name: ing.ingredient_name,
+              unit: ing.ingredient_unit,
+              totalNeeded: qty,
+              stockAvailable: Number(ing.stock_available),
+              hasEnough: Number(ing.stock_available) >= qty,
+              sources: [{ productName: item.product_name, qty }],
+            });
+          }
         }
       }
     }
     return [...map.values()].sort((a, b) => (a.hasEnough ? 1 : -1) - (b.hasEnough ? 1 : -1));
-  }, [items]);
+  }, [items, allFullyCovered, activeOrders]);
 
   if (summary.length === 0) return null;
 
@@ -876,9 +1188,11 @@ function IngredientsSummary({ items, totalCount }: { items: ProductionPlanningIt
         <div className="min-w-0 flex-1">
           <span className="text-sm font-semibold text-slate-900">Potrzebne surowce</span>
           <p className="text-xs text-slate-400">
-            {items.length === totalCount
-              ? `dla wszystkich ${totalCount} produktów`
-              : `dla ${items.length} z ${totalCount} zaznaczonych`}
+            {allFullyCovered
+              ? `dla ${activeOrders.length} aktywnych zleceń`
+              : items.length === totalCount
+                ? `dla wszystkich ${totalCount} produktów`
+                : `dla ${items.length} z ${totalCount} zaznaczonych`}
           </p>
         </div>
         {missing.length > 0 && (
@@ -945,6 +1259,7 @@ export function ProductionOrdersPage() {
   const [dateTo, setDateTo] = useState(today);
   const [selectedRecipeIds, setSelectedRecipeIds] = useState<Set<string>>(new Set());
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(true);
+  const [coveredCustomQties, setCoveredCustomQties] = useState<Map<string, number>>(new Map());
   const [completedOrdersOpen, setCompletedOrdersOpen] = useState(false);
   const [page] = useState(1);
   const [form, setForm] = useState<FormState>({ open: false });
@@ -981,19 +1296,28 @@ export function ProductionOrdersPage() {
     }
   }, [tab, planningLoading, planningItems.length]);
 
-  // Items that are schedulable (not all orders fully scheduled)
+  // Items with remaining qty to plan — use suggested_production_qty as the source of truth
+  // (remaining_qty per order can be non-zero even when active production already covers demand)
   const schedulableItems = planningItems.filter(
-    (i) => !(i.orders.length > 0 && i.orders.every((o) => Number(o.remaining_qty) <= 0))
+    (i) => Number(i.suggested_production_qty) > 0
+  );
+  // Items fully covered (stock ok / all in production) — shown as info only
+  const coveredItems = planningItems.filter(
+    (i) => Number(i.suggested_production_qty) <= 0
   );
 
-  // Auto-select all schedulable items when plan loads or tab changes
+  // Auto-select only items with actual remaining qty to plan
   useEffect(() => {
-    if (!planningLoading && planningItems.length > 0) {
+    if (!planningLoading) {
       setSelectedRecipeIds(new Set(schedulableItems.map((i) => i.recipe_id)));
     }
   }, [planningItems]);
 
   const selectedItems = planningItems.filter((i) => selectedRecipeIds.has(i.recipe_id));
+  // Covered items selected for extra production (na zapas)
+  const coveredSelectedItems = coveredItems.filter(
+    (i) => (coveredCustomQties.get(i.recipe_id) ?? 0) > 0
+  );
 
   function toggleItem(recipeId: string) {
     setSelectedRecipeIds((prev) => {
@@ -1027,7 +1351,7 @@ export function ProductionOrdersPage() {
   }
 
   async function handleBulkCreate() {
-    if (selectedItems.length === 0) return;
+    if (selectedItems.length === 0 && coveredSelectedItems.length === 0) return;
     setBulkCreating(true);
     try {
       for (const item of selectedItems) {
@@ -1045,6 +1369,18 @@ export function ProductionOrdersPage() {
             quantity: Number(o.remaining_qty),
           })),
           notes: `Dla zamówień: ${ordersWithRemaining.map((o) => o.order_number).join(', ')}`,
+        });
+      }
+      for (const item of coveredSelectedItems) {
+        const qty = coveredCustomQties.get(item.recipe_id) ?? 0;
+        if (qty <= 0) continue;
+        await createM.mutateAsync({
+          recipe: item.recipe_id,
+          date: tab === 'today' ? today : format(new Date(), 'yyyy-MM-dd'),
+          mode: 'simple',
+          quantity_produced: qty,
+          source_orders: [],
+          notes: 'Produkcja na zapas',
         });
       }
     } finally {
@@ -1116,36 +1452,7 @@ export function ProductionOrdersPage() {
           </div>
         )}
 
-        {/* Header row with select-all + Zatwierdź */}
-        {!planningLoading && planningItems.length > 0 && (
-          <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
-            <label className="flex cursor-pointer items-center gap-2.5">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-primary"
-                checked={allSelected}
-                ref={(el) => { if (el) el.indeterminate = someSelected; }}
-                onChange={toggleAll}
-              />
-              <span className="text-sm text-slate-600">
-                {selectedRecipeIds.size > 0
-                  ? `Zaznaczono ${selectedRecipeIds.size} z ${schedulableItems.length}`
-                  : 'Zaznacz wszystkie'}
-              </span>
-            </label>
-            {canProduction && selectedItems.length > 0 && (
-              <Button
-                size="sm"
-                disabled={bulkCreating}
-                onClick={() => void handleBulkCreate()}
-              >
-                {bulkCreating ? 'Zatwierdzanie…' : `Zatwierdź produkcję (${selectedItems.length})`}
-              </Button>
-            )}
-          </div>
-        )}
-
-        {/* Planning items */}
+        {/* ── Sekcja 1: Do wyprodukowania ── */}
         {planningLoading && <p className="px-4 py-6 text-sm text-slate-400">Ładowanie…</p>}
         {!planningLoading && planningItems.length === 0 && (
           <p className="px-4 py-6 text-sm text-slate-400">
@@ -1154,45 +1461,158 @@ export function ProductionOrdersPage() {
               : 'Brak otwartych zamówień na wyroby z recepturami.'}
           </p>
         )}
-        {!planningLoading && planningItems.length > 0 && (
-          <div className="divide-y divide-slate-100">
-            {planningItems.map((item) => {
-              const isSelected = selectedRecipeIds.has(item.recipe_id);
-              const stockTracked = item.stock_available != null;
-              const hasShortfall = stockTracked && Number(item.shortfall) > 0;
-              const draftInProd = orders
-                .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
-                .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
-              // Use fresh activeOrders data to determine in-production status
-              const allFullyScheduled = item.orders.length > 0 && item.orders.every((o) => Number(o.remaining_qty) <= 0);
+        {!planningLoading && schedulableItems.length > 0 && (
+          <>
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 md:px-6">
+              <div className="flex items-center gap-2">
+                <span className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center">
+                  <svg className="h-3.5 w-3.5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                    <path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                <span className="text-sm font-semibold text-slate-900">Do wyprodukowania</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                    onChange={toggleAll}
+                  />
+                  <span className="text-xs text-slate-500">
+                    {selectedRecipeIds.size > 0
+                      ? `${selectedRecipeIds.size} z ${schedulableItems.length}`
+                      : 'wszystkie'}
+                  </span>
+                </label>
+                {canProduction && selectedItems.length > 0 && (
+                  <Button size="sm" disabled={bulkCreating} onClick={() => void handleBulkCreate()}>
+                    {bulkCreating ? 'Zatwierdzanie…' : `Zatwierdź (${selectedItems.length + coveredSelectedItems.length})`}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 p-3">
+              {schedulableItems.map((item) => {
+                const isSelected = selectedRecipeIds.has(item.recipe_id);
+                const stockTracked = item.stock_available != null;
+                const hasShortfall = stockTracked && Number(item.shortfall) > 0;
+                const draftInProd = orders
+                  .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
+                  .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
+                const allFullyScheduled = item.orders.length > 0 && item.orders.every((o) => Number(o.remaining_qty) <= 0);
 
-              return (
-                <PlanningItem
-                  key={item.recipe_id}
-                  item={item}
-                  isSelected={isSelected}
-                  stockTracked={stockTracked}
-                  hasShortfall={hasShortfall}
-                  draftInProd={draftInProd}
-                  allInProduction={allFullyScheduled}
-                  canManage={canProduction}
-                  onToggle={() => toggleItem(item.recipe_id)}
-                  onOpenModal={() => setForm({
-                    open: true,
-                    prefillRecipeId: item.recipe_id,
-                    prefillQty: Math.ceil(Number(item.suggested_production_qty)),
-                    prefillSourceOrders: item.orders,
-                    highlightProductId: item.product_id,
-                  })}
-                />
-              );
-            })}
+                return (
+                  <PlanningItem
+                    key={item.recipe_id}
+                    item={item}
+                    isSelected={isSelected}
+                    stockTracked={stockTracked}
+                    hasShortfall={hasShortfall}
+                    draftInProd={draftInProd}
+                    allInProduction={allFullyScheduled}
+                    canManage={canProduction}
+                    onToggle={() => toggleItem(item.recipe_id)}
+                    onOpenModal={(selectedOrders) => setForm({
+                      open: true,
+                      prefillRecipeId: item.recipe_id,
+                      prefillQty: Math.ceil(Number(item.suggested_production_qty)),
+                      prefillSourceOrders: selectedOrders,
+                      highlightProductId: item.product_id,
+                    })}
+                  />
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ── Sekcja 2: Pokryte ze stanu / zleceń ── */}
+        {!planningLoading && coveredItems.length > 0 && (
+          <>
+            {schedulableItems.length > 0 && (
+              <div className="mx-4 my-3 border-t border-slate-200 md:mx-6" />
+            )}
+            <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5 md:px-6">
+              <span className="h-6 w-6 rounded-md bg-green-100 flex items-center justify-center">
+                <svg className="h-3.5 w-3.5 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                  <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <span className="text-sm font-semibold text-slate-900">Pokryte ze stanu / zleceń</span>
+            </div>
+            <div className="flex flex-col gap-2 p-3">
+              {coveredItems.map((item) => {
+                const draftInProd = orders
+                  .filter((o) => o.status !== 'completed' && o.recipe === item.recipe_id)
+                  .reduce((sum, o) => sum + Number(o.quantity_produced), 0);
+                const customQty = coveredCustomQties.get(item.recipe_id) ?? 0;
+                const isSelected = customQty > 0;
+                const stockTracked = item.stock_available != null;
+                const hasShortfall = stockTracked && Number(item.shortfall) > 0;
+                return (
+                  <PlanningItem
+                    key={item.recipe_id}
+                    item={item}
+                    isSelected={isSelected}
+                    stockTracked={stockTracked}
+                    hasShortfall={hasShortfall}
+                    draftInProd={draftInProd}
+                    allInProduction={item.orders.every((o) => Number(o.remaining_qty) <= 0)}
+                    canManage={canProduction}
+                    isCovered
+                    customQty={customQty}
+                    onCustomQtyChange={(qty) => {
+                      setCoveredCustomQties((prev) => {
+                        const next = new Map(prev);
+                        if (qty > 0) next.set(item.recipe_id, qty);
+                        else next.delete(item.recipe_id);
+                        return next;
+                      });
+                    }}
+                    onToggle={() => {
+                      setCoveredCustomQties((prev) => {
+                        const next = new Map(prev);
+                        if (next.has(item.recipe_id)) next.delete(item.recipe_id);
+                        return next;
+                      });
+                    }}
+                    onOpenModal={(selectedOrders) => setForm({
+                      open: true,
+                      prefillRecipeId: item.recipe_id,
+                      prefillQty: Math.ceil(Number(item.suggested_production_qty)),
+                      prefillSourceOrders: selectedOrders,
+                      highlightProductId: item.product_id,
+                    })}
+                  />
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ── Zatwierdź button — shown at bottom only when covered items are also selected ── */}
+        {!planningLoading && canProduction && coveredSelectedItems.length > 0 && (
+          <div className="border-t border-slate-100 px-4 py-3 md:px-6">
+            <Button
+              className="w-full"
+              disabled={bulkCreating}
+              onClick={() => void handleBulkCreate()}
+            >
+              {bulkCreating
+                ? 'Zatwierdzanie…'
+                : `Zatwierdź produkcję (${selectedItems.length + coveredSelectedItems.length})`}
+            </Button>
           </div>
         )}
       </section>
 
-      {/* ── Ingredients summary — reacts to checkboxes ── */}
-      {selectedItems.length > 0 && <IngredientsSummary items={selectedItems} totalCount={planningItems.length} />}
+      {/* ── Ingredients summary — only when schedulable items are selected with actual qty needed ── */}
+      {selectedItems.length > 0 && selectedItems.some((item) => Number(item.suggested_production_qty) > 0 && item.ingredients.some((ing) => Number(ing.quantity_needed) > 0)) && (
+        <IngredientsSummary items={selectedItems} totalCount={planningItems.length} activeOrders={activeOrders} />
+      )}
 
         </div>{/* end left column */}
 
@@ -1559,8 +1979,10 @@ export function ProductionOrdersListContent() {
                     <td className="px-4 py-2.5">
                       {o.status === 'completed' ? (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Zakończone</span>
+                      ) : o.status === 'in_progress' ? (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">W toku</span>
                       ) : (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">W produkcji</span>
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Szkic</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-slate-400">

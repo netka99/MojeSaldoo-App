@@ -95,6 +95,9 @@ export type DashboardSummary = {
   van_routes_today: DashboardVanRoute[];
   low_stock_alerts: DashboardLowStockAlert[];
   date: string;
+  wz_draft_count: number;
+  orders_to_produce: number;
+  orders_to_invoice: number;
 };
 
 /** Row from `GET /api/reports/inventory/`. */

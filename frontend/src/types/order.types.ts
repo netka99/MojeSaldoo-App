@@ -27,6 +27,7 @@ export interface OrderItem {
   quantity: string | number;
   quantity_delivered: string | number;
   quantity_returned: string | number;
+  quantity_produced: string | number;
   unit_price_net: string | number;
   unit_price_gross: string | number;
   vat_rate: string | number;
@@ -50,6 +51,8 @@ export interface Order {
   order_number: string | null;
   order_date: string;
   delivery_date: string;
+  production_date: string | null;
+  shipment_date: string | null;
   status: OrderStatus;
   subtotal_net: string | number;
   subtotal_gross: string | number;
@@ -66,9 +69,18 @@ export interface Order {
   items: OrderItem[];
   has_active_invoice?: boolean;
   has_wz?: boolean;
-  wz_numbers?: { id: string; number: string; corrections?: { id: string; number: string }[] }[];
+  wz_numbers?: { id: string; number: string; status?: string; corrections?: { id: string; number: string }[] }[];
   invoice_numbers?: { id: string; number: string; has_correction?: boolean }[];
   production_status?: 'in_progress' | 'completed' | null;
+  production_docs?: {
+    id: string | null;
+    number: string | null;
+    status: 'draft' | 'completed';
+    rw: string | null;
+    rw_id: string | null;
+    pw: string | null;
+    pw_id: string | null;
+  }[];
 }
 
 /**
@@ -92,6 +104,8 @@ export interface OrderCreate {
   customer_id: string;
   delivery_date: string;
   order_date?: string | null;
+  production_date?: string | null;
+  shipment_date?: string | null;
   items?: OrderItemWrite[];
   customer_notes?: string;
   internal_notes?: string;
