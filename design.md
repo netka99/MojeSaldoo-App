@@ -233,7 +233,7 @@ function fieldStateCls(value: string | undefined) {
 <input className={cn('field-ios w-full', fieldStateCls(value))} />
 ```
 
-Nie stosuj tego na wyszukiwarce listy, filtrze daty raportu ani cenie w wierszu pozycji. Tam pole zostaje zwykłe `field-ios`, `date-pill` albo `field-ios-sm`.
+Nie stosuj tego na wyszukiwarce listy, filtrze daty raportu ani cenie w wierszu pozycji. Tam pole zostaje zwykłe `field-ios`, `date-pill` albo `field-ios-sm`. Wyjątek: data w nagłówku listy, w jednym wierszu z pigułkami, bierze kształt z sekcji „Nagłówek listy z filtrami”.
 
 Etykieta stoi **nad** polem, z `mb-1.5`. Nie rozciągaj krótkiego pola na całą szerokość karty i nie dawaj etykiety po lewej, a pola po prawej, jeśli między nimi zostaje pusta dziura.
 
@@ -315,6 +315,73 @@ Pola, bez których da się wystawić dokument, siedzą w **jednej** białej karc
 - chevron `h-4 w-4 text-slate-400`, obrót 180° gdy otwarte
 
 Nie wkładaj accordionów w szare pudło `#E9EAED` ani karty w kartę.
+
+---
+
+## Nagłówek listy z filtrami
+
+Wzorzec pochodzi z widoku „Wszystkie otwarte” (`frontend/src/pages/OrdersPage.tsx`). Formularz zostaje przy `field-ios`, `select-pill` i `date-pill`. Ta sekcja jest tylko dla listy, którą użytkownik przegląda i zawęża.
+
+Kolejność jest jedna, od góry: przełącznik widoku, ciche linki, tytuł, karta filtrów. W karcie też jedno pod drugim: grupowanie, pigułki statusu, zakres dat. Nie ustawiaj grupowania, statusów i dat w kolumnach obok siebie. Na laptopie kolumna listy może urosnąć do `max-w-3xl lg:max-w-6xl`, gdy filtrów jest więcej. Pasek podsumowania na dole bierze tę samą szerokość. Telefon zostaje przy `max-w-3xl`.
+
+### Przełącznik widoku
+
+Dwa tryby tej samej strony, na przykład „Widok dzienny” i „Wszystkie otwarte”. Biała kapsuła `rounded-2xl border border-slate-200 bg-white p-1`. Zaznaczony: `rounded-xl bg-primary text-white`. Spoczynkowy: `text-slate-600`.
+
+Na telefonie przełącznik jest na całą szerokość i wyższy (`flex-1 py-2.5`), żeby od razu było widać, który widok jest włączony. Od `md` jest krótki i wyrównany do lewej (`md:inline-flex md:w-auto md:py-1.5`).
+
+### Cichy link akcji
+
+Skrót do tworzenia, na przykład „Zleć produkcję” i „Nowe zamówienie”, stoi nad tytułem, do prawej. To nie jest pigułka i nie ma tła. Ikona `h-4 w-4` i tekst `text-sm font-medium`, kolor akcji (`text-orange-800` albo `text-primary`), hover `underline`. Na telefonie krótka nazwa, od `lg` pełna.
+
+### Tytuł, podtytuł, szukanie
+
+Tytuł: `text-xl font-bold tracking-tight text-slate-900`. Podtytuł: `text-xs text-slate-500`, jedna linia. Na telefonie długie zdanie o zakresie listy chowa się pod przyciskiem „i” obok tytułu (`h-5 w-5 rounded-full border border-slate-300`). Liczba, która i tak jest na filtrze, nie powtarza się w tym zdaniu. Gdy liczba stoi przy nazwie filtra, jest `text-primary`.
+
+Szukanie to lupa `h-9 w-9 rounded-full`, po prawej stronie tytułu. Kliknięcie otwiera `field-ios` z ikoną. Zamknięcie czyści wpisane hasło. Nie stawiaj pola szukania na dole listy.
+
+### Grupowanie, które zmienia widok
+
+Gdy przełącznik decyduje, po jakiej dacie widać listę, dostaje własny pas na górze karty: `border-b border-primary/15 bg-primary/5`. Tytuł jak tytuł sekcji: ikona w kwadracie i `text-sm font-semibold text-slate-900`, na przykład „Grupuj po dacie:”.
+
+Segmenty są kapsułą, nie rzędem osobnych pigułek:
+
+```tsx
+<div className="grid grid-cols-2 gap-1 rounded-full border-2 border-primary bg-slate-200 p-1 md:inline-grid md:w-auto">
+  <button type="button" className="rounded-full bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm">
+    Dostawy
+  </button>
+  <button type="button" className="rounded-full px-3 py-2 text-sm font-medium text-slate-700">
+    Produkcji
+  </button>
+</div>
+```
+
+Niebieska obwódka `border-2 border-primary` jest tylko na tym przełączniku. `shadow-sm` jest tylko na zaznaczonym segmencie, nie na karcie. Podpisy są krótkie. Na telefonie segmenty dzielą szerokość karty, od `md` kapsuła jest krótka.
+
+### Pigułki statusu
+
+Filtr z liczbą jest półokrągły, `rounded-2xl`, nie kapsuła. Tekst w jednej linii: `whitespace-nowrap shrink-0`.
+
+| Stan | Klasy |
+|---|---|
+| Zaznaczony | `border-primary bg-primary text-white` |
+| Spoczynkowy | `border-slate-200 bg-white text-slate-700` |
+| Liczba | `rounded-full px-1.5 py-0.5 text-xs font-semibold tabular-nums`; na zaznaczonym `bg-white/20 text-white`, obok `bg-slate-100 text-slate-600` |
+
+Od `md` pigułki stoją w jednym rzędzie i mogą zawinąć się całe, nigdy w połowie napisu. Na telefonie zamiast rzędu jest jeden select „Pokaż”. Natywny select nie pokoloruje części tekstu, więc napis jest przezroczysty, a na wierzchu leży nazwa i liczba w `text-primary`.
+
+### Zakres dat pod pigułkami
+
+Zakres jest pod pigułkami, oddzielony cienką linią `border-t border-slate-200`. „Od” i „Do” stoją w jednym wierszu, etykieta obok pola, nie kolumną nad nim. Od `lg` pola są od razu widoczne. Poniżej `lg` zakres jest akordeonem: nagłówek „Zakres dat” i chevron obrócony o 180°, gdy otwarty.
+
+Pole daty w tym wierszu bierze kształt pigułki, nie szarego `date-pill`:
+
+```tsx
+const dateFieldClass = 'cursor-pointer rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-normal text-slate-900 shadow-none [color-scheme:light] focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30';
+```
+
+Na formularzu data zostaje `date-pill`. Szare tło `#F2F2F7` i kanciaste `rounded-lg` nie stoją obok pigułek listy.
 
 ---
 
@@ -428,6 +495,8 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 - cienia na karcie leżącej na stronie (`shadow-apple-sm`, `shadow-sm`)
 - cienia na strzałce wstecz (`shadow-soft`, cień koła na liście klientów)
 - numeru dokumentu schowanego w polu tekstowym, skoro da się go pokazać jako wartość i edytować ołówkiem
+- szarego `date-pill` obok pigułek filtra listy
+- jednego ściśniętego wiersza, w którym pigułka łamie napis, żeby zmieścić daty
 
 ---
 
@@ -439,3 +508,4 @@ Nie dawaj animacji wejścia strony z `transform`. Przesunięcie łapie `position
 4. Przyciski główne i drugorzędne ustaw jak w tabeli wyżej.
 5. Opcje, bez których zapis się uda, zwiń w jedną kartę.
 6. Nie zmieniaj przy tym logiki zapisu, walidacji ani nazw pól.
+7. Nagłówek listy z filtrami bierz z sekcji „Nagłówek listy z filtrami”: przełącznik widoku, ciche linki, pigułki statusu i zakres dat pod kreską. Nie składaj go od nowa z pól formularza.

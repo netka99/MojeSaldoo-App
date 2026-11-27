@@ -5,6 +5,7 @@ import type { Order, OrderItem } from '@/types';
 
 export interface OrdersDaySummaryProps {
   orders: Order[];
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 /** Collapsed bar label: count of distinct products after aggregation (PL plural rules). */
@@ -163,7 +164,7 @@ function SummaryChevron({ open, className }: { open: boolean; className?: string
   );
 }
 
-export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
+export function OrdersDaySummary({ orders, onExpandedChange }: OrdersDaySummaryProps) {
   const [expanded, setExpanded] = useState(false);
 
   const ordersDayTotal = useMemo(() => sumOrdersGross(orders), [orders]);
@@ -172,7 +173,11 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
   const productLines = useMemo(() => aggregateProductsFromOrders(orders), [orders]);
   const returnLines = useMemo(() => aggregateReturnsFromOrders(orders), [orders]);
 
-  const toggleExpanded = () => setExpanded((v) => !v);
+  const toggleExpanded = () => {
+    const next = !expanded;
+    setExpanded(next);
+    onExpandedChange?.(next);
+  };
 
   const summaryToggleLabel = `Podsumowanie, ${distinctProductCountLabel(productLines.length)}`;
 
@@ -181,14 +186,25 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
   const dayTotalFmt = formatMoneyGross(ordersDayTotal);
 
   return (
-    <div
-      className={cn(
-        'fixed bottom-[calc(83px+env(safe-area-inset-bottom))] left-0 right-0 z-40',
-        'md:bottom-0 md:left-64',
-      )}
-    >
+    <div className={cn('fixed bottom-[calc(83px+env(safe-area-inset-bottom))] left-0 right-0 z-40', 'md:bottom-0 md:left-64')}>
       <div className="overflow-hidden border-t border-slate-200 bg-white">
-        {/* Expands upward */}
+
+        {/* Toggle button — always visible */}
+        <button
+          type="button"
+          className="w-full text-left text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+          aria-expanded={expanded}
+          aria-controls="orders-day-summary-panel"
+          onClick={toggleExpanded}
+          aria-label={summaryToggleLabel}
+        >
+          <span className="mx-auto flex w-full max-w-3xl lg:max-w-6xl items-center justify-between gap-2 px-5 py-2.5">
+            Podsumowanie
+            <SummaryChevron open={expanded} className="h-4 w-4 text-slate-400" />
+          </span>
+        </button>
+
+        {/* Expandable product table — grows upward */}
         <div
           className={cn(
             'overflow-hidden transition-[max-height] duration-300 ease-in-out',
@@ -197,7 +213,7 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
           id="orders-day-summary-panel"
           aria-hidden={!expanded}
         >
-          <div className="mx-auto max-h-[min(55vh,24rem)] w-full max-w-3xl overflow-auto px-5 pb-2 pt-3">
+          <div className="mx-auto max-h-[min(55vh,24rem)] w-full max-w-3xl lg:max-w-6xl overflow-auto border-t border-slate-200 px-5 pb-2 pt-3">
             {productLines.length === 0 ? (
               <p className="py-2 text-center text-sm text-slate-500">Brak pozycji w zamówieniach.</p>
             ) : (
@@ -205,26 +221,18 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
                 <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                   <caption className="sr-only">Pozycje sprzedaży złączone wg produktu</caption>
                   <colgroup>
-                    <col />
-                    <col className="w-[5rem]" />
-                    <col className="w-[36%]" />
+                    <col /><col className="w-[5rem]" /><col className="w-[36%]" />
                   </colgroup>
                   <thead className="sr-only">
-                    <tr>
-                      <th scope="col">Produkt</th>
-                      <th scope="col">Ilość</th>
-                      <th scope="col">Wartość</th>
-                    </tr>
+                    <tr><th>Produkt</th><th>Ilość</th><th>Wartość</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {productLines.map((line) => (
                       <tr key={line.key}>
                         <td className="max-w-[1px] py-1.5 pr-2 text-left text-foreground">
-                          <span className="block truncate" title={line.product_name}>
-                            {line.product_name}
-                          </span>
+                          <span className="block truncate" title={line.product_name}>{line.product_name}</span>
                         </td>
-                        <td className="py-1.5 px-1.5 text-right tabular-nums text-foreground align-baseline">
+                        <td className="px-1.5 py-1.5 text-right tabular-nums text-foreground align-baseline">
                           {formatOrderLineQuantityWithUnit(line.quantityTotal, line.product_unit)}
                         </td>
                         <td className="py-1.5 pl-1.5 text-right tabular-nums font-medium text-foreground align-baseline">
@@ -234,38 +242,26 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
                     ))}
                   </tbody>
                 </table>
-                <div className="my-2 border-t border-slate-200" />
-                <div className="flex items-baseline justify-between gap-2 text-sm font-semibold text-slate-900">
-                  <span className="text-foreground">Suma</span>
-                  <span className="tabular-nums text-foreground">{subtotalFmt}</span>
-                </div>
               </>
             )}
-
-            {returnLines.length > 0 ? (
+            {returnLines.length > 0 && (
               <>
-                <p className="mb-1.5 mt-4 text-sm font-semibold text-amber-700">
-                  Zwrot
-                </p>
+                <p className="mb-1.5 mt-4 text-sm font-semibold text-amber-700">Zwrot</p>
                 <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                   <caption className="sr-only">Pozycje zwrotów</caption>
                   <colgroup>
-                    <col />
-                    <col className="w-[5rem]" />
-                    <col className="w-[36%]" />
+                    <col /><col className="w-[5rem]" /><col className="w-[36%]" />
                   </colgroup>
                   <tbody className="divide-y divide-slate-100">
                     {returnLines.map((line) => (
                       <tr key={line.key}>
-                        <td className="max-w-[1px] py-1.5 pr-2 text-left text-amber-700 dark:text-amber-400">
-                          <span className="block truncate" title={line.product_name}>
-                            {line.product_name}
-                          </span>
+                        <td className="max-w-[1px] py-1.5 pr-2 text-left text-amber-700">
+                          <span className="block truncate" title={line.product_name}>{line.product_name}</span>
                         </td>
-                        <td className="py-1.5 px-1.5 text-right tabular-nums text-amber-700 dark:text-amber-400 align-baseline">
+                        <td className="px-1.5 py-1.5 text-right tabular-nums text-amber-700 align-baseline">
                           {formatOrderLineQuantityWithUnit(line.quantityReturned, line.product_unit)}
                         </td>
-                        <td className="py-1.5 pl-1.5 text-right tabular-nums font-medium text-amber-700 dark:text-amber-400 align-baseline">
+                        <td className="py-1.5 pl-1.5 text-right tabular-nums font-medium text-amber-700 align-baseline">
                           −{formatMoneyGross(line.returnGrossSum)}
                         </td>
                       </tr>
@@ -274,42 +270,22 @@ export function OrdersDaySummary({ orders }: OrdersDaySummaryProps) {
                 </table>
                 <div className="my-2 border-t border-slate-200" />
                 <div className="flex items-baseline justify-between gap-2 text-sm font-semibold text-amber-700">
-                  <span>Suma</span>
+                  <span>Zwrot</span>
                   <span className="tabular-nums">−{returnsFmt}</span>
                 </div>
               </>
-            ) : null}
+            )}
           </div>
         </div>
 
-        <div className="orders-day-compact">
-          {returnsGross > 0.005 ? (
-            <div className="mx-auto flex w-full max-w-3xl justify-between px-5 py-2 text-sm text-amber-700">
-              <span>Zwrot</span>
-              <span className="tabular-nums">−{returnsFmt}</span>
-            </div>
-          ) : null}
-          <div className="bg-primary/5">
-            <div className="mx-auto flex w-full max-w-3xl items-baseline justify-between gap-3 px-5 py-3">
-              <span className="text-sm font-semibold text-slate-800">Suma</span>
-              <span className="text-2xl font-bold tabular-nums tracking-tight text-primary">{dayTotalFmt}</span>
-            </div>
+        {/* Always-visible total */}
+        <div className="border-t border-slate-200 bg-primary/5">
+          <div className="mx-auto flex w-full max-w-3xl lg:max-w-6xl items-baseline justify-between gap-3 px-5 py-3">
+            <span className="text-sm font-semibold text-slate-800">Suma</span>
+            <span className="text-2xl font-bold tabular-nums tracking-tight text-primary">{dayTotalFmt}</span>
           </div>
         </div>
 
-        <button
-          type="button"
-          className="w-full border-t border-slate-200 text-left text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
-          aria-expanded={expanded}
-          aria-controls="orders-day-summary-panel"
-          onClick={toggleExpanded}
-          aria-label={summaryToggleLabel}
-        >
-          <span className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 px-5 py-2.5">
-            Podsumowanie
-            <SummaryChevron open={expanded} className="h-4 w-4 text-slate-400" />
-          </span>
-        </button>
       </div>
     </div>
   );

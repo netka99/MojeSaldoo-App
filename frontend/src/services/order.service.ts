@@ -16,6 +16,8 @@ export type OrderListParams = {
   delivery_date?: string;
   delivery_date_after?: string;
   delivery_date_before?: string;
+  production_date_after?: string;
+  production_date_before?: string;
   /** Delivered orders that have no invoice yet (django-filter). */
   without_invoice?: boolean;
   /** Exclude orders already assigned to an active van route. */

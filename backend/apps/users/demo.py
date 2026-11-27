@@ -239,6 +239,12 @@ def _create_demo_company_for_user_inner(user) -> None:
         product_type=Product.PRODUCT_TYPE_FINISHED,
         price_net=Decimal("85.00"), price_gross=Decimal("91.80"), vat_rate=Decimal("8.00"),
     )
+    chleb_zytni = Product.objects.create(
+        company=company, user=user,
+        name="Chleb żytni 500g", unit="szt",
+        product_type=Product.PRODUCT_TYPE_FINISHED,
+        price_net=Decimal("5.00"), price_gross=Decimal("5.40"), vat_rate=Decimal("8.00"),
+    )
     torba = Product.objects.create(
         company=company, user=user,
         name="Torba papierowa z logo", unit="szt",
@@ -454,11 +460,13 @@ def _create_demo_company_for_user_inner(user) -> None:
         sklep, m1 + timedelta(days=2), m1 + timedelta(days=3),
         Order.STATUS_INVOICED,
         [(chleb, 100, "4.50"), (bulka, 200, "0.80"), (rogal, 150, "1.20")],
+        production_date=m1 + timedelta(days=1), shipment_date=m1 + timedelta(days=2),
     )
     order_m1b = _make_order(
         hotel, m1 + timedelta(days=11), m1 + timedelta(days=12),
         Order.STATUS_INVOICED,
         [(chleb, 60, "4.50"), (drozdzowka, 80, "2.00"), (tort, 4, "85.00")],
+        production_date=m1 + timedelta(days=10), shipment_date=m1 + timedelta(days=11),
     )
 
     # ── Current month before the work week — invoiced ────────────────
@@ -466,11 +474,13 @@ def _create_demo_company_for_user_inner(user) -> None:
         kawiarnia, m2 + timedelta(days=1), m2 + timedelta(days=2),
         Order.STATUS_INVOICED,
         [(drozdzowka, 60, "2.00"), (rogal, 80, "1.20"), (tort, 2, "85.00")],
+        production_date=m2, shipment_date=m2 + timedelta(days=1),
     )
     order_m2b = _make_order(
         przedszkole, m2 + timedelta(days=4), m2 + timedelta(days=5),
         Order.STATUS_INVOICED,
         [(chleb, 80, "4.50"), (bulka, 150, "0.80"), (rogal, 60, "1.20")],
+        production_date=m2 + timedelta(days=3), shipment_date=m2 + timedelta(days=4),
     )
 
     # ── Week 1 (fully completed, 2 weeks ago) ───────────────────────
@@ -482,124 +492,173 @@ def _create_demo_company_for_user_inner(user) -> None:
 
     # wk1_mon deliveries: Sklep + Przedszkole
     order_wk1_mon_sklep = _make_order(
-        sklep, wk1_mon - timedelta(days=1), wk1_mon,
+        sklep, wk1_mon - timedelta(days=2), wk1_mon,
         Order.STATUS_INVOICED,
         [(chleb, 80, "4.50"), (bulka, 150, "0.80")],
+        production_date=wk1_mon - timedelta(days=2), shipment_date=wk1_mon - timedelta(days=1),
     )
     order_wk1_mon_przed = _make_order(
-        przedszkole, wk1_mon - timedelta(days=1), wk1_mon,
+        przedszkole, wk1_mon - timedelta(days=2), wk1_mon,
         Order.STATUS_INVOICED,
         [(chleb, 50, "4.50"), (bulka, 100, "0.80")],
+        production_date=wk1_mon - timedelta(days=2), shipment_date=wk1_mon - timedelta(days=1),
     )
     # wk1_wed deliveries: Bar + Kawiarnia
     order_wk1_wed_bar = _make_order(
-        bar, wk1_wed - timedelta(days=1), wk1_wed,
+        bar, wk1_wed - timedelta(days=2), wk1_wed,
         Order.STATUS_INVOICED,
         [(chleb, 60, "4.50"), (bulka, 80, "0.80"), (rogal, 60, "1.20")],
+        production_date=wk1_wed - timedelta(days=2), shipment_date=wk1_wed - timedelta(days=1),
     )
     order_wk1_wed_kaw = _make_order(
-        kawiarnia, wk1_wed - timedelta(days=1), wk1_wed,
+        kawiarnia, wk1_wed - timedelta(days=2), wk1_wed,
         Order.STATUS_INVOICED,
         [(rogal, 80, "1.20"), (drozdzowka, 48, "2.00")],
+        production_date=wk1_wed - timedelta(days=2), shipment_date=wk1_wed - timedelta(days=1),
     )
     # wk1_fri deliveries: Sklep + Bistro
     order_wk1_fri_sklep = _make_order(
-        sklep, wk1_fri - timedelta(days=1), wk1_fri,
+        sklep, wk1_fri - timedelta(days=2), wk1_fri,
         Order.STATUS_INVOICED,
         [(chleb, 100, "4.50"), (bulka, 120, "0.80"), (rogal, 80, "1.20")],
+        production_date=wk1_fri - timedelta(days=2), shipment_date=wk1_fri - timedelta(days=1),
     )
     order_wk1_fri_bistro = _make_order(
-        bistro, wk1_fri - timedelta(days=1), wk1_fri,
+        bistro, wk1_fri - timedelta(days=2), wk1_fri,
         Order.STATUS_INVOICED,
         [(rogal, 60, "1.20"), (drozdzowka, 36, "2.00")],
+        production_date=wk1_fri - timedelta(days=2), shipment_date=wk1_fri - timedelta(days=1),
     )
 
     # ── Week 2 (last full work week, in progress) ────────────────────
-    # Monday: Sklep + Hotel — STATUS_INVOICED
     order_mon_sklep = _make_order(
-        sklep, wk_mon - timedelta(days=1), wk_mon,
+        sklep, wk_mon - timedelta(days=2), wk_mon,
         Order.STATUS_INVOICED,
         [(chleb, 100, "4.50"), (bulka, 200, "0.80")],
+        production_date=wk_mon - timedelta(days=2), shipment_date=wk_mon - timedelta(days=1),
     )
     order_mon_hotel = _make_order(
-        hotel, wk_mon - timedelta(days=1), wk_mon,
+        hotel, wk_mon - timedelta(days=2), wk_mon,
         Order.STATUS_INVOICED,
         [(chleb, 80, "4.50"), (rogal, 60, "1.20")],
+        production_date=wk_mon - timedelta(days=2), shipment_date=wk_mon - timedelta(days=1),
     )
     # Tuesday: Bar — delivered, no invoice yet
     order_tue = _make_order(
-        bar, wk_mon, wk_tue,
+        bar, wk_mon - timedelta(days=1), wk_tue,
         Order.STATUS_DELIVERED,
         [(chleb, 60, "4.50"), (bulka, 100, "0.80")],
+        production_date=wk_mon - timedelta(days=1), shipment_date=wk_tue - timedelta(days=1),
     )
     # Wednesday: Kawiarnia + Przedszkole — delivered, no invoice yet
     order_wed_kaw = _make_order(
-        kawiarnia, wk_tue, wk_wed,
+        kawiarnia, wk_tue - timedelta(days=1), wk_wed,
         Order.STATUS_DELIVERED,
         [(rogal, 80, "1.20"), (drozdzowka, 60, "2.00")],
+        production_date=wk_tue, shipment_date=wk_wed,
     )
     order_wed_przed = _make_order(
-        przedszkole, wk_tue, wk_wed,
+        przedszkole, wk_tue - timedelta(days=1), wk_wed,
         Order.STATUS_DELIVERED,
         [(chleb, 60, "4.50"), (bulka, 80, "0.80")],
+        production_date=wk_tue, shipment_date=wk_wed,
     )
-    # Thursday: Restauracja — STATUS_DELIVERED (WZ done, FV issued not paid)
+    # Thursday: Restauracja — STATUS_DELIVERED
     order_thu = _make_order(
-        restauracja, wk_wed, wk_thu,
+        restauracja, wk_wed - timedelta(days=1), wk_thu,
         Order.STATUS_DELIVERED,
         [(chleb, 50, "4.50"), (rogal, 40, "1.20")],
+        production_date=wk_wed, shipment_date=wk_thu,
     )
-    # Friday: Hotel — STATUS_CONFIRMED (PRD draft, WZ draft, no FV)
+    # Friday: Hotel — STATUS_DELIVERED
     order_fri = _make_order(
-        hotel, wk_thu, wk_fri,
-        Order.STATUS_CONFIRMED,
+        hotel, wk_thu - timedelta(days=1), wk_fri,
+        Order.STATUS_DELIVERED,
         [(drozdzowka, 48, "2.00"), (tort, 2, "85.00")],
+        production_date=wk_thu, shipment_date=wk_fri,
     )
-    # Next Monday (wk_fri + 3): Bistro — STATUS_CONFIRMED, NO PRD → "unscheduled"
-    # production_date = Saturday (wk_fri+1), shipment_date = Monday morning (delivery same day)
+    # Next Monday (relative to today): Bistro + Sklep
+    _next_mon = today + timedelta(days=(7 - today.weekday()))
+    _next_tue = _next_mon + timedelta(days=1)
     order_next_mon = _make_order(
-        bistro, wk_fri, wk_fri + timedelta(days=3),
+        bistro, today, _next_mon,
         Order.STATUS_CONFIRMED,
         [(rogal, 100, "1.20"), (bulka, 120, "0.80")],
-        production_date=wk_fri + timedelta(days=1),
-        shipment_date=wk_fri + timedelta(days=3),
+        production_date=_next_mon - timedelta(days=1),
+        shipment_date=_next_mon,
     )
-    # Next Monday: Sklep — chleb + bułki, no PRD
-    # production_date = Saturday, shipment_date = Monday
+    # Next Monday: Sklep
     order_next_mon_sklep = _make_order(
-        sklep, wk_fri, wk_fri + timedelta(days=3),
+        sklep, today, _next_mon,
         Order.STATUS_CONFIRMED,
         [(chleb, 50, "4.50"), (bulka, 80, "0.80")],
-        production_date=wk_fri + timedelta(days=1),
-        shipment_date=wk_fri + timedelta(days=3),
+        production_date=_next_mon - timedelta(days=1),
+        shipment_date=_next_mon,
     )
-    # Next Tuesday: Kawiarnia — rogale + drożdżówki, no PRD
-    # production_date = Sunday, shipment_date = Tuesday (dostawa = Tuesday)
+    # Next Tuesday: Kawiarnia
     order_next_tue_kaw = _make_order(
-        kawiarnia, wk_fri + timedelta(days=1), wk_fri + timedelta(days=4),
+        kawiarnia, today, _next_tue,
         Order.STATUS_CONFIRMED,
         [(rogal, 40, "1.20"), (drozdzowka, 24, "2.00")],
-        production_date=wk_fri + timedelta(days=2),
-        shipment_date=wk_fri + timedelta(days=4),
+        production_date=_next_tue - timedelta(days=1),
+        shipment_date=_next_tue,
     )
-    # Next Tuesday: Przedszkole — chleb + bułki, no PRD
-    # Bez dat planowania — pokazuje mix: niektóre z datami, niektóre bez
+    # Next Tuesday: Przedszkole
     order_next_tue_przed = _make_order(
-        przedszkole, wk_fri + timedelta(days=1), wk_fri + timedelta(days=4),
+        przedszkole, today, _next_tue,
         Order.STATUS_CONFIRMED,
         [(chleb, 40, "4.50"), (bulka, 60, "0.80")],
+        production_date=_next_tue - timedelta(days=1),
+        shipment_date=_next_tue,
     )
-    # TODAY: Bar Centrum — rogale + drożdżówki, dostawa dzisiaj, brak PRD
+    # TODAY delivery: Bar Centrum — ordered 2 days ago, production today morning
     order_today_bar = _make_order(
-        bar, today - timedelta(days=1), today,
+        bar, today - timedelta(days=2), today,
         Order.STATUS_CONFIRMED,
         [(rogal, 30, "1.20"), (drozdzowka, 12, "2.00")],
+        production_date=today, shipment_date=today,
     )
-    # TODAY: Hotel Złoty — chleb, dostawa dzisiaj, brak PRD
+    # TODAY delivery: Hotel Złoty — ordered 2 days ago, production today morning
     order_today_hotel = _make_order(
-        hotel, today - timedelta(days=1), today,
+        hotel, today - timedelta(days=2), today,
         Order.STATUS_CONFIRMED,
-        [(chleb, 20, "4.50")],
+        [(chleb, 20, "4.50"), (rogal, 40, "1.20")],
+        production_date=today, shipment_date=today,
+    )
+    # TODAY delivery: Kawiarnia Różana — ordered yesterday, production today
+    order_today_kaw = _make_order(
+        kawiarnia, today - timedelta(days=1), today,
+        Order.STATUS_CONFIRMED,
+        [(drozdzowka, 36, "2.00"), (rogal, 24, "1.20")],
+        production_date=today, shipment_date=today,
+    )
+    # TODAY delivery: Sklep Spożywczy — ordered 2 days ago, production today
+    order_today_sklep = _make_order(
+        sklep, today - timedelta(days=2), today,
+        Order.STATUS_CONFIRMED,
+        [(chleb, 60, "4.50"), (bulka, 120, "0.80"), (chleb_zytni, 30, "5.00")],
+        production_date=today, shipment_date=today,
+    )
+    # TOMORROW delivery: Bistro Pod Lipą — ordered today, production today
+    order_tomorrow_bistro = _make_order(
+        bistro, today, today + timedelta(days=1),
+        Order.STATUS_CONFIRMED,
+        [(rogal, 100, "1.20"), (bulka, 80, "0.80")],
+        production_date=today, shipment_date=today + timedelta(days=1),
+    )
+    # TOMORROW delivery: Restauracja Smaczna — ordered today, production today
+    order_tomorrow_rest = _make_order(
+        restauracja, today, today + timedelta(days=1),
+        Order.STATUS_CONFIRMED,
+        [(chleb, 40, "4.50"), (rogal, 60, "1.20")],
+        production_date=today, shipment_date=today + timedelta(days=1),
+    )
+    # TOMORROW delivery: Przedszkole Słoneczko — ordered today, production today
+    order_tomorrow_przed = _make_order(
+        przedszkole, today, today + timedelta(days=1),
+        Order.STATUS_CONFIRMED,
+        [(chleb, 50, "4.50"), (bulka, 80, "0.80"), (chleb_zytni, 20, "5.00")],
+        production_date=today, shipment_date=today + timedelta(days=1),
     )
 
     # ------------------------------------------------------------------
@@ -1198,6 +1257,18 @@ def _create_demo_company_for_user_inner(user) -> None:
                                quantity=Decimal("6.00"), unit="kg")   # 6 kg mąki na 10 chlebów
     RecipeItem.objects.create(recipe=recipe_chleb, ingredient=cukier,
                                quantity=Decimal("0.20"), unit="kg")   # 0.2 kg cukru
+
+    recipe_chleb_zytni = Recipe.objects.create(
+        company=company,
+        product=chleb_zytni,
+        name="Chleb żytni 500g",
+        yield_quantity=Decimal("10"),  # one batch = 10 bochenków
+        notes="Chleb żytni na zakwasie żytnim.",
+    )
+    RecipeItem.objects.create(recipe=recipe_chleb_zytni, ingredient=maka,
+                               quantity=Decimal("7.00"), unit="kg")   # 7 kg mąki na 10 chlebów
+    RecipeItem.objects.create(recipe=recipe_chleb_zytni, ingredient=cukier,
+                               quantity=Decimal("0.10"), unit="kg")
 
     recipe_bulka = Recipe.objects.create(
         company=company,

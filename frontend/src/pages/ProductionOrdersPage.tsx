@@ -751,6 +751,8 @@ function PlanningItem({
   onCustomQtyChange,
   onToggle,
   onOpenModal,
+  selectedOrderIds,
+  onSelectedOrderIdsChange,
 }: {
   item: ProductionPlanningItem;
   isSelected: boolean;
@@ -763,15 +765,25 @@ function PlanningItem({
   customQty?: number;
   onCustomQtyChange?: (qty: number) => void;
   onToggle: () => void;
-  onOpenModal: (selectedOrders: PlanningOrder[]) => void;
+  onOpenModal: (selectedOrders: PlanningOrder[], qty: number) => void;
+  selectedOrderIds: Set<string>;
+  onSelectedOrderIdsChange: (ids: Set<string>) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [showQtyInput, setShowQtyInput] = useState(false);
   const [qtyInputVal, setQtyInputVal] = useState('');
-  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(
-    () => new Set(item.orders.filter((o) => Number(o.remaining_qty) > 0).map((o) => o.order_id))
-  );
+  const suggestedQty = Math.ceil(Number(item.suggested_production_qty));
+  const [manualQty, setManualQty] = useState(String(suggestedQty));
+
+  // Auto mode: stock is empty and nothing is in production → checkboxes drive the qty
+  // Manual mode: stock or in-production exists → user types qty, checkboxes hidden
+  const isAutoMode = Number(item.stock_available ?? 0) === 0 && Number(item.already_scheduled ?? 0) === 0;
+  const selectedOrdersQty = item.orders
+    .filter((o) => selectedOrderIds.has(o.order_id))
+    .reduce((s, o) => s + Number(o.remaining_qty), 0);
+  const createQty = isAutoMode ? Math.ceil(selectedOrdersQty) : (parseFloat(manualQty.replace(',', '.')) || suggestedQty);
+
   const hasIngredients = item.ingredients.length > 0;
   const showCheckbox = !isCovered || (customQty != null && customQty > 0);
   const showIngredients = hasIngredients && (!isCovered || (customQty != null && customQty > 0));
@@ -919,8 +931,7 @@ function PlanningItem({
       {expanded && showIngredients && (
         <div className="border-t border-emerald-100 bg-emerald-50/40 px-4 pb-4 pt-3 md:px-10">
           {(() => {
-            const baseProdQty = Number(item.suggested_production_qty);
-            const totalProdQty = baseProdQty + (customQty ?? 0);
+            const totalProdQty = createQty + (customQty ?? 0);
             const yieldQty = Number(item.recipe_yield_quantity) || 1;
             const batchesNeeded = totalProdQty / yieldQty;
             return (
@@ -974,7 +985,6 @@ function PlanningItem({
                     const partialInProd = o.in_production && !o.fully_scheduled;
                     return fullyInProd ? (
                       <div key={o.order_id} className="flex items-center gap-2.5 bg-blue-50/60 px-4 py-2">
-                        {/* checkmark icon instead of checkbox */}
                         <svg className="h-3.5 w-3.5 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                           <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -989,18 +999,20 @@ function PlanningItem({
                         </span>
                       </div>
                     ) : (
-                      <label key={o.order_id} className="flex cursor-pointer items-center gap-2.5 px-4 py-2 hover:bg-slate-50/60">
-                        <input
-                          type="checkbox"
-                          className="h-3.5 w-3.5 accent-primary shrink-0"
-                          checked={selectedOrderIds.has(o.order_id)}
-                          onChange={() => setSelectedOrderIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(o.order_id)) next.delete(o.order_id);
-                            else next.add(o.order_id);
-                            return next;
-                          })}
-                        />
+                      <div key={o.order_id} className="flex items-center gap-2.5 px-4 py-2">
+                        {isAutoMode && (
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 accent-primary shrink-0 cursor-pointer"
+                            checked={selectedOrderIds.has(o.order_id)}
+                            onChange={() => {
+                              const next = new Set(selectedOrderIds);
+                              if (next.has(o.order_id)) next.delete(o.order_id);
+                              else next.add(o.order_id);
+                              onSelectedOrderIdsChange(next);
+                            }}
+                          />
+                        )}
                         <div className="min-w-0 flex-1">
                           <span className="text-xs font-medium text-slate-800">{o.customer_name || o.order_number}</span>
                           {o.customer_name && <span className="ml-1.5 text-xs text-slate-400">{o.order_number}</span>}
@@ -1014,20 +1026,32 @@ function PlanningItem({
                         <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-800">
                           {n2.format(Number(o.remaining_qty))} {item.product_unit}
                         </span>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
                 {/* Przycisk otwiera form z zaznaczonymi zamówieniami */}
                 {canManage && (
-                  <button
-                    type="button"
-                    className="mt-2 w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-40"
-                    disabled={selectedOrderIds.size === 0}
-                    onClick={() => onOpenModal(item.orders.filter((o) => selectedOrderIds.has(o.order_id)))}
-                  >
-                    Utwórz zlecenie ({n2.format(Number(item.suggested_production_qty))} {item.product_unit})
-                  </button>
+                  <div className="mt-2 flex items-center gap-2">
+                    {!isAutoMode && (
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="h-9 w-24 rounded-lg border border-slate-300 bg-[#F2F2F7] px-2 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        value={manualQty}
+                        onChange={(e) => setManualQty(e.target.value)}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className="h-9 flex-1 rounded-lg bg-primary px-3 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-40"
+                      disabled={isAutoMode && selectedOrderIds.size === 0}
+                      onClick={() => onOpenModal(item.orders.filter((o) => selectedOrderIds.has(o.order_id)), createQty)}
+                    >
+                      Utwórz zlecenie ({n2.format(createQty)} {item.product_unit})
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -1108,7 +1132,7 @@ type IngredientSummaryRow = {
   sources: { productName: string; qty: number }[];
 };
 
-function IngredientsSummary({ items, totalCount, activeOrders }: { items: ProductionPlanningItem[]; totalCount: number; activeOrders: ProductionOrder[] }) {
+function IngredientsSummary({ items, totalCount, activeOrders, selectedQtyByRecipe }: { items: ProductionPlanningItem[]; totalCount: number; activeOrders: ProductionOrder[]; selectedQtyByRecipe: Map<string, number> }) {
   const [open, setOpen] = useState(true);
 
   // Check if all selected items are fully covered (nothing left to plan)
@@ -1145,9 +1169,12 @@ function IngredientsSummary({ items, totalCount, activeOrders }: { items: Produc
       }
     } else {
       for (const item of items) {
+        const yieldQty = Number(item.recipe_yield_quantity) || 1;
+        const selectedQty = selectedQtyByRecipe.get(item.recipe_id) ?? Math.ceil(Number(item.suggested_production_qty));
+        const batches = selectedQty / yieldQty;
         for (const ing of item.ingredients) {
           const existing = map.get(ing.ingredient_id);
-          const qty = Number(ing.quantity_needed);
+          const qty = Number(ing.quantity_per_batch) * batches;
           if (existing) {
             existing.totalNeeded += qty;
             existing.sources.push({ productName: item.product_name, qty });
@@ -1258,6 +1285,7 @@ export function ProductionOrdersPage() {
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo] = useState(today);
   const [selectedRecipeIds, setSelectedRecipeIds] = useState<Set<string>>(new Set());
+  const [selectedOrderIdsByRecipe, setSelectedOrderIdsByRecipe] = useState<Map<string, Set<string>>>(new Map());
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(true);
   const [coveredCustomQties, setCoveredCustomQties] = useState<Map<string, number>>(new Map());
   const [completedOrdersOpen, setCompletedOrdersOpen] = useState(false);
@@ -1310,6 +1338,12 @@ export function ProductionOrdersPage() {
   useEffect(() => {
     if (!planningLoading) {
       setSelectedRecipeIds(new Set(schedulableItems.map((i) => i.recipe_id)));
+      setSelectedOrderIdsByRecipe(new Map(
+        schedulableItems.map((i) => [
+          i.recipe_id,
+          new Set(i.orders.filter((o) => Number(o.remaining_qty) > 0).map((o) => o.order_id)),
+        ])
+      ));
     }
   }, [planningItems]);
 
@@ -1318,6 +1352,24 @@ export function ProductionOrdersPage() {
   const coveredSelectedItems = coveredItems.filter(
     (i) => (coveredCustomQties.get(i.recipe_id) ?? 0) > 0
   );
+
+  // Map recipeId → qty to produce (based on selected orders or manual input)
+  const selectedQtyByRecipe = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of selectedItems) {
+      const isAutoMode = Number(item.stock_available ?? 0) === 0 && Number(item.already_scheduled ?? 0) === 0;
+      if (isAutoMode) {
+        const orderIds = selectedOrderIdsByRecipe.get(item.recipe_id) ?? new Set();
+        const qty = item.orders
+          .filter((o) => orderIds.has(o.order_id))
+          .reduce((s, o) => s + Number(o.remaining_qty), 0);
+        map.set(item.recipe_id, Math.ceil(qty));
+      } else {
+        map.set(item.recipe_id, Math.ceil(Number(item.suggested_production_qty)));
+      }
+    }
+    return map;
+  }, [selectedItems, selectedOrderIdsByRecipe]);
 
   function toggleItem(recipeId: string) {
     setSelectedRecipeIds((prev) => {
@@ -1515,10 +1567,16 @@ export function ProductionOrdersPage() {
                     allInProduction={allFullyScheduled}
                     canManage={canProduction}
                     onToggle={() => toggleItem(item.recipe_id)}
-                    onOpenModal={(selectedOrders) => setForm({
+                    selectedOrderIds={selectedOrderIdsByRecipe.get(item.recipe_id) ?? new Set()}
+                    onSelectedOrderIdsChange={(ids) => setSelectedOrderIdsByRecipe((prev) => {
+                      const next = new Map(prev);
+                      next.set(item.recipe_id, ids);
+                      return next;
+                    })}
+                    onOpenModal={(selectedOrders, qty) => setForm({
                       open: true,
                       prefillRecipeId: item.recipe_id,
-                      prefillQty: Math.ceil(Number(item.suggested_production_qty)),
+                      prefillQty: qty,
                       prefillSourceOrders: selectedOrders,
                       highlightProductId: item.product_id,
                     })}
@@ -1579,10 +1637,16 @@ export function ProductionOrdersPage() {
                         return next;
                       });
                     }}
-                    onOpenModal={(selectedOrders) => setForm({
+                    selectedOrderIds={selectedOrderIdsByRecipe.get(item.recipe_id) ?? new Set()}
+                    onSelectedOrderIdsChange={(ids) => setSelectedOrderIdsByRecipe((prev) => {
+                      const next = new Map(prev);
+                      next.set(item.recipe_id, ids);
+                      return next;
+                    })}
+                    onOpenModal={(selectedOrders, qty) => setForm({
                       open: true,
                       prefillRecipeId: item.recipe_id,
-                      prefillQty: Math.ceil(Number(item.suggested_production_qty)),
+                      prefillQty: qty,
                       prefillSourceOrders: selectedOrders,
                       highlightProductId: item.product_id,
                     })}
@@ -1611,7 +1675,7 @@ export function ProductionOrdersPage() {
 
       {/* ── Ingredients summary — only when schedulable items are selected with actual qty needed ── */}
       {selectedItems.length > 0 && selectedItems.some((item) => Number(item.suggested_production_qty) > 0 && item.ingredients.some((ing) => Number(ing.quantity_needed) > 0)) && (
-        <IngredientsSummary items={selectedItems} totalCount={planningItems.length} activeOrders={activeOrders} />
+        <IngredientsSummary items={selectedItems} totalCount={planningItems.length} activeOrders={activeOrders} selectedQtyByRecipe={selectedQtyByRecipe} />
       )}
 
         </div>{/* end left column */}

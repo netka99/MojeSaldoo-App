@@ -37,11 +37,20 @@ _ORDER_STATUSES_WITH_LINE_RESERVATION = frozenset(
 )
 
 
+from rest_framework.pagination import PageNumberPagination
+
+class OrderPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 1000
+
+
 class OrderViewSet(viewsets.ModelViewSet):
     """
     CRUD for orders, scoped to ``request.user.current_company``.
     """
     lookup_field = "uuid"
+    pagination_class = OrderPagination
 
     serializer_class = OrderSerializer
     module_required = "orders"
@@ -142,10 +151,27 @@ class OrderViewSet(viewsets.ModelViewSet):
             for r in rows
         ])
 
+    def _auto_production_date(self, serializer, company):
+        """If order_dates_enabled is off, default production_date to delivery_date."""
+        workflow = getattr(company, 'workflow_settings', None)
+        if workflow is None or not workflow.order_dates_enabled:
+            delivery_date = serializer.validated_data.get('delivery_date')
+            if delivery_date and not serializer.validated_data.get('production_date'):
+                return {'production_date': delivery_date}
+        return {}
+
     def perform_create(self, serializer):
+        company = self.request.user.current_company
         serializer.save(
-            company=self.request.user.current_company,
+            company=company,
             user=self.request.user,
+            **self._auto_production_date(serializer, company),
+        )
+
+    def perform_update(self, serializer):
+        company = self.request.user.current_company
+        serializer.save(
+            **self._auto_production_date(serializer, company),
         )
 
     @action(detail=True, methods=["get"], url_path="items")

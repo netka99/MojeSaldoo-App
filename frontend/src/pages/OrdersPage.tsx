@@ -75,6 +75,9 @@ export function OrdersPage() {
 
 type ViewMode = 'day' | 'all';
 
+/** false przywraca poprzedni nagłówek widoku „Wszystkie otwarte”. */
+const COMPACT_ALL_ORDERS_HEADER = true;
+
 function OrdersPageContent() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -88,6 +91,8 @@ function OrdersPageContent() {
 
   const [search, setSearch] = useState('');
   const [pill, setPill] = useState<FilterPill>('all');
+  const [allSummaryOpen, setAllSummaryOpen] = useState(false);
+  const [daySummaryOpen, setDaySummaryOpen] = useState(false);
 
   const wzSuccessMsg = (location.state as { wzSuccess?: string } | null)?.wzSuccess ?? null;
   useEffect(() => {
@@ -336,17 +341,30 @@ function OrdersPageContent() {
     <>
     <div
       className={cn(
-        'mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-4',
-        'pb-[calc(83px+11.5rem+env(safe-area-inset-bottom))] md:pb-[calc(10.5rem+env(safe-area-inset-bottom))]',
+        'mx-auto flex w-full max-w-3xl lg:max-w-6xl flex-col gap-4 px-5 py-4',
+        viewMode === 'all'
+          ? allSummaryOpen
+            ? 'pb-[calc(83px+min(55vh,24rem)+9rem+env(safe-area-inset-bottom))] md:pb-[calc(min(55vh,24rem)+9rem+env(safe-area-inset-bottom))]'
+            : 'pb-[calc(83px+9rem+env(safe-area-inset-bottom))] md:pb-[calc(9rem+env(safe-area-inset-bottom))]'
+          : daySummaryOpen
+            ? 'pb-[calc(83px+min(55vh,24rem)+9rem+env(safe-area-inset-bottom))] md:pb-[calc(min(55vh,24rem)+9rem+env(safe-area-inset-bottom))]'
+            : 'pb-[calc(83px+9rem+env(safe-area-inset-bottom))] md:pb-[calc(9rem+env(safe-area-inset-bottom))]',
       )}
     >
-      {/* View mode toggle */}
-      <div className="inline-flex gap-1 self-start rounded-2xl border border-slate-200 bg-white p-1">
+      {/* View mode toggle. Na telefonie na całą szerokość, żeby od razu było widać, który widok jest włączony. */}
+      <div className={cn(
+        'gap-1 rounded-2xl border border-slate-200 bg-white p-1',
+        COMPACT_ALL_ORDERS_HEADER
+          ? 'flex w-full p-1.5 max-md:mb-2 md:inline-flex md:w-auto md:self-start md:p-1'
+          : 'inline-flex self-start',
+      )}>
         <button
           type="button"
+          aria-pressed={viewMode === 'day'}
           onClick={() => setViewMode('day')}
           className={cn(
-            'rounded-xl px-4 py-1.5 text-sm font-medium transition-colors',
+            'rounded-xl px-4 text-sm font-medium transition-colors',
+            COMPACT_ALL_ORDERS_HEADER ? 'flex-1 py-2.5 md:flex-none md:py-1.5' : 'py-1.5',
             viewMode === 'day'
               ? 'bg-primary text-white'
               : 'text-slate-600 hover:bg-slate-50',
@@ -356,9 +374,11 @@ function OrdersPageContent() {
         </button>
         <button
           type="button"
+          aria-pressed={viewMode === 'all'}
           onClick={() => setViewMode('all')}
           className={cn(
-            'rounded-xl px-4 py-1.5 text-sm font-medium transition-colors',
+            'rounded-xl px-4 text-sm font-medium transition-colors',
+            COMPACT_ALL_ORDERS_HEADER ? 'flex-1 py-2.5 md:flex-none md:py-1.5' : 'py-1.5',
             viewMode === 'all'
               ? 'bg-primary text-white'
               : 'text-slate-600 hover:bg-slate-50',
@@ -367,7 +387,7 @@ function OrdersPageContent() {
           Wszystkie otwarte
         </button>
       </div>
-      {viewMode === 'all' && (
+      {viewMode === 'all' && !COMPACT_ALL_ORDERS_HEADER && (
         <p className="px-1 text-xs text-slate-500">
           Szkice, potwierdzone i w realizacji — ostatnie 60 dni i przyszłe. Bez anulowanych i zafakturowanych. Grupowane według daty dostawy.
         </p>
@@ -381,6 +401,8 @@ function OrdersPageContent() {
           onOrderClick={(id) => navigate(`/orders/${id}`, { state: { from: location.pathname + location.search } })}
           canOrders={canOrders ?? false}
           onNewOrder={() => navigate(`/orders/new?date=${encodeURIComponent(todayIso())}`)}
+          summaryOpen={allSummaryOpen}
+          onSummaryOpenChange={setAllSummaryOpen}
         />
       )}
 
@@ -391,6 +413,7 @@ function OrdersPageContent() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="min-w-0 flex-1">
               <h1 className="text-xl font-bold tracking-tight text-slate-900">Wybierz sklep</h1>
+              <p className="mt-0.5 text-xs text-slate-500">Zamówienia według daty dostawy</p>
             </div>
             <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
               {deliveryEnabled && wzSelectionMode ? (
@@ -577,7 +600,7 @@ function OrdersPageContent() {
             </motion.div>
           )}
 
-          <OrdersDaySummary orders={orders} />
+          <OrdersDaySummary orders={orders} onExpandedChange={setDaySummaryOpen} />
         </>
       )}
 
@@ -1026,8 +1049,32 @@ function formatDeliveryDate(iso: string): string {
   return dateFmt.format(d);
 }
 
+const shortDateFmt = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' });
+function formatShortDate(iso: string): string {
+  return shortDateFmt.format(new Date(iso + 'T00:00:00'));
+}
+
 function isToday(iso: string): boolean {
   return iso === todayIso();
+}
+
+function orderCountPhrase(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  const noun =
+    count === 1
+      ? 'zamówienie'
+      : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+        ? 'zamówienia'
+        : 'zamówień';
+  return `${count} ${noun}`;
+}
+
+function formatActiveDateChip(groupBy: 'delivery' | 'production', from: string, to: string): string {
+  const kind = groupBy === 'production' ? 'Produkcja' : 'Dostawa';
+  if (from && to) return `${kind} ${formatShortDate(from)}–${formatShortDate(to)}`;
+  if (from) return `${kind} od ${formatShortDate(from)}`;
+  return `${kind} do ${formatShortDate(to)}`;
 }
 
 interface AllOrdersViewProps {
@@ -1037,6 +1084,8 @@ interface AllOrdersViewProps {
   onOrderClick: (id: string) => void;
   canOrders: boolean;
   onNewOrder: () => void;
+  summaryOpen: boolean;
+  onSummaryOpenChange: (open: boolean) => void;
 }
 
 type OrderTabFilter = 'all' | 'production' | 'in_production' | 'delivery' | 'invoice';
@@ -1049,23 +1098,372 @@ const ORDER_TAB_FILTERS: { id: OrderTabFilter; label: string }[] = [
   { id: 'invoice', label: 'Do zafakturowania' },
 ];
 
-function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, onNewOrder }: AllOrdersViewProps) {
+function countOrdersForTab(orders: Order[], tab: OrderTabFilter): number {
+  if (tab === 'all') return orders.length;
+  if (tab === 'production') return orders.filter((o) => o.status === 'confirmed' && !o.production_status).length;
+  if (tab === 'in_production') return orders.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial')).length;
+  if (tab === 'delivery') return orders.filter((o) => o.status === 'confirmed' && o.production_status === 'completed' && !o.has_wz).length;
+  return orders.filter((o) => o.status === 'delivered' && !o.has_active_invoice).length;
+}
+
+interface AllOrdersCompactHeaderProps {
+  orderCount: number;
+  productionEnabled: boolean;
+  canOrders: boolean;
+  onNewOrder: () => void;
+  onOpenProduction: () => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  dateChip: string | null;
+  onClearDates: () => void;
+  groupBy: 'delivery' | 'production';
+  onGroupByChange: (value: 'delivery' | 'production') => void;
+  tabFilter: OrderTabFilter;
+  onTabFilterChange: (value: OrderTabFilter) => void;
+  dateFiltered: Order[];
+  dateRangeOpen: boolean;
+  onDateRangeOpenChange: (open: boolean) => void;
+  dateFrom: string;
+  dateTo: string;
+  onDateFromChange: (value: string) => void;
+  onDateToChange: (value: string) => void;
+}
+
+function AllOrdersCompactHeader({
+  orderCount,
+  productionEnabled,
+  canOrders,
+  onNewOrder,
+  onOpenProduction,
+  search,
+  onSearchChange,
+  dateChip,
+  onClearDates,
+  groupBy,
+  onGroupByChange,
+  tabFilter,
+  onTabFilterChange,
+  dateFiltered,
+  dateRangeOpen,
+  onDateRangeOpenChange,
+  dateFrom,
+  dateTo,
+  onDateFromChange,
+  onDateToChange,
+}: AllOrdersCompactHeaderProps) {
+  const [searchOpen, setSearchOpen] = useState(search.trim().length > 0);
+  const [scopeInfoOpen, setScopeInfoOpen] = useState(false);
+  const dateKind = groupBy === 'production' ? 'Data produkcji' : 'Data dostawy';
+  const searchVisible = searchOpen || search.trim().length > 0;
+  const selectedTab = ORDER_TAB_FILTERS.find((tab) => tab.id === tabFilter) ?? ORDER_TAB_FILTERS[0];
+  const selectedCount = countOrdersForTab(dateFiltered, selectedTab.id);
+  const dateFieldClass = 'cursor-pointer rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-normal text-slate-900 shadow-none [color-scheme:light] focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30';
+  return (
+    <div className="flex flex-col gap-4">
+      {(productionEnabled || canOrders) && (
+        <div className="flex items-center justify-end gap-2">
+          {productionEnabled && (
+            <button
+              type="button"
+              onClick={onOpenProduction}
+              className="inline-flex items-center gap-1.5 px-1 py-1 text-sm font-medium text-orange-800 hover:underline"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                <path d="M3 21h18M6 21V10l4 2V10l4 2V9l5 2v10" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="lg:hidden">Produkcja</span>
+              <span className="hidden lg:inline">Zleć produkcję</span>
+            </button>
+          )}
+          {canOrders && (
+            <button
+              type="button"
+              onClick={onNewOrder}
+              className="inline-flex items-center gap-1.5 px-1 py-1 text-sm font-medium text-primary hover:underline"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+              </svg>
+              Nowe zamówienie
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">Otwarte zamówienia</h1>
+            <button
+              type="button"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 text-xs font-semibold text-slate-500 md:hidden"
+              aria-expanded={scopeInfoOpen}
+              aria-label="Ostatnie 60 dni, bez anulowanych i zafakturowanych"
+              onClick={() => setScopeInfoOpen((open) => !open)}
+            >
+              i
+            </button>
+          </div>
+          <p className="mt-1 hidden text-xs text-slate-500 md:block">
+            {orderCount > 0
+              ? `${orderCountPhrase(orderCount)} · ostatnie 60 dni, bez anulowanych i zafakturowanych`
+              : 'Brak otwartych zamówień · ostatnie 60 dni, bez anulowanych i zafakturowanych'}
+          </p>
+          {scopeInfoOpen && (
+            <p className="mt-1 text-xs text-slate-500 md:hidden">Ostatnie 60 dni, bez anulowanych i zafakturowanych.</p>
+          )}
+        </div>
+        <button
+          type="button"
+          aria-expanded={searchVisible}
+          aria-label={searchVisible ? 'Zamknij szukanie' : 'Szukaj zamówień'}
+          onClick={() => {
+            if (searchVisible) {
+              onSearchChange('');
+              setSearchOpen(false);
+              return;
+            }
+            setSearchOpen(true);
+          }}
+          className={cn(
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
+            searchVisible ? 'bg-primary/10 text-primary' : 'bg-slate-100 text-slate-700',
+          )}
+        >
+          <SearchIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      {searchVisible && (
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <input
+            type="search"
+            value={search}
+            autoFocus
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Szukaj po kliencie lub numerze…"
+            aria-label="Szukaj zamówień"
+            className="field-ios w-full pl-9"
+          />
+        </div>
+      )}
+
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white md:rounded-3xl">
+        <div className="border-b border-primary/15 bg-primary/5 px-4 py-3 md:px-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary" aria-hidden>
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                  <rect x="4" y="4" width="7" height="7" rx="1.5" />
+                  <rect x="13" y="4" width="7" height="7" rx="1.5" />
+                  <rect x="4" y="13" width="7" height="7" rx="1.5" />
+                  <rect x="13" y="13" width="7" height="7" rx="1.5" />
+                </svg>
+              </span>
+              <p className="text-sm font-semibold text-slate-900">Grupuj po dacie:</p>
+            </div>
+            <div className="grid grid-cols-2 gap-1 rounded-full border-2 border-primary bg-slate-200 p-1 md:inline-grid md:w-auto">
+              <button
+                type="button"
+                aria-pressed={groupBy === 'delivery'}
+                onClick={() => onGroupByChange('delivery')}
+                className={cn(
+                  'rounded-full px-3 py-2 text-sm font-medium transition-colors',
+                  groupBy === 'delivery' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-700 hover:text-slate-900',
+                )}
+              >
+                Dostawy
+              </button>
+              <button
+                type="button"
+                aria-pressed={groupBy === 'production'}
+                onClick={() => onGroupByChange('production')}
+                className={cn(
+                  'rounded-full px-3 py-2 text-sm font-medium transition-colors',
+                  groupBy === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-700 hover:text-slate-900',
+                )}
+              >
+                Produkcji
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 md:p-5">
+        <div className="hidden flex-wrap items-center gap-2 md:flex">
+          {ORDER_TAB_FILTERS.map((tab) => {
+            const count = countOrdersForTab(dateFiltered, tab.id);
+            const active = tabFilter === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onTabFilterChange(tab.id)}
+                className={cn(
+                  'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-2xl border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                  active
+                    ? 'border-primary bg-primary text-white'
+                    : 'border-slate-200 bg-white text-slate-700',
+                )}
+              >
+                {tab.label}
+                <span className={cn('rounded-full px-1.5 py-0.5 text-xs font-semibold tabular-nums', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <label htmlFor="all-orders-status" className="mb-1.5 block text-sm font-medium text-slate-800 md:hidden">Pokaż</label>
+        <div className="relative md:hidden">
+          <div className="pointer-events-none absolute inset-y-0 left-3 right-8 flex items-center gap-1.5 text-sm font-medium" aria-hidden>
+            <span className="text-slate-900">{selectedTab.label}</span>
+            <span className="font-semibold tabular-nums text-primary">{selectedCount}</span>
+          </div>
+          <select
+            id="all-orders-status"
+            value={tabFilter}
+            onChange={(e) => onTabFilterChange(e.target.value as OrderTabFilter)}
+            className="select-pill w-full text-transparent"
+          >
+            {ORDER_TAB_FILTERS.map((tab) => (
+              <option key={tab.id} value={tab.id}>
+                {tab.label} · {countOrdersForTab(dateFiltered, tab.id)}
+              </option>
+            ))}
+          </select>
+          <svg className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+
+        <div className="mt-4 hidden items-center gap-2 border-t border-slate-200 pt-3 lg:flex">
+          <p className="whitespace-nowrap text-sm font-medium text-slate-800">
+            Zakres dat
+            <span className="ml-2 text-xs font-normal text-slate-500">{dateKind}</span>
+          </p>
+          <label htmlFor="all-orders-date-from-lg" className="text-sm font-medium text-slate-800">Od</label>
+          <input
+            id="all-orders-date-from-lg"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => onDateFromChange(e.target.value)}
+            className={cn(dateFieldClass, 'w-40')}
+          />
+          <label htmlFor="all-orders-date-to-lg" className="text-sm font-medium text-slate-800">Do</label>
+          <input
+            id="all-orders-date-to-lg"
+            type="date"
+            value={dateTo}
+            onChange={(e) => onDateToChange(e.target.value)}
+            className={cn(dateFieldClass, 'w-40')}
+          />
+          {(dateFrom || dateTo) && (
+            <button type="button" onClick={onClearDates} className="text-sm font-medium text-primary hover:underline">
+              Wyczyść
+            </button>
+          )}
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-3 lg:hidden">
+          <button
+            type="button"
+            aria-expanded={dateRangeOpen}
+            aria-controls="all-orders-date-range"
+            onClick={() => onDateRangeOpenChange(!dateRangeOpen)}
+            className="flex w-full items-center justify-between text-sm font-medium text-slate-800"
+          >
+            Zakres dat
+            <svg className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', dateRangeOpen && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {dateChip && !dateRangeOpen && (
+            <button
+              type="button"
+              onClick={onClearDates}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1 text-sm font-medium text-slate-700"
+              aria-label={`Wyczyść zakres: ${dateChip}`}
+            >
+              {dateChip}
+              <svg className="h-3.5 w-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
+          {dateRangeOpen && (
+            <div id="all-orders-date-range" className="mt-3">
+              <p className="mb-3 text-xs text-slate-500">{dateKind}</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="all-orders-date-from" className="mb-1.5 block text-sm font-medium text-slate-800">Od</label>
+                  <input
+                    id="all-orders-date-from"
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => onDateFromChange(e.target.value)}
+                    className={cn(dateFieldClass, 'w-full')}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="all-orders-date-to" className="mb-1.5 block text-sm font-medium text-slate-800">Do</label>
+                  <input
+                    id="all-orders-date-to"
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => onDateToChange(e.target.value)}
+                    className={cn(dateFieldClass, 'w-full')}
+                  />
+                </div>
+              </div>
+              {(dateFrom || dateTo) && (
+                <button type="button" onClick={onClearDates} className="mt-3 text-sm font-medium text-primary hover:underline">
+                  Wyczyść
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, onNewOrder, summaryOpen, onSummaryOpenChange }: AllOrdersViewProps) {
   const productionEnabled = useModuleGuard('production');
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [tabFilter, setTabFilter] = useState<OrderTabFilter>('all');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [dateRangeOpen, setDateRangeOpen] = useState(false);
+  const [groupBy, setGroupBy] = useState<'delivery' | 'production'>('delivery');
   const toggleExpanded = (id: string) =>
     setExpandedIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
+  const dateFiltered = useMemo(() => {
+    if (!dateFrom && !dateTo) return orders;
+    return orders.filter((o) => {
+      const d = groupBy === 'production' ? (o.production_date ?? o.delivery_date) : o.delivery_date;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
+  }, [orders, dateFrom, dateTo, groupBy]);
+
   const tabFiltered = useMemo(() => {
-    if (tabFilter === 'production') return orders.filter((o) => o.status === 'confirmed' && !o.production_status);
-    if (tabFilter === 'in_production') return orders.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial'));
-    if (tabFilter === 'delivery') return orders.filter((o) =>
-      (o.status === 'confirmed' && (o.production_status === 'completed' || o.production_status === 'partial')) || o.status === 'delivered'
+    if (tabFilter === 'production') return dateFiltered.filter((o) => o.status === 'confirmed' && !o.production_status);
+    if (tabFilter === 'in_production') return dateFiltered.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial'));
+    if (tabFilter === 'delivery') return dateFiltered.filter((o) =>
+      o.status === 'confirmed' && o.production_status === 'completed' && !o.has_wz
     );
-    if (tabFilter === 'invoice') return orders.filter((o) => o.status === 'delivered' && !o.has_active_invoice);
-    return orders;
-  }, [orders, tabFilter]);
+    if (tabFilter === 'invoice') return dateFiltered.filter((o) => o.status === 'delivered' && !o.has_active_invoice);
+    return dateFiltered;
+  }, [dateFiltered, tabFilter]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1077,16 +1475,42 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
     );
   }, [tabFiltered, search]);
 
-  // Group by delivery_date
+  // Client-side product summary — matches exactly what's shown in the list
+  const summary = useMemo(() => {
+    const map = new Map<string, { product_name: string; unit: string; total_quantity: number; total_gross: number }>();
+    for (const order of filtered) {
+      for (const item of order.items) {
+        const key = item.product_id;
+        const existing = map.get(key);
+        const qty = parseFloat(String(item.quantity)) || 0;
+        const gross = parseFloat(String(item.line_total_gross)) || 0;
+        if (existing) {
+          existing.total_quantity += qty;
+          existing.total_gross += gross;
+        } else {
+          map.set(key, {
+            product_name: item.product_name,
+            unit: (item.product_unit || 'szt.').trim(),
+            total_quantity: qty,
+            total_gross: gross,
+          });
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => a.product_name.localeCompare(b.product_name, 'pl'));
+  }, [filtered]);
+
+  // Group by delivery_date or production_date
   const groups = useMemo(() => {
     const map = new Map<string, Order[]>();
     for (const o of filtered) {
-      const list = map.get(o.delivery_date) ?? [];
+      const key = groupBy === 'production' ? (o.production_date ?? o.delivery_date) : o.delivery_date;
+      const list = map.get(key) ?? [];
       list.push(o);
-      map.set(o.delivery_date, list);
+      map.set(key, list);
     }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [filtered]);
+  }, [filtered, groupBy]);
 
   if (isPending) {
     return (
@@ -1098,9 +1522,39 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
   }
 
   return (
+    <>
     <div className="flex flex-col gap-4">
+      {COMPACT_ALL_ORDERS_HEADER ? (
+        <AllOrdersCompactHeader
+          orderCount={orders.length}
+          productionEnabled={productionEnabled}
+          canOrders={canOrders}
+          onNewOrder={onNewOrder}
+          onOpenProduction={() => {
+            const from = dateFrom || todayIso();
+            const to = dateTo || dateFrom || todayIso();
+            navigate(`/production/orders?date_from=${from}&date_to=${to}`);
+          }}
+          search={search}
+          onSearchChange={setSearch}
+          dateChip={dateFrom || dateTo ? formatActiveDateChip(groupBy, dateFrom, dateTo) : null}
+          onClearDates={() => { setDateFrom(''); setDateTo(''); }}
+          groupBy={groupBy}
+          onGroupByChange={setGroupBy}
+          tabFilter={tabFilter}
+          onTabFilterChange={setTabFilter}
+          dateFiltered={dateFiltered}
+          dateRangeOpen={dateRangeOpen}
+          onDateRangeOpenChange={setDateRangeOpen}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+        />
+      ) : (
+        <>
       {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-xl font-bold tracking-tight text-slate-900">Otwarte zamówienia</h1>
           <p className="mt-1 text-xs text-slate-500">
@@ -1108,11 +1562,53 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {productionEnabled && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={actionBtnSecondary}
+              onClick={() => {
+                const from = dateFrom || todayIso();
+                const to = dateTo || dateFrom || todayIso();
+                navigate(`/production/orders?date_from=${from}&date_to=${to}`);
+              }}
+            >
+              Produkcja
+            </Button>
+          )}
           {canOrders && (
             <Button type="button" size="sm" className={actionBtn} onClick={onNewOrder}>
               + Nowe zamówienie
             </Button>
           )}
+        </div>
+      </div>
+
+      {/* Group-by toggle */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-slate-500">Grupuj po:</span>
+        <div className="inline-flex gap-0.5 rounded-xl border border-slate-200 bg-slate-100 p-0.5">
+          <button
+            type="button"
+            onClick={() => setGroupBy('delivery')}
+            className={cn(
+              'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+              groupBy === 'delivery' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+            )}
+          >
+            Dacie dostawy
+          </button>
+          <button
+            type="button"
+            onClick={() => setGroupBy('production')}
+            className={cn(
+              'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+              groupBy === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+            )}
+          >
+            Dacie produkcji
+          </button>
         </div>
       </div>
 
@@ -1129,14 +1625,50 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
         />
       </div>
 
+      {/* Date range filter */}
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs font-medium text-slate-500 whitespace-nowrap">
+          {groupBy === 'production' ? 'Produkcja' : 'Dostawa'}:
+        </span>
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-slate-500 whitespace-nowrap">Od</label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="date-pill"
+            aria-label="Data dostawy od"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-slate-500 whitespace-nowrap">Do</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="date-pill"
+            aria-label="Data dostawy do"
+          />
+        </div>
+        {(dateFrom || dateTo) && (
+          <button
+            type="button"
+            onClick={() => { setDateFrom(''); setDateTo(''); }}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Wyczyść
+          </button>
+        )}
+      </div>
+
       {/* Tab filters */}
       <div className="flex flex-wrap gap-1.5">
         {ORDER_TAB_FILTERS.map((tab) => {
-          const count = tab.id === 'all' ? orders.length
-            : tab.id === 'production' ? orders.filter((o) => o.status === 'confirmed' && !o.production_status).length
-            : tab.id === 'in_production' ? orders.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial')).length
-            : tab.id === 'delivery' ? orders.filter((o) => (o.status === 'confirmed' && (o.production_status === 'completed' || o.production_status === 'partial')) || o.status === 'delivered').length
-            : orders.filter((o) => o.status === 'delivered' && !o.has_active_invoice).length;
+          const count = tab.id === 'all' ? dateFiltered.length
+            : tab.id === 'production' ? dateFiltered.filter((o) => o.status === 'confirmed' && !o.production_status).length
+            : tab.id === 'in_production' ? dateFiltered.filter((o) => o.status === 'confirmed' && (o.production_status === 'in_progress' || o.production_status === 'partial')).length
+            : tab.id === 'delivery' ? dateFiltered.filter((o) => o.status === 'confirmed' && o.production_status === 'completed' && !o.has_wz).length
+            : dateFiltered.filter((o) => o.status === 'delivered' && !o.has_active_invoice).length;
           const active = tabFilter === tab.id;
           return (
             <button
@@ -1158,6 +1690,8 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
           );
         })}
       </div>
+        </>
+      )}
 
       {orders.length === 0 && (
         <div className="flex flex-col items-center gap-3 py-12 text-center">
@@ -1175,11 +1709,19 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
       {groups.map(([dateIso, dateOrders]) => (
         <section key={dateIso}>
           <h2 className={cn(
-            'mb-2 px-1 text-[13px] font-semibold capitalize',
+            'mb-2 px-1 text-[13px] font-semibold capitalize flex items-center gap-2',
             isToday(dateIso) ? 'text-primary' : 'text-muted-foreground',
           )}>
             {formatDeliveryDate(dateIso)}
-            {isToday(dateIso) && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">dziś</span>}
+            {isToday(dateIso) && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">dziś</span>}
+            <span className={cn(
+              'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+              groupBy === 'production'
+                ? 'bg-violet-50 text-violet-500'
+                : 'bg-blue-50 text-blue-500',
+            )}>
+              {groupBy === 'production' ? 'produkcja' : 'dostawa'}
+            </span>
           </h2>
           <ul className="flex flex-col gap-2">
             {dateOrders.map((order) => {
@@ -1192,50 +1734,55 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                   orderStatusLeftBorderClass(order.status),
                 )}>
                   <div className="flex items-center gap-3 px-4 py-3">
-                    {/* Main row — click navigates to detail */}
                     <button
                       type="button"
                       className="min-w-0 flex-1 text-left"
                       onClick={() => onOrderClick(order.id)}
                     >
-                      <div className="flex flex-wrap items-center gap-2">
+                      {/* Linia 1: nazwa + status zamówienia */}
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-medium text-foreground">{order.customer_name}</span>
                         <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', orderStatusBadgeClassName(order.status))}>
                           {ORDER_STATUS_LABELS_PL[order.status]}
                         </span>
+                      </div>
+                      {/* Linia 2: numer, status produkcji, druga data, WZ, faktury */}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        {order.order_number && (
+                          <span className="text-[12px] text-muted-foreground">{order.order_number}</span>
+                        )}
                         {productionEnabled && order.production_status === 'completed' && (
-                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Wyprodukowano</span>
+                          <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">Wyprod.</span>
                         )}
                         {productionEnabled && order.production_status === 'partial' && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Częściowo w prod.</span>
+                          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">Częśc. prod.</span>
                         )}
                         {productionEnabled && order.production_status === 'in_progress' && (
-                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">W produkcji</span>
+                          <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[11px] font-medium text-blue-700">W prod.</span>
                         )}
-                      </div>
-                      {(order.order_number || (order.wz_numbers?.length ?? 0) > 0 || (order.invoice_numbers?.length ?? 0) > 0) && (
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          {order.order_number && (
-                            <span className="text-[12px] text-muted-foreground">{order.order_number}</span>
-                          )}
-                          {order.wz_numbers?.map((d) => (
-                            <span key={d.id} className="contents">
-                              <Link to={`/delivery/${d.id}`} onClick={(e) => e.stopPropagation()} className={d.status === 'draft' ? 'rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-200' : 'rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-200'}>
-                                {d.number}{d.status === 'draft' ? ' ⚠' : ''}
-                              </Link>
-                              {d.corrections?.map((kor) => (
-                                <Link key={kor.id} to={`/delivery/${kor.id}`} onClick={(e) => e.stopPropagation()} className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200">{kor.number}</Link>
-                              ))}
-                            </span>
-                          ))}
-                          {order.invoice_numbers?.map((d) => (
-                            <Link key={d.id} to={`/invoices/${d.id}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 hover:bg-violet-200">
-                              {d.number}
-                              {d.has_correction && <span className="ml-0.5 text-amber-500" title="Wystawiono korektę">KOR</span>}
+                        {groupBy === 'delivery' && order.production_date && order.production_date !== order.delivery_date && (
+                          <span className="text-[11px] text-violet-600">· prod. {formatShortDate(order.production_date)}</span>
+                        )}
+                        {groupBy === 'production' && order.delivery_date && order.delivery_date !== (order.production_date ?? order.delivery_date) && (
+                          <span className="text-[11px] text-blue-600">· dost. {formatShortDate(order.delivery_date)}</span>
+                        )}
+                        {order.wz_numbers?.map((d) => (
+                          <span key={d.id} className="contents">
+                            <Link to={`/delivery/${d.id}`} onClick={(e) => e.stopPropagation()} className={d.status === 'draft' ? 'rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-200' : 'rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-200'}>
+                              {d.number}{d.status === 'draft' ? ' ⚠' : ''}
                             </Link>
-                          ))}
-                        </div>
-                      )}
+                            {d.corrections?.map((kor) => (
+                              <Link key={kor.id} to={`/delivery/${kor.id}`} onClick={(e) => e.stopPropagation()} className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[11px] font-medium text-purple-700 hover:bg-purple-200">{kor.number}</Link>
+                            ))}
+                          </span>
+                        ))}
+                        {order.invoice_numbers?.map((d) => (
+                          <Link key={d.id} to={`/invoices/${d.id}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 hover:bg-violet-200">
+                            {d.number}
+                            {d.has_correction && <span className="ml-0.5 text-amber-500">KOR</span>}
+                          </Link>
+                        ))}
+                      </div>
                     </button>
                     <div className="shrink-0 text-right">
                       <p className="text-sm font-semibold tabular-nums text-slate-900">
@@ -1245,7 +1792,6 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
                         {order.items.length} poz.
                       </p>
                     </div>
-                    {/* Expand toggle — RIGHT side, matching daily view */}
                     {order.items.length > 0 && (
                       <button
                         type="button"
@@ -1273,6 +1819,74 @@ function AllOrdersView({ orders, isPending, onRefetch, onOrderClick, canOrders, 
           </ul>
         </section>
       ))}
+
     </div>
+
+    {/* Sticky summary — fixed above nav, mirrors OrdersDaySummary */}
+    {orders.length > 0 && createPortal(
+      <div className={cn('fixed bottom-[calc(83px+env(safe-area-inset-bottom))] left-0 right-0 z-40', 'md:bottom-0 md:left-64')}>
+        <div className="overflow-hidden border-t border-slate-200 bg-white">
+
+          {/* Toggle */}
+          <button
+            type="button"
+            onClick={() => onSummaryOpenChange(!summaryOpen)}
+            aria-expanded={summaryOpen}
+            className="w-full text-left text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+          >
+            <span className="mx-auto flex w-full max-w-3xl lg:max-w-6xl items-center justify-between gap-2 px-5 py-2.5">
+              {dateFrom || dateTo ? `Zestawienie · data ${groupBy === 'production' ? 'produkcji' : 'dostawy'}` : 'Zestawienie produktów'}
+              <svg className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', summaryOpen && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </button>
+
+          {/* Expandable table — grows upward */}
+          <div className={cn('overflow-hidden transition-[max-height] duration-300 ease-in-out', summaryOpen ? 'max-h-[min(55vh,24rem)]' : 'max-h-0')}>
+            <div className="mx-auto max-h-[min(55vh,24rem)] w-full max-w-3xl lg:max-w-6xl overflow-auto border-t border-slate-200 px-5 pb-2 pt-3">
+              {summary.length === 0 && <p className="py-2 text-center text-sm text-slate-500">Brak danych.</p>}
+              {summary.length > 0 && (
+                <>
+                  <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
+                    <caption className="sr-only">Zestawienie produktów</caption>
+                    <colgroup><col /><col className="w-[5rem]" /><col className="w-[36%]" /></colgroup>
+                    <thead className="sr-only"><tr><th>Produkt</th><th>Ilość</th><th>Wartość</th></tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {summary.map((row) => (
+                        <tr key={row.product_name}>
+                          <td className="max-w-[1px] py-1.5 pr-2 text-left text-foreground">
+                            <span className="block truncate" title={row.product_name}>{row.product_name}</span>
+                          </td>
+                          <td className="px-1.5 py-1.5 text-right tabular-nums text-foreground align-baseline">
+                            {Number.isInteger(Number(row.total_quantity)) ? Number(row.total_quantity) : Number(row.total_quantity).toFixed(2)} {row.unit}
+                          </td>
+                          <td className="py-1.5 pl-1.5 text-right tabular-nums font-medium text-foreground align-baseline">
+                            {formatMoneyGrossLocal(row.total_gross)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Always-visible total */}
+          <div className="border-t border-slate-200 bg-primary/5">
+            <div className="mx-auto flex w-full max-w-3xl lg:max-w-6xl items-baseline justify-between gap-3 px-5 py-3">
+              <span className="text-sm font-semibold text-slate-800">Suma</span>
+              <span className="text-2xl font-bold tabular-nums tracking-tight text-primary">
+                {formatMoneyGrossLocal(filtered.reduce((s, o) => s + (parseFloat(String(o.total_gross)) || 0), 0))}
+              </span>
+            </div>
+          </div>
+
+        </div>
+      </div>,
+      document.body,
+    )}
+    </>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -17,6 +17,7 @@ import { formatDeliveryDate } from '@/lib/order-utils';
 import { cn } from '@/lib/utils';
 import { useCreateOrderMutation, useConfirmOrderMutation, useOrdersByCustomerQuery } from '@/query/use-orders';
 import { useCustomerQuery, useCustomerListQuery, useCustomerPricesQuery } from '@/query/use-customers';
+import { useWorkflowSettingsQuery } from '@/query/use-companies';
 import { authStorage } from '@/services/api';
 import { productService } from '@/services/product.service';
 import type { Product } from '@/types';
@@ -335,6 +336,37 @@ function normalizeQty(raw: string): string {
 
 /* ── Icons ──────────────────────────────────────────────────────── */
 
+function DatePill({ label, value, onChange, required, borderColor }: { label: string; value: string; onChange: (v: string) => void; required?: boolean; borderColor: string }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const open = useCallback(() => {
+    inputRef.current?.showPicker?.();
+    inputRef.current?.focus();
+  }, []);
+  return (
+    <div
+      className={cn('flex cursor-pointer items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 transition-colors hover:bg-slate-50', borderColor)}
+      onClick={open}
+    >
+      <svg className="h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+        <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round" />
+      </svg>
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <input
+        ref={inputRef}
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        onClick={(e) => e.stopPropagation()}
+        className="w-0 cursor-pointer border-0 bg-transparent p-0 text-[13px] font-semibold text-slate-800 focus:outline-none focus:ring-0 [color-scheme:light] [&::-webkit-calendar-picker-indicator]:hidden"
+      />
+      <span className={cn('text-[13px] font-semibold', value ? 'text-slate-800' : 'text-slate-400')}>
+        {value ? formatDeliveryDate(value) : '—'}
+      </span>
+    </div>
+  );
+}
+
 function ChevronLeftIcon() {
   return (
     <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
@@ -469,23 +501,33 @@ interface CustomerDropdownProps {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   containerRef: React.RefObject<HTMLDivElement>;
+  isNew?: boolean;
 }
 
-function CustomerDropdown({ value, onChange, onSelect, customers, loading, open, onOpenChange, containerRef }: CustomerDropdownProps) {
+function CustomerDropdown({ value, onChange, onSelect, customers, loading, open, onOpenChange, containerRef, isNew }: CustomerDropdownProps) {
   return (
     <div ref={containerRef} className="relative">
-      <input
-        type="text"
-        autoComplete="off"
-        value={value}
-        placeholder="Zmień klienta…"
-        className="h-9 w-full rounded-xl border border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-        onChange={(e) => { onChange(e.target.value); onOpenChange(true); }}
-        onFocus={() => onOpenChange(true)}
-        aria-label="Wyszukaj klienta"
-        aria-expanded={open}
-        aria-autocomplete="list"
-      />
+      <div className="relative">
+        <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+        </svg>
+        <input
+          type="text"
+          autoComplete="off"
+          value={value}
+          placeholder={isNew ? 'Wyszukaj klienta…' : 'Zmień klienta…'}
+          className={cn(
+            'w-full rounded-xl border bg-card pl-9 pr-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30',
+            isNew ? 'h-12 border-primary/40 text-base font-medium' : 'h-9 border-border text-sm',
+          )}
+          onChange={(e) => { onChange(e.target.value); onOpenChange(true); }}
+          onFocus={() => onOpenChange(true)}
+          autoFocus={isNew}
+          aria-label="Wyszukaj klienta"
+          aria-expanded={open}
+          aria-autocomplete="list"
+        />
+      </div>
       {open && (
         <ul
           role="listbox"
@@ -622,12 +664,15 @@ export function OrderCreatePage() {
   const urlCustomerId = searchParams.get('customer_id') ?? '';
   const { user } = useAuth();
   const companyId = user?.current_company ?? '';
+  const { data: workflowSettings } = useWorkflowSettingsQuery(companyId || undefined);
+  const orderDatesEnabled = workflowSettings?.order_dates_enabled ?? false;
   const create = useCreateOrderMutation();
   const confirm = useConfirmOrderMutation();
 
   const draft = loadDraft();
 
   const [deliveryDate, setDeliveryDate] = useState(draft.deliveryDate ?? urlDate);
+  const [productionDate, setProductionDate] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(draft.selectedCustomer ?? null);
   const [customerInput, setCustomerInput] = useState(draft.selectedCustomer?.name ?? '');
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -927,7 +972,7 @@ export function OrderCreatePage() {
           discount_percent: toApiDecimalString(parseDecimalInput(l.discountPercent) ?? 0),
         };
       });
-      const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items };
+      const body: OrderCreate = { customer_id: selectedCustomer.id, delivery_date: deliveryDate, items, production_date: productionDate || null, shipment_date: null };
       const order = await create.mutateAsync(body);
       await confirm.mutateAsync(order.id);
       clearDraft();
@@ -982,7 +1027,7 @@ export function OrderCreatePage() {
           discount_percent: toApiDecimalString(parseDecimalInput(l.discountPercent) ?? 0),
         };
       });
-      await create.mutateAsync({ customer_id: selectedCustomer.id, delivery_date: deliveryDate, items });
+      await create.mutateAsync({ customer_id: selectedCustomer.id, delivery_date: deliveryDate, items, production_date: productionDate || null, shipment_date: null });
       clearDraft();
       setShowLeaveDialog(false);
       const dest = pendingNavRef.current;
@@ -1039,16 +1084,10 @@ export function OrderCreatePage() {
               </h1>
 
               {/* Date row */}
-              <div className="mt-0.5 flex items-center gap-3">
-                <input
-                  type="date"
-                  value={deliveryDate}
-                  onChange={(e) => setDeliveryDate(e.target.value)}
-                  aria-label="Data dostawy"
-                  className="cursor-pointer border-0 bg-transparent p-0 text-[13px] text-muted-foreground focus:outline-none focus:ring-0"
-                />
-                {deliveryDate && (
-                  <span className="text-[13px] text-muted-foreground">{dateLabel}</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <DatePill label="Dostawa" value={deliveryDate} onChange={setDeliveryDate} required borderColor="border-blue-300" />
+                {orderDatesEnabled && (
+                  <DatePill label="Produkcja" value={productionDate} onChange={setProductionDate} borderColor="border-violet-300" />
                 )}
               </div>
             </div>
@@ -1078,6 +1117,7 @@ export function OrderCreatePage() {
                 open={customerOpen}
                 onOpenChange={setCustomerOpen}
                 containerRef={customerRef}
+                isNew={!selectedCustomer}
               />
             </div>
           )}
@@ -1093,7 +1133,7 @@ export function OrderCreatePage() {
               value={productSearch}
               onChange={(e) => setProductSearch(e.target.value)}
               aria-label="Szukaj produktu"
-              className="h-12 w-full rounded-2xl border border-border bg-card pl-12 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              className="h-9 w-full rounded-2xl border border-border bg-card pl-12 pr-4 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
             />
           </div>
 

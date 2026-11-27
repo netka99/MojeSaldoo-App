@@ -669,7 +669,6 @@ export function OrderDetailPage() {
   const [editLines, setEditLines] = useState<EditLine[]>([]);
   const [editDate, setEditDate] = useState('');
   const [editProductionDate, setEditProductionDate] = useState('');
-  const [editShipmentDate, setEditShipmentDate] = useState('');
   const [isDirty, setIsDirty] = useState(false);
 
   /* Sync edit lines when order loads / changes */
@@ -685,8 +684,7 @@ export function OrderDetailPage() {
   useEffect(() => {
     if (order?.delivery_date) setEditDate(order.delivery_date);
     setEditProductionDate(order?.production_date ?? '');
-    setEditShipmentDate(order?.shipment_date ?? '');
-  }, [order?.delivery_date, order?.production_date, order?.shipment_date]);
+  }, [order?.delivery_date, order?.production_date]);
 
   if (!authStorage.getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -723,7 +721,7 @@ export function OrderDetailPage() {
           customer_id: order.customer_id,
           delivery_date: editDate || order.delivery_date,
           production_date: editProductionDate || null,
-          shipment_date: editShipmentDate || null,
+          shipment_date: null,
           items: editLines.map((l) => ({
             product_id: l.item.product_id,
             quantity: String(l.quantity),
@@ -837,7 +835,7 @@ export function OrderDetailPage() {
                     {ORDER_STATUS_LABELS_PL[order.status]}
                   </span>
                   <span className="text-[13px] text-muted-foreground">
-                    {order.order_number} · zam. {formatDate(order.order_date)} · dostawa {formatDate(order.delivery_date)}
+                    {order.order_number} · zam. {formatDate(order.order_date)}
                   </span>
                 </div>
               )}
@@ -946,67 +944,50 @@ export function OrderDetailPage() {
 
         {order && !isError && (
           <>
-            {(isDraft || isEditing) && (
-              <div className="rounded-2xl bg-surface-card px-4 py-3 shadow-soft">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Data dostawy
-                </label>
-                <input
-                  type="date"
-                  value={editDate}
-                  onChange={(e) => { setEditDate(e.target.value); setIsDirty(true); }}
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-                />
-              </div>
-            )}
-
-            {orderDatesEnabled && (order?.production_date || order?.shipment_date || isDraft || isEditing) && (
-              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-100">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Planowanie</p>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {/* Data produkcji */}
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-800">Data produkcji</p>
-                      <p className="text-xs text-slate-400">Kiedy zacząć produkować</p>
-                    </div>
-                    {(isDraft || isEditing) ? (
-                      <input
-                        type="date"
-                        value={editProductionDate}
-                        onChange={(e) => { setEditProductionDate(e.target.value); setIsDirty(true); }}
-                        className="date-pill w-40 border-solid border-slate-300 bg-white"
-                      />
-                    ) : (
-                      <span className="text-sm font-medium text-slate-700">
-                        {order?.production_date ? formatDate(order.production_date) : <span className="text-slate-300">—</span>}
-                      </span>
-                    )}
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
+              {orderDatesEnabled && (
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <svg className="h-4 w-4 shrink-0 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <span className="text-sm text-slate-600">Produkcja</span>
                   </div>
-                  {/* Data wysyłki WZ */}
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-800">Data wysyłki WZ</p>
-                      <p className="text-xs text-slate-400">Kiedy wystawić WZ i wysłać towar</p>
-                    </div>
-                    {(isDraft || isEditing) ? (
-                      <input
-                        type="date"
-                        value={editShipmentDate}
-                        onChange={(e) => { setEditShipmentDate(e.target.value); setIsDirty(true); }}
-                        className="date-pill w-40 border-solid border-slate-300 bg-white"
-                      />
-                    ) : (
-                      <span className="text-sm font-medium text-slate-700">
-                        {order?.shipment_date ? formatDate(order.shipment_date) : <span className="text-slate-300">—</span>}
-                      </span>
-                    )}
-                  </div>
+                  {(isDraft || isEditing) ? (
+                    <input
+                      type="date"
+                      value={editProductionDate}
+                      onChange={(e) => { setEditProductionDate(e.target.value); setIsDirty(true); }}
+                      className="date-pill w-40 border-solid border-violet-200 bg-white"
+                    />
+                  ) : (
+                    <span className="text-sm font-semibold text-violet-700">
+                      {order?.production_date ? formatDate(order.production_date) : <span className="font-normal text-slate-300">—</span>}
+                    </span>
+                  )}
                 </div>
+              )}
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 shrink-0 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-sm text-slate-600">Dostawa</span>
+                </div>
+                {(isDraft || isEditing) ? (
+                  <input
+                    type="date"
+                    value={editDate}
+                    onChange={(e) => { setEditDate(e.target.value); setIsDirty(true); }}
+                    className="date-pill w-40 border-solid border-blue-200 bg-white"
+                  />
+                ) : (
+                  <span className="text-sm font-semibold text-blue-700">
+                    {order?.delivery_date ? formatDate(order.delivery_date) : <span className="font-normal text-slate-300">—</span>}
+                  </span>
+                )}
               </div>
-            )}
+            </div>
 
             <p className="px-1 text-[13px] text-muted-foreground">
               {itemCountLabel(displayLines.length)}

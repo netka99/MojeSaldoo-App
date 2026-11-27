@@ -15,6 +15,14 @@ class OrderFilter(django_filters.FilterSet):
         field_name="delivery_date",
         lookup_expr="lte",
     )
+    production_date_after = django_filters.DateFilter(
+        field_name="production_date",
+        lookup_expr="gte",
+    )
+    production_date_before = django_filters.DateFilter(
+        field_name="production_date",
+        lookup_expr="lte",
+    )
     without_invoice = django_filters.BooleanFilter(method="filter_without_invoice")
     exclude_routed = django_filters.BooleanFilter(method="filter_exclude_routed")
 
